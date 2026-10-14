@@ -62,6 +62,11 @@ export interface ConversationItemWire {
   steps?: PlanStepWire[];
   updatedAt?: number | string;
   updated_at?: number | string;
+  // assistant_text: a Codex async question set (`questions` + `async`), or a
+  // driver notice (`notice`). Either is a whole message of its own.
+  questions?: { title?: string; options?: string[] }[];
+  async?: boolean;
+  notice?: boolean;
   // all
   timestamp?: string;
 }
@@ -261,7 +266,41 @@ export function applyConversationItems(
         const streaming =
           session.transport === 'stream' || (!!session.provider && session.provider !== 'claude');
         const last = session.conversation[session.conversation.length - 1];
-        if (streaming && last && last.role === 'assistant' && !last.toolCalls?.length) {
+        // A question set or notice is a message of its own: it must not be
+        // glued onto the bubble before it (dropping its questions), and later
+        // deltas must not be appended to it.
+        const sealed = !!item.notice || !!item.async || Array.isArray(item.questions);
+        if (sealed) {
+          const questions = Array.isArray(item.questions)
+            ? item.questions
+                .filter((q) => typeof q?.title === 'string' && q.title.trim())
+                .map((q) => ({
+                  title: q.title as string,
+                  options: Array.isArray(q.options)
+                    ? q.options.filter((o): o is string => typeof o === 'string')
+                    : [],
+                }))
+            : undefined;
+          if (
+            !isDuplicateMessage(session, 'assistant', text, item.timestamp ? tsOf(item) : undefined)
+          ) {
+            session.conversation.push({
+              role: 'assistant',
+              content: text,
+              timestamp: tsOf(item),
+              sealed: true,
+              ...(questions?.length ? { questions } : {}),
+            });
+          }
+          break;
+        }
+        if (
+          streaming &&
+          last &&
+          last.role === 'assistant' &&
+          !last.toolCalls?.length &&
+          !last.sealed
+        ) {
           if (last.content && text.startsWith(last.content)) {
             last.content = text; // full-snapshot growth (OpenCode)
           } else {

@@ -2035,21 +2035,23 @@ impl SessionStore {
         session_id: &str,
         answer: ManagedAnswer,
     ) -> bool {
-        // Route to the feed whose question is on the card. Only a card the
-        // driver itself parked goes to the driver; otherwise (the shim's card,
-        // or a racing answer before the shim's park landed) the shim's channel
-        // wins when it exists. Either falls back to the other, which is the
-        // single-feed behavior every session had before the split.
+        // Route to the feed whose question is on the card — and ONLY to it.
+        // Falling back to the other feed when the owner's channel is gone
+        // would hand the answer to a feed that is not asking (the shim
+        // unregistering a beat before its card is released, say), so a
+        // known owner without a channel is a refusal, not a guess. With no
+        // owner yet (an answer racing the shim's own park) the shim's channel
+        // is preferred, then the driver's.
         let owner = self.states.get(session_id).and_then(|s| s.pending_owner());
-        let (first, second) = if owner == Some(PendingOwner::Primary) {
-            (&self.managed_answers, &self.ask_answers)
-        } else {
-            (&self.ask_answers, &self.managed_answers)
+        let tx = match owner {
+            Some(PendingOwner::Primary) => self.managed_answers.get(session_id).map(|t| t.clone()),
+            Some(PendingOwner::Ask) => self.ask_answers.get(session_id).map(|t| t.clone()),
+            None => self
+                .ask_answers
+                .get(session_id)
+                .or_else(|| self.managed_answers.get(session_id))
+                .map(|t| t.clone()),
         };
-        let tx = first
-            .get(session_id)
-            .or_else(|| second.get(session_id))
-            .map(|tx| tx.clone());
         match tx {
             Some(tx) => tx.send(answer).is_ok(),
             None => false,
@@ -3709,6 +3711,46 @@ mod tests {
                 answer_kinds: None,
             },
         ));
+    }
+
+    /// An answer for the shim's card never falls through to the driver just
+    /// because the shim's channel is gone (it unregisters as its ask ends):
+    /// the driver is not asking, so that answer is refused, not misdelivered.
+    #[test]
+    fn an_answer_for_a_known_owner_without_a_channel_is_refused() {
+        use crate::session::state::{PendingQuestion, PendingWrite};
+        let store = SessionStore::new();
+        store.register_managed("s1", "/w", "codex");
+        let (driver, mut driver_rx) = mpsc::unbounded_channel::<ManagedAnswer>();
+        store.register_managed_answer("s1", driver);
+        store.set_managed_mode(
+            "s1",
+            SessionMode::Question,
+            PendingWrite::Park(
+                PendingOwner::Ask,
+                Pending::Question {
+                    questions: vec![PendingQuestion {
+                        question: "ask?".into(),
+                        header: None,
+                        multi_select: false,
+                        options: Vec::new(),
+                        secret: false,
+                    }],
+                    raw: Value::Null,
+                },
+            ),
+        );
+        // No shim channel registered (already gone) while its card is up.
+        assert!(!store.submit_managed_answer(
+            "s1",
+            ManagedAnswer {
+                option: Some(1),
+                text: None,
+                answers: None,
+                answer_kinds: None,
+            },
+        ));
+        assert!(driver_rx.try_recv().is_err());
     }
 
     /// The driver's own answer channel (codex parks `requestUserInput`

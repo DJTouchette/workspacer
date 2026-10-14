@@ -175,8 +175,6 @@ impl QuestionGuard {
             return;
         }
         self.defused = true;
-        self.store
-            .unregister_ask_answer_if(&self.session_id, &self.tx);
         // `Resolve(Ask)`: this guard owns the *question* — it parked it, and it
         // is the one thing that knows the question is over (answered, or timed
         // out with the tool call already returning an error to the agent). It
@@ -190,6 +188,10 @@ impl QuestionGuard {
             SessionMode::Responding,
             PendingWrite::Resolve(PendingOwner::Ask),
         );
+        // Unregister only AFTER the card is released: until then an answer is
+        // routed to this (Ask) feed by the card's owner, and must find it.
+        self.store
+            .unregister_ask_answer_if(&self.session_id, &self.tx);
     }
 }
 

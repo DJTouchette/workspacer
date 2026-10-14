@@ -20,9 +20,10 @@
 //! consume the streamed notifications: `turn/started|completed|failed`,
 //! `item/started|completed` (commandExecution / fileChange / mcpToolCall / …),
 //! `item/agentMessage/delta` (streamed text), `thread/tokenUsage/updated`, and
-//! answer every server request: approvals (`item/*/requestApproval`) and
-//! questions (`item/tool/requestUserInput`) park for the user, anything else
-//! is answered at once (see `handle_server_request`).
+//! answer every server request: approvals (`item/*/requestApproval`, MCP
+//! tool-call elicitations) and questions (`item/tool/requestUserInput`) park
+//! for the user, anything else is answered at once — or, in a hybrid session,
+//! left to the TUI (see `handle_server_request`).
 //!
 //! The pure `translate(method, params)` is unit-tested; the live ws client
 //! needs a real `codex` binary to validate end-to-end.
@@ -51,7 +52,7 @@ use crate::session::state::{
     Pending, PendingOption, PendingOwner, PendingQuestion, PendingWrite, SessionMode,
     SubagentStatus, SubagentUpdate,
 };
-use crate::session::{ConversationStore, Delivery, ManagedAnswer, ManagedSend, SessionStore};
+use crate::session::{ConversationStore, Delivery, ManagedAnswer, ManagedPrompt, SessionStore};
 use crate::wrapper::pty;
 
 /// Translate one Codex app-server message (`method` + `params`) into typed
@@ -861,29 +862,34 @@ fn command_text(params: &Value) -> Option<String> {
 }
 
 /// A server→client request parked while the user decides: the JSON-RPC request
-/// id (what the answer must name), the turn it belongs to, and what to show, so
-/// a request queued *behind* the surfaced one can be re-surfaced when it
-/// reaches the head of the FIFO. Mirrors `claude_stream::ParkedCanUse`.
+/// id (what the answer must name), the thread and turn it belongs to, and what
+/// to show, so a request queued *behind* the surfaced one can be re-surfaced
+/// when it reaches the head of the FIFO. Mirrors `claude_stream::ParkedCanUse`.
 #[derive(Debug)]
 struct ParkedRequest {
     id: Value,
-    /// `turnId` from the request params: a turn that ends voids its requests.
+    /// `threadId` / `turnId` from the request params: a turn that ends voids
+    /// its requests, and a thread runs one turn at a time.
+    thread_id: Option<String>,
     turn_id: Option<String>,
+    /// Answer it automatically with nothing at this moment — a non-blocking
+    /// `requestUserInput` (`isBlocking: false`), as codex's own TUI does.
+    deadline: Option<std::time::Instant>,
     kind: ParkedKind,
 }
 
 #[derive(Debug)]
 enum ParkedKind {
-    /// A `*/requestApproval`. `method` picks the answer shape — a permissions
-    /// grant is not a `{decision}` (see [`approval_result`]).
+    /// A `*/requestApproval`, or an MCP tool-call approval elicitation.
+    /// `method` picks the answer shape (see [`approval_result`]).
     Approval {
         method: String,
         tool: Option<String>,
         summary: Option<String>,
         raw: Value,
     },
-    /// `item/tool/requestUserInput` (Plan mode's blocking questions). `wire`
-    /// keeps Codex's questions, whose ids key the answer; `card` is the same
+    /// `item/tool/requestUserInput` (Plan mode's questions). `wire` keeps
+    /// Codex's questions, whose ids key the answer; `card` is the same
     /// questions in the shape Claude's AskUserQuestion parks, so every client
     /// renders them with the card it already has.
     Question {
@@ -906,6 +912,12 @@ struct ServerRequests {
     queue: VecDeque<ParkedRequest>,
     unsupported_logged: HashSet<String>,
 }
+
+/// How long a non-blocking `requestUserInput` waits before it is answered with
+/// nothing — codex's TUI gives it a 60s hidden grace plus a 60s visible
+/// countdown (`tui/src/bottom_pane/request_user_input`), then submits empty
+/// answers. A blocking one waits for the user however long that takes.
+const NON_BLOCKING_QUESTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Surface a parked request as the session's pending card. The store's pending
 /// is a single slot, so only the FIFO *head* is ever displayed — later requests
@@ -945,27 +957,37 @@ fn surface_parked(
     );
 }
 
-/// Show the new FIFO head, or — when the queue is empty — release the card and
-/// return the session to Responding (the turn is still running).
+/// Show the new FIFO head, or — when the queue is empty — release the card.
+/// The mode released to follows the turn: `Responding` while one runs,
+/// `Input` when none does (a request outlived its turn, or the server cleared
+/// it after the turn ended), never "streaming" for a session that is idle.
 fn surface_next(
     store: &SessionStore,
     session_id: &str,
     requests: &ServerRequests,
     cur_mode: &mut SessionMode,
+    turn_running: bool,
 ) {
     match requests.queue.front() {
         Some(next) => surface_parked(store, session_id, cur_mode, next),
         None => set_mode(
             store,
             session_id,
-            SessionMode::Responding,
+            if turn_running {
+                SessionMode::Responding
+            } else {
+                SessionMode::Input
+            },
             PendingWrite::Resolve(PendingOwner::Primary),
             cur_mode,
         ),
     }
 }
 
-/// Park a request at the back of the FIFO, surfacing it when it is the head.
+/// Park a request at the back of the FIFO and make sure the head is on the
+/// card. A request from an earlier turn of the SAME thread is stale by
+/// definition (a thread runs one turn at a time — we missed that turn's end),
+/// so it is dropped rather than left blocking the head forever.
 fn park_request(
     store: &SessionStore,
     session_id: &str,
@@ -973,39 +995,61 @@ fn park_request(
     cur_mode: &mut SessionMode,
     parked: ParkedRequest,
 ) {
+    if let (Some(thread), Some(turn)) = (parked.thread_id.clone(), parked.turn_id.clone()) {
+        requests.queue.retain(|r| {
+            let stale = r.thread_id.as_deref() == Some(thread.as_str())
+                && r.turn_id.as_deref().is_some_and(|t| t != turn);
+            if stale {
+                tracing::debug!(session = %session_id, request = %r.id, "codex: dropped a request from an ended turn");
+            }
+            !stale
+        });
+    }
     requests.queue.push_back(parked);
-    if requests.queue.len() == 1 {
+    let shown = matches!(*cur_mode, SessionMode::Approval | SessionMode::Question);
+    if requests.queue.len() == 1 || !shown {
         surface_parked(store, session_id, cur_mode, &requests.queue[0]);
     }
 }
 
-/// The answer to an approval request. Command and file-change approvals take a
-/// `{decision}`; `item/permissions/requestApproval` takes the GRANTED subset of
-/// the requested profile (`{permissions, scope}`), so allowing grants exactly
-/// what was asked for this turn and denying grants nothing — a `{decision}`
-/// there fails to deserialize, and the turn would sit on it.
+/// The answer to an approval request:
+/// - command and file-change approvals take a `{decision}`;
+/// - `item/permissions/requestApproval` takes the GRANTED subset of the
+///   requested profile (`{permissions, scope}`), so allowing grants exactly
+///   what was asked for this turn and denying grants nothing;
+/// - an MCP tool-call approval (an elicitation) takes an elicitation result:
+///   `accept` with empty content is a plain "Allow" (codex's
+///   `parse_mcp_tool_approval_elicitation_response`), `decline` a rejection.
 fn approval_result(method: &str, params: &Value, approve: bool) -> Value {
-    if method == "item/permissions/requestApproval" {
-        let mut granted = serde_json::Map::new();
-        if approve {
-            if let Some(requested) = params.get("permissions").and_then(Value::as_object) {
-                for (key, value) in requested {
-                    if !value.is_null() {
-                        granted.insert(key.clone(), value.clone());
+    match method {
+        "item/permissions/requestApproval" => {
+            let mut granted = serde_json::Map::new();
+            if approve {
+                if let Some(requested) = params.get("permissions").and_then(Value::as_object) {
+                    for (key, value) in requested {
+                        if !value.is_null() {
+                            granted.insert(key.clone(), value.clone());
+                        }
                     }
                 }
             }
+            json!({ "permissions": granted, "scope": "turn" })
         }
-        return json!({ "permissions": granted, "scope": "turn" });
+        "mcpServer/elicitation/request" if approve => {
+            json!({ "action": "accept", "content": {}, "_meta": null })
+        }
+        "mcpServer/elicitation/request" => {
+            json!({ "action": "decline", "content": null, "_meta": null })
+        }
+        _ => json!({ "decision": if approve { "accept" } else { "decline" } }),
     }
-    json!({ "decision": if approve { "accept" } else { "decline" } })
 }
 
 /// Answer the FIFO head with the user's approval decision, then surface the
-/// next parked request (parallel tool calls can park several) or — when the
-/// queue is empty — return the session to Responding. Answering the head (the
-/// request `surface_parked` displayed) is what guarantees the user approves the
-/// card they actually saw; a decision while a question is the head is dropped.
+/// next parked request (parallel tool calls can park several) or release the
+/// card. Answering the head (the request `surface_parked` displayed) is what
+/// guarantees the user approves the card they actually saw; a decision while
+/// a question is the head is dropped.
 fn resolve_approval(
     store: &SessionStore,
     session_id: &str,
@@ -1013,6 +1057,7 @@ fn resolve_approval(
     requests: &mut ServerRequests,
     cur_mode: &mut SessionMode,
     approve: bool,
+    turn_running: bool,
 ) {
     let Some(ParkedRequest {
         kind: ParkedKind::Approval { .. },
@@ -1032,7 +1077,7 @@ fn resolve_approval(
     };
     let result = approval_result(&method, &raw, approve);
     let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
-    surface_next(store, session_id, requests, cur_mode);
+    surface_next(store, session_id, requests, cur_mode, turn_running);
 }
 
 /// Answer the parked `item/tool/requestUserInput` at the FIFO head with the
@@ -1045,6 +1090,7 @@ fn resolve_question(
     requests: &mut ServerRequests,
     cur_mode: &mut SessionMode,
     answer: &ManagedAnswer,
+    turn_running: bool,
 ) {
     let Some(ParkedRequest {
         kind: ParkedKind::Question { .. },
@@ -1065,18 +1111,49 @@ fn resolve_question(
     // The answers themselves are never logged: a question may be `isSecret`.
     let result = user_input_response(&wire, answer);
     let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
-    surface_next(store, session_id, requests, cur_mode);
+    surface_next(store, session_id, requests, cur_mode, turn_running);
+}
+
+/// Answer every non-blocking question whose wait is over with no answers
+/// (`{answers: {}}`), clearing its card — codex's TUI auto-resolves them the
+/// same way, so the model is never left waiting on a question the user did
+/// not have to answer.
+fn expire_parked(
+    store: &SessionStore,
+    session_id: &str,
+    out_tx: &mpsc::UnboundedSender<Value>,
+    requests: &mut ServerRequests,
+    cur_mode: &mut SessionMode,
+    now: std::time::Instant,
+    turn_running: bool,
+) {
+    let expired = |r: &ParkedRequest| r.deadline.is_some_and(|d| d <= now);
+    if !requests.queue.iter().any(expired) {
+        return;
+    }
+    let head_expired = requests.queue.front().is_some_and(expired);
+    requests.queue.retain(|r| {
+        if !expired(r) {
+            return true;
+        }
+        tracing::debug!(session = %session_id, request = %r.id, "codex: non-blocking question timed out — answered empty");
+        let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": r.id, "result": { "answers": {} } }));
+        false
+    });
+    if head_expired {
+        surface_next(store, session_id, requests, cur_mode, turn_running);
+    }
 }
 
 /// Drop parked requests the server has voided, re-surfacing the head when it
-/// was among them. `serverRequest/resolved` names one request (answered or
-/// cleared by a turn start/complete/interrupt); a `turn/completed` voids every
-/// request of that turn even if that notification is missed.
+/// was among them. `serverRequest/resolved` names one request (answered —
+/// possibly in the hybrid TUI — or cleared by a turn start/complete/interrupt).
 fn drop_parked(
     store: &SessionStore,
     session_id: &str,
     requests: &mut ServerRequests,
     cur_mode: &mut SessionMode,
+    turn_running: bool,
     void: impl Fn(&ParkedRequest) -> bool,
 ) {
     let head_voided = requests.queue.front().is_some_and(&void);
@@ -1086,7 +1163,7 @@ fn drop_parked(
         tracing::debug!(session = %session_id, dropped = before - requests.queue.len(), "codex: server cleared parked requests");
     }
     if head_voided {
-        surface_next(store, session_id, requests, cur_mode);
+        surface_next(store, session_id, requests, cur_mode, turn_running);
     }
 }
 
@@ -1200,9 +1277,51 @@ fn user_input_card(questions: &[Value]) -> Vec<PendingQuestion> {
 /// blocking on a reply that never comes.
 const METHOD_NOT_FOUND: i64 = -32601;
 
-/// Answer a server→client request (it carries an `id`). Every one is answered
-/// — approvals and questions once the user decides, the rest immediately — so
-/// no request can leave the turn hanging.
+/// `_meta.codex_approval_kind` on an elicitation that is really codex asking
+/// to run an MCP tool (`core/src/mcp_tool_call.rs`). With codex 0.159's
+/// default-on `tool_call_mcp_elicitation` feature, EVERY approval of an MCP
+/// tool without `readOnlyHint` — our own workspacer facade and AskUserQuestion
+/// tools included — arrives this way, not as a `requestApproval`.
+const MCP_TOOL_CALL_APPROVAL_KIND: &str = "mcp_tool_call";
+
+/// The approval card for an MCP tool-call elicitation: the server (and the
+/// tool's title when codex supplied one) as the tool, codex's own rendered
+/// question as the summary.
+fn mcp_tool_approval_card(params: &Value) -> (Option<String>, Option<String>, Value) {
+    let server = params
+        .get("serverName")
+        .and_then(Value::as_str)
+        .unwrap_or("mcp");
+    let title = params
+        .pointer("/request/_meta/tool_title")
+        .and_then(Value::as_str)
+        .filter(|t| !t.trim().is_empty());
+    let tool = match title {
+        Some(title) => format!("{server}: {title}"),
+        None => format!("mcp {server}"),
+    };
+    let summary = params
+        .pointer("/request/message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(str::to_owned);
+    (Some(tool), summary, params.clone())
+}
+
+/// Answer — or deliberately leave — a server→client request (it carries an
+/// `id`).
+///
+/// HEADLESS answers every one: approvals and questions once the user decides,
+/// the rest immediately, so no request can leave the turn hanging.
+///
+/// HYBRID shares the thread with codex's own TUI, and codex sends a thread's
+/// requests to EVERY subscribed connection, taking the first reply
+/// (`outgoing_message.rs send_request_to_connections`). There an immediate
+/// refusal from us would pre-empt a TUI that can actually handle the request,
+/// so anything we cannot show is left for the TUI. Parking is never a reply,
+/// so approvals and questions still park on both surfaces; whichever answers
+/// first wins, and `serverRequest/resolved` clears the other's card.
 #[allow(clippy::too_many_arguments)]
 fn handle_server_request(
     value: &Value,
@@ -1217,24 +1336,32 @@ fn handle_server_request(
     acc: &mut UsageAcc,
     policy: &TurnPolicy,
     requests: &mut ServerRequests,
+    headless: bool,
 ) {
     let id = value.get("id").cloned().unwrap_or(Value::Null);
-    let turn_id = params
-        .get("turnId")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
+    let text = |k: &str| params.get(k).and_then(Value::as_str).map(str::to_owned);
+    let (thread_id, turn_id) = (text("threadId"), text("turnId"));
+    let mcp_tool_approval = method == "mcpServer/elicitation/request"
+        && params
+            .pointer("/request/_meta/codex_approval_kind")
+            .and_then(Value::as_str)
+            == Some(MCP_TOOL_CALL_APPROVAL_KIND);
     match method {
         // YOLO accepts inline; otherwise park the request id + card and
         // surface the FIFO head, so the user's /approve decision answers the
         // request that's actually on screen (see `resolve_approval`, called
         // from the decision branch in run_session).
-        m if m.ends_with("/requestApproval") => {
+        m if m.ends_with("/requestApproval") || mcp_tool_approval => {
             if policy.bypassing() {
                 let result = approval_result(method, params, true);
                 let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
                 return;
             }
-            let (tool, summary, raw) = approval_card.unwrap_or((None, None, params.clone()));
+            let (tool, summary, raw) = if mcp_tool_approval {
+                mcp_tool_approval_card(params)
+            } else {
+                approval_card.unwrap_or((None, None, params.clone()))
+            };
             park_request(
                 store,
                 session_id,
@@ -1242,7 +1369,9 @@ fn handle_server_request(
                 cur_mode,
                 ParkedRequest {
                     id,
+                    thread_id,
                     turn_id,
+                    deadline: None,
                     kind: ParkedKind::Approval {
                         method: method.to_string(),
                         tool,
@@ -1253,7 +1382,8 @@ fn handle_server_request(
             );
         }
         // A question for the human — parked even under YOLO, like Claude's
-        // AskUserQuestion: auto-answering it would be nonsense.
+        // AskUserQuestion: auto-answering it would be nonsense. A non-blocking
+        // one is answered empty if the user lets it lapse.
         "item/tool/requestUserInput" => {
             let wire = params
                 .get("questions")
@@ -1261,10 +1391,14 @@ fn handle_server_request(
                 .cloned()
                 .unwrap_or_default();
             if wire.is_empty() {
-                let _ =
-                    out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": { "answers": {} } }));
+                if headless {
+                    let _ = out_tx
+                        .send(json!({ "jsonrpc": "2.0", "id": id, "result": { "answers": {} } }));
+                }
                 return;
             }
+            // codex reads a missing `isBlocking` as blocking.
+            let blocking = params.get("isBlocking").and_then(Value::as_bool) != Some(false);
             park_request(
                 store,
                 session_id,
@@ -1272,7 +1406,10 @@ fn handle_server_request(
                 cur_mode,
                 ParkedRequest {
                     id,
+                    thread_id,
                     turn_id,
+                    deadline: (!blocking)
+                        .then(|| std::time::Instant::now() + NON_BLOCKING_QUESTION_TIMEOUT),
                     kind: ParkedKind::Question {
                         card: user_input_card(&wire),
                         wire,
@@ -1281,19 +1418,14 @@ fn handle_server_request(
                 },
             );
         }
-        // No elicitation UI yet: decline at once (the MCP tool call fails
-        // cleanly instead of hanging the turn) and say so in the conversation,
-        // so the user knows why the tool did not get what it asked for.
+        // Any other elicitation: no UI for it yet. Headless declines at once
+        // (the MCP call fails cleanly instead of hanging the turn); hybrid
+        // leaves it to the TUI. Either way the conversation says so.
         "mcpServer/elicitation/request" => {
             let server = params
                 .get("serverName")
                 .and_then(Value::as_str)
                 .unwrap_or("an MCP server");
-            tracing::warn!(session = %session_id, server = %server, "codex: MCP elicitation declined — no UI for it yet");
-            let _ = out_tx.send(json!({
-                "jsonrpc": "2.0", "id": id,
-                "result": { "action": "decline", "content": null, "_meta": null }
-            }));
             let asked = params
                 .pointer("/request/message")
                 .and_then(Value::as_str)
@@ -1301,19 +1433,35 @@ fn handle_server_request(
                 .filter(|m| !m.is_empty())
                 .map(|m| format!(" It asked: “{m}”"))
                 .unwrap_or_default();
+            let notice = if headless {
+                tracing::warn!(session = %session_id, server = %server, "codex: MCP elicitation declined — no UI for it yet");
+                let _ = out_tx.send(json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "result": { "action": "decline", "content": null, "_meta": null }
+                }));
+                format!("⚠️ The MCP server `{server}` asked for input, which Workspacer cannot show yet, so the request was declined.{asked}")
+            } else {
+                tracing::info!(session = %session_id, server = %server, "codex: MCP elicitation left for the TUI");
+                format!("⚠️ The MCP server `{server}` asked for input, which Workspacer cannot show yet — answer it in the Terminal view.{asked}")
+            };
             apply_updates(
                 store,
                 conv,
                 session_id,
-                vec![AgentUpdate::AssistantText(format!(
-                    "\n⚠️ The MCP server `{server}` asked for input, which Workspacer cannot show yet, so the request was declined.{asked}\n"
-                ))],
+                vec![AgentUpdate::Notice(notice)],
                 cur_mode,
                 acc,
             );
         }
         _ => {
-            if requests.unsupported_logged.insert(method.to_string()) {
+            let first = requests.unsupported_logged.insert(method.to_string());
+            if !headless {
+                if first {
+                    tracing::info!(session = %session_id, method = %method, "codex: unsupported server request left for the TUI");
+                }
+                return;
+            }
+            if first {
                 tracing::warn!(session = %session_id, method = %method, "codex: unsupported server request — answered with method-not-found");
             }
             let _ = out_tx.send(json!({
@@ -2356,8 +2504,10 @@ async fn run_session(
     #[cfg(test)]
     evidence.before_registration();
     let registration = store.with_generation(session_id, evidence.generation, || {
-        let (tx, rx) = mpsc::unbounded_channel::<String>();
-        store.register_managed_input(session_id, tx);
+        // ONE prompt channel carrying each send's delivery (`steer`/`now`),
+        // so messages reach the driver in the order they were sent.
+        let (tx, rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        store.register_managed_prompt(session_id, tx);
         let (dtx, drx) = mpsc::unbounded_channel::<bool>();
         store.register_managed_decision(session_id, dtx);
         // Live model/effort switch (POST /sessions/:id/model): applied to the
@@ -2376,10 +2526,6 @@ async fn run_session(
         // driver answers AskUserQuestion through.
         let (atx, arx) = mpsc::unbounded_channel::<ManagedAnswer>();
         store.register_managed_answer(session_id, atx);
-        // Sends that carry a non-default delivery (`now`: interrupt, then
-        // send as the next turn). Ordinary sends keep using `rx`.
-        let (stx, srx) = mpsc::unbounded_channel::<ManagedSend>();
-        store.register_managed_send(session_id, stx);
         // Approval policy, live-switchable via `/permission-mode`: the adapter
         // mediates every approval request on this ws path, so flipping the flag
         // takes effect on the next request without touching the session. A
@@ -2422,10 +2568,9 @@ async fn run_session(
             )
         };
 
-        (rx, drx, mrx, irx, arx, srx, policy, tui_pty)
+        (rx, drx, mrx, irx, arx, policy, tui_pty)
     });
-    let Some((mut rx, mut drx, mut mrx, mut irx, mut arx, mut srx, policy, tui_pty)) = registration
-    else {
+    let Some((mut rx, mut drx, mut mrx, mut irx, mut arx, policy, tui_pty)) = registration else {
         evidence.reason = DriverExit::Superseded;
         evidence.cleanup = child.cleanup().await;
         evidence.exit_status = child.exit_status;
@@ -2499,10 +2644,9 @@ async fn run_session(
     // The running turn (which `turn/interrupt` and `turn/steer` must name),
     // our requests in flight, and messages waiting for a turn to take them.
     let mut input = TurnInput::default();
-    // A closed answer/delivery channel (session terminating) only disables
+    // A closed answer channel (session terminating) only disables
     // its arm; the input channel closing is what ends the driver.
     let mut answers_open = true;
-    let mut sends_open = true;
     // Poll `thread/loaded/list` until the TUI's thread appears, then rejoin it —
     // retrying the resume until we're actually subscribed. Bounded by a deadline
     // so a TUI that never creates a thread (or died at startup) can't busy-poll
@@ -2516,10 +2660,11 @@ async fn run_session(
     // Watch the TUI (the thread owner) for death: if it exits while the app-server
     // lives, the session is dead and must tear down rather than run against a
     // dead thread. try_wait is cheap; a coarse tick is fine.
+    let mut upkeep = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
 
     let reason = 'driver: loop {
-        let mut incoming: Option<ManagedSend> = None;
+        let mut incoming: Option<ManagedPrompt> = None;
         tokio::select! {
             msg = ws_read.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
@@ -2577,17 +2722,13 @@ async fn run_session(
                 }
             },
             msg = rx.recv() => match msg {
-                Some(text) => incoming = Some(ManagedSend { text, delivery: Delivery::Steer }),
+                Some(prompt) => incoming = Some(prompt),
                 None => break DriverExit::InputClosed, // managed input dropped → terminated
-            },
-            send = srx.recv(), if sends_open => match send {
-                Some(send) => incoming = Some(send),
-                None => sends_open = false,
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
                     if store.with_generation(session_id, evidence.generation, || {
-                        resolve_approval(store, session_id, &out_tx, &mut requests, &mut cur_mode, approve);
+                        resolve_approval(store, session_id, &out_tx, &mut requests, &mut cur_mode, approve, input.turns.running());
                     }).is_none() { break DriverExit::Superseded; }
                 }
                 None => break DriverExit::DecisionClosed,
@@ -2595,10 +2736,21 @@ async fn run_session(
             answer = arx.recv(), if answers_open => match answer {
                 Some(answer) => {
                     if store.with_generation(session_id, evidence.generation, || {
-                        resolve_question(store, session_id, &out_tx, &mut requests, &mut cur_mode, &answer);
+                        resolve_question(store, session_id, &out_tx, &mut requests, &mut cur_mode, &answer, input.turns.running());
                     }).is_none() { break DriverExit::Superseded; }
                 }
                 None => answers_open = false,
+            },
+            // Time-based upkeep: lapse non-blocking questions, and never let a
+            // message wait forever on a turn that went silent.
+            now = upkeep.tick() => {
+                let now = now.into_std();
+                if store.with_generation(session_id, evidence.generation, || {
+                    expire_parked(store, session_id, &out_tx, &mut requests, &mut cur_mode, now, input.turns.running());
+                    if let Some(tid) = thread_id.as_deref() {
+                        input.watchdog(now, &out_tx, &mut req_id, tid, &policy);
+                    }
+                }).is_none() { break DriverExit::Superseded; }
             },
             intr = irx.recv() => match intr {
                 Some(()) => {
@@ -2641,7 +2793,7 @@ async fn run_session(
         }
         // A user message, from either send channel. Echo it verbatim, but
         // prepend the role instructions (once) to what's actually sent.
-        if let Some(ManagedSend { text, delivery }) = incoming {
+        if let Some(ManagedPrompt { text, delivery }) = incoming {
             if store
                 .with_generation(session_id, evidence.generation, || {
                     conv.push(
@@ -2817,7 +2969,8 @@ fn handle_message(
 ) {
     // Track the running turn first: everything below (steering, a held
     // interrupt) needs its id.
-    if let (Some(turn), Some(tid)) = (input.turns.observe(value), thread_id.as_deref()) {
+    let held_interrupt = input.turns.observe(value, thread_id.as_deref());
+    if let (Some(turn), Some(tid)) = (held_interrupt, thread_id.as_deref()) {
         input.send_interrupt(out_tx, req_id, tid, &turn);
     }
     handle_message_inner(
@@ -3056,24 +3209,28 @@ fn handle_message_inner(
         // request that no longer exists.
         "serverRequest/resolved" => {
             if let Some(rid) = params.get("requestId").filter(|v| !v.is_null()) {
-                drop_parked(store, session_id, requests, cur_mode, |r| &r.id == rid);
+                let running = input.turns.running();
+                drop_parked(store, session_id, requests, cur_mode, running, |r| {
+                    &r.id == rid
+                });
             }
         }
         // The turn is over, and with it every request it raised — even when
-        // its `serverRequest/resolved` is missed. The `Idle` above already
-        // released the card, so a request still parked (another turn's)
-        // must be put back on it.
-        "turn/completed" if !requests.queue.is_empty() => {
+        // its `serverRequest/resolved` is missed — and every request of the
+        // same thread (one turn at a time: an older one is stale). The `Idle`
+        // above already released the card, so a request still parked (another
+        // thread's) must be put back on it. Legacy `turn/failed` alike.
+        "turn/completed" | "turn/failed" if !requests.queue.is_empty() => {
             let ended = params
                 .pointer("/turn/id")
                 .or_else(|| params.get("turnId"))
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            if let Some(ended) = ended {
-                requests
-                    .queue
-                    .retain(|r| r.turn_id.as_deref() != Some(ended.as_str()));
-            }
+                .and_then(Value::as_str);
+            let thread = params.get("threadId").and_then(Value::as_str);
+            requests.queue.retain(|r| {
+                let of_turn = ended.is_some() && r.turn_id.as_deref() == ended;
+                let of_thread = thread.is_some() && r.thread_id.as_deref() == thread;
+                !(of_turn || of_thread)
+            });
             if let Some(head) = requests.queue.front() {
                 surface_parked(store, session_id, cur_mode, head);
             }
@@ -3082,7 +3239,8 @@ fn handle_message_inner(
     }
 
     // Server→client *requests* (they carry an id) must be answered or the
-    // agent blocks — every one, including methods we do not implement.
+    // agent blocks — headless answers every one, including methods we do not
+    // implement; hybrid leaves what we cannot show to the TUI.
     if value.get("id").is_some_and(|id| !id.is_null()) {
         handle_server_request(
             value,
@@ -3097,6 +3255,7 @@ fn handle_message_inner(
             acc,
             policy,
             requests,
+            headless,
         );
     }
 }
@@ -3258,6 +3417,10 @@ struct TurnTracker {
     interrupt_wanted: bool,
     /// Last finished turn, so a late `turn/start` response cannot revive it.
     finished: Option<String>,
+    /// When our thread last showed turn activity (any `turn/*` or `item/*`
+    /// notification). Bounds how long a message may wait on a turn that may
+    /// have ended unseen — see [`TurnInput::watchdog`].
+    last_activity: Option<std::time::Instant>,
 }
 
 impl TurnTracker {
@@ -3272,10 +3435,32 @@ impl TurnTracker {
         self.interrupt_wanted = false;
     }
 
+    /// Stop believing a turn is running or starting: the server said there is
+    /// none, or it has been silent too long to trust a turn we never saw end.
+    fn forget(&mut self) {
+        if let Some(id) = self.active.take() {
+            self.finished = Some(id);
+        }
+        self.starting = false;
+        self.interrupt_wanted = false;
+    }
+
+    fn running(&self) -> bool {
+        self.active.is_some() || self.starting
+    }
+
     /// Fold one app-server message. Returns a held interrupt's turn id once
-    /// that turn is known.
-    fn observe(&mut self, value: &Value) -> Option<String> {
+    /// that turn is known. A notification naming ANOTHER thread (a sub-agent's
+    /// turn) is ignored: its turns are not ours to steer or interrupt.
+    fn observe(&mut self, value: &Value, thread_id: Option<&str>) -> Option<String> {
         let method = value.get("method").and_then(Value::as_str);
+        let theirs = value.pointer("/params/threadId").and_then(Value::as_str);
+        if matches!((thread_id, theirs), (Some(ours), Some(theirs)) if ours != theirs) {
+            return None;
+        }
+        if method.is_some_and(|m| m.starts_with("turn/") || m.starts_with("item/")) {
+            self.last_activity = Some(std::time::Instant::now());
+        }
         let turn_id = |v: Option<&Value>| {
             v.and_then(|v| v.get("turn"))
                 .and_then(|t| t.get("id"))
@@ -3287,6 +3472,9 @@ impl TurnTracker {
                 let id = turn_id(value.get("params"))?;
                 self.started(id)
             }
+            // A thread runs one turn at a time, so ANY of our thread's turns
+            // ending means nothing of ours is running — even when its id is
+            // not the one we were tracking (we missed that one's end).
             Some("turn/completed" | "turn/failed") => {
                 let id = turn_id(value.get("params"))
                     .or_else(|| {
@@ -3296,9 +3484,7 @@ impl TurnTracker {
                             .map(str::to_owned)
                     })
                     .or_else(|| self.active.clone());
-                if id.is_none() || self.active == id {
-                    self.active = None;
-                }
+                self.active = None;
                 self.finished = id;
                 self.starting = false;
                 self.interrupt_wanted = false;
@@ -3341,6 +3527,7 @@ enum Inflight {
         text: String,
         expected: String,
         attempts: u8,
+        since: std::time::Instant,
     },
     ModelSwitch,
     Interrupt,
@@ -3352,28 +3539,40 @@ struct Held {
     text: String,
     /// Deliver only once no turn is running (`turn/start`), never as a steer:
     /// a `delivery: "now"` send waiting out its interrupt, or a steer the
-    /// running turn refused (a review or compaction turn cannot be steered).
+    /// running turn refused as not steerable (a review or compaction turn).
     after_turn: bool,
     attempts: u8,
+    /// When it began waiting, for [`TurnInput::watchdog`].
+    since: std::time::Instant,
 }
 
 /// A refused steer is retried against whatever turn is running at most this
-/// many times before it waits for the turn to end instead.
+/// many times; after that it goes out as a `turn/start`, which codex 0.159
+/// itself starts OR steers (`start_or_steer_turn`) depending on whether a turn
+/// is running — so it lands either way.
 const MAX_STEER_ATTEMPTS: u8 = 3;
+
+/// How long a held message may wait on a turn that shows no sign of life
+/// before it is sent as a `turn/start` anyway. A turn we never saw end (a
+/// missed `turn/completed`) would otherwise hold it forever. Generous, because
+/// a long silent tool call is a legitimate quiet turn — and a `turn/start`
+/// into a turn that IS still running steers it rather than racing it.
+const STALLED_TURN: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// How user messages reach the thread: `turn/start` when nothing is running,
 /// `turn/steer` (naming the running turn) when something is.
 ///
-/// A second `turn/start` while a turn runs is what this replaced: it raced the
-/// running turn instead of joining it. Steering is codex's own mid-turn input
-/// (what its TUI does when you type while it works), and it needs the running
-/// turn's id — so a message sent between our `turn/start` and that id arriving
-/// is held, and steered in the moment the id is known.
+/// A second `turn/start` while a turn runs is what this replaced. Steering is
+/// codex's own mid-turn input (what its TUI does when you type while it
+/// works), and it needs the running turn's id — so a message sent between our
+/// `turn/start` and that id arriving is held, and steered in the moment the id
+/// is known.
 ///
-/// Nothing is ever dropped: a steer the server refuses (the turn just ended,
-/// another one replaced it, or it is not steerable) goes back to the front of
-/// the queue and is re-delivered by [`Self::pump`] — steered into the turn now
-/// running, or started as the next turn once none is.
+/// Order is the send order, always: only ONE steer is ever unacknowledged, and
+/// later messages wait behind it. A refused steer (the turn just ended,
+/// another replaced it, or it is not steerable) goes back to the front and is
+/// re-delivered by [`Self::pump`] before anything sent after it. Nothing is
+/// dropped and nothing waits forever ([`Self::watchdog`]).
 #[derive(Debug, Default)]
 struct TurnInput {
     turns: TurnTracker,
@@ -3384,6 +3583,12 @@ struct TurnInput {
 impl TurnInput {
     fn track(&mut self, id: u64, request: Inflight) {
         self.inflight.insert(id, request);
+    }
+
+    fn steer_pending(&self) -> bool {
+        self.inflight
+            .values()
+            .any(|r| matches!(r, Inflight::Steer { .. }))
     }
 
     /// Accept a user message for `thread_id`. `Delivery::Now` interrupts the
@@ -3401,12 +3606,13 @@ impl TurnInput {
             if let Some(turn) = self.turns.request_interrupt() {
                 self.send_interrupt(out_tx, req_id, thread_id, &turn);
             }
-            self.turns.active.is_some() || self.turns.starting
+            self.turns.running()
         };
         self.held.push_back(Held {
             text,
             after_turn,
             attempts: 0,
+            since: std::time::Instant::now(),
         });
         self.pump(out_tx, req_id, thread_id, policy);
     }
@@ -3423,10 +3629,28 @@ impl TurnInput {
         let _ = out_tx.send(turn_interrupt_request(*req_id, thread_id, turn_id));
     }
 
-    /// Deliver whatever the current turn state allows, in order: steer the
-    /// leading messages into a running turn, or start a turn with the first
-    /// one when nothing is running or starting (the rest then steer into it).
-    /// A message held for after the turn stops the run, so order is kept.
+    fn start(
+        &mut self,
+        out_tx: &mpsc::UnboundedSender<Value>,
+        req_id: &mut u64,
+        thread_id: &str,
+        held: Held,
+        policy: &TurnPolicy,
+    ) {
+        self.turns.sent_turn();
+        *req_id += 1;
+        self.track(*req_id, Inflight::TurnStart);
+        send_turn(out_tx, *req_id, thread_id, &held.text, policy);
+        // Whatever waited for a turn to end now joins the new one.
+        for rest in &mut self.held {
+            rest.after_turn = false;
+        }
+    }
+
+    /// Deliver the FRONT message if the turn state allows: steer it into a
+    /// running turn (then wait for that steer's answer before the next), or
+    /// start a turn with it when nothing is running or starting. A message
+    /// held for after the turn blocks the ones behind it, so order is kept.
     fn pump(
         &mut self,
         out_tx: &mpsc::UnboundedSender<Value>,
@@ -3434,34 +3658,75 @@ impl TurnInput {
         thread_id: &str,
         policy: &TurnPolicy,
     ) {
-        if let Some(turn) = self.turns.active.clone() {
-            while self.held.front().is_some_and(|h| !h.after_turn) {
-                let Some(held) = self.held.pop_front() else {
-                    break;
-                };
-                *req_id += 1;
-                let _ = out_tx.send(turn_steer_request(*req_id, thread_id, &turn, &held.text));
-                self.track(
-                    *req_id,
-                    Inflight::Steer {
-                        text: held.text,
-                        expected: turn.clone(),
-                        attempts: held.attempts + 1,
-                    },
-                );
+        if self.steer_pending() {
+            return;
+        }
+        let Some(front) = self.held.front() else {
+            return;
+        };
+        if front.attempts >= MAX_STEER_ATTEMPTS && !self.turns.starting {
+            if let Some(held) = self.held.pop_front() {
+                self.start(out_tx, req_id, thread_id, held, policy);
             }
+            return;
+        }
+        if let Some(turn) = self.turns.active.clone() {
+            if front.after_turn {
+                return;
+            }
+            let Some(held) = self.held.pop_front() else {
+                return;
+            };
+            *req_id += 1;
+            let _ = out_tx.send(turn_steer_request(*req_id, thread_id, &turn, &held.text));
+            self.track(
+                *req_id,
+                Inflight::Steer {
+                    text: held.text,
+                    expected: turn,
+                    attempts: held.attempts + 1,
+                    since: held.since,
+                },
+            );
         } else if !self.turns.starting {
             if let Some(held) = self.held.pop_front() {
-                self.turns.sent_turn();
-                *req_id += 1;
-                self.track(*req_id, Inflight::TurnStart);
-                send_turn(out_tx, *req_id, thread_id, &held.text, policy);
-                // Whatever waited for a turn to end now joins the new one.
-                for rest in &mut self.held {
-                    rest.after_turn = false;
-                }
+                self.start(out_tx, req_id, thread_id, held, policy);
             }
         }
+    }
+
+    /// Never hold a message forever. When the front message has waited
+    /// [`STALLED_TURN`] with no sign of the turn it waits on, stop trusting
+    /// that turn and send it as a `turn/start` (codex starts or steers).
+    /// Returns whether it acted.
+    fn watchdog(
+        &mut self,
+        now: std::time::Instant,
+        out_tx: &mpsc::UnboundedSender<Value>,
+        req_id: &mut u64,
+        thread_id: &str,
+        policy: &TurnPolicy,
+    ) -> bool {
+        let Some(front) = self.held.front() else {
+            return false;
+        };
+        if self.steer_pending() {
+            return false;
+        }
+        let quiet_since = self
+            .turns
+            .last_activity
+            .map_or(front.since, |at| at.max(front.since));
+        if now.saturating_duration_since(quiet_since) < STALLED_TURN {
+            return false;
+        }
+        tracing::warn!(turn = ?self.turns.active, "codex: a message waited on a silent turn — sending it as a new turn");
+        self.turns.forget();
+        for held in &mut self.held {
+            held.after_turn = false;
+        }
+        self.pump(out_tx, req_id, thread_id, policy);
+        true
     }
 
     /// Fold the response to one of OUR requests. `None` when the id is not one
@@ -3494,15 +3759,35 @@ impl TurnInput {
                 text,
                 expected,
                 attempts,
+                since,
             } => {
                 // Not an error the user needs to see: the message is
                 // re-delivered, never lost.
                 tracing::info!(session = %session_id, error = %err, "codex turn/steer refused — re-delivering");
-                let still_running = self.turns.active.as_deref() == Some(expected.as_str());
+                let not_steerable = err
+                    .pointer("/data/codexErrorInfo/activeTurnNotSteerable")
+                    .is_some();
+                let after_turn = if not_steerable {
+                    // The turn demonstrably runs and cannot take input: wait
+                    // for it to end (the watchdog bounds the wait).
+                    true
+                } else if let Some(found) = steer_mismatch_found(&msg) {
+                    // Another turn replaced the one we named: steer into it.
+                    self.turns.active = Some(found);
+                    false
+                } else {
+                    // "no active turn": whatever we believed was running is
+                    // not, so the message starts the next turn.
+                    if self.turns.active.as_deref() == Some(expected.as_str()) {
+                        self.turns.forget();
+                    }
+                    false
+                };
                 self.held.push_front(Held {
                     text,
-                    after_turn: still_running || attempts >= MAX_STEER_ATTEMPTS,
+                    after_turn,
                     attempts,
+                    since,
                 });
                 Vec::new()
             }
@@ -3525,6 +3810,14 @@ impl TurnInput {
             }
         })
     }
+}
+
+/// The turn a refused steer found running instead, from codex's
+/// "expected active turn id `a` but found `b`" (`ExpectedTurnMismatch`).
+fn steer_mismatch_found(msg: &str) -> Option<String> {
+    let rest = msg.split_once("but found `")?.1;
+    let found = rest.split_once('`')?.0.trim();
+    (!found.is_empty()).then(|| found.to_string())
 }
 
 /// `turn/steer`: add input to the RUNNING turn. `expectedTurnId` is a
@@ -4103,13 +4396,17 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let mut turns = TurnTracker::default();
         // Idle: nothing to interrupt, and nothing is aimed at a later turn.
         assert_eq!(turns.request_interrupt(), None);
-        assert_eq!(turns.observe(&started), None, "idle interrupt was dropped");
+        assert_eq!(
+            turns.observe(&started, Some("t")),
+            None,
+            "idle interrupt was dropped"
+        );
         assert_eq!(turns.request_interrupt().as_deref(), Some("u1"));
-        assert_eq!(turns.observe(&completed), None);
+        assert_eq!(turns.observe(&completed, Some("t")), None);
         assert_eq!(turns.request_interrupt(), None);
         // A late turn/start response cannot revive the finished turn.
         assert_eq!(
-            turns.observe(&json!({"id":5,"result":{"turn":{"id":"u1"}}})),
+            turns.observe(&json!({"id":5,"result":{"turn":{"id":"u1"}}}), Some("t")),
             None
         );
         assert_eq!(turns.request_interrupt(), None);
@@ -4119,7 +4416,10 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         assert_eq!(turns.request_interrupt(), None);
         assert_eq!(
             turns
-                .observe(&json!({"method":"turn/started","params":{"turn":{"id":"u2"}}}))
+                .observe(
+                    &json!({"method":"turn/started","params":{"turn":{"id":"u2"}}}),
+                    Some("t")
+                )
                 .as_deref(),
             Some("u2")
         );
@@ -4129,7 +4429,10 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         assert_eq!(turns.request_interrupt(), None);
         assert_eq!(
             turns
-                .observe(&json!({"id":9,"result":{"turn":{"id":"u3","status":"inProgress"}}}))
+                .observe(
+                    &json!({"id":9,"result":{"turn":{"id":"u3","status":"inProgress"}}}),
+                    Some("t")
+                )
                 .as_deref(),
             Some("u3")
         );
@@ -4139,9 +4442,6 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         );
     }
 
-    /// Stop on a running Codex turn reaches the app-server as a
-    /// `turn/interrupt` naming the turn, and the turn actually ends. The fake
-    /// refuses a request without `turnId`, as Codex 0.159 does.
     /// End to end through `run_session`: a blocking `requestUserInput` is
     /// answered through the store's `/answer` route, a send during the turn
     /// steers it (never a second `turn/start`), and a `delivery: "now"` send
@@ -4233,7 +4533,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         assert_eq!(steer["params"]["input"][0]["text"], "also this");
         assert_eq!(calls("turn/start").len(), 1, "a steer, not a second turn");
 
-        store.submit_message_with_delivery(sid, "now!".into(), Delivery::Now);
+        store.submit_message_with(sid, "now!".into(), Delivery::Now);
         assert!(until(|| calls("turn/start").len() == 2).await);
         assert_eq!(calls("turn/interrupt")[0]["params"]["turnId"], "turn-1");
         assert_eq!(calls("turn/start")[1]["params"]["input"][0]["text"], "now!");
@@ -4253,6 +4553,9 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let _ = tokio::time::timeout(std::time::Duration::from_secs(8), task).await;
     }
 
+    /// Stop on a running Codex turn reaches the app-server as a
+    /// `turn/interrupt` naming the turn, and the turn actually ends. The fake
+    /// refuses a request without `turnId`, as Codex 0.159 does.
     #[cfg(unix)]
     #[tokio::test]
     async fn interrupt_stops_the_running_codex_turn() {
@@ -6384,6 +6687,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &mut pending_approvals,
             &mut cur_mode,
             false,
+            true,
         );
         let sent = out_rx.try_recv().expect("first decision forwarded");
         assert_eq!(sent["id"], json!(7));
@@ -6400,6 +6704,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &mut pending_approvals,
             &mut cur_mode,
             true,
+            true,
         );
         let sent = out_rx.try_recv().expect("second decision forwarded");
         assert_eq!(sent["id"], json!(8));
@@ -6415,6 +6720,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &out_tx,
             &mut pending_approvals,
             &mut cur_mode,
+            true,
             true,
         );
         assert!(out_rx.try_recv().is_err());
@@ -6487,6 +6793,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         requests: ServerRequests,
         input: TurnInput,
         pending_switch: Option<crate::session::ModelSwitch>,
+        headless: bool,
     }
 
     impl Driver {
@@ -6511,6 +6818,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 requests: ServerRequests::default(),
                 input: TurnInput::default(),
                 pending_switch: None,
+                headless: true,
             }
         }
 
@@ -6531,7 +6839,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 &mut self.requests,
                 &mut self.input,
                 &mut self.pending_switch,
-                true,
+                self.headless,
             );
         }
 
@@ -6555,6 +6863,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 &mut self.requests,
                 &mut self.cur_mode,
                 &answer,
+                self.input.turns.running(),
             );
         }
 
@@ -6566,6 +6875,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 &mut self.requests,
                 &mut self.cur_mode,
                 approve,
+                self.input.turns.running(),
             );
         }
 
@@ -6628,6 +6938,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
     #[test]
     fn request_user_input_parks_a_question_card_and_answers_in_codex_shape() {
         let mut d = Driver::new(true);
+        d.started("u1");
         d.feed(user_input_request(40, "u1"));
         // Parked even under YOLO, and nothing answered yet.
         assert!(d.sent().is_empty());
@@ -6709,6 +7020,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
     #[test]
     fn a_question_waits_behind_a_parked_approval_and_answers_route_by_kind() {
         let mut d = Driver::new(false);
+        d.started("u1");
         d.feed(json!({
             "jsonrpc": "2.0", "id": 7, "method": "item/commandExecution/requestApproval",
             "params": { "threadId": "th", "turnId": "u1", "command": "rm -rf build" }
@@ -6767,9 +7079,11 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
     }
 
     #[test]
-    fn a_request_from_another_turn_survives_a_turn_end() {
+    fn a_request_from_another_thread_survives_a_turn_end() {
         let mut d = Driver::new(false);
-        d.feed(user_input_request(9, "u0"));
+        let mut child = user_input_request(9, "c1");
+        child["params"]["threadId"] = json!("child");
+        d.feed(child);
         d.completed("u1", "completed");
         // The `Idle` released the card; the still-live request is back on it.
         assert_eq!(d.requests.queue.len(), 1);
@@ -6834,6 +7148,10 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let text = d.conversation_text();
         assert!(text.contains("`github` asked for input"), "{text}");
         assert!(text.contains("Which repository?"), "{text}");
+        // A driver notice: its own `assistant_text`, flagged so no client
+        // glues it onto the agent's reply.
+        assert!(text.contains(r#""kind":"assistant_text""#), "{text}");
+        assert!(text.contains(r#""notice":true"#), "{text}");
     }
 
     #[test]
@@ -6880,8 +7198,11 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         assert_eq!(sent[0]["params"]["threadId"], "th");
         assert_eq!(sent[0]["params"]["input"][0]["text"], "second");
         assert!(sent[0]["params"]["clientUserMessageId"].is_string());
-        // While it runs, a send steers straight away, each with its own id.
+        // While it runs, a send steers too — but only once the steer before
+        // it is acknowledged, so the two can never land out of order.
         d.send("third", Delivery::Steer);
+        assert!(d.sent().is_empty(), "held behind the unacknowledged steer");
+        d.feed(json!({ "id": sent[0]["id"], "result": { "turnId": "u1" } }));
         let third = d.sent();
         assert_eq!(third[0]["method"], "turn/steer");
         assert_ne!(
@@ -6889,6 +7210,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             sent[0]["params"]["clientUserMessageId"]
         );
         // Once it ends, the next send is a fresh turn again.
+        d.feed(json!({ "id": third[0]["id"], "result": { "turnId": "u1" } }));
         d.completed("u1", "completed");
         d.send("fourth", Delivery::Steer);
         assert_eq!(d.sent()[0]["method"], "turn/start");
@@ -7065,5 +7387,248 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         // An ordinary streamed message is still not re-emitted on completion.
         let streamed = json!({ "id": "m2", "type": "agentMessage", "text": "streamed" });
         assert!(translate("item/completed", &json!({ "item": streamed })).is_empty());
+    }
+
+    fn mcp_tool_approval(id: u64) -> Value {
+        json!({
+            "jsonrpc": "2.0", "id": id, "method": "mcpServer/elicitation/request",
+            "params": {
+                "threadId": "th", "turnId": "u1", "serverName": "workspacer_ask",
+                "request": {
+                    "mode": "form",
+                    "message": "Allow the workspacer_ask MCP server to run tool \"AskUserQuestion\"?",
+                    "requestedSchema": { "type": "object", "properties": {} },
+                    "_meta": { "codex_approval_kind": "mcp_tool_call", "persist": ["session", "always"] }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn an_mcp_tool_call_approval_elicitation_parks_as_an_approval() {
+        let mut d = Driver::new(false);
+        d.started("u1");
+        d.feed(mcp_tool_approval(50));
+        // Never declined behind the user's back: it waits for a decision.
+        assert!(d.sent().is_empty());
+        assert_eq!(d.cur_mode, SessionMode::Approval);
+        let Some(Pending::Approval { tool, summary, .. }) = d.pending() else {
+            panic!("expected an approval card, got {:?}", d.pending());
+        };
+        assert_eq!(tool.as_deref(), Some("mcp workspacer_ask"));
+        assert!(summary.unwrap().contains("AskUserQuestion"));
+        // No "cannot show" notice: this one is shown.
+        assert!(!d.conversation_text().contains("cannot show"));
+        d.decide(true);
+        let sent = d.sent();
+        assert_eq!(sent[0]["id"], json!(50));
+        assert_eq!(
+            sent[0]["result"],
+            json!({ "action": "accept", "content": {}, "_meta": null })
+        );
+        assert_eq!(d.cur_mode, SessionMode::Responding);
+
+        d.feed(mcp_tool_approval(51));
+        d.decide(false);
+        assert_eq!(
+            d.sent()[0]["result"],
+            json!({ "action": "decline", "content": null, "_meta": null })
+        );
+
+        // YOLO allows it inline.
+        let mut d = Driver::new(true);
+        d.feed(mcp_tool_approval(52));
+        let sent = d.sent();
+        assert_eq!(sent[0]["id"], json!(52));
+        assert_eq!(sent[0]["result"]["action"], "accept");
+        assert!(d.requests.queue.is_empty());
+    }
+
+    #[test]
+    fn a_hybrid_session_never_pre_empts_the_tui() {
+        let mut d = Driver::new(false);
+        d.headless = false;
+        // codex sends a thread's requests to every connection and takes the
+        // first reply: what we cannot show is left for the TUI.
+        d.feed(json!({ "jsonrpc": "2.0", "id": 60, "method": "item/tool/call", "params": {} }));
+        d.feed(json!({
+            "jsonrpc": "2.0", "id": 61, "method": "mcpServer/elicitation/request",
+            "params": { "threadId": "th", "serverName": "github",
+                        "request": { "mode": "form", "message": "Which repo?", "requestedSchema": {} } }
+        }));
+        assert!(d.sent().is_empty(), "nothing answered for the TUI to lose");
+        assert!(d
+            .conversation_text()
+            .contains("answer it in the Terminal view"));
+        // What we can show still parks (parking is not a reply)…
+        d.feed(user_input_request(62, "u1"));
+        assert_eq!(d.cur_mode, SessionMode::Question);
+        assert!(d.sent().is_empty());
+        // …and an answer given in the TUI clears our card.
+        d.feed(
+            json!({"method":"serverRequest/resolved","params":{"threadId":"th","requestId":62}}),
+        );
+        assert!(d.pending().is_none());
+    }
+
+    #[test]
+    fn a_non_blocking_question_is_answered_empty_when_it_lapses() {
+        let mut d = Driver::new(false);
+        d.started("u1");
+        let mut request = user_input_request(70, "u1");
+        request["params"]["isBlocking"] = json!(false);
+        d.feed(request);
+        d.feed(user_input_request(71, "u1"));
+        assert_eq!(d.cur_mode, SessionMode::Question);
+        let expire = |d: &mut Driver, after: std::time::Duration| {
+            let running = d.input.turns.running();
+            expire_parked(
+                &d.store,
+                d.sid,
+                &d.out_tx,
+                &mut d.requests,
+                &mut d.cur_mode,
+                std::time::Instant::now() + after,
+                running,
+            );
+        };
+        expire(&mut d, std::time::Duration::from_secs(60));
+        assert!(d.sent().is_empty(), "still inside its window");
+        expire(
+            &mut d,
+            NON_BLOCKING_QUESTION_TIMEOUT + std::time::Duration::from_secs(1),
+        );
+        let sent = d.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["id"], json!(70));
+        assert_eq!(sent[0]["result"], json!({ "answers": {} }));
+        // The blocking one behind it never lapses; it is on the card now.
+        assert_eq!(d.requests.queue.len(), 1);
+        assert_eq!(d.requests.queue[0].id, json!(71));
+        assert_eq!(d.cur_mode, SessionMode::Question);
+        expire(&mut d, std::time::Duration::from_secs(24 * 3600));
+        assert!(d.sent().is_empty());
+    }
+
+    #[test]
+    fn a_refused_steer_keeps_its_place_ahead_of_later_messages() {
+        let mut d = Driver::new(false);
+        d.started("u1");
+        d.send("M1", Delivery::Steer);
+        let m1 = d.sent().remove(0);
+        assert_eq!(m1["method"], "turn/steer");
+        // u1 ends before M1's steer is answered; M2 is sent meanwhile.
+        d.completed("u1", "completed");
+        d.send("M2", Delivery::Steer);
+        assert!(d.sent().is_empty(), "M2 waits behind M1's unanswered steer");
+        d.feed(json!({ "id": m1["id"], "error": { "code": -32600, "message": "no active turn to steer" } }));
+        let sent = d.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["method"], "turn/start");
+        assert_eq!(sent[0]["params"]["input"][0]["text"], "M1");
+        d.started("u2");
+        let sent = d.sent();
+        assert_eq!(sent[0]["method"], "turn/steer");
+        assert_eq!(sent[0]["params"]["input"][0]["text"], "M2");
+    }
+
+    #[test]
+    fn a_stale_turn_never_black_holes_a_message() {
+        // A completion for a turn other than the tracked one still means our
+        // thread is idle (one turn at a time): the next send starts a turn.
+        let mut d = Driver::new(false);
+        d.started("u1");
+        d.completed("u0", "completed");
+        d.send("after", Delivery::Steer);
+        assert_eq!(d.sent()[0]["method"], "turn/start");
+
+        // u1's end was missed entirely: the server's "no active turn" makes
+        // the message a fresh turn rather than a retry into a ghost.
+        let mut d = Driver::new(false);
+        d.started("u1");
+        d.send("ghost", Delivery::Steer);
+        let steer = d.sent().remove(0);
+        d.feed(json!({ "id": steer["id"], "error": { "code": -32600, "message": "no active turn to steer" } }));
+        let sent = d.sent();
+        assert_eq!(sent[0]["method"], "turn/start");
+        assert_eq!(sent[0]["params"]["input"][0]["text"], "ghost");
+        assert!(d.input.turns.starting);
+
+        // Waiting on a turn that went silent is bounded by the watchdog.
+        let mut d = Driver::new(false);
+        d.started("r1");
+        d.send("after review", Delivery::Steer);
+        let steer = d.sent().remove(0);
+        d.feed(json!({ "id": steer["id"], "error": {
+            "code": -32600, "message": "cannot steer a review turn",
+            "data": { "codexErrorInfo": { "activeTurnNotSteerable": { "turnKind": "review" } } }
+        }}));
+        let tid = d.thread_id.clone().unwrap();
+        let now = std::time::Instant::now();
+        assert!(!d
+            .input
+            .watchdog(now, &d.out_tx, &mut d.req_id, &tid, &d.policy));
+        assert!(d.sent().is_empty());
+        assert!(d.input.watchdog(
+            now + STALLED_TURN + std::time::Duration::from_secs(1),
+            &d.out_tx,
+            &mut d.req_id,
+            &tid,
+            &d.policy
+        ));
+        let sent = d.sent();
+        assert_eq!(sent[0]["method"], "turn/start");
+        assert_eq!(sent[0]["params"]["input"][0]["text"], "after review");
+    }
+
+    #[test]
+    fn another_threads_turns_are_not_ours_to_steer() {
+        let mut d = Driver::new(false);
+        d.feed(json!({"method":"turn/started","params":{"threadId":"child","turn":{"id":"c1","status":"inProgress"}}}));
+        assert!(d.input.turns.active.is_none());
+        d.send("hello", Delivery::Steer);
+        assert_eq!(d.sent()[0]["method"], "turn/start");
+        d.started("u1");
+        // A sub-agent's turn ending does not end ours.
+        d.feed(json!({"method":"turn/completed","params":{"threadId":"child","turn":{"id":"c1","status":"completed"}}}));
+        assert_eq!(d.input.turns.active.as_deref(), Some("u1"));
+    }
+
+    #[test]
+    fn releasing_the_card_after_a_turn_ends_reports_input_not_streaming() {
+        let mut d = Driver::new(false);
+        d.started("u1");
+        let mut child = user_input_request(80, "c1");
+        child["params"]["threadId"] = json!("child");
+        d.feed(child);
+        d.completed("u1", "completed");
+        assert_eq!(d.cur_mode, SessionMode::Question, "re-parked after Idle");
+        d.answer(answers(&["1"], &[]));
+        assert_eq!(d.sent()[0]["id"], json!(80));
+        // Nothing of ours is running: Input, not Responding.
+        assert_eq!(d.cur_mode, SessionMode::Input);
+        assert!(d.pending().is_none());
+    }
+
+    #[test]
+    fn legacy_turn_failed_and_stale_heads_prune_parked_requests() {
+        let mut d = Driver::new(false);
+        d.started("u1");
+        d.feed(user_input_request(90, "u1"));
+        d.feed(json!({"method":"turn/failed","params":{"threadId":"th","turnId":"u1","error":{"message":"boom"}}}));
+        assert!(d.requests.queue.is_empty());
+        assert!(d.pending().is_none());
+
+        // A head left over from an earlier turn of the same thread (its end
+        // never seen) cannot block a new turn's request from the card.
+        let mut d = Driver::new(false);
+        d.feed(user_input_request(91, "old"));
+        d.feed(json!({
+            "jsonrpc": "2.0", "id": 92, "method": "item/commandExecution/requestApproval",
+            "params": { "threadId": "th", "turnId": "new", "command": "ls" }
+        }));
+        assert_eq!(d.requests.queue.len(), 1);
+        assert_eq!(d.cur_mode, SessionMode::Approval);
+        assert_eq!(pending_summary(&d.store, d.sid).as_deref(), Some("ls"));
     }
 }

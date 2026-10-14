@@ -139,6 +139,18 @@ pub enum ConversationItem {
         #[serde(skip_serializing_if = "Option::is_none")]
         timestamp: Option<String>,
     },
+    /// A notice from the driver itself (not the agent) — e.g. that an MCP
+    /// server asked for input Workspacer cannot show. Same `assistant_text`
+    /// kind so any client renders it, flagged `notice: true` so a client that
+    /// coalesces streamed text keeps it a message of its own.
+    #[serde(rename = "assistant_text")]
+    AssistantNotice {
+        text: String,
+        /// Always true.
+        notice: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+    },
     ToolUse {
         id: String,
         name: String,

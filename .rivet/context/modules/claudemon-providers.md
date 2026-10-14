@@ -149,35 +149,61 @@ immediately treated as final failure. Preserve the error before the Idle update.
 
 ### Codex server requests, steering, and async questions
 
-Every server→client request (has `id` and `method`) is answered, or the turn
-hangs. `*/requestApproval` and `item/tool/requestUserInput` park in ONE FIFO
-(`ServerRequests`): only the head is the card, an `/approve` answers only an
-approval head and an `/answer` only a question head. A question parks as the same
-`Pending::Question` Claude's AskUserQuestion uses (plus `secret` for `isSecret`),
-and its reply is `{answers:{<questionId>:{answers:[label]}}}`, free text encoded
-like Codex's own picker (`"user_note: …"`, behind `"None of the above"` when
-`isOther`). `item/permissions/requestApproval` replies with the granted profile
-`{permissions, scope:"turn"}`, never `{decision}`. `serverRequest/resolved` and
-the owning turn's `turn/completed` drop parked requests. Elicitations are
-declined with a conversation notice; anything else gets JSON-RPC `-32601`.
+`*/requestApproval`, `item/tool/requestUserInput` and MCP tool-call approval
+elicitations park in ONE FIFO (`ServerRequests`). Only the head is shown as the card. An
+`/approve` answers only an approval at the head, and an `/answer` only a question at the head.
+A request from an older turn of the same thread is stale and is pruned. Reply shapes:
 
-The driver and the MCP AskUserQuestion shim register SEPARATE answer channels
-(`register_managed_answer` / `register_ask_answer`); `/answer` routes by the
-card's `PendingOwner`. One shared slot let the shim's unregister strip the
+- A question parks as the same `Pending::Question` Claude's AskUserQuestion uses
+  (plus `secret` for `isSecret`). The reply is
+  `{answers:{<questionId>:{answers:[label]}}}`. Free text is encoded the way Codex's
+  own picker does it (`"user_note: …"`, behind `"None of the above"` when `isOther`).
+  `isBlocking:false` is answered `{answers:{}}` after 120s, as Codex's TUI does.
+- `item/permissions/requestApproval` gets the granted profile
+  `{permissions, scope:"turn"}`, never `{decision}`.
+- In codex 0.159, `tool_call_mcp_elicitation` is on by default. Every approval of an MCP
+  tool without `readOnlyHint` (our facade and AskUserQuestion tools included)
+  arrives as `mcpServer/elicitation/request` with
+  `request._meta.codex_approval_kind:"mcp_tool_call"`. Allow is
+  `{action:"accept", content:{}}`; deny is `decline`. Declining these blindly breaks
+  every MCP tool call.
+- Other elicitations and unknown methods: headless declines them or answers
+  `-32601`. Hybrid leaves them unanswered. Codex sends a thread's requests to
+  every connection and takes the first reply, so a refusal would pre-empt
+  the TUI.
+- `serverRequest/resolved` drops a parked request, and so does `turn/completed` /
+  `turn/failed` for its turn or thread. Releasing the card writes `Input` when no
+  turn runs, never `Responding`.
+
+The driver and the MCP AskUserQuestion shim register separate answer channels
+(`register_managed_answer` / `register_ask_answer`). `/answer` routes strictly by
+the card's `PendingOwner`. A known owner without a channel is refused, not
+handed to the other feed. One shared slot let the shim's unregister strip the
 driver's channel for the rest of the session.
 
-A send while a turn runs is `turn/steer` with `expectedTurnId` (held while our
-`turn/start` has no turn id yet), never a second `turn/start`. A refused steer is
-re-queued, not lost. `Delivery::Now` (`submit_message_with_delivery`) sends
-`turn/interrupt` and starts the message as the next turn. Errors to our own
-requests are tracked by id (`TurnInput::inflight`) and surfaced.
+The driver uses one prompt channel (`register_managed_prompt`, `ManagedPrompt
+{text, delivery}`), so send order is kept:
+
+- A send while a turn runs is `turn/steer` with `expectedTurnId`. Only one steer is
+  ever unacknowledged, and later sends wait behind it.
+- A refused steer goes back to the front of the queue. "No active turn" clears the
+  tracked turn and starts a new one. A mismatch steers into the turn that was found.
+  A not-steerable turn waits for that turn to end.
+- `TurnTracker` ignores other threads' notifications.
+- A message held on a turn that has been silent for 60s goes out as `turn/start`. In 0.159
+  `turn/start` is start-or-steer, so this is safe while a turn runs.
+- `Delivery::Now` sends `turn/interrupt` and starts the message as the next turn.
+- Errors to our own requests are tracked by id (`TurnInput::inflight`) and surfaced.
 
 `request_user_input_async` / `send_message_to_user_async` arrive as an
-`agentMessage` item with `delivery:"async"` on `item/started` + `item/completed`
-only, with no deltas, so they are emitted from the completed item. Questions become
-`ConversationItem::AssistantQuestions` (wire kind `assistant_text` plus
-`questions`, `async:true` and `item_id`). It is non-blocking and never parks. Codex's desktop
-answers them as ordinary input in an envelope
+`agentMessage` item with `delivery:"async"`. They come only on `item/started` +
+`item/completed`, with no deltas. Questions become `ConversationItem::AssistantQuestions`
+(wire kind `assistant_text` plus `questions`, `async:true` and `item_id`). It is non-blocking
+and never parks. Driver notices are `AssistantNotice` (`assistant_text` +
+`notice:true`). Any client that coalesces streamed assistant text MUST NOT merge
+an item carrying `questions`/`async`/`notice`, and must not append later deltas to it.
+The desktop applier marks such a turn `sealed`. Codex's desktop answers async questions
+as ordinary input in this envelope:
 `<send_user_message_question_reply>[{"questionItemId","question","answer"}]</send_user_message_question_reply>`
 (see codex `tui/src/async_question_reply.rs`).
 

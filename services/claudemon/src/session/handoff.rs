@@ -223,7 +223,7 @@ pub fn build_brief(
                     continue; // successful results add bulk, not signal
                 }
             }
-            ConversationItem::Usage { .. } => continue,
+            ConversationItem::Usage { .. } | ConversationItem::AssistantNotice { .. } => continue,
             ConversationItem::SlashCommand { name, args, .. } => match args {
                 Some(args) => format!("**User ran:** /{name} {}\n", clip(args, RECENT_TEXT_CAP)),
                 None => format!("**User ran:** /{name}\n"),

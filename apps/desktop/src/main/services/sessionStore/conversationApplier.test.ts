@@ -337,6 +337,55 @@ describe('applyConversationItems — assistant text coalescing by transport', ()
   });
 });
 
+describe('applyConversationItems — sealed assistant messages', () => {
+  it('a codex async question set is its own bubble and later deltas do not join it', () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'codex';
+    (s as { transport?: string }).transport = 'stream';
+    applyConversationItems(
+      s,
+      [
+        { kind: 'assistant_text', text: 'Looking into it.' },
+        {
+          kind: 'assistant_text',
+          text: 'Which database?\n- Postgres\n- SQLite',
+          questions: [{ title: 'Which database?', options: ['Postgres', 'SQLite'] }],
+          async: true,
+          timestamp: '2026-10-13T10:00:00Z',
+        },
+        { kind: 'assistant_text', text: 'Meanwhile, ' },
+        { kind: 'assistant_text', text: 'reading the schema.' },
+      ],
+      noUsage,
+    );
+    expect(s.conversation.map((t) => t.content)).toEqual([
+      'Looking into it.',
+      'Which database?\n- Postgres\n- SQLite',
+      'Meanwhile, reading the schema.',
+    ]);
+    expect(s.conversation[1].sealed).toBe(true);
+    expect(s.conversation[1].questions).toEqual([
+      { title: 'Which database?', options: ['Postgres', 'SQLite'] },
+    ]);
+  });
+
+  it('a driver notice is never glued onto the reply around it', () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'codex';
+    applyConversationItems(
+      s,
+      [
+        { kind: 'assistant_text', text: 'Calling the tool.' },
+        { kind: 'assistant_text', text: 'The MCP server asked for input.', notice: true },
+        { kind: 'assistant_text', text: 'Done.' },
+      ],
+      noUsage,
+    );
+    expect(s.conversation).toHaveLength(3);
+    expect(s.conversation[1].questions).toBeUndefined();
+  });
+});
+
 describe('applyConversationItems — managed-provider file changes', () => {
   it('a codex apply_patch tool_use records a fileChange (managed providers fire no hooks)', () => {
     const s = mkSession();
