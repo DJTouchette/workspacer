@@ -906,6 +906,23 @@ pub struct SessionState {
     /// Additive/back-compatible: omitted when empty, absent rows read empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub background_task_list: Vec<super::background_tasks::BackgroundTask>,
+    /// Codex: the thread's persisted goal (`thread/goal/*`). Absent when the
+    /// thread has none or the provider has no goals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<super::codex_controls::CodexGoal>,
+    /// Codex: the thread's own name (`thread/name/updated`), set by the TUI's
+    /// `/rename`, its automatic title, or `agents.rename`. The hub uses it as
+    /// the label of a session nobody named in Workspacer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_name: Option<String>,
+    /// Codex on Windows: `windowsSandbox/readiness`. Absent elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows_sandbox: Option<super::codex_controls::WindowsSandboxStatus>,
+    /// Codex with the experimental opt-in: `"plan"` or `"default"`, the
+    /// collaboration mode the next GUI turn starts in. Absent when plan mode
+    /// is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collaboration_mode: Option<String>,
     /// Count of background subagents (async Agent/Task tool) currently running,
     /// tracked from the `SubagentStart`/`SubagentStop` hooks. While this is
     /// non-zero, a parent `Stop` does NOT idle the session — the parent's own
@@ -1013,6 +1030,10 @@ impl SessionState {
             compaction_count: 0,
             background_tasks: 0,
             background_task_list: Vec::new(),
+            goal: None,
+            thread_name: None,
+            windows_sandbox: None,
+            collaboration_mode: None,
             live_subagents: 0,
             parent_turn_ended: false,
             requested_model: None,
@@ -1175,6 +1196,23 @@ impl SessionState {
     /// Claude rows are enrichment and detached children may outlive Input.
     /// Their own stop hook/artifact closes them, and their hook/stream counters
     /// also include background shells; neither is derived from parent Input.
+    /// The wire `background_tasks` count for a managed (non-Claude) provider:
+    /// running subagent rows plus running background-task rows (Codex
+    /// background terminals). Claude keeps its own stream/hook counters.
+    pub fn managed_background_count(&self) -> u32 {
+        let subagents = self
+            .subagents
+            .iter()
+            .filter(|s| s.status == SubagentStatus::Running)
+            .count();
+        let tasks = self
+            .background_task_list
+            .iter()
+            .filter(|t| t.is_running())
+            .count();
+        (subagents + tasks) as u32
+    }
+
     pub fn close_stale_subagents(&mut self) -> bool {
         if self.subagents.is_empty() || self.provider == "claude" {
             return false;
@@ -1190,12 +1228,8 @@ impl SessionState {
         }
         if changed && self.provider != "claude" {
             // Same derivation `apply_subagent_update` uses, so the wire count
-            // and the rows can never disagree: nothing is running now.
-            self.background_tasks = self
-                .subagents
-                .iter()
-                .filter(|s| s.status == SubagentStatus::Running)
-                .count() as u32;
+            // and the rows can never disagree.
+            self.background_tasks = self.managed_background_count();
         }
         changed
     }

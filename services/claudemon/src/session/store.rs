@@ -379,6 +379,9 @@ pub struct SessionStore {
     /// Background-task control for stream sessions (provider pid + the
     /// `stop_task` channel). Absent for every other transport.
     managed_task_controls: Arc<DashMap<String, ManagedTaskControl>>,
+    /// Codex ws sessions' extras channel (review, goals, thread name, Windows
+    /// sandbox setup) and plan-mode state — see `session::codex_controls`.
+    codex_controls: Arc<DashMap<String, super::codex_controls::CodexControlHandle>>,
     /// Latest account-level rate-limit reading from the OAuth usage endpoint
     /// (see `session::account_usage`), keyed by Claude config root (`""` = the
     /// daemon's default). One entry per logged-in account: a profile spawn
@@ -803,6 +806,7 @@ impl SessionStore {
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
             managed_task_controls: Arc::new(DashMap::new()),
+            codex_controls: Arc::new(DashMap::new()),
             account_usage: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             account_usage_errors: Arc::new(
                 std::sync::RwLock::new(std::collections::HashMap::new()),
@@ -2192,6 +2196,72 @@ impl SessionStore {
         true
     }
 
+    /// [`Self::update_background_task_list`] for a managed (non-Claude)
+    /// provider whose task rows ARE its ambient work (Codex background
+    /// terminals): the wire `background_tasks` count is re-derived from the
+    /// rows and the subagents, the same derivation `apply_subagent_update`
+    /// uses, so the two can never disagree.
+    pub fn update_managed_background_tasks(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&mut Vec<super::background_tasks::BackgroundTask>) -> bool,
+    ) -> bool {
+        self.update_state(session_id, |entry| {
+            if !f(&mut entry.background_task_list) {
+                return false;
+            }
+            entry.background_tasks = entry.managed_background_count();
+            true
+        })
+    }
+
+    /// Mutate one session row in place; `f` reports whether anything a client
+    /// can see changed, and only then is the row broadcast. For driver-owned
+    /// enrichment fields (Codex goal, thread name, sandbox readiness) — never
+    /// the mode or the pending card, which have their own funnels.
+    pub fn update_state(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&mut SessionState) -> bool,
+    ) -> bool {
+        let state = {
+            let Some(mut entry) = self.states.get_mut(session_id) else {
+                return false;
+            };
+            if !f(&mut entry) {
+                return false;
+            }
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state,
+        });
+        true
+    }
+
+    /// Register a codex ws session's extras channel (see
+    /// `session::codex_controls`).
+    pub fn register_codex_control(
+        &self,
+        session_id: &str,
+        handle: super::codex_controls::CodexControlHandle,
+    ) {
+        self.codex_controls.insert(session_id.to_string(), handle);
+    }
+
+    /// The live codex extras channel for a session, if its driver offers one.
+    pub fn codex_control(
+        &self,
+        session_id: &str,
+    ) -> Option<super::codex_controls::CodexControlHandle> {
+        self.codex_controls
+            .get(session_id)
+            .map(|c| c.value().clone())
+    }
+
     /// Interrupt a managed session's current turn. Returns false when the
     /// session has no structural interrupt (caller falls back to the PTY /
     /// terminate paths).
@@ -2348,6 +2418,7 @@ impl SessionStore {
         self.managed_permission_modes.remove(session_id);
         self.managed_interrupts.remove(session_id);
         self.managed_task_controls.remove(session_id);
+        self.codex_controls.remove(session_id);
         existed
     }
 
@@ -2409,6 +2480,7 @@ impl SessionStore {
         self.managed_permission_modes.remove(session_id);
         self.managed_interrupts.remove(session_id);
         self.managed_task_controls.remove(session_id);
+        self.codex_controls.remove(session_id);
         // Release the hybrid Term view's resources (attached by `attach_pty`).
         // The 256 KiB byte ring per session is the bulk of a managed session's
         // memory; leaving it (and the input wrapper + broadcast) around after the
@@ -2527,11 +2599,7 @@ impl SessionStore {
                     tool_calls: None,
                 });
             }
-            entry.background_tasks = entry
-                .subagents
-                .iter()
-                .filter(|s| s.status == SubagentStatus::Running)
-                .count() as u32;
+            entry.background_tasks = entry.managed_background_count();
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
         };
@@ -3009,7 +3077,12 @@ impl SessionStore {
         let Some(handle) = self.managed_yolo.get(session_id).map(|h| h.clone()) else {
             return Err(PermissionSwitchError::Managed);
         };
-        match mode {
+        // Codex plan mode (`collaborationMode`, experimental opt-in) rides
+        // beside the approval flag: `plan` keeps the approval posture and
+        // starts the next turns in Codex's plan collaboration mode; `ask` /
+        // `yolo` leave it.
+        let collaboration = self.codex_control(session_id).map(|c| c.collaboration);
+        let result = match mode {
             "yolo" => {
                 handle
                     .live
@@ -3025,8 +3098,25 @@ impl SessionStore {
                     .store(false, std::sync::atomic::Ordering::Relaxed);
                 Ok("ask")
             }
+            "plan" => match &collaboration {
+                Some(c) if c.is_available() => Ok("plan"),
+                _ => return Err(PermissionSwitchError::PlanUnavailable),
+            },
             _ => Err(PermissionSwitchError::Managed),
+        };
+        if let (Ok(mode), Some(c)) = (&result, collaboration.filter(|c| c.is_available())) {
+            let plan = *mode == "plan";
+            c.set_plan(plan);
+            let label = if plan { "plan" } else { "default" };
+            self.update_state(session_id, |entry| {
+                if entry.collaboration_mode.as_deref() == Some(label) {
+                    return false;
+                }
+                entry.collaboration_mode = Some(label.to_string());
+                true
+            });
         }
+        result
     }
 
     // --- chat message submission --------------------------------------------

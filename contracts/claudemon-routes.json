@@ -93,6 +93,16 @@
     },
     {
       "method": "POST",
+      "pattern": "/sessions/:id/goal",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/goal/clear",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
       "pattern": "/sessions/:id/handoff",
       "server": "claudemon-api"
     },
@@ -128,6 +138,11 @@
     },
     {
       "method": "POST",
+      "pattern": "/sessions/:id/review",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
       "pattern": "/sessions/:id/signal",
       "server": "claudemon-api"
     },
@@ -152,8 +167,18 @@
       "server": "claudemon-api"
     },
     {
+      "method": "POST",
+      "pattern": "/sessions/:id/thread-name",
+      "server": "claudemon-api"
+    },
+    {
       "method": "GET",
       "pattern": "/sessions/:id/transcript",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/windows-sandbox/setup",
       "server": "claudemon-api"
     },
     {

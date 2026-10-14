@@ -297,6 +297,27 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         .route("/sessions/:id/tasks/:task_id/output", get(get_task_output))
         .route("/sessions/:id/tasks/:task_id/stop", post(post_task_stop))
         .route("/sessions/:id/handoff", post(post_handoff))
+        // Codex app-server extras (see daemon::codex_extras_api).
+        .route(
+            "/sessions/:id/review",
+            post(crate::daemon::codex_extras_api::post_review),
+        )
+        .route(
+            "/sessions/:id/goal",
+            post(crate::daemon::codex_extras_api::post_goal),
+        )
+        .route(
+            "/sessions/:id/goal/clear",
+            post(crate::daemon::codex_extras_api::post_goal_clear),
+        )
+        .route(
+            "/sessions/:id/thread-name",
+            post(crate::daemon::codex_extras_api::post_thread_name),
+        )
+        .route(
+            "/sessions/:id/windows-sandbox/setup",
+            post(crate::daemon::codex_extras_api::post_windows_sandbox_setup),
+        )
         .route("/conversation/stream", get(conversation_stream))
         .route("/events", get(event_stream))
         .route("/hooks/stream", get(hook_stream))
@@ -1003,10 +1024,10 @@ async fn post_permission_mode(
         };
     }
     let result = if store.is_managed(&id) {
-        if payload.mode != "ask" && payload.mode != "yolo" {
+        if !matches!(payload.mode.as_str(), "ask" | "yolo" | "plan") {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "ok": false, "error": format!("unknown managed permission mode '{}' (expected 'ask' or 'yolo')", payload.mode) })),
+                Json(json!({ "ok": false, "error": format!("unknown managed permission mode '{}' (expected 'ask', 'yolo' or 'plan')", payload.mode) })),
             )
                 .into_response();
         }
@@ -1061,6 +1082,12 @@ async fn post_permission_mode(
                     StatusCode::CONFLICT,
                     "the TUI did not acknowledge the mode cycle keystroke".to_string(),
                     Some(current.as_str().to_string()),
+                ),
+                PermissionSwitchError::PlanUnavailable => (
+                    StatusCode::CONFLICT,
+                    "plan mode needs the codex.experimentalApi opt-in and a Codex build with collaboration modes"
+                        .to_string(),
+                    None,
                 ),
                 PermissionSwitchError::ManagedUnavailable { current } => (
                     StatusCode::CONFLICT,

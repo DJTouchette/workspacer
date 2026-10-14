@@ -593,6 +593,11 @@ pub struct SpawnManagedPayload {
     /// Other adapters ignore them; the launcher's instructions name the files.
     #[serde(default)]
     pub skill_roots: Vec<String>,
+    /// Codex only: the `codex.experimentalApi` opt-in (default off). Turns on
+    /// `capabilities.experimentalApi` and the experimental extras —
+    /// background-terminal stop/list and plan (collaboration) mode.
+    #[serde(default)]
+    pub codex_experimental_api: bool,
     /// Extra env vars merged on top of the daemon's environment: a profile's
     /// config root under whichever name its harness uses (`CLAUDE_CONFIG_DIR`
     /// / `CODEX_HOME` / `COPILOT_HOME`), plus Copilot's resolved auth token.
@@ -884,6 +889,7 @@ pub(crate) fn start_native_managed(
                         env: payload.env.clone(),
                         extra_args: payload.extra_args.clone(),
                         skill_roots: payload.skill_roots.clone(),
+                        codex_experimental: payload.codex_experimental_api,
                     },
                 )
             }
@@ -906,6 +912,7 @@ pub(crate) fn start_native_managed(
                         env: payload.env.clone(),
                         extra_args: payload.extra_args.clone(),
                         skill_roots: payload.skill_roots.clone(),
+                        ..Default::default()
                     },
                 },
             ),

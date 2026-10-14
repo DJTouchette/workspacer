@@ -15,6 +15,7 @@
 
 pub mod claude_stream;
 pub mod codex;
+mod codex_extras;
 pub mod codex_rollout;
 pub mod codex_usage;
 pub mod copilot;
@@ -1273,6 +1274,10 @@ pub struct SpawnExtras {
     /// `skills/extraRoots/set`; adapters without a per-session skills channel
     /// ignore them (the launcher's instruction line names the files instead).
     pub skill_roots: Vec<String>,
+    /// Codex only: the `codex.experimentalApi` opt-in. Sends
+    /// `capabilities.experimentalApi` on `initialize` and enables the
+    /// experimental extras (background-terminal stop/list, plan mode).
+    pub codex_experimental: bool,
 }
 
 /// Spawn a PTY child and wire it into an already-registered session's byte
