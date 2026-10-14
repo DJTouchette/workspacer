@@ -321,6 +321,9 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
             "/sessions/:id/windows-sandbox/setup",
             post(crate::daemon::codex_extras_api::post_windows_sandbox_setup),
         )
+        .route("/sessions/:id/mcp-status", post(post_mcp_status))
+        .route("/sessions/:id/mcp-reconnect", post(post_mcp_reconnect))
+        .route("/sessions/:id/fast-mode", post(post_fast_mode))
         .route("/conversation/stream", get(conversation_stream))
         .route("/events", get(event_stream))
         .route("/hooks/stream", get(hook_stream))
@@ -651,6 +654,13 @@ struct MessagePayload {
     /// `origin: {kind: "human"}` on Claude stream.
     #[serde(default)]
     sender: crate::session::MessageSender,
+    /// The uuid to stamp on the message's provider frame, so a caller that
+    /// loses this reply still knows which delivery receipt
+    /// (`message_receipts`) is its message. Must be a UUID; absent, one is
+    /// minted. Reported back as `message_uuid` for Claude stream sessions,
+    /// the only driver that stamps it.
+    #[serde(default)]
+    uuid: Option<String>,
 }
 
 async fn post_message(
@@ -663,9 +673,35 @@ async fn post_message(
     // flushed on the next `Input` transition otherwise (cold start, mid-turn,
     // or an open approval/question dialog). Only a stopped session rejects.
     // See `SessionStore::submit_message`.
-    match store.submit_message_from(&id, payload.text, payload.delivery, payload.sender) {
-        MessageOutcome::Sent => Json(json!({ "ok": true })).into_response(),
-        MessageOutcome::Queued => Json(json!({ "ok": true, "queued": true })).into_response(),
+    let uuid = match payload.uuid.as_deref().map(uuid::Uuid::parse_str) {
+        None => uuid::Uuid::new_v4(),
+        Some(Ok(uuid)) => uuid,
+        Some(Err(_)) => {
+            return (StatusCode::BAD_REQUEST, "uuid must be a UUID").into_response();
+        }
+    }
+    .hyphenated()
+    .to_string();
+    // Only the Claude stream driver stamps the uuid on its frame; reporting
+    // one for any other session would name a message no receipt will name.
+    let stamped = store.get(&id).is_some_and(|state| {
+        state.provider == "claude" && state.transport == crate::session::Transport::Stream
+    });
+    let reply = |mut body: Value| {
+        if stamped {
+            body["message_uuid"] = json!(uuid);
+        }
+        Json(body).into_response()
+    };
+    match store.submit_message_tracked(
+        &id,
+        payload.text,
+        payload.delivery,
+        payload.sender,
+        Some(uuid.clone()),
+    ) {
+        MessageOutcome::Sent => reply(json!({ "ok": true })),
+        MessageOutcome::Queued => reply(json!({ "ok": true, "queued": true })),
         MessageOutcome::Rejected(mode) => (
             StatusCode::CONFLICT,
             Json(json!({
@@ -1041,6 +1077,13 @@ async fn post_signal(
             (StatusCode::NOT_FOUND, "no managed session").into_response()
         };
     }
+    // SIGINT on a Claude stream session: the interrupt control request, with
+    // its receipt (`interrupt_receipt_v1`) in the reply.
+    if matches!(payload.signal, crate::protocol::Signal::Sigint) {
+        if let Some(response) = interrupt_with_receipt(&store, &id).await {
+            return response;
+        }
+    }
     // SIGINT on a driver with a structural interrupt (the stream transport's
     // `interrupt` control request) — the Ctrl-C equivalent: stop the current
     // turn, keep the session alive.
@@ -1067,6 +1110,169 @@ async fn post_signal(
         return (StatusCode::GONE, "wrapper disconnected").into_response();
     }
     Json(json!({ "ok": true, "signal": payload.signal })).into_response()
+}
+
+/// How long an interrupt waits for its receipt before answering without one.
+const INTERRUPT_RECEIPT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Interrupt a Claude stream session through its status channel and answer
+/// with the CLI's receipt: `interrupt: {supported, still_queued, cancelled}`
+/// naming OUR messages by uuid. `still_queued` messages run after the
+/// interrupt — callers must never resend them. `None` when the session has no
+/// such driver; the caller then takes the plain interrupt path.
+async fn interrupt_with_receipt(store: &SessionStore, id: &str) -> Option<Response> {
+    use crate::session::provider_status::StatusControl;
+    let claude_stream = store.get(id).is_some_and(|state| {
+        state.provider == "claude" && state.transport == crate::session::Transport::Stream
+    });
+    if !claude_stream || !store.has_status_control(id) {
+        return None;
+    }
+    let (reply, receipt) = tokio::sync::oneshot::channel();
+    store
+        .submit_status_control(id, StatusControl::Interrupt { reply })
+        .ok()?;
+    let signal = crate::protocol::Signal::Sigint;
+    Some(
+        match tokio::time::timeout(INTERRUPT_RECEIPT_TIMEOUT, receipt).await {
+            Ok(Ok(Ok(receipt))) => {
+                Json(json!({ "ok": true, "signal": signal, "interrupt": receipt })).into_response()
+            }
+            // The interrupt was sent; the CLI refused it. Same `ok` as the
+            // receipt-less path always gave, with the refusal beside it.
+            Ok(Ok(Err(error))) => Json(json!({
+                "ok": true, "signal": signal, "interrupt": null, "interrupt_error": error,
+            }))
+            .into_response(),
+            // Sent, but no receipt in time (or the driver ended): unknown.
+            _ => Json(json!({ "ok": true, "signal": signal, "interrupt": null })).into_response(),
+        },
+    )
+}
+
+/// How long an MCP status read waits for the provider (Codex's list waits on
+/// servers still starting); the snapshot keeps updating regardless.
+const MCP_STATUS_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Wait for a driver's verdict on a [`StatusControl`] request.
+async fn status_verdict<T>(
+    store: &SessionStore,
+    id: &str,
+    make: impl FnOnce(
+        tokio::sync::oneshot::Sender<Result<T, String>>,
+    ) -> crate::session::provider_status::StatusControl,
+    ok: impl FnOnce(T) -> Value,
+    wait: Duration,
+) -> Response {
+    if !valid_session_id(id) {
+        return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
+    }
+    if store.get(id).is_none() {
+        return (StatusCode::NOT_FOUND, "session not found").into_response();
+    }
+    let (reply, verdict) = tokio::sync::oneshot::channel();
+    if store.submit_status_control(id, make(reply)).is_err() {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(json!({ "ok": false, "error": "this needs a live Claude stream or Codex app-server session" })),
+        )
+            .into_response();
+    }
+    match tokio::time::timeout(wait, verdict).await {
+        Ok(Ok(Ok(value))) => Json(ok(value)).into_response(),
+        Ok(Ok(Err(error))) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({ "ok": false, "error": "the agent did not answer" })),
+        )
+            .into_response(),
+    }
+}
+
+/// Ask the provider for its MCP servers now (Claude `mcp_status`, Codex
+/// `mcpServerStatus/list`). The answer also refreshes the snapshot's
+/// `mcp_servers`.
+async fn post_mcp_status(State(store): State<SessionStore>, Path(id): Path<String>) -> Response {
+    status_verdict(
+        &store,
+        &id,
+        |reply| crate::session::provider_status::StatusControl::McpStatus { reply },
+        |servers| json!({ "ok": true, "mcp_servers": servers }),
+        // A read: short, so it never holds an engine command slot for long.
+        MCP_STATUS_TIMEOUT,
+    )
+    .await
+}
+
+#[derive(Debug, Deserialize)]
+struct McpReconnectPayload {
+    server: String,
+}
+
+/// Reconnect one MCP server (Claude `mcp_reconnect`; Codex reloads its MCP
+/// configuration, `config/mcpServer/reload`, since it has no per-server
+/// reconnect). `server` must be a name the snapshot lists.
+async fn post_mcp_reconnect(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<McpReconnectPayload>,
+) -> Response {
+    let known = store.get(&id).is_some_and(|state| {
+        state
+            .provider_status
+            .mcp_servers
+            .iter()
+            .flatten()
+            .any(|server| server.name == payload.server)
+    });
+    if !known {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": "no MCP server by that name on this session" })),
+        )
+            .into_response();
+    }
+    let server = payload.server;
+    status_verdict(
+        &store,
+        &id,
+        |reply| crate::session::provider_status::StatusControl::McpReconnect {
+            server: server.clone(),
+            reply,
+        },
+        |()| json!({ "ok": true, "server": server }),
+        Duration::from_secs(10),
+    )
+    .await
+}
+
+#[derive(Debug, Deserialize)]
+struct FastModePayload {
+    enabled: bool,
+}
+
+/// Turn Claude fast mode on or off (`apply_flag_settings {fastMode}`, applied
+/// from the next turn). `ok` means the CLI accepted the setting; whether fast
+/// mode is actually ON is the snapshot's `fast_mode`, which changes only when
+/// the CLI reports it (`system/init` / `result` `fast_mode_state`).
+async fn post_fast_mode(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<FastModePayload>,
+) -> Response {
+    let enabled = payload.enabled;
+    status_verdict(
+        &store,
+        &id,
+        |reply| crate::session::provider_status::StatusControl::FastMode { enabled, reply },
+        |()| json!({ "ok": true, "enabled": enabled }),
+        Duration::from_secs(10),
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -3940,12 +4146,15 @@ mod tests {
             let (status, _) =
                 request(state.clone(), post_json("/sessions/sess-1/message", body)).await;
             assert_eq!(status, StatusCode::OK);
+            let prompt = rx.try_recv().unwrap();
+            assert!(prompt.uuid.is_some(), "every send names its frame uuid");
             assert_eq!(
-                rx.try_recv().unwrap(),
+                prompt,
                 ManagedPrompt {
                     text,
                     delivery,
-                    sender: crate::session::MessageSender::Human
+                    sender: crate::session::MessageSender::Human,
+                    uuid: prompt.uuid.clone(),
                 }
             );
         }
@@ -3980,14 +4189,80 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        let prompt = rx.try_recv().unwrap();
         assert_eq!(
-            rx.try_recv().unwrap(),
+            prompt,
             ManagedPrompt {
                 text: "x".into(),
                 delivery: Delivery::Now,
-                sender: MessageSender::Agent
+                sender: MessageSender::Agent,
+                uuid: prompt.uuid.clone(),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn post_message_stamps_the_callers_uuid_and_reports_it_for_claude_stream() {
+        use crate::session::ManagedPrompt;
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let (tx, mut rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        state.store.register_managed_prompt("sess-1", tx);
+        let uuid = "0A1B2C3D-0000-4000-8000-00000000000F";
+        // Not yet a stream row: the uuid reaches the driver, but is not
+        // reported — no receipt will ever name it.
+        let (status, body) = request(
+            state.clone(),
+            post_json(
+                "/sessions/sess-1/message",
+                json!({ "text": "x", "uuid": uuid }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert!(body.get("message_uuid").is_none(), "{body}");
+        assert_eq!(
+            rx.try_recv().unwrap().uuid.as_deref(),
+            Some("0a1b2c3d-0000-4000-8000-00000000000f")
+        );
+        state
+            .store
+            .set_transport("sess-1", crate::session::state::Transport::Stream);
+        let (status, body) = request(
+            state.clone(),
+            post_json(
+                "/sessions/sess-1/message",
+                json!({ "text": "y", "uuid": uuid }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["message_uuid"], "0a1b2c3d-0000-4000-8000-00000000000f");
+        // Minted when absent, and the minted one is what the driver got.
+        let (_, body) = request(
+            state.clone(),
+            post_json("/sessions/sess-1/message", json!({ "text": "z" })),
+        )
+        .await;
+        rx.try_recv().unwrap();
+        let minted = rx.try_recv().unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["message_uuid"].as_str(), minted.uuid.as_deref());
+        // Not a UUID: refused, nothing sent.
+        let (status, _) = request(
+            state,
+            post_json(
+                "/sessions/sess-1/message",
+                json!({ "text": "w", "uuid": "../x" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -5668,5 +5943,182 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body, b"invalid session id");
+    }
+
+    /// A stand-in driver answering every status request the way the Claude
+    /// stream driver would.
+    fn fake_status_driver(state: &ApiState, id: &str) {
+        use crate::session::provider_status::{InterruptReceipt, McpServer, StatusControl};
+        let (tx, mut rx) = mpsc::unbounded_channel::<StatusControl>();
+        state.store.register_managed_status_control(id, tx);
+        tokio::spawn(async move {
+            while let Some(control) = rx.recv().await {
+                match control {
+                    StatusControl::McpStatus { reply } => {
+                        let _ = reply.send(Ok(vec![McpServer {
+                            name: "w".into(),
+                            status: "connected".into(),
+                            error: None,
+                        }]));
+                    }
+                    StatusControl::McpReconnect { reply, .. } => {
+                        let _ = reply.send(Err("Server not found: w".into()));
+                    }
+                    StatusControl::FastMode { reply, .. } => {
+                        let _ = reply.send(Ok(()));
+                    }
+                    StatusControl::Interrupt { reply } => {
+                        let _ = reply.send(Ok(InterruptReceipt {
+                            supported: true,
+                            still_queued: vec!["u1".into()],
+                            cancelled: vec![],
+                        }));
+                    }
+                }
+            }
+        });
+    }
+
+    #[tokio::test]
+    async fn sigint_on_claude_stream_answers_with_the_interrupt_receipt() {
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        state
+            .store
+            .set_transport("sess-1", crate::session::state::Transport::Stream);
+        fake_status_driver(&state, "sess-1");
+        let (status, body) = request(
+            state,
+            post_json("/sessions/sess-1/signal", json!({ "signal": "SIGINT" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body["interrupt"],
+            json!({ "supported": true, "still_queued": ["u1"], "cancelled": [] })
+        );
+    }
+
+    #[tokio::test]
+    async fn sigint_without_a_status_driver_keeps_the_plain_interrupt() {
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let (itx, mut irx) = mpsc::unbounded_channel::<()>();
+        state.store.register_managed_interrupt("sess-1", itx);
+        let (status, body) = request(
+            state,
+            post_json("/sessions/sess-1/signal", json!({ "signal": "SIGINT" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert!(body.get("interrupt").is_none(), "{body}");
+        assert!(irx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn status_routes_answer_with_the_drivers_verdict() {
+        let state = test_state();
+        // No such session / no driver.
+        let (status, _) = request(
+            state.clone(),
+            post_json("/sessions/nope/mcp-status", json!({})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let (status, _) = request(
+            state.clone(),
+            post_json("/sessions/sess-1/fast-mode", json!({ "enabled": true })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+
+        fake_status_driver(&state, "sess-1");
+        let (status, body) = request(
+            state.clone(),
+            post_json("/sessions/sess-1/mcp-status", json!({})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body["mcp_servers"],
+            json!([{ "name": "w", "status": "connected" }])
+        );
+
+        let (status, body) = request(
+            state.clone(),
+            post_json("/sessions/sess-1/fast-mode", json!({ "enabled": true })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body, json!({ "ok": true, "enabled": true }));
+        let (status, _) = request(
+            state.clone(),
+            post_json("/sessions/sess-1/fast-mode", json!({ "enabled": "yes" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        // Reconnect: only a server the row lists; the CLI's refusal is a 502.
+        let (status, _) = request(
+            state.clone(),
+            post_json("/sessions/sess-1/mcp-reconnect", json!({ "server": "w" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "w is not on the row yet");
+        state.store.update_provider_status("sess-1", |s| {
+            s.set_mcp_servers(vec![crate::session::provider_status::McpServer {
+                name: "w".into(),
+                status: "failed".into(),
+                error: None,
+            }])
+        });
+        let (status, body) = request(
+            state,
+            post_json("/sessions/sess-1/mcp-reconnect", json!({ "server": "w" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"], "Server not found: w");
+    }
+
+    #[tokio::test]
+    async fn the_snapshot_carries_live_provider_status_at_top_level() {
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        state.store.update_provider_status("sess-1", |s| {
+            s.record_receipt("u1", "started", 5);
+            s.set_fast_mode("off", Some("free"));
+            s.hook_started(crate::session::provider_status::ActiveHook {
+                id: "h".into(),
+                name: "Stop".into(),
+                event: "Stop".into(),
+                started_at: 7,
+            })
+        });
+        let (_, body) = request(state, get("/sessions/sess-1")).await;
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body["message_receipts"],
+            json!([{ "uuid": "u1", "state": "started", "at": 5 }])
+        );
+        assert_eq!(body["fast_mode"], "off");
+        assert_eq!(body["fast_mode_disabled_reason"], "free");
+        assert_eq!(
+            body["active_hooks"],
+            json!([{ "id": "h", "name": "Stop", "event": "Stop", "started_at": 7 }])
+        );
+        assert!(body.get("mcp_servers").is_none());
     }
 }

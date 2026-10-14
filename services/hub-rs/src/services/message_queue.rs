@@ -56,6 +56,12 @@ pub struct Entry {
     pub text: String,
     /// Epoch milliseconds.
     pub created_at: i64,
+    /// The uuid minted for this entry's delivery attempt and stamped on its
+    /// provider frame (Claude stream), so a delivery receipt can settle an
+    /// uncertain send. Set only while the entry is in flight; a queued entry
+    /// never carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_uuid: Option<String>,
 }
 
 /// An entry that may or may not have reached the agent (`queueUncertain`).
@@ -66,6 +72,28 @@ pub struct Uncertain {
     /// Truncated preview of the text.
     pub text: String,
     /// Epoch milliseconds.
+    pub at: i64,
+    /// The uuid the attempt was stamped with. A `started`/`completed`
+    /// receipt for exactly this uuid confirms the delivery (see
+    /// [`Queues::confirm`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_uuid: Option<String>,
+}
+
+/// An uncertain send that a delivery receipt later confirmed
+/// (`queueConfirmed`): the agent DID read it. Informational only; it never
+/// resumes a paused queue and is cleared by the next resume, send-now,
+/// clear, a new uncertain report, or removing its id.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Confirmed {
+    pub id: String,
+    /// Truncated preview of the text.
+    pub text: String,
+    pub message_uuid: String,
+    /// The receipt that confirmed it: `started` or `completed`.
+    pub delivery: String,
+    /// Epoch milliseconds of the confirmation.
     pub at: i64,
 }
 
@@ -213,6 +241,8 @@ struct Queue {
     error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     uncertain: Option<Uncertain>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    confirmed: Option<Confirmed>,
     /// Removed for delivery, outcome not yet recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     in_flight: Option<Entry>,
@@ -225,6 +255,7 @@ impl Queue {
         !self.entries.is_empty()
             || self.paused
             || self.uncertain.is_some()
+            || self.confirmed.is_some()
             || self.in_flight.is_some()
             || awaiting
     }
@@ -238,6 +269,7 @@ impl Queue {
     fn resume(&mut self) {
         self.paused = false;
         self.error = None;
+        self.confirmed = None;
     }
     fn wire(&self) -> Value {
         serde_json::to_value(&self.entries).unwrap_or_else(|_| json!([]))
@@ -253,7 +285,9 @@ impl Queue {
             id: entry.id.clone(),
             text: entry.text.chars().take(UNCERTAIN_PREVIEW_CHARS).collect(),
             at: chrono::Utc::now().timestamp_millis(),
+            message_uuid: entry.message_uuid.clone(),
         });
+        self.confirmed = None;
         self.paused = true;
         self.error = Some(error);
     }
@@ -289,6 +323,23 @@ pub struct Queues {
     writer: tokio::sync::Mutex<()>,
     kicks: tokio::sync::mpsc::UnboundedSender<String>,
     receiver: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<String>>>,
+    /// Per session, the message uuids its latest row reports as read by the
+    /// agent (`messageReceipts` in state `started`/`completed`) → that state.
+    delivered: Mutex<BTreeMap<String, BTreeMap<String, String>>>,
+}
+
+/// The uuids a row's `messageReceipts` report as read by the agent.
+fn delivered_uuids(row: &Value) -> BTreeMap<String, String> {
+    row["messageReceipts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|receipt| {
+            let uuid = receipt["uuid"].as_str()?;
+            let state = receipt["state"].as_str()?;
+            matches!(state, "started" | "completed").then(|| (uuid.to_owned(), state.to_owned()))
+        })
+        .collect()
 }
 
 impl Default for Queues {
@@ -313,6 +364,7 @@ impl Queues {
             writer: tokio::sync::Mutex::new(()),
             kicks,
             receiver: Mutex::new(Some(receiver)),
+            delivered: Default::default(),
         }
     }
     /// Open the persisted document. An unreadable document is reported and
@@ -406,6 +458,10 @@ impl Queues {
                 Some(uncertain) => object.insert("queueUncertain".into(), json!(uncertain)),
                 None => object.remove("queueUncertain"),
             };
+            match &queue.confirmed {
+                Some(confirmed) => object.insert("queueConfirmed".into(), json!(confirmed)),
+                None => object.remove("queueConfirmed"),
+            };
         }
         row
     }
@@ -426,9 +482,68 @@ impl Queues {
                 turns.remove(id);
             }
         }
-        if self.wants_flush(id, row) {
+        let delivered = delivered_uuids(row);
+        let confirmable = self
+            .uncertain_uuid(id)
+            .is_some_and(|u| delivered.contains_key(&u));
+        // Only sessions with a queue record can have a send to settle; every
+        // other row leaves nothing behind.
+        let queued = self.state.lock().unwrap().contains_key(id);
+        let mut known = self.delivered.lock().unwrap();
+        if queued && !delivered.is_empty() {
+            known.insert(id.to_owned(), delivered);
+        } else {
+            known.remove(id);
+        }
+        drop(known);
+        // The worker settles a confirmable report under the session lock.
+        if confirmable || self.wants_flush(id, row) {
             self.kick(id);
         }
+    }
+    fn uncertain_uuid(&self, id: &str) -> Option<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .get(id)
+            .and_then(|queue| queue.uncertain.as_ref())
+            .and_then(|uncertain| uncertain.message_uuid.clone())
+    }
+    /// The receipt state the latest row reports for `uuid`, when the agent
+    /// has read that message.
+    fn delivered_state(&self, id: &str, uuid: Option<&str>) -> Option<String> {
+        let uuid = uuid?;
+        self.delivered.lock().unwrap().get(id)?.get(uuid).cloned()
+    }
+    /// Settle the uncertain report when a delivery receipt for EXACTLY its
+    /// uuid says the agent read the message: the report becomes
+    /// `queueConfirmed`. Nothing is resent, and a paused queue stays paused
+    /// (only `sessions.queueResume` / `queueSendNow` lift a pause). Returns
+    /// whether anything changed. Callers hold `session_lock(id)`.
+    pub async fn confirm(&self, id: &str) -> bool {
+        let uuid = self.uncertain_uuid(id);
+        let Some(delivery) = self.delivered_state(id, uuid.as_deref()) else {
+            return false;
+        };
+        let uuid = uuid.unwrap_or_default();
+        let mut changed = false;
+        self.commit(id, |queue| {
+            if let Some(uncertain) = queue
+                .uncertain
+                .take_if(|u| u.message_uuid.as_deref() == Some(uuid.as_str()))
+            {
+                queue.confirmed = Some(Confirmed {
+                    id: uncertain.id,
+                    text: uncertain.text,
+                    message_uuid: uuid.clone(),
+                    delivery: delivery.clone(),
+                    at: chrono::Utc::now().timestamp_millis(),
+                });
+                changed = true;
+            }
+        })
+        .await;
+        changed
     }
     fn wants_flush(&self, id: &str, row: &Value) -> bool {
         let sendable = self.state.lock().unwrap().get(id).is_some_and(|queue| {
@@ -471,6 +586,7 @@ impl Queues {
         for id in &removed {
             self.state.lock().unwrap().remove(id);
             self.turns.lock().unwrap().remove(id);
+            self.delivered.lock().unwrap().remove(id);
             self.drop_lock(id);
         }
         self.write(self.document(None)?).await?;
@@ -481,6 +597,7 @@ impl Queues {
         let _writer = self.writer.lock().await;
         let existed = self.state.lock().unwrap().remove(id).is_some();
         self.turns.lock().unwrap().remove(id);
+        self.delivered.lock().unwrap().remove(id);
         self.drop_lock(id);
         if existed {
             self.write(self.document(None)?).await?;
@@ -501,6 +618,7 @@ impl Queues {
                 id: format!("q-{}", uuid::Uuid::new_v4().simple()),
                 text: text.to_owned(),
                 created_at: chrono::Utc::now().timestamp_millis(),
+                message_uuid: None,
             };
             let entry_id = entry.id.clone();
             queue.entries.push(entry);
@@ -547,6 +665,9 @@ impl Queues {
             queue.entries.retain(|e| e.id != entry);
             if queue.uncertain.as_ref().is_some_and(|u| u.id == entry) {
                 queue.uncertain = None;
+            }
+            if queue.confirmed.as_ref().is_some_and(|c| c.id == entry) {
+                queue.confirmed = None;
             }
             Ok(())
         })
@@ -617,7 +738,8 @@ impl Queues {
                 if queue.entries.is_empty() {
                     bail!("message queue is empty");
                 }
-                let head = queue.entries.remove(0);
+                let mut head = queue.entries.remove(0);
+                head.message_uuid = Some(uuid::Uuid::new_v4().hyphenated().to_string());
                 queue.in_flight = Some(head.clone());
                 Ok(head)
             })
@@ -639,7 +761,7 @@ impl Queues {
             .lock()
             .unwrap()
             .insert(id.to_owned(), Turn::after_send(Some(row), None));
-        let outcome = deliver(head.clone()).await;
+        let outcome = self.upgrade(id, &head, deliver(head.clone()).await);
         self.settle(id, 0, head, &outcome, true, None).await;
         Some(outcome)
     }
@@ -658,7 +780,8 @@ impl Queues {
         let (index, taken) = self
             .transact(id, |queue, _| {
                 let index = queue.position(entry)?;
-                let taken = queue.entries.remove(index);
+                let mut taken = queue.entries.remove(index);
+                taken.message_uuid = Some(uuid::Uuid::new_v4().hyphenated().to_string());
                 queue.resume();
                 queue.in_flight = Some(taken.clone());
                 Ok((index, taken))
@@ -670,7 +793,7 @@ impl Queues {
             turns.insert(id.to_owned(), Turn::after_send(row, previous.as_ref()));
             previous
         };
-        let outcome = deliver(taken.clone()).await;
+        let outcome = self.upgrade(id, &taken, deliver(taken.clone()).await);
         self.settle(id, index, taken, &outcome, false, previous)
             .await;
         match outcome {
@@ -679,6 +802,20 @@ impl Queues {
             Delivery::Uncertain(error) => Err(anyhow!(
                 "message delivery outcome is unknown; it was not retried: {error}"
             )),
+        }
+    }
+    /// An uncertain outcome whose receipt already arrived (the agent read
+    /// this attempt's uuid before its acknowledgement was lost) was a send.
+    fn upgrade(&self, id: &str, entry: &Entry, outcome: Delivery) -> Delivery {
+        match outcome {
+            Delivery::Uncertain(_)
+                if self
+                    .delivered_state(id, entry.message_uuid.as_deref())
+                    .is_some() =>
+            {
+                Delivery::Sent
+            }
+            outcome => outcome,
         }
     }
     /// Record a delivery outcome. Rejected: the entry goes back where it was
@@ -711,6 +848,9 @@ impl Queues {
                 self.commit(id, |queue| {
                     queue.in_flight = None;
                     let index = index.min(queue.entries.len());
+                    // Never sent: the next attempt gets a fresh uuid.
+                    let mut entry = entry;
+                    entry.message_uuid = None;
                     queue.entries.insert(index, entry);
                     if auto {
                         queue.paused = true;
@@ -1294,6 +1434,7 @@ mod tests {
         let blocker = dir.path().join("not-a-directory");
         std::fs::write(&blocker, b"").unwrap();
         let entry = |id: &str, text: &str| Entry {
+            message_uuid: None,
             id: id.into(),
             text: text.into(),
             created_at: 1,
@@ -1421,5 +1562,161 @@ mod tests {
         queues.add("s2", "one").await.unwrap();
         queues.prune(&BTreeSet::new()).await.unwrap();
         assert!(queues.sessions().is_empty());
+    }
+
+    /// A deliverer that records the uuid each attempt was stamped with.
+    fn stamped(
+        uuids: &Arc<Mutex<Vec<Option<String>>>>,
+        outcome: Delivery,
+    ) -> impl FnOnce(Entry) -> std::future::Ready<Delivery> {
+        let uuids = uuids.clone();
+        move |entry| {
+            uuids.lock().unwrap().push(entry.message_uuid);
+            std::future::ready(outcome)
+        }
+    }
+    fn with_receipts(mut row: Value, receipts: Value) -> Value {
+        row["messageReceipts"] = receipts;
+        row
+    }
+
+    #[tokio::test]
+    async fn a_receipt_for_the_exact_uuid_confirms_an_uncertain_send_without_resuming() {
+        let queues = Queues::default();
+        let uuids = Arc::new(Mutex::new(Vec::new()));
+        queues.add("s1", "one").await.unwrap();
+        queues.add("s1", "two").await.unwrap();
+        queues
+            .flush(
+                "s1",
+                &row("input"),
+                stamped(&uuids, Delivery::Uncertain("ack lost".into())),
+            )
+            .await
+            .unwrap();
+        let uuid = uuids.lock().unwrap()[0]
+            .clone()
+            .expect("every attempt is stamped");
+        assert_eq!(uncertain(&queues, "s1")["messageUuid"], uuid.as_str());
+        // A queued entry never carries a uuid on the wire.
+        assert!(queues.list("s1")[0].get("messageUuid").is_none());
+
+        // Another message's receipt, or this one merely queued, settles nothing.
+        queues.observe(&with_receipts(
+            row("responding"),
+            json!([{"uuid":"someone-else","state":"completed","at":1},{"uuid":uuid,"state":"queued","at":1}]),
+        ));
+        assert!(!queues.confirm("s1").await);
+        assert_eq!(uncertain(&queues, "s1")["text"], "one");
+
+        // Its own `started` receipt does: the report becomes a confirmation,
+        // the pause and the remaining entry stay, nothing is resent.
+        queues.observe(&with_receipts(
+            row("responding"),
+            json!([{"uuid":uuid,"state":"started","at":2}]),
+        ));
+        assert!(queues.confirm("s1").await);
+        assert!(!queues.confirm("s1").await, "idempotent");
+        let row_out = queues.enrich(json!({"sessionId":"s1"}));
+        assert!(row_out.get("queueUncertain").is_none());
+        assert_eq!(row_out["queueConfirmed"]["id"], uncertain_id(&row_out));
+        assert_eq!(row_out["queueConfirmed"]["delivery"], "started");
+        assert_eq!(row_out["queueConfirmed"]["messageUuid"], uuid.as_str());
+        assert_eq!(
+            row_out["queuePaused"], true,
+            "a receipt never lifts a pause"
+        );
+        assert_eq!(texts(&queues, "s1"), ["two"]);
+        assert_eq!(uuids.lock().unwrap().len(), 1);
+        assert!(
+            queues
+                .flush("s1", &row("input"), stamped(&uuids, Delivery::Sent))
+                .await
+                .is_none()
+        );
+
+        // Resuming is still the person's call, and it clears the note.
+        queues.resume_sending("s1").await.unwrap();
+        let row_out = queues.enrich(json!({"sessionId":"s1"}));
+        assert!(row_out.get("queueConfirmed").is_none());
+        assert_eq!(row_out["queuePaused"], false);
+    }
+    fn uncertain_id(row: &Value) -> Value {
+        row["queueConfirmed"]["id"].clone()
+    }
+
+    #[tokio::test]
+    async fn an_uncertain_send_already_receipted_counts_as_sent() {
+        let queues = Arc::new(Queues::default());
+        queues.add("s1", "one").await.unwrap();
+        // The receipt lands while the send is still waiting on its ack.
+        let seen = queues.clone();
+        let outcome = queues
+            .flush("s1", &row("input"), move |entry| {
+                let uuid = entry.message_uuid.clone().unwrap();
+                seen.observe(
+                    &json!({"sessionId":"s1","session_id":"s1","mode":"responding","pending":null,
+                    "messageReceipts":[{"uuid":uuid,"state":"completed","at":1}]}),
+                );
+                std::future::ready(Delivery::Uncertain("ack lost".into()))
+            })
+            .await;
+        assert_eq!(outcome, Some(Delivery::Sent));
+        assert!(uncertain(&queues, "s1").is_null());
+        assert_eq!(
+            queues.enrich(json!({"sessionId":"s1"}))["queuePaused"],
+            false
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rejected_attempt_is_restamped_on_retry() {
+        let queues = Queues::default();
+        let uuids = Arc::new(Mutex::new(Vec::new()));
+        let id = queues.add("s1", "one").await.unwrap();
+        queues
+            .send_now(
+                "s1",
+                &id,
+                Some(&row("input")),
+                stamped(&uuids, Delivery::Rejected("no".into())),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            queues.list("s1")[0].get("messageUuid").is_none(),
+            "restored without its uuid"
+        );
+        queues
+            .send_now(
+                "s1",
+                &id,
+                Some(&row("input")),
+                stamped(&uuids, Delivery::Sent),
+            )
+            .await
+            .unwrap();
+        let uuids = uuids.lock().unwrap();
+        assert!(uuids[0].is_some() && uuids[1].is_some() && uuids[0] != uuids[1]);
+    }
+
+    #[tokio::test]
+    async fn receipts_are_kept_only_for_queued_sessions_and_dropped_with_them() {
+        let queues = Queues::default();
+        let receipts = json!([{"uuid":"u1","state":"completed","at":1}]);
+        queues.observe(&with_receipts(row_for("never", "input"), receipts.clone()));
+        assert!(
+            queues.delivered.lock().unwrap().is_empty(),
+            "no queue, nothing kept"
+        );
+        queues.add("s1", "one").await.unwrap();
+        queues.observe(&with_receipts(row("input"), receipts.clone()));
+        assert!(queues.delivered.lock().unwrap().contains_key("s1"));
+        queues.forget("s1").await.unwrap();
+        assert!(queues.delivered.lock().unwrap().is_empty());
+        queues.add("s2", "two").await.unwrap();
+        queues.observe(&with_receipts(row_for("s2", "input"), receipts));
+        queues.prune(&BTreeSet::new()).await.unwrap();
+        assert!(queues.delivered.lock().unwrap().is_empty());
     }
 }

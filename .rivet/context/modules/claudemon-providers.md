@@ -9,7 +9,7 @@ related_paths:
   - "services/claudemon/src/daemon/spawn.rs"
   - "services/claudemon/src/execution.rs"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-10-14
 ---
 
 # Claudemon provider adapters and transports
@@ -270,6 +270,120 @@ serialization test.
 - Forms park as `ParkedKind::Form` in the same FIFO as approvals and questions,
   and the reply adds `_meta:null`.
 - `pending.raw` is the request params plus `pending_id`.
+
+## Live provider status (receipts, MCP, hooks, fast mode)
+
+`session/provider_status.rs` holds runtime facts a driver reports beside the
+mode state machine. They are flattened into `SessionState`, so each is a
+top-level snapshot key, omitted while it carries nothing. The hub's `compat`
+projection copies them in camelCase.
+
+| Claudemon key | Hub key | Shape |
+| --- | --- | --- |
+| `message_receipts` | `messageReceipts` | `[{uuid, state, at}]`, newest last: at most 32, at most 10 settled (`completed`/`cancelled`), none older than 10 minutes. `state` uses the CLI's words: `queued`, `started`, `completed` and `cancelled`. |
+| `mcp_servers` | `mcpServers` | `[{name, status, error?}]`. `status` is `connected`, `failed`, `needs-auth`, `pending` or `disabled`; Codex statuses are mapped onto that set. |
+| `active_hooks` | `activeHooks` | `[{id, name, event, started_at}]` (`startedAt` on the hub). Hooks are removed when they respond, and cleared at turn end (a main-thread `result`, Codex `turn/completed`), on a driver respawn and when the session stops. |
+| `fast_mode` / `fast_mode_disabled_reason` | `fastMode` / `fastModeDisabledReason` | The CLI's own `fast_mode_state` (`on`, `off` or `cooldown`) and its reason. It is never set from what we requested. |
+
+`claude_status.rs` and `codex_status.rs` see each provider message before the
+driver does. They consume only answers to their own requests, which use the
+`wks-status-<n>` id namespace. One `StatusControl` channel per driver carries
+`McpStatus`, `McpReconnect`, `FastMode` and `Interrupt`.
+`SessionStore::submit_status_control` hands a request to that channel.
+
+Claude stream wire facts, captured live on CLI 2.1.299 (2026-10-14):
+
+- `{"type":"command_lifecycle","command_uuid":<our user-frame uuid>,"state":…}`
+  arrives for every user frame we send. The sequence is `queued`, `started`,
+  `completed`. An interrupted queued message reports `cancelled`. Only uuids we
+  sent are recorded.
+- The uuid is stamped by us. `POST /sessions/:id/message {uuid}` lets the caller
+  choose it (it must be a UUID). The same value is the frame's uuid and, for a send
+  into an idle session, the echoed `user_message.uuid` (rewind/fork id); a steer
+  into a running turn is echoed without one, but its receipts still arrive
+  under our uuid via `command_lifecycle`. The reply's `message_uuid` names it for Claude
+  stream rows only.
+- With `--include-hook-events`, hooks emit `system/hook_started {hook_id,
+  hook_name, hook_event}` and later `hook_response {…, exit_code, stdout,
+  stderr, outcome: success|error|cancelled}`. The flag is added only when
+  `claude --version` reports 2.1.204 or later. The version comes from the
+  stream driver's single per-spawn probe (`cli_version`, the same one that
+  gates `--thinking-display`), and both gated flags are spliced in right after
+  `--replay-user-messages`, ahead of the caller's extra args. An
+  `outcome: error` adds an `AssistantNotice`. No other hook becomes a
+  conversation item.
+- `mcp_status` returns `{mcpServers:[{name,status,config,scope,source,error?}]}`.
+  Each turn's `system/init.mcp_servers` (`[{name,status,source}]`) also
+  refreshes the list.
+- `mcp_reconnect {serverName}` answers an unknown name with the error
+  `Server not found: <name>`. A successful reconnect is followed by an
+  `mcp_status` refresh.
+- `apply_flag_settings {settings:{fastMode:true}}` returns plain success. On
+  haiku the next init still said `fast_mode_state:"off"`; the reason changed
+  from `sdk_opt_in_required` to none. Success means the CLI accepted the
+  setting, not that fast mode is on. The state is read from `init`, `result`
+  and the `initialize` answer.
+- `interrupt` returns `{still_queued:[uuid…]}`. `cancelled` appears only with
+  `cancel_queued`, which we never send. The receipt goes back to the caller of
+  `POST /signal {SIGINT}` as `interrupt: {supported, still_queued, cancelled}`,
+  filtered to our uuids, after waiting up to 5 seconds (otherwise
+  `interrupt: null`). A notice is added only when our messages were left
+  pending. Never resend `still_queued` messages: they run after the interrupt.
+  Older CLIs report `supported:false`.
+
+Codex wire facts. The MCP shapes were observed live on codex-cli 0.153.4; the
+hook shapes come from the schema only:
+
+- `mcpServer/startupStatus/updated {threadId,name,status:starting|ready|failed|cancelled,error,failureReason}`.
+- `mcpServerStatus/list {threadId,detail,limit}` returns
+  `{data:[{name,runtimeStatus,authStatus,…}]}`. `runtimeStatus` is null unless
+  `threadId` is passed, and the reply waits for servers that are still
+  starting.
+- `config/mcpServer/reload` takes no params and returns `{}`. Codex has no
+  per-server reconnect, so `claude.mcpReconnect` reloads all servers.
+- `hook/started` and `hook/completed {run:{id,eventName,status,sourcePath,entries}}`.
+  Only `status:"failed"` adds a notice.
+- Fast mode and interrupt receipts are refused on Codex.
+
+The hub projection moves these fields to camelCase; it does not duplicate the
+snake_case spelling. Changes apply to the row at once, but the row is published
+at most once per 150 ms per session (`STATUS_PUBLISH_DEBOUNCE`). Fast mode and
+MCP updates also rewrite the status line's older `capabilities.fast_mode`, MCP
+count and `inventory.mcp_servers` status, so the two views agree. Only one MCP
+status read per session is in flight at a time; concurrent callers share its
+answer. The embedded engine runs `mcp-status` and `mcp-reconnect` in their own
+two-slot pool, so they never hold the eight command slots that message sends
+use. A message held before its driver registered keeps its reported uuid.
+
+Daemon routes: `POST /sessions/:id/mcp-status` (waits at most 5 s), which returns
+`{ok, mcp_servers}`; `POST /sessions/:id/mcp-reconnect {server}`, which only
+accepts a server the row lists; and `POST /sessions/:id/fast-mode {enabled}`.
+A session without a status driver gets 501, and a provider refusal gets 502.
+
+Hub bus methods:
+
+- `sessions.mcpStatus {sessionId}` returns `{ok, mcpServers}` (view and triage
+  tiers).
+- `claude.mcpReconnect {sessionId, server}` returns `{ok, server}` (operator
+  tier, because on Codex it reloads the whole MCP configuration).
+- `claude.setFastMode {sessionId, enabled}` returns `{ok, enabled}` (operator
+  tier).
+- `claude.signal` now adds `interrupt: {supported, stillQueued, cancelled}`
+  (or `null`), plus `interruptError` when the CLI refused the interrupt.
+- A delivered `agents.sendMessage` result carries `messageUuid` when the driver
+  stamped one.
+
+Hub message queue: every delivery attempt mints `Entry.message_uuid` and
+stamps it on the frame. A rejected attempt is retried under a fresh uuid. An
+uncertain report records `messageUuid`. When a row's `message_receipts` shows
+exactly that uuid as `started` or `completed`, `Queues::confirm` turns
+`queueUncertain` into `queueConfirmed {id, text, messageUuid, delivery, at}`.
+Confirmation never resends and never lifts a pause. A receipt that arrives
+before the acknowledgement times out makes the attempt count as sent.
+
+PTY Claude spawns (`argv[0]` stem `claude` with no `rollout_provider`) get
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` unless the caller or the daemon environment
+already set it, as the stream driver does.
 
 ## Native child cards and Claude artifact replay
 

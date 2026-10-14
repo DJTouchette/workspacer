@@ -32,6 +32,7 @@
     "claude.handoffAgentBrief",
     "claude.handoffBrief",
     "claude.listModels",
+    "claude.mcpReconnect",
     "claude.profiles.add",
     "claude.profiles.list",
     "claude.profiles.remove",
@@ -40,6 +41,7 @@
     "claude.rewindFiles",
     "claude.sessionsForDir",
     "claude.setEffort",
+    "claude.setFastMode",
     "claude.setModel",
     "claude.setPermissionMode",
     "claude.signal",
@@ -172,6 +174,7 @@
     "sessions.kept",
     "sessions.list",
     "sessions.load",
+    "sessions.mcpStatus",
     "sessions.queueAdd",
     "sessions.queueClear",
     "sessions.queueMove",
@@ -418,10 +421,37 @@
     },
     {
       "Server": "claudemon-api",
+      "Pattern": "/sessions/:id/fast-mode",
+      "Disposition": "loopback-confined",
+      "Reason": "turns Claude fast mode on or off through the CLI's own apply_flag_settings {fastMode} control request (applied from the next turn). claude.setFastMode is operator-tier like claude.setEffort; the only caller value is the boolean `enabled`",
+      "Twin": "claude.setFastMode",
+      "TwinKind": "bus-method",
+      "Gate": ""
+    },
+    {
+      "Server": "claudemon-api",
       "Pattern": "/sessions/:id/message",
       "Disposition": "loopback-confined",
       "Reason": "the settle+verify flush send path — injects a prompt into a running agent. agents.sendMessage is TRIAGE-tier, so a scoped credential can already do this over the bus",
       "Twin": "agents.sendMessage",
+      "TwinKind": "bus-method",
+      "Gate": ""
+    },
+    {
+      "Server": "claudemon-api",
+      "Pattern": "/sessions/:id/mcp-reconnect",
+      "Disposition": "loopback-confined",
+      "Reason": "reconnects one MCP server the session already lists (Claude mcp_reconnect). Codex has no per-server reconnect, so there it reloads the whole MCP configuration (config/mcpServer/reload), which can start servers added to the config since launch. claude.mcpReconnect is therefore OPERATOR-tier, like claude.setFastMode",
+      "Twin": "claude.mcpReconnect",
+      "TwinKind": "bus-method",
+      "Gate": ""
+    },
+    {
+      "Server": "claudemon-api",
+      "Pattern": "/sessions/:id/mcp-status",
+      "Disposition": "loopback-confined",
+      "Reason": "asks the provider for its MCP server status (Claude mcp_status, Codex mcpServerStatus/list) and refreshes the snapshot's mcp_servers. sessions.mcpStatus is VIEW-tier: a read with no caller value beyond the session id",
+      "Twin": "sessions.mcpStatus",
       "TwinKind": "bus-method",
       "Gate": ""
     },
@@ -971,7 +1001,8 @@
       "sessions.queueRemove",
       "sessions.queueResume",
       "sessions.queueSendNow",
-      "sessions.queueUpdate"
+      "sessions.queueUpdate",
+      "sessions.mcpStatus"
     ],
     "view": [
       "remote.sharingInfo",
@@ -999,7 +1030,8 @@
       "agents.reportProgress",
       "sessionArchive.get",
       "sessions.kept",
-      "sessions.taskOutput"
+      "sessions.taskOutput",
+      "sessions.mcpStatus"
     ]
   },
   "spawnKeys": [

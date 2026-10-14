@@ -79,6 +79,21 @@ pub(crate) trait ExecutionEngineV1: Send + Sync {
         let _ = (delivery, sender);
         self.send(store, id, text)
     }
+    /// `send_with` carrying the uuid a delivery-aware driver stamps on the
+    /// message. Engines that cannot honour it keep the default, which drops
+    /// the uuid and sends normally.
+    fn send_tracked(
+        &self,
+        store: &SessionStore,
+        id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        uuid: Option<String>,
+    ) -> MessageOutcome {
+        let _ = uuid;
+        self.send_with(store, id, text, delivery, sender)
+    }
     fn decide(&self, store: &SessionStore, id: &str, decision: ManagedDecision) -> bool;
     fn cancel(&self, store: &SessionStore, id: &str) -> bool;
     fn stop(&self, store: &SessionStore, id: &str) -> bool;
@@ -217,6 +232,17 @@ impl ExecutionEngineV1 for ClaudemonEngine {
     ) -> MessageOutcome {
         store.native_submit_message_from(id, text, delivery, sender)
     }
+    fn send_tracked(
+        &self,
+        store: &SessionStore,
+        id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        uuid: Option<String>,
+    ) -> MessageOutcome {
+        store.native_submit_message_tracked(id, text, delivery, sender, uuid)
+    }
     fn decide(&self, store: &SessionStore, id: &str, decision: ManagedDecision) -> bool {
         store.native_submit_managed_decision(id, decision)
     }
@@ -323,6 +349,19 @@ impl ExecutionEngineV1 for BoundEngine {
     ) -> MessageOutcome {
         self.call(MessageOutcome::WrapperGone, |engine| {
             engine.send_with(store, id, text, delivery, sender)
+        })
+    }
+    fn send_tracked(
+        &self,
+        store: &SessionStore,
+        id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        uuid: Option<String>,
+    ) -> MessageOutcome {
+        self.call(MessageOutcome::WrapperGone, |engine| {
+            engine.send_tracked(store, id, text, delivery, sender, uuid)
         })
     }
     fn decide(&self, store: &SessionStore, id: &str, decision: ManagedDecision) -> bool {

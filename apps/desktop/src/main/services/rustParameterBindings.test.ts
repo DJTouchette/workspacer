@@ -25,7 +25,7 @@ describe('Rust dispatcher caller parameter extraction', () => {
         (n, row) => n + row.fields.filter((field) => !!policy.dangerousKind(field)).length,
         0,
       ),
-    }).toEqual({ rows: 91, bindings: 51 }); // 91 = 83 + claude.compact / rewindFiles / revert (id + text arms, no dangerous field) + Codex extras agents.review / setGoal / clearGoal / windowsSandboxSetup / rename (mode and name read through helpers, no dangerous inline field); git.pull + git.discard arms (cwd, path each); terminals.shells (no params); sessions.taskOutput / taskStop: id + integer arms, no dangerous field; claude.handoffSummaryBrief: session id only; sessions.queueAdd/Update/Remove/Move/SendNow/Clear/Resume: session id, entry id, text, expectedText, index, delivery, no dangerous field
+    }).toEqual({ rows: 94, bindings: 51 }); // 94 = 83 + claude.compact / rewindFiles / revert (id + text arms, no dangerous field) + Codex extras agents.review / setGoal / clearGoal / windowsSandboxSetup / rename (mode and name read through helpers, no dangerous inline field) + sessions.mcpStatus (session id), claude.mcpReconnect (server name), claude.setFastMode (boolean): no dangerous field; git.pull + git.discard arms (cwd, path each); terminals.shells (no params); sessions.taskOutput / taskStop: id + integer arms, no dangerous field; claude.handoffSummaryBrief: session id only; sessions.queueAdd/Update/Remove/Move/SendNow/Clear/Resume: session id, entry id, text, expectedText, index, delivery, no dangerous field
     for (const [method, field] of [
       ['git.status', 'cwd'],
       ['git.stage', 'path'],
