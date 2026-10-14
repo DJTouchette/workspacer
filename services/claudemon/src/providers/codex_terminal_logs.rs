@@ -195,7 +195,7 @@ mod tests {
             assert_eq!(std::fs::read(&target).unwrap(), b"x");
             // A symlinked session dir is refused.
             let linked = root.join("s2");
-            std::os::unix::fs::symlink(&root.join("elsewhere-dir"), &linked).unwrap();
+            std::os::unix::fs::symlink(root.join("elsewhere-dir"), &linked).unwrap();
             std::fs::create_dir(root.join("elsewhere-dir")).unwrap();
             assert!(ensure_private_dir(&linked).is_err());
         }

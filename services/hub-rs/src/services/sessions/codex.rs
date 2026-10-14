@@ -85,7 +85,7 @@ impl Sessions {
         let (path, payload) = match method {
             "agents.review" => {
                 let target = review_target(params.get("target").unwrap_or(&Value::Null))?;
-                let mut body = json!({"target":target});
+                let body = json!({"target":target});
                 // Inline only: detached delivery is deprecated (Codex 0.159)
                 // and runs on a thread whose findings this session never sees.
                 match text(&params, "delivery")? {
