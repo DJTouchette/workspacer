@@ -277,3 +277,83 @@ boot acknowledgement and generation cleanup. Some real-CLI/platform fixtures are
 explicitly ignored. A passing mock driver does not certify the installed external
 CLI, real account permissions, or every Windows/macOS transport. For source changes,
 also run the calling launcher and relevant model/context/error contract tests.
+
+## Conversation history: compaction, reasoning, rewind, revert and fork
+
+New conversation-item kinds and fields. Every client keys on `kind` and skips
+kinds it does not know (native `Item::display`, TUI, desktop applier, m-next),
+so older clients ignore them safely.
+
+| Shape | Meaning |
+| --- | --- |
+| `{kind:"reasoning", item_id, text, timestamp?}` | The model's shown reasoning. Streams as FRAGMENTS: same-`item_id` items append, like `assistant_text`; the retained log folds a trailing same-id fragment. Never merged into `assistant_text`. |
+| `{kind:"compaction", trigger?, pre_tokens?, post_tokens?, timestamp?}` | Everything before it was summarized out of context. `trigger` is `"manual"`/`"auto"` (Claude only). |
+| `user_message.uuid?` | The provider-facing id of that user message: the uuid the Claude stream driver stamps on the frame (= the CLI's message uuid, echoed back by `--replay-user-messages`), the transcript row's `uuid` on replay, or the echo id the Codex driver matches to codex's `userMessage` item. Absent when unknown. |
+
+Session row: `compacting` (bool), `compaction_count`, `last_compact_at` are now
+also driven by managed drivers (`SessionStore::set_compacting` /
+`note_compaction`), not just the PreCompact/PostCompact hooks.
+
+Sources:
+
+- Claude stream: `system/status {status:"compacting"}` sets `compacting`;
+  `status:null` (live: `{status:null, compact_result:"success"}`) clears it;
+  `system/compact_boundary {compact_metadata:{trigger, pre_tokens,
+  post_tokens}}` is the boundary. `thinking_delta` streams into
+  `reasoning` (`item_id` = `<api message id>:<block index>`); a thinking
+  block in the `assistant` frame lands whole only when its message did not
+  stream. Current models default to an omitted thinking display
+  (`thinking_display:"updates"`: empty `thinking`, only `estimated_tokens`),
+  which produces nothing; `--thinking-display summarized` (CLI flag, via a
+  profile's extra args) or the `showThinkingSummaries` setting shows text.
+  Transcript rows: `system/compact_boundary {compactMetadata}` and non-empty
+  thinking blocks map to the same kinds (PTY sessions and resumed history).
+- Codex: `item/reasoning/summaryTextDelta` streams by `itemId`;
+  `summaryPartAdded` with `summaryIndex>0` adds a paragraph break; raw
+  `item/reasoning/textDelta` is NOT streamed. The completed `reasoning` item
+  (summary joined, raw `content` only when no summary) is dropped when its id
+  already streamed. `contextCompaction` item started/completed brackets the
+  compaction; the deprecated `thread/compacted` only adds a boundary when the
+  turn has none.
+- Handoff briefs and summary sources skip `reasoning` and `compaction`; the hub
+  MCP last-message reduction skips them inside a reply run.
+
+Controls (one store channel, `register_managed_session_control` /
+`ManagedSessionControl {action, reply}`; drivers answer with the provider's own
+result or error text). Naming is deliberate: **rewindFiles restores FILES
+(Claude), revert drops TURNS (Codex)**; each provider refuses the other with an
+error naming the alternative.
+
+| Bus method | claudemon route | Claude stream | Codex |
+| --- | --- | --- | --- |
+| `claude.compact {sessionId, instructions?}` | `POST /sessions/:id/compact {instructions?}` | `/compact [instructions]` as a user message (documented headless path; verified live on 2.1.299) plus a `slash_command` echo; reply `{queued:true}` | `thread/compact/start {threadId}`; reply `{}` |
+| `claude.rewindFiles {sessionId, userMessageId, dryRun?}` | `POST /sessions/:id/rewind-files {user_message_id, dry_run?}` | `rewind_files` control request; reply `RewindFilesResult {canRewind, error?, filesChanged?, insertions?, deletions?, skippedLinks?}` | refused |
+| `claude.revert {sessionId, userMessageId \| beforeTurnId}` | `POST /sessions/:id/revert {user_message_id?, before_turn_id?}` | refused | `thread/revert {threadId, beforeTurnId}`; on success the shown conversation is cut before that turn's user message (a `reset` delta) |
+
+HTTP answers: `200 {ok:true, result}`, `502 {ok:false, error}` (provider
+refused), `501` (no live stream/Codex driver), `504` (no answer in 30s), `400`
+for ids that are not bounded plain ids. All three bus methods are full-tier only.
+
+Claude stream sessions always run with `--replay-user-messages` (replayed text
+frames carry `isReplay:true` and render nothing: the `user` arm reads only tool
+results) and `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true` unless the spawn
+env or daemon env chose a value. Live check (2.1.299, `--no-session-persistence`,
+after a `/compact`): `rewind_files` answered a dry run with success
+`{canRewind:false, error:"No file checkpoint found for this message."}` and a
+real one with a control error of the same text, so a successful file rewind is
+NOT yet verified against the real CLI.
+
+Fork (claudemon `/sessions/spawn-managed {provider, cwd, resume:<source>,
+fork:true, fork_before?:<user message uuid>}`): a NEW row id (never the
+source's). "Fork before message U" keeps the history before U. Claude runs
+`--resume <source> --fork-session --session-id <new> [--resume-session-at
+<U's transcript parentUuid>]`; forking before the first message is refused.
+Codex bootstraps the new driver with `thread/fork {threadId:<source thread>,
+lastTurnId?, cwd}` as request id 101 (same capture as `thread/start`); the fork
+point (the turn before U's turn) comes from the LIVE source driver
+(`SessionControlAction::ForkPoint`), so forking a Codex session from a message
+needs the source running. The new session is seeded with the source's visible
+history cut at the fork point. The hub has no `agents.fork` yet: it needs a
+spawn path that mints a new id while inheriting the source launch record
+(provider/profile/cwd), which touches agent_spawn admission and the spawn-key
+registries.
