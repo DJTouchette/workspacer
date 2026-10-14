@@ -51,7 +51,14 @@ pub(crate) fn review_target(target: &Value) -> Result<Value, String> {
     };
     match target.get("type").and_then(Value::as_str) {
         Some("uncommittedChanges") => Ok(json!({ "type": "uncommittedChanges" })),
-        Some("baseBranch") => Ok(json!({ "type": "baseBranch", "branch": text("branch", 255)? })),
+        Some("baseBranch") => {
+            let branch = text("branch", 255)?;
+            // Codex hands the branch to git; an option-looking name is refused.
+            if branch.starts_with('-') {
+                return Err("target.branch must not start with '-'".into());
+            }
+            Ok(json!({ "type": "baseBranch", "branch": branch }))
+        }
         Some("commit") => {
             let sha = text("sha", 64)?;
             if !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -148,17 +155,22 @@ pub(crate) async fn post_review(
         Ok(target) => target,
         Err(error) => return refuse(StatusCode::BAD_REQUEST, error),
     };
-    let delivery = match body.get("delivery").and_then(Value::as_str) {
-        None => None,
-        Some(d @ ("inline" | "detached")) => Some(d.to_string()),
-        Some(_) => {
-            return refuse(
-                StatusCode::BAD_REQUEST,
-                "delivery must be inline or detached",
-            )
-        }
-    };
-    run(&store, &id, CodexOp::Review { target, delivery }).await
+    // Inline only: detached delivery is deprecated in Codex 0.159, and its
+    // review runs on another thread whose findings this session never sees.
+    match body.get("delivery") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(d)) if d == "inline" => {}
+        Some(_) => return refuse(StatusCode::BAD_REQUEST, "delivery must be inline"),
+    }
+    run(
+        &store,
+        &id,
+        CodexOp::Review {
+            target,
+            delivery: None,
+        },
+    )
+    .await
 }
 
 /// `POST /sessions/:id/goal {objective?, status?, tokenBudget?}` →
@@ -243,6 +255,7 @@ mod tests {
             json!(null),
             json!({"type":"everything"}),
             json!({"type":"baseBranch"}),
+            json!({"type":"baseBranch","branch":"--output=/tmp/x"}),
             json!({"type":"commit","sha":"not hex!"}),
             json!({"type":"custom","instructions":""}),
             json!({"type":"custom","instructions":7}),

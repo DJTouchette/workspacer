@@ -146,6 +146,10 @@ async fn run_controlled(
     // `claude --resume <id>`. Bounded to the most-recent window. Nothing is
     // deleted; stale ones come back archived (see `SessionState::is_archived`)
     // so they stay out of the default list but remain reachable.
+    // Codex background-terminal logs a crashed or killed daemon left behind
+    // (a driver removes its own on exit).
+    tokio::task::spawn_blocking(crate::providers::codex_terminal_logs::sweep_stale);
+
     match db.load_recent_sessions(SESSION_HYDRATE_LIMIT) {
         Ok(sessions) if !sessions.is_empty() => {
             let count = sessions.len();

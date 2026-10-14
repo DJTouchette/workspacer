@@ -1024,10 +1024,19 @@ async fn post_permission_mode(
         };
     }
     let result = if store.is_managed(&id) {
-        if !matches!(payload.mode.as_str(), "ask" | "yolo" | "plan") {
+        // `plan` is Codex plan mode, offered only by a live Codex ws driver;
+        // every other managed session keeps the plain ask/yolo vocabulary.
+        let plan_ok = store.codex_control(&id).is_some();
+        if !matches!(payload.mode.as_str(), "ask" | "yolo") && !(plan_ok && payload.mode == "plan")
+        {
+            let expected = if plan_ok {
+                "'ask', 'yolo' or 'plan'"
+            } else {
+                "'ask' or 'yolo'"
+            };
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "ok": false, "error": format!("unknown managed permission mode '{}' (expected 'ask', 'yolo' or 'plan')", payload.mode) })),
+                Json(json!({ "ok": false, "error": format!("unknown managed permission mode '{}' (expected {expected})", payload.mode) })),
             )
                 .into_response();
         }
@@ -1048,7 +1057,18 @@ async fn post_permission_mode(
             .map(|m| m.as_str().to_string())
     };
     match result {
-        Ok(mode) => Json(json!({ "ok": true, "mode": mode })).into_response(),
+        Ok(mode) => {
+            let mut body = json!({ "ok": true, "mode": mode });
+            // Codex: the plan half rides beside the approval posture.
+            if let Some(collaboration) = store
+                .codex_control(&id)
+                .and_then(|_| store.get(&id))
+                .and_then(|s| s.collaboration_mode)
+            {
+                body["collaborationMode"] = json!(collaboration);
+            }
+            Json(body).into_response()
+        }
         Err(err) => {
             let (status, msg, current) = match err {
                 PermissionSwitchError::NoSession => {
@@ -3982,24 +4002,54 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
         assert!(v["error"].as_str().unwrap().contains("ask"));
-        // `plan` is Codex plan mode: refused (409) without the experimental
-        // opt-in's collaboration modes, never a silent ask/yolo change.
+        // `plan` is Codex plan mode: a managed session without a Codex ws
+        // driver keeps the old ask/yolo 400 …
         state.store.register_managed_yolo(
             "sess-1",
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             false,
         );
-        let req = post_json(
-            "/sessions/sess-1/permission-mode",
-            json!({ "mode": "plan" }),
+        let plan = || {
+            post_json(
+                "/sessions/sess-1/permission-mode",
+                json!({ "mode": "plan" }),
+            )
+        };
+        let (status, body) = request(state.clone(), plan()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(v["error"]
+            .as_str()
+            .unwrap()
+            .contains("expected 'ask' or 'yolo'"));
+        // … a Codex driver without collaboration modes refuses it (409) …
+        let collaboration =
+            std::sync::Arc::new(crate::session::codex_controls::CollaborationShared::default());
+        let (tx, _ctl) = tokio::sync::mpsc::unbounded_channel();
+        state.store.register_codex_control(
+            "sess-1",
+            crate::session::codex_controls::CodexControlHandle {
+                tx,
+                collaboration: collaboration.clone(),
+            },
         );
-        let (status, body) = request(state, req).await;
+        let (status, body) = request(state.clone(), plan()).await;
         assert_eq!(status, StatusCode::CONFLICT);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
         assert!(v["error"]
             .as_str()
             .unwrap()
             .contains("codex.experimentalApi"));
+        // … and with them, plan rides beside the posture it kept (yolo).
+        collaboration
+            .available
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let (status, body) = request(state.clone(), plan()).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["mode"], "yolo");
+        assert_eq!(v["collaborationMode"], "plan");
+        assert!(collaboration.is_plan());
     }
 
     #[tokio::test]

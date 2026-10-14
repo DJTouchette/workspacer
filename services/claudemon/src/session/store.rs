@@ -3078,9 +3078,11 @@ impl SessionStore {
             return Err(PermissionSwitchError::Managed);
         };
         // Codex plan mode (`collaborationMode`, experimental opt-in) rides
-        // beside the approval flag: `plan` keeps the approval posture and
+        // BESIDE the approval flag: `plan` keeps the approval posture and
         // starts the next turns in Codex's plan collaboration mode; `ask` /
-        // `yolo` leave it.
+        // `yolo` leave it. A `plan` switch therefore answers with the posture
+        // (`ask`/`yolo`) it kept — the plan half is the snapshot's
+        // `collaboration_mode` — so a client can show both.
         let collaboration = self.codex_control(session_id).map(|c| c.collaboration);
         let result = match mode {
             "yolo" => {
@@ -3099,13 +3101,19 @@ impl SessionStore {
                 Ok("ask")
             }
             "plan" => match &collaboration {
-                Some(c) if c.is_available() => Ok("plan"),
+                Some(c) if c.is_available() => {
+                    Ok(if handle.live.load(std::sync::atomic::Ordering::Relaxed) {
+                        "yolo"
+                    } else {
+                        "ask"
+                    })
+                }
                 _ => return Err(PermissionSwitchError::PlanUnavailable),
             },
             _ => Err(PermissionSwitchError::Managed),
         };
-        if let (Ok(mode), Some(c)) = (&result, collaboration.filter(|c| c.is_available())) {
-            let plan = *mode == "plan";
+        if let (Ok(_), Some(c)) = (&result, collaboration.filter(|c| c.is_available())) {
+            let plan = mode == "plan";
             c.set_plan(plan);
             let label = if plan { "plan" } else { "default" };
             self.update_state(session_id, |entry| {

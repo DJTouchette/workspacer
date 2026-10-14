@@ -48,7 +48,14 @@ pub(super) fn review_target(target: &Value) -> Result<Value> {
     };
     Ok(match target.get("type").and_then(Value::as_str) {
         Some("uncommittedChanges") => json!({"type":"uncommittedChanges"}),
-        Some("baseBranch") => json!({"type":"baseBranch","branch":field("branch")?}),
+        Some("baseBranch") => {
+            let branch = field("branch")?;
+            // Codex hands the branch to git: an option-looking name is refused.
+            if branch.starts_with('-') {
+                bail!("target.branch must not start with '-'");
+            }
+            json!({"type":"baseBranch","branch":branch})
+        }
         Some("commit") => {
             let mut out = json!({"type":"commit","sha":field("sha")?});
             if let Some(title) = text(target, "title")? {
@@ -79,10 +86,13 @@ impl Sessions {
             "agents.review" => {
                 let target = review_target(params.get("target").unwrap_or(&Value::Null))?;
                 let mut body = json!({"target":target});
+                // Inline only: detached delivery is deprecated (Codex 0.159)
+                // and runs on a thread whose findings this session never sees.
                 match text(&params, "delivery")? {
-                    None => {}
-                    Some(d @ ("inline" | "detached")) => body["delivery"] = json!(d),
-                    Some(_) => bail!("delivery must be \"inline\" or \"detached\""),
+                    None | Some("inline") => {}
+                    Some(_) => {
+                        bail!("delivery must be \"inline\" (detached reviews are not supported)")
+                    }
                 }
                 (format!("{root}/review"), body)
             }
@@ -224,6 +234,7 @@ mod tests {
         for bad in [
             json!(null),
             json!({"type":"baseBranch"}),
+            json!({"type":"baseBranch","branch":"-c core.pager=x"}),
             json!({"type":"custom","instructions":" "}),
             json!({"type":"commit","sha":"a","title":3}),
             json!({"type":"nope"}),

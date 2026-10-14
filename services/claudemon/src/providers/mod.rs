@@ -17,6 +17,7 @@ pub mod claude_stream;
 pub mod codex;
 mod codex_extras;
 pub mod codex_rollout;
+pub(crate) mod codex_terminal_logs;
 pub mod codex_usage;
 pub mod copilot;
 pub mod copilot_usage;

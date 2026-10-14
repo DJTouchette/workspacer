@@ -2623,6 +2623,7 @@ pub(super) async fn run_session(
         );
         return Ok(());
     };
+    aux.watch_yolo(policy.yolo.clone());
 
     let mut thread_id: Option<String> = resume_thread;
     // Whether our `thread/resume` has actually taken (we're receiving the thread's

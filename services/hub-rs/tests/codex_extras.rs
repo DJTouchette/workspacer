@@ -84,6 +84,14 @@ async fn codex_extras_validate_refuse_non_codex_and_stay_owner_only() {
             "agents.review",
             json!({"sessionId":SID,"target":{"type":"uncommittedChanges"},"delivery":"later"}),
         ),
+        (
+            "agents.review",
+            json!({"sessionId":SID,"target":{"type":"uncommittedChanges"},"delivery":"detached"}),
+        ),
+        (
+            "agents.review",
+            json!({"sessionId":SID,"target":{"type":"baseBranch","branch":"--upload-pack=x"}}),
+        ),
         ("agents.setGoal", json!({"sessionId":SID})),
         ("agents.setGoal", json!({"sessionId":SID,"tokenBudget":-5})),
         (

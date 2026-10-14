@@ -10,8 +10,10 @@
 //!
 //! Every request this module sends uses a STRING id (`wks-extras-<n>`), so it
 //! can never collide with the driver's numeric turn ids, and every one is
-//! optional: an error — `-32601` from a 0.153 build, or "requires
-//! experimentalApi capability" without the opt-in — only marks that feature
+//! optional: an error — a build without the method (real Codex answers
+//! `-32600 "Invalid request: unknown variant …"`; `-32601` is the JSON-RPC
+//! spelling), or "requires experimentalApi capability" without the opt-in —
+//! only marks that feature
 //! unavailable (or answers the caller with the reason). Nothing here waits on
 //! a reply inside the driver loop.
 //!
@@ -22,7 +24,6 @@
 //! on `initialize`.
 
 use std::collections::HashMap;
-use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -44,6 +45,11 @@ const ID_PREFIX: &str = "wks-extras-";
 const MAX_BUFFERED: usize = 256 * 1024;
 /// Bytes one background terminal's log may grow to on disk.
 const MAX_LOG: u64 = 8 * 1024 * 1024;
+/// Bytes all of one session's terminal logs may grow to together.
+const MAX_SESSION_LOGS: u64 = 32 * 1024 * 1024;
+/// Longest Codex error text relayed to a caller (Codex's own refusal of an
+/// unknown method lists every method it knows — kilobytes).
+const MAX_ERROR_TEXT: usize = 300;
 /// Task type the background-task list shows for a Codex terminal — the same
 /// kind as a Claude background shell, so clients render it the same way.
 const TERMINAL_TASK_TYPE: &str = "local_bash";
@@ -174,7 +180,30 @@ pub(super) struct Extras {
     /// Terminals by Codex item id.
     terminals: HashMap<String, Terminal>,
     goal_requested: bool,
-    log_root: PathBuf,
+    /// This session's own log directory (see `codex_terminal_logs`); `None`
+    /// when the platform names no local data dir (logs are then not kept).
+    log_root: Option<PathBuf>,
+    /// Bytes written to this session's logs, against [`MAX_SESSION_LOGS`].
+    logged_total: u64,
+    /// The live ask/yolo flag: a bypassed session does not run in Codex's
+    /// Windows sandbox, so its readiness is not news.
+    yolo: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// The Windows sandbox notice was posted (at most once per session).
+    sandbox_noticed: bool,
+    /// The bootstrap `thread/start` (id 101) result was taken.
+    started_seen: bool,
+    /// The world-writable warning was posted (at most once per session).
+    writable_noticed: bool,
+}
+
+impl Drop for Extras {
+    /// The driver is ending: its background terminals died with its
+    /// app-server, and their logs go with them.
+    fn drop(&mut self) {
+        if let Some(dir) = &self.log_root {
+            super::codex_terminal_logs::remove_session(dir);
+        }
+    }
 }
 
 /// The JSON-RPC error's text, worded for a person.
@@ -184,12 +213,24 @@ fn rpc_error(method: &str, err: &Value) -> String {
         .get("message")
         .and_then(Value::as_str)
         .unwrap_or("unknown error");
-    if code == Some(-32601) || message.to_ascii_lowercase().contains("method not found") {
+    let lower = message.to_ascii_lowercase();
+    // Real Codex answers a method it does not know with -32600 "Invalid
+    // request: unknown variant `X`, expected one of …" (its whole method
+    // list); -32601 / "method not found" is the JSON-RPC spelling.
+    if code == Some(-32601)
+        || lower.contains("method not found")
+        || lower.contains("unknown variant")
+    {
         format!("this Codex build does not support {method}")
     } else if message.contains("experimentalApi") {
         format!("{method} needs the codex.experimentalApi opt-in")
     } else {
-        format!("{method} failed: {message}")
+        let mut end = message.len().min(MAX_ERROR_TEXT);
+        while !message.is_char_boundary(end) {
+            end -= 1;
+        }
+        let ellipsis = if end < message.len() { "…" } else { "" };
+        format!("{method} failed: {}{ellipsis}", &message[..end])
     }
 }
 
@@ -232,16 +273,30 @@ impl Extras {
             collaboration,
             terminals: HashMap::new(),
             goal_requested: false,
-            log_root: std::env::temp_dir()
-                .join("workspacer-codex-terminals")
-                .join(session_id),
+            log_root: super::codex_terminal_logs::root().map(|root| root.join(session_id)),
+            logged_total: 0,
+            yolo: None,
+            sandbox_noticed: false,
+            started_seen: false,
+            writable_noticed: false,
         }
+    }
+
+    /// Share the session's live ask/yolo flag (registered after `new`).
+    pub(super) fn watch_yolo(&mut self, yolo: Arc<std::sync::atomic::AtomicBool>) {
+        self.yolo = Some(yolo);
+    }
+
+    fn bypassed(&self) -> bool {
+        self.yolo
+            .as_ref()
+            .is_some_and(|y| y.load(Ordering::Relaxed))
     }
 
     #[cfg(test)]
     pub(super) fn with_platform(mut self, windows: bool, log_root: PathBuf) -> Self {
         self.windows = windows;
-        self.log_root = log_root;
+        self.log_root = Some(log_root);
         self
     }
 
@@ -491,7 +546,10 @@ impl Extras {
             });
             true
         });
-        if !ready && previous != Some(false) {
+        // Only a session that really runs in Codex's Windows sandbox (not
+        // bypassed) hears about it, and only once.
+        if !ready && previous != Some(false) && !self.bypassed() && !self.sandbox_noticed {
+            self.sandbox_noticed = true;
             let what = match status.as_str() {
                 "notConfigured" => "is not set up",
                 "updateRequired" => "needs an update",
@@ -533,10 +591,19 @@ impl Extras {
         let Some(method) = value.get("method").and_then(Value::as_str) else {
             // Our thread/start (101) / thread/resume (2) result carries the
             // thread's name, model and effort.
-            if let Some(result) = value.get("result") {
-                let id = value.get("id").and_then(Value::as_u64);
-                if matches!(id, Some(2) | Some(101)) {
-                    self.thread_result(result, store);
+            // Id 101 is the bootstrap thread/start only once: a user turn's
+            // ever-climbing id can reach it later, so it is taken at most
+            // once and only when it carries a thread (like codex.rs's
+            // `thread_id.is_none()` guard). Turn ids start at 3, so id 2 is
+            // always a thread/resume.
+            if let Some(result) = value.get("result").filter(|r| r.get("thread").is_some()) {
+                match value.get("id").and_then(Value::as_u64) {
+                    Some(2) => self.thread_result(result, store),
+                    Some(101) if !self.started_seen => {
+                        self.started_seen = true;
+                        self.thread_result(result, store);
+                    }
+                    _ => {}
                 }
             }
             return;
@@ -567,6 +634,9 @@ impl Extras {
                 if let Some(effort) = settings.get("effort").and_then(Value::as_str) {
                     *self.collaboration.effort.lock().unwrap() = Some(effort.to_string());
                 }
+                // The thread's own collaboration mode — ours, or one the TUI
+                // switched — is the truth the next turn starts from.
+                self.remote_mode(settings.get("collaborationMode"), store);
             }
             "windows/worldWritableWarning" => self.world_writable(&params, store, conv),
             "windowsSandbox/setupCompleted" => self.setup_completed(&params, store, conv, out_tx),
@@ -612,7 +682,50 @@ impl Extras {
         }
     }
 
+    /// Fold a collaboration mode Codex reports for the thread (a resume
+    /// restores the persisted one; `thread/settings/updated` carries it on
+    /// every change) into the plan-mode state, so a thread already in plan
+    /// mode stays in it — and leaving it is sent explicitly.
+    fn remote_mode(&mut self, mode: Option<&Value>, store: &SessionStore) {
+        let Some(kind) = mode.and_then(|m| m.get("mode")).and_then(Value::as_str) else {
+            return;
+        };
+        let plan = kind == "plan";
+        self.collaboration.set_plan(plan);
+        // The thread already holds this mode: plan → later non-plan turns must
+        // say "default"; default → nothing needs saying.
+        self.collaboration.engaged.store(plan, Ordering::Relaxed);
+        if let Some(effort) = mode
+            .and_then(|m| m.pointer("/settings/reasoning_effort"))
+            .and_then(Value::as_str)
+        {
+            if plan {
+                *self.collaboration.plan_effort.lock().unwrap() = Some(json!(effort));
+            }
+        }
+        // Without the opt-in the toggle is unavailable: only a thread that
+        // really is in plan mode (switched in the TUI) is worth showing.
+        let label = match (plan, self.collaboration.is_available()) {
+            (true, _) => Some("plan"),
+            (false, true) => Some("default"),
+            (false, false) => None,
+        };
+        store.update_state(&self.session_id, |s| {
+            if s.collaboration_mode.as_deref() == label {
+                return false;
+            }
+            s.collaboration_mode = label.map(str::to_owned);
+            true
+        });
+    }
+
     fn thread_result(&mut self, result: &Value, store: &SessionStore) {
+        let mode = result
+            .get("collaborationMode")
+            .or_else(|| result.pointer("/thread/collaborationMode"))
+            .or_else(|| result.pointer("/threadSettings/collaborationMode"))
+            .cloned();
+        self.remote_mode(mode.as_ref(), store);
         if let Some(model) = result.get("model").and_then(Value::as_str) {
             *self.collaboration.model.lock().unwrap() = Some(model.to_string());
         }
@@ -663,7 +776,10 @@ impl Extras {
             s.windows_sandbox = Some(status);
             true
         });
-        self.notice(conv, format!("Windows sandbox warning: {detail}."));
+        if !self.bypassed() && !self.writable_noticed {
+            self.writable_noticed = true;
+            self.notice(conv, format!("Windows sandbox warning: {detail}."));
+        }
     }
 
     fn setup_completed(
@@ -764,7 +880,7 @@ impl Extras {
             return;
         };
         if t.promoted {
-            append_log(t, delta);
+            append_log(t, delta, &mut self.logged_total);
         } else if t.buffered.len() < MAX_BUFFERED {
             let room = MAX_BUFFERED - t.buffered.len();
             let mut end = delta.len().min(room);
@@ -783,15 +899,30 @@ impl Extras {
             return;
         }
         t.promoted = true;
-        let log = self.log_root.join(format!("{}.output", t.task_id));
-        let opened = std::fs::create_dir_all(&self.log_root)
-            .and_then(|_| std::fs::write(&log, t.buffered.as_bytes()));
-        if opened.is_ok() {
-            t.logged = t.buffered.len() as u64;
-            t.log = Some(log.clone());
-        } else {
-            tracing::warn!(session = %self.session_id, path = %log.display(),
-                "codex background terminal: cannot write its log");
+        if let Some(root) = &self.log_root {
+            let log = root.join(format!("{}.output", t.task_id));
+            let room = MAX_SESSION_LOGS.saturating_sub(self.logged_total);
+            let mut keep = t.buffered.len().min(room as usize);
+            while !t.buffered.is_char_boundary(keep) {
+                keep -= 1;
+            }
+            let opened = super::codex_terminal_logs::ensure_private_dir(root).and_then(|_| {
+                // A finished terminal whose process id was reused left its
+                // (our own) log behind; a new one starts fresh.
+                let _ = std::fs::remove_file(&log);
+                super::codex_terminal_logs::create(&log, &t.buffered.as_bytes()[..keep])
+            });
+            match opened {
+                Ok(()) => {
+                    t.logged = keep as u64;
+                    self.logged_total += keep as u64;
+                    t.log = Some(log);
+                }
+                Err(error) => {
+                    tracing::warn!(session = %self.session_id, path = %log.display(), %error,
+                    "codex background terminal: cannot write its log")
+                }
+            }
         }
         t.buffered = String::new();
         let (task_id, command, has_log) = (t.task_id.clone(), t.command.clone(), t.log.clone());
@@ -810,7 +941,17 @@ impl Extras {
             task.has_output = has_log.is_some();
             task.output_file = has_log;
             tasks.push(task);
+            let before: Vec<(String, Option<PathBuf>)> = tasks
+                .iter()
+                .map(|t| (t.id.clone(), t.output_file.clone()))
+                .collect();
             bg::retain_bounded(tasks, now);
+            // An evicted row's log goes with it.
+            for (id, file) in before {
+                if let Some(file) = file.filter(|_| !tasks.iter().any(|t| t.id == id)) {
+                    let _ = std::fs::remove_file(file);
+                }
+            }
             true
         });
     }
@@ -1014,19 +1155,16 @@ impl Extras {
     }
 }
 
-fn append_log(t: &mut Terminal, delta: &str) {
+fn append_log(t: &mut Terminal, delta: &str, session_total: &mut u64) {
     let Some(path) = &t.log else {
         return;
     };
-    if t.logged >= MAX_LOG {
+    if t.logged >= MAX_LOG || *session_total >= MAX_SESSION_LOGS {
         return;
     }
-    let written = std::fs::OpenOptions::new()
-        .append(true)
-        .open(path)
-        .and_then(|mut f| f.write_all(delta.as_bytes()));
-    if written.is_ok() {
+    if super::codex_terminal_logs::append(path, delta.as_bytes()).is_ok() {
         t.logged += delta.len() as u64;
+        *session_total += delta.len() as u64;
     }
 }
 
@@ -1242,7 +1380,8 @@ mod tests {
             store.get("s").unwrap().collaboration_mode.as_deref(),
             Some("default")
         );
-        assert_eq!(store.set_managed_permission_mode("s", "plan"), Ok("plan"));
+        // `plan` answers with the approval posture it kept.
+        assert_eq!(store.set_managed_permission_mode("s", "plan"), Ok("ask"));
         assert!(x.collaboration.is_plan());
         assert_eq!(
             store.get("s").unwrap().collaboration_mode.as_deref(),
@@ -1257,7 +1396,7 @@ mod tests {
     }
 
     #[test]
-    fn method_not_found_on_0_153_degrades_every_probe_quietly() {
+    fn a_build_without_the_methods_degrades_every_probe_quietly() {
         let (store, conv, x, mut rx, tx, logs) = fixture(true);
         let mut x = x.with_platform(true, logs);
         x.startup(&tx);
@@ -1269,7 +1408,12 @@ mod tests {
             Some("t"),
             true,
         );
-        let not_found = json!({"code":-32601,"message":"method not found"});
+        // Real Codex's refusal of a method it does not know: -32600 with
+        // its whole method list.
+        let list: Vec<String> = (0..400).map(|i| format!("`method/{i}`")).collect();
+        let not_found = json!({"code":-32600,"message":format!(
+            "Invalid request: unknown variant `thread/goal/get`, expected one of {}",
+            list.join(", "))});
         let probes = drain(&mut rx);
         assert_eq!(probes.len(), 3, "readiness, collaboration list, goal get");
         for request in probes {
@@ -1823,7 +1967,7 @@ mod tests {
             "stopped"
         );
 
-        // A 0.153 build without the method: the stop answers why.
+        // A build without the method: the stop answers why.
         x.observe(
             &json!({"method":"item/started","params":command_item("b","6","unifiedExecStartup")}),
             &store,
@@ -1876,8 +2020,9 @@ mod tests {
 }
 
 /// End to end through `codex::run_session` against a scripted stand-in
-/// app-server: the extras ride the real driver loop, and a 0.153-shaped
-/// server that knows none of their methods leaves the chat path untouched.
+/// app-server: the extras ride the real driver loop, and a server that knows
+/// none of their methods (answering the way real Codex does) leaves the chat
+/// path untouched.
 #[cfg(all(test, unix))]
 mod driver_tests {
     use super::super::codex::{run_session, DriverEvidence};
@@ -1934,7 +2079,8 @@ class Server(http.server.BaseHTTPRequestHandler):
                 method = msg.get('method')
                 if 'id' not in msg or method is None: continue
                 if method in script.get('unsupported', []):
-                    send({'id': msg['id'], 'error': {'code': -32601, 'message': 'method not found'}})
+                    known = ', '.join('`m/%d`' % i for i in range(300))
+                    send({'id': msg['id'], 'error': {'code': -32600, 'message': 'Invalid request: unknown variant `%s`, expected one of %s' % (method, known)}})
                     continue
                 if method == 'turn/start':
                     turns += 1
@@ -2125,7 +2271,11 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         assert!(until(|| store.get(sid).unwrap().goal.is_some()).await);
         assert_eq!(store.get(sid).unwrap().goal.unwrap().objective, "Ship v2");
 
-        assert_eq!(store.set_managed_permission_mode(sid, "plan"), Ok("plan"));
+        assert_eq!(store.set_managed_permission_mode(sid, "plan"), Ok("ask"));
+        assert_eq!(
+            store.get(sid).unwrap().collaboration_mode.as_deref(),
+            Some("plan")
+        );
         assert!(
             until(|| matches!(
                 store.submit_message(sid, "plan it".into()),
@@ -2170,7 +2320,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
     }
 
     #[tokio::test]
-    async fn a_0_153_server_without_the_extras_still_chats_and_answers_why() {
+    async fn a_server_without_the_extras_still_chats_and_answers_why() {
         let fake = Fake::new(
             json!({
                 "unsupported": [
@@ -2185,7 +2335,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             }),
             false,
         );
-        let sid = "extras-0153";
+        let sid = "extras-missing";
         let (store, conv, task) = start(&fake, sid);
         assert!(until(|| !fake.calls("thread/goal/get").is_empty()).await);
         assert!(fake.calls("initialize")[0]["params"]
@@ -2248,5 +2398,259 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         );
         store.terminate_managed(sid);
         let _ = tokio::time::timeout(std::time::Duration::from_secs(8), task).await;
+    }
+}
+
+/// Plan-mode state that outlives a driver, error hygiene, notice noise and
+/// log lifetime.
+#[cfg(test)]
+mod lifetime_tests {
+    use super::*;
+    use crate::session::conversation::ConversationItem;
+    use std::sync::atomic::AtomicBool;
+
+    fn setup(experimental: bool) -> (SessionStore, ConversationStore, Extras, PathBuf) {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed("s", "/work", "codex");
+        let logs = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("codex-extras-logs-{}", uuid::Uuid::new_v4()))
+            .join("s");
+        let extras = Extras::new(
+            "s",
+            "/work",
+            experimental,
+            collaboration_seed(Some("gpt-5.5"), Some("high")),
+        )
+        .with_platform(false, logs.clone());
+        (store, conv, extras, logs)
+    }
+
+    fn plan_mode() -> Value {
+        json!({"mode":"plan","settings":{"model":"gpt-5.5","reasoning_effort":"medium","developer_instructions":null}})
+    }
+
+    #[test]
+    fn a_thread_resumed_in_plan_mode_stays_in_it_and_leaving_says_default() {
+        let (store, conv, mut x, _) = setup(true);
+        x.collaboration.available.store(true, Ordering::Relaxed);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        x.observe(
+            &json!({"id":2,"result":{"model":"gpt-5.5","thread":{"id":"t"},"collaborationMode":plan_mode()}}),
+            &store,
+            &conv,
+            &tx,
+            Some("t"),
+            true,
+        );
+        assert!(x.collaboration.is_plan());
+        assert_eq!(
+            store.get("s").unwrap().collaboration_mode.as_deref(),
+            Some("plan")
+        );
+        // The user picks ask: the next turn must leave plan explicitly.
+        x.collaboration.set_plan(false);
+        let mut params = json!({});
+        stamp_turn(&mut params, Some(&x.collaboration));
+        assert_eq!(params["collaborationMode"]["mode"], "default");
+    }
+
+    #[test]
+    fn a_tui_side_mode_change_arrives_with_thread_settings() {
+        let (store, conv, mut x, _) = setup(false);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let settings = |mode: Value| json!({"method":"thread/settings/updated","params":{"threadId":"t","threadSettings":{"model":"gpt-5.5","collaborationMode":mode}}});
+        x.observe(&settings(plan_mode()), &store, &conv, &tx, Some("t"), true);
+        assert!(x.collaboration.is_plan());
+        // Without the opt-in a plan thread is still shown as such.
+        assert_eq!(
+            store.get("s").unwrap().collaboration_mode.as_deref(),
+            Some("plan")
+        );
+        x.observe(
+            &settings(json!({"mode":"default","settings":{"model":"gpt-5.5"}})),
+            &store,
+            &conv,
+            &tx,
+            Some("t"),
+            true,
+        );
+        assert!(!x.collaboration.is_plan());
+        assert!(!x.collaboration.engaged.load(Ordering::Relaxed));
+        assert_eq!(store.get("s").unwrap().collaboration_mode, None);
+    }
+
+    #[test]
+    fn a_late_turn_response_with_id_101_is_not_a_thread_result() {
+        let (store, conv, mut x, _) = setup(false);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let started =
+            json!({"id":101,"result":{"model":"gpt-5.5","thread":{"id":"t","name":"First"}}});
+        x.observe(&started, &store, &conv, &tx, Some("t"), true);
+        assert_eq!(
+            store.get("s").unwrap().thread_name.as_deref(),
+            Some("First")
+        );
+        // Ours again later — never re-applied; a turn result is never one.
+        x.observe(
+            &json!({"id":101,"result":{"model":"other","thread":{"id":"t","name":"Second"}}}),
+            &store,
+            &conv,
+            &tx,
+            Some("t"),
+            true,
+        );
+        x.observe(
+            &json!({"id":2,"result":{"turn":{"id":"u"}}}),
+            &store,
+            &conv,
+            &tx,
+            Some("t"),
+            true,
+        );
+        assert_eq!(
+            store.get("s").unwrap().thread_name.as_deref(),
+            Some("First")
+        );
+        assert_eq!(
+            x.collaboration.model.lock().unwrap().as_deref(),
+            Some("gpt-5.5")
+        );
+    }
+
+    #[test]
+    fn relayed_codex_errors_are_bounded() {
+        let long = "x".repeat(5_000);
+        let text = rpc_error("thread/goal/set", &json!({"code":-32603,"message":long}));
+        assert!(text.len() < MAX_ERROR_TEXT + 64, "{}", text.len());
+        assert!(text.ends_with('…'));
+        assert_eq!(
+            rpc_error(
+                "review/start",
+                &json!({"code":-32600,"message":"Invalid request: unknown variant `review/start`, expected one of `initialize`"})
+            ),
+            "this Codex build does not support review/start"
+        );
+    }
+
+    fn notices(conv: &ConversationStore) -> usize {
+        conv.snapshot("s")
+            .map(|(_, items)| items)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|i| matches!(i, ConversationItem::AssistantNotice { .. }))
+            .count()
+    }
+
+    #[test]
+    fn sandbox_notices_only_for_sandboxed_sessions_and_once() {
+        let (store, conv, x, logs) = setup(false);
+        let mut x = x.with_platform(true, logs);
+        let yolo = Arc::new(AtomicBool::new(true));
+        x.watch_yolo(yolo.clone());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let answer = |x: &mut Extras, rx: &mut mpsc::UnboundedReceiver<Value>, status: &str| {
+            x.startup(&tx);
+            let req = rx.try_recv().unwrap();
+            x.intercept(
+                &json!({"id":req["id"],"result":{"status":status}}),
+                &store,
+                &conv,
+                &tx,
+                None,
+            );
+        };
+        answer(&mut x, &mut rx, "notConfigured");
+        assert_eq!(notices(&conv), 0, "bypassed: not news");
+        assert!(!store.get("s").unwrap().windows_sandbox.unwrap().ready);
+        let warn = json!({"method":"windows/worldWritableWarning","params":{"samplePaths":["C:\\\\T"],"extraCount":0,"failedScan":false}});
+        x.observe(&warn, &store, &conv, &tx, None, false);
+        assert_eq!(notices(&conv), 0);
+        yolo.store(false, Ordering::Relaxed);
+        store.update_state("s", |s| {
+            s.windows_sandbox = None;
+            true
+        });
+        answer(&mut x, &mut rx, "notConfigured");
+        assert_eq!(notices(&conv), 1);
+        store.update_state("s", |s| {
+            s.windows_sandbox = None;
+            true
+        });
+        answer(&mut x, &mut rx, "updateRequired");
+        assert_eq!(notices(&conv), 1, "at most once per session");
+        x.observe(&warn, &store, &conv, &tx, None, false);
+        x.observe(&warn, &store, &conv, &tx, None, false);
+        assert_eq!(notices(&conv), 2);
+    }
+
+    fn started(id: &str, process: &str) -> Value {
+        json!({"method":"item/started","params":{"threadId":"t","item":{"type":"commandExecution","id":id,"command":"run","processId":process,"source":"unifiedExecStartup","status":"inProgress"}}})
+    }
+
+    #[test]
+    fn logs_leave_with_their_row_and_with_the_driver() {
+        let (store, conv, mut x, logs) = setup(false);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let obs = |x: &mut Extras, v: Value| x.observe(&v, &store, &conv, &tx, Some("t"), true);
+        // More finished terminals than the row cap: the oldest rows go, and
+        // their logs with them.
+        for n in 0..(bg::MAX_TASKS + 3) {
+            let id = format!("i{n}");
+            obs(&mut x, started(&id, &n.to_string()));
+            obs(
+                &mut x,
+                json!({"method":"turn/completed","params":{"threadId":"t","turn":{"id":id}}}),
+            );
+            obs(
+                &mut x,
+                json!({"method":"item/completed","params":{"threadId":"t","item":{"type":"commandExecution","id":id,"status":"completed","exitCode":0}}}),
+            );
+        }
+        let rows = store.get("s").unwrap().background_task_list;
+        assert_eq!(rows.len(), bg::MAX_TASKS);
+        let files = std::fs::read_dir(&logs).unwrap().count();
+        assert_eq!(files, bg::MAX_TASKS, "evicted rows' logs removed");
+        drop(x);
+        assert!(!logs.exists(), "the driver's end removes its logs");
+        let _ = std::fs::remove_dir_all(logs.parent().unwrap());
+    }
+
+    #[test]
+    fn a_session_s_logs_are_capped_in_total() {
+        let (store, conv, mut x, logs) = setup(false);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        x.logged_total = MAX_SESSION_LOGS - 4;
+        x.observe(&started("a", "1"), &store, &conv, &tx, Some("t"), true);
+        x.observe(
+            &json!({"method":"item/commandExecution/outputDelta","params":{"threadId":"t","itemId":"a","delta":"0123456789"}}),
+            &store,
+            &conv,
+            &tx,
+            Some("t"),
+            true,
+        );
+        x.observe(
+            &json!({"method":"turn/completed","params":{"threadId":"t","turn":{"id":"u"}}}),
+            &store,
+            &conv,
+            &tx,
+            Some("t"),
+            true,
+        );
+        x.observe(
+            &json!({"method":"item/commandExecution/outputDelta","params":{"threadId":"t","itemId":"a","delta":"more"}}),
+            &store,
+            &conv,
+            &tx,
+            Some("t"),
+            true,
+        );
+        let log = logs.join("codex-1.output");
+        assert_eq!(std::fs::read(&log).unwrap(), b"0123");
+        drop(x);
+        let _ = std::fs::remove_dir_all(logs.parent().unwrap());
     }
 }
