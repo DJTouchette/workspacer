@@ -1670,52 +1670,110 @@ fn thinking_display_args(
     vec!["--thinking-display".into(), "summarized".into()]
 }
 
-/// Whether a settings file the CLI reads for this session sets
+/// Where the OS keeps Claude Code's managed (policy) settings.
+fn managed_settings_path() -> std::path::PathBuf {
+    if cfg!(target_os = "macos") {
+        "/Library/Application Support/ClaudeCode/managed-settings.json".into()
+    } else if cfg!(windows) {
+        r"C:\Program Files\ClaudeCode\managed-settings.json".into()
+    } else {
+        "/etc/claude-code/managed-settings.json".into()
+    }
+}
+
+/// Whether any settings source the CLI reads for this session sets
 /// `showThinkingSummaries` (either way): the user's config root
 /// (`CLAUDE_CONFIG_DIR` from the spawn env or the daemon's, else
-/// `~/.claude`) and the project's `.claude/settings{,.local}.json`.
-fn settings_choose_thinking_display(cwd: &str, spawn_env: &HashMap<String, String>) -> bool {
+/// `~/.claude`), the project's `.claude/settings{,.local}.json`, a
+/// `--settings <file | json>` in the spawn's extra args (a profile), and the
+/// OS managed-settings file.
+fn settings_choose_thinking_display(
+    cwd: &str,
+    spawn_env: &HashMap<String, String>,
+    extra_args: &[String],
+) -> bool {
+    let names = |v: &Value| v.get("showThinkingSummaries").is_some();
+    let file_names = |path: &std::path::Path| {
+        std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some_and(|v| names(&v))
+    };
+    let inline = extra_args
+        .iter()
+        .enumerate()
+        .filter_map(|(i, arg)| match arg.strip_prefix("--settings=") {
+            Some(value) => Some(value),
+            None => (arg == "--settings")
+                .then(|| extra_args.get(i + 1).map(String::as_str))
+                .flatten(),
+        })
+        .any(|value| match serde_json::from_str::<Value>(value) {
+            Ok(json) => names(&json),
+            Err(_) => file_names(&std::path::Path::new(cwd).join(value)),
+        });
     let root = spawn_env
         .get("CLAUDE_CONFIG_DIR")
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from))
         .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().join(".claude")));
     let project = std::path::Path::new(cwd).join(".claude");
-    root.map(|r| r.join("settings.json"))
-        .into_iter()
-        .chain([
-            project.join("settings.json"),
-            project.join("settings.local.json"),
-        ])
-        .any(|path| {
-            std::fs::read(&path)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-                .is_some_and(|v| v.get("showThinkingSummaries").is_some())
-        })
+    inline
+        || root
+            .map(|r| r.join("settings.json"))
+            .into_iter()
+            .chain([
+                project.join("settings.json"),
+                project.join("settings.local.json"),
+                managed_settings_path(),
+            ])
+            .any(|path| file_names(&path))
 }
 
-/// The CLI's `(major, minor, patch)` from `<bin> --version` (~40 ms), cached
-/// per resolved binary path: an update installs a new versioned file, so the
-/// canonical path changes with the version. `None` when it cannot be learned.
-async fn cli_version(bin: &str) -> Option<(u32, u32, u32)> {
-    type Cache = std::sync::Mutex<HashMap<String, Option<(u32, u32, u32)>>>;
-    static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
-    let key = which_bin(bin)
-        .and_then(|p| std::fs::canonicalize(p).ok())
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| bin.to_string());
-    if let Some(known) = CACHE
+/// How long a failed version probe is trusted before the next spawn retries.
+const VERSION_PROBE_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
+
+#[derive(Debug, Clone, Copy)]
+enum ProbeState {
+    Known(Option<(u32, u32, u32)>),
+    Failed(std::time::Instant),
+}
+
+/// The CLI's `(major, minor, patch)` from `<bin> --version` (~40 ms).
+///
+/// Cached per resolved binary FILE `(canonical path, mtime, size)`, so an
+/// update in place re-probes. A failed or timed-out probe is not cached as an
+/// answer: it is retried after [`VERSION_PROBE_RETRY`]. Concurrent spawns of
+/// one binary share a single probe. The probe runs in the session's own cwd
+/// with the session's env (a profile's `PATH` / `CLAUDE_CONFIG_DIR` apply),
+/// never in the daemon's directory. `None` when it cannot be learned.
+async fn cli_version(
+    bin: &str,
+    cwd: &str,
+    env: &HashMap<String, String>,
+) -> Option<(u32, u32, u32)> {
+    type Slot = Arc<tokio::sync::Mutex<Option<ProbeState>>>;
+    static SLOTS: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Slot>>> =
+        std::sync::OnceLock::new();
+    let key = probe_key(bin, env);
+    let slot = SLOTS
         .get_or_init(Default::default)
         .lock()
         .unwrap()
-        .get(&key)
-    {
-        return *known;
+        .entry(key)
+        .or_default()
+        .clone();
+    let mut state = slot.lock().await;
+    match *state {
+        Some(ProbeState::Known(version)) => return version,
+        Some(ProbeState::Failed(at)) if at.elapsed() < VERSION_PROBE_RETRY => return None,
+        _ => {}
     }
     let probe = async {
         let out = Command::new(bin)
             .arg("--version")
+            .current_dir(cwd)
+            .envs(env)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .stdout(Stdio::piped())
@@ -1734,21 +1792,42 @@ async fn cli_version(bin: &str) -> Option<(u32, u32, u32)> {
         .await
         .ok()
         .flatten();
-    CACHE
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap()
-        .insert(key, version);
+    *state = Some(match version {
+        Some(v) => ProbeState::Known(Some(v)),
+        None => ProbeState::Failed(std::time::Instant::now()),
+    });
     version
 }
 
-/// `bin` as a path: itself when it names one, else its first `PATH` hit.
-fn which_bin(bin: &str) -> Option<std::path::PathBuf> {
+/// The cache key for a binary: its resolved file's canonical path, mtime and
+/// size; the bare spelling when it cannot be resolved.
+fn probe_key(bin: &str, env: &HashMap<String, String>) -> String {
+    which_bin(bin, env)
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .and_then(|p| {
+            let meta = std::fs::metadata(&p).ok()?;
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            Some(format!("{}|{mtime}|{}", p.display(), meta.len()))
+        })
+        .unwrap_or_else(|| bin.to_string())
+}
+
+/// `bin` as a path: itself when it names one, else its first hit on the
+/// session's `PATH` (the spawn env's, else the daemon's).
+fn which_bin(bin: &str, env: &HashMap<String, String>) -> Option<std::path::PathBuf> {
     let path = std::path::Path::new(bin);
     if path.components().count() > 1 {
         return Some(path.to_path_buf());
     }
-    std::env::split_paths(&std::env::var_os("PATH")?)
+    let search = env
+        .get("PATH")
+        .map(std::ffi::OsString::from)
+        .or_else(|| std::env::var_os("PATH"))?;
+    std::env::split_paths(&search)
         .map(|dir| dir.join(bin))
         .find(|candidate| candidate.is_file())
 }
@@ -1830,8 +1909,8 @@ async fn run_session(
     let mut argv = build_argv(&cfg);
     // Ask for thinking TEXT when the CLI takes the flag and nobody chose a
     // display already (see `thinking_display_args`).
-    let version = cli_version(&cfg.bin).await;
-    let settings_choose = settings_choose_thinking_display(&cfg.cwd, &cfg.env);
+    let version = cli_version(&cfg.bin, &cfg.cwd, &cfg.env).await;
+    let settings_choose = settings_choose_thinking_display(&cfg.cwd, &cfg.env, &cfg.extra_args);
     argv.extend(thinking_display_args(
         version,
         &cfg.extra_args,
@@ -2946,22 +3025,83 @@ mod tests {
             root.to_string_lossy().into_owned(),
         )]);
         let cwd = project.to_string_lossy().into_owned();
-        assert!(!settings_choose_thinking_display(&cwd, &env));
+        assert!(!settings_choose_thinking_display(&cwd, &env, &[]));
         std::fs::write(root.join("settings.json"), r#"{"model":"opus"}"#).unwrap();
-        assert!(!settings_choose_thinking_display(&cwd, &env));
+        assert!(!settings_choose_thinking_display(&cwd, &env, &[]));
         std::fs::write(
             project.join(".claude/settings.local.json"),
             r#"{"showThinkingSummaries":false}"#,
         )
         .unwrap();
-        assert!(settings_choose_thinking_display(&cwd, &env));
+        assert!(settings_choose_thinking_display(&cwd, &env, &[]));
         std::fs::remove_file(project.join(".claude/settings.local.json")).unwrap();
         std::fs::write(
             root.join("settings.json"),
             r#"{"showThinkingSummaries":true}"#,
         )
         .unwrap();
-        assert!(settings_choose_thinking_display(&cwd, &env));
+        assert!(settings_choose_thinking_display(&cwd, &env, &[]));
+        std::fs::write(root.join("settings.json"), r#"{"model":"opus"}"#).unwrap();
+        // A profile's `--settings`: inline JSON or a file.
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(settings_choose_thinking_display(
+            &cwd,
+            &env,
+            &args(&["--settings", r#"{"showThinkingSummaries":false}"#])
+        ));
+        assert!(!settings_choose_thinking_display(
+            &cwd,
+            &env,
+            &args(&["--settings", r#"{"model":"opus"}"#])
+        ));
+        let profile = dir.join("profile.json");
+        std::fs::write(&profile, r#"{"showThinkingSummaries":true}"#).unwrap();
+        assert!(settings_choose_thinking_display(
+            &cwd,
+            &env,
+            &args(&[&format!("--settings={}", profile.display())])
+        ));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The version probe runs in the session's cwd with its env (never the
+    /// daemon's directory), re-probes a binary that changed on disk, and
+    /// retries a failure instead of caching it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn version_probe_runs_in_the_session_and_rekeys_on_change() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("claudemon-probe-{}", uuid::Uuid::new_v4()));
+        let work = dir.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let bin = dir.join("claude");
+        let write = |body: &str| {
+            std::fs::write(&bin, body).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        write(
+            "#!/bin/sh\necho \"$PROBE_TAG\" > \"$PWD/probe-ran\"\necho '2.1.250 (Claude Code)'\n",
+        );
+        let env = HashMap::from([("PROBE_TAG".to_string(), "session-env".to_string())]);
+        let cwd = work.to_string_lossy().into_owned();
+        let bin_s = bin.to_string_lossy().into_owned();
+        let before = probe_key(&bin_s, &env);
+        assert_eq!(cli_version(&bin_s, &cwd, &env).await, Some((2, 1, 250)));
+        assert_eq!(
+            std::fs::read_to_string(work.join("probe-ran"))
+                .unwrap()
+                .trim(),
+            "session-env"
+        );
+        let daemon_cwd = std::env::current_dir().unwrap();
+        assert!(!daemon_cwd.join("probe-ran").exists());
+        // An update in place is a new key, probed afresh.
+        write("#!/bin/sh\necho '2.1.299 (Claude Code) updated'\n");
+        assert_ne!(probe_key(&bin_s, &env), before);
+        assert_eq!(cli_version(&bin_s, &cwd, &env).await, Some((2, 1, 299)));
+        // A failure is remembered only briefly, as a failure.
+        let broken = dir.join("broken").to_string_lossy().into_owned();
+        assert_eq!(cli_version(&broken, &cwd, &env).await, None);
         let _ = std::fs::remove_dir_all(dir);
     }
 
