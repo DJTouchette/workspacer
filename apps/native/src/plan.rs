@@ -114,10 +114,7 @@ pub fn active(steps: &[Step]) -> Option<&Step> {
 /// unless the row's own plan is newer (or the transcript window holds none).
 /// Both come from the same daemon, so a tie goes to the transcript, which
 /// updates first while the conversation streams.
-pub fn current(
-    transcript: &crate::model::Transcript,
-    row: Option<&Plan>,
-) -> Option<Vec<Step>> {
+pub fn current(transcript: &crate::model::Transcript, row: Option<&Plan>) -> Option<Vec<Step>> {
     let latest = transcript
         .rows
         .iter()

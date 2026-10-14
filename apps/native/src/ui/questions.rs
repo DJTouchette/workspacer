@@ -14,7 +14,29 @@ pub(super) fn question_list(value: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// A question whose answer must stay hidden (Codex's `isSecret`).
+pub(super) fn secret(question: &Value) -> bool {
+    question["secret"].as_bool() == Some(true)
+}
+
 impl Workspace {
+    /// Once the hub accepts the answers, secret ones are wiped from their
+    /// fields: Edit answers asks for them again rather than holding them.
+    pub(super) fn forget_secret_answers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let questions = self
+            .selected_session()
+            .and_then(|s| s.questions.as_ref())
+            .map(question_list)
+            .unwrap_or_default();
+        for (ix, question) in questions.iter().enumerate() {
+            if secret(question)
+                && let Some(input) = self.extras.answers.get(ix).cloned()
+            {
+                input.update(cx, |input, cx| input.set_value("", window, cx));
+            }
+        }
+    }
+
     /// A new question set (or another session's) starts fresh: no picks,
     /// answers or focus carried over from the last one.
     pub(super) fn sync_questions(
@@ -57,12 +79,17 @@ impl Workspace {
                 .iter()
                 .map(|q| {
                     let has_options = q["options"].as_array().is_some_and(|o| !o.is_empty());
+                    // A secret (a token, a password) is typed masked and never
+                    // shown back.
+                    let secret = secret(q);
                     cx.new(|cx| {
-                        InputState::new(window, cx).placeholder(if has_options {
-                            "Or type a different answer"
-                        } else {
-                            "Type your answer"
-                        })
+                        InputState::new(window, cx).masked(secret).placeholder(
+                            match (secret, has_options) {
+                                (true, _) => "Type it here; it stays hidden",
+                                (false, true) => "Or type a different answer",
+                                (false, false) => "Type your answer",
+                            },
+                        )
                     })
                 })
                 .collect();

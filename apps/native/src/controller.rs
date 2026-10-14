@@ -1456,8 +1456,7 @@ impl Worker {
         let valid = self.view.connected
             && self.view.selected.as_ref() == Some(&session)
             && self.sessions.get(&session).is_some_and(|s| {
-                (!s.stopped()
-                    || matches!(&action, Action::Queue(op) if !op.needs_live_session()))
+                (!s.stopped() || matches!(&action, Action::Queue(op) if !op.needs_live_session()))
                     && match &action {
                         Action::Approve(_) => s.approval.is_some(),
                         Action::DenyWithNote(note) => {

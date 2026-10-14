@@ -547,6 +547,8 @@ impl Workspace {
         }
         self.sync_attachments(next, window, cx);
         self.sync_questions(next, window, cx);
+        self.sync_queue(next, window, cx);
+        self.sync_async_questions(next);
         if self.view.selected != next.selected {
             self.extras.confirm_end = None;
             if matches!(

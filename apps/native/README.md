@@ -311,7 +311,16 @@ Captured during a real Codex round trip through an isolated backend:
   to send and Shift+Enter for a new line. The choice is saved on this device and
   applies only to the chat composer: other fields keep their Enter, an open IME
   composition keeps Enter for the input method, and a busy composer neither
-  sends nor adds a line. While the agent works, Enter queues the message.
+  sends nor adds a line.
+- **Sending while the agent works** (a turn running, an approval or question
+  open, or a send still in flight): the send key **steers** — the message is
+  sent now and the agent reads it at its next step (Claude's next tool
+  boundary, Codex's `turn/steer`). **Tab** (with a draft) or **Queue** puts it
+  on the hub's message queue for when the turn ends. **Send now**
+  (Ctrl/Cmd+Enter when Enter sends, Ctrl/Cmd+Shift+Enter in either mode) has
+  the agent read it immediately: Claude sets background work aside, Codex is
+  interrupted and takes it as the next turn. The hint line under the composer
+  names the keys. Idle, every key is an ordinary send and Tab keeps its job.
 - Scrollback retains its position while new text arrives. Jump to latest resumes
   following the conversation.
 
@@ -414,10 +423,47 @@ Transcript rendering is described below.
   not inline pictures; raw HTML renders through the component's limited HTML
   subset; footnotes, math, Mermaid and front matter are not specially
   rendered; a `#heading` on a link to another file opens that file at the top.
-- Sent messages remain visibly provisional until a new authoritative user turn
-  acknowledges them. Messages sent during work say **Queued**. Failed or uncertain
-  sends preserve the existing draft behavior; acceptance alone does not remove
-  the provisional bubble.
+- Sent messages remain visibly provisional — the user's bubble after the
+  transcript's last message — until a new authoritative user turn acknowledges
+  them. The line under the bubble says how it went: **Sending…**, **Sent · the
+  agent reads it at its next step** (steered mid-turn), **Sent now**, or
+  **Waiting for this turn to end** only when the daemon itself reports holding
+  it. A steered message is never labelled queued. Failed or uncertain sends
+  preserve the existing draft behavior; acceptance alone does not remove the
+  provisional bubble.
+- **Message queue.** The hub owns each session's queue (`sessions.queue*`;
+  every client edits the same one) and sends the head entry when a turn ends,
+  never over an open approval or question. While it holds anything, a panel
+  docks above the composer, below the other dock cards: each entry with its
+  number and first line (**More** shows it all), **Move up/down**, **Edit**
+  (inline; Enter saves, Shift+Enter adds a line, Esc cancels), **Send now**
+  and **Remove**, plus **Clear all**. Every control is a Tab stop. A paused
+  queue shows the hub's reason and **Resume** (re-placing the head, which any
+  change does). A send whose delivery is unknown shows as **May have been
+  sent** with **Dismiss** and **Send again** (queue it anew, then dismiss);
+  it is never resent automatically, and when the hub's 200-character preview
+  may be cut, **Copy to composer** replaces Send again. An entry the hub sends
+  while you edit it ends the edit with your text in the composer.
+- **Questions that don't block** (Codex `request_user_input_async`) are a card
+  in the transcript where they were asked: each question with its options and
+  a typed answer (typing wins over a choice). The agent keeps working and the
+  composer stays usable. **Send answer(s)** sends the answered questions as one
+  ordinary message (steering a running turn) in Codex's own reply envelope;
+  the card then reads **Answered** with the answers. The reply reads as its
+  answers in the transcript too, and marks its card answered after a reload
+  while it is in the loaded conversation (older replies leave the card
+  unanswered). History and child transcripts show the card read-only.
+- **Driver notices** (the daemon speaking, not the agent — e.g. an MCP server
+  asking for input Workspacer cannot show) are subdued info rows, never merged
+  into the agent's text around them.
+- **Task list.** The newest plan (TodoWrite, Claude's TaskCreate/TaskUpdate/
+  TaskList, Codex's plan tool; or the session row's plan when the transcript
+  window holds none) is pinned under the title: **Tasks n/m done** with the
+  running step, folding to that one line. It opens while work remains (not in
+  short windows) and a finished list starts folded; your choice holds while
+  steps tick off and resets when the list itself changes. In the transcript
+  each update is a one-line **Task list updated · n/m done** marker that opens
+  to the list as it was — history stays, without a full checklist per update.
 - Opening or switching to a conversation lands on the latest message and follows
   new output; scrolling up pauses following and **Jump to latest** resumes it.
   Reading positions are not remembered between visits (matching desktop).
@@ -541,6 +587,8 @@ editing; this is Vim-style app navigation, not a modal text editor.
 | `Ctrl/Cmd+,` | Settings, including with Vim disabled |
 | `Ctrl/Cmd+Enter` | Send, start the agent, or pin the focused project-path field |
 | `Enter` / `Shift+Enter` | With **Send messages with Enter**: send / new line in the composer |
+| `Tab` | While the agent works, with a draft: queue it for the turn's end |
+| `Ctrl/Cmd+Shift+Enter` (or `Ctrl/Cmd+Enter` when Enter sends) | While the agent works: send now |
 | `Ctrl/Cmd+Shift+E`, `g f` | Files: the editor on the selected session's folder |
 | ``Ctrl/Cmd+` ``, `g t` | Show or hide the selected agent's terminal |
 | `Ctrl/Cmd+S` | Save the file in the editor |
@@ -733,7 +781,9 @@ be expanded, and attachment controls share the composer action row.
   move between rows, Enter/Space choose, and 1–9 choose within a question.
   Accepted answers make the card read-only (with **Edit answers**) until the
   question set changes. The composer draft is never touched or sent from the
-  card. Labels and typed numbers are sent literally. **Model and effort** opens from
+  card. Labels and typed numbers are sent literally. A secret question (Codex
+  `isSecret`) is typed masked, and its answer is wiped from the field once the
+  hub accepts it (**Edit answers** asks for it again). **Model and effort** opens from
   the title bar's model chip (which also shows the session's recorded effort) or
   `g m`. It starts on the session's exact model ID — selected in the list only
   when the catalog has that exact ID, never a near match — and its effort, and
@@ -743,7 +793,9 @@ be expanded, and attachment controls share the composer action row.
   for the effort (the hub routes it to Claude's `/effort` or Codex's thread
   settings). An unchanged form sends nothing. Accepted, queued and refused
   changes are reported, including a model change accepted with its effort
-  refused. Drafts are untouched. The same page's **Access** row switches the
+  refused; a refusal reads **Model/Effort/Access change refused: …** and the
+  title chip keeps the hub's recorded value (Claude stream sessions now refuse
+  a live switch the CLI rejects). Drafts are untouched. The same page's **Access** row switches the
   running session's mode live, on one click (`claude.setPermissionMode`;
   Claude's four modes, Codex's Ask to approve / Full access). The daemon
   drives and verifies it, and its refusal, such as Claude full access for a
@@ -957,6 +1009,12 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/history.rs` | Session history grouped by project (worktrees to their repository), ordering and search |
 | `src/ui/recent.rs` | Session history page: search field, folding groups, Show more, keyboard cursor |
 | `src/ui/questions.rs` | Pending question sets: picker, answers and submission |
+| `src/queue.rs` | A session's hub-owned message queue from its row, and the `sessions.queue*` calls |
+| `src/ui/queue.rs` | Queue panel above the composer: edit, reorder, remove, send now, paused and may-have-been-sent |
+| `src/questions.rs` | Codex async questions and their reply envelope |
+| `src/ui/async_questions.rs` | Async question cards in the transcript and replies read as answers |
+| `src/plan.rs` | The agent's task list (TodoWrite, Task tools, Codex plans) and which plan is current |
+| `src/ui/plan.rs` | Task list pinned under the title and its transcript markers |
 | `src/ui/attachments.rs` | Draft attachments: picking, pasting, uploads and thumbnails |
 | `src/ui/archive.rs` | Archive and restore, shared through the hub |
 | `src/jobs.rs` | Hub jobs as the Jobs view reads them, and the owner's approve/pause payloads |

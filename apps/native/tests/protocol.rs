@@ -1645,10 +1645,7 @@ async fn delivery_modes_and_queue_changes_use_the_hub_contracts() {
         .await;
     let read = hub.frame("call", Some("sessions.conversation")).await;
     read.result(snapshot(1, "Working")).await;
-    let v = view(&controller, |v| {
-        v.transcript.seq == Some(1) && !v.loading
-    })
-    .await;
+    let v = view(&controller, |v| v.transcript.seq == Some(1) && !v.loading).await;
     let queue = &v.sessions[0].queue;
     assert_eq!(queue.entries[0].text, "later");
     assert!(queue.paused);
@@ -1671,7 +1668,9 @@ async fn delivery_modes_and_queue_changes_use_the_hub_contracts() {
         action: Action::Queue(op),
     };
     use wks_native::queue::Op;
-    controller.command(op(Op::Add("after this turn".into()))).unwrap();
+    controller
+        .command(op(Op::Add("after this turn".into())))
+        .unwrap();
     let add = hub.frame("call", Some("sessions.queueAdd")).await;
     assert_eq!(
         add.value["params"],

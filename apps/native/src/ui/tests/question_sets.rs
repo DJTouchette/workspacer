@@ -377,3 +377,169 @@ fn question_picker_keeps_send_reachable_in_every_theme_and_window(cx: &mut TestA
         "{answer:?} not scrolled into {list:?}"
     );
 }
+
+/// A secret question (Codex `isSecret`) is answered like any other, then
+/// wiped from its field once the hub accepts it; other answers stay for
+/// Edit answers.
+#[gpui::test]
+fn secret_answers_are_sent_then_never_kept(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    let mut next = state("a");
+    Arc::make_mut(&mut next.sessions)[0].questions = Some(serde_json::json!([
+        {"question":"API token?","options":[],"secret":true},
+        {"question":"Which region?","options":[]}
+    ]));
+    let pending = next.clone();
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(next), window, cx);
+            this.extras.answers[0].update(cx, |i, cx| i.set_value("s3cr3t", window, cx));
+            this.extras.answers[1].update(cx, |i, cx| i.set_value("eu-west", window, cx));
+            this.submit_answers(cx);
+        })
+    });
+    let sent = sent_actions(&mut commands);
+    assert!(matches!(&sent[..], [Action::Answers(a)] if a == &["s3cr3t", "eu-west"]));
+    let mut accepted = pending;
+    accepted.receipt = Some(Receipt {
+        number: 1,
+        session: "a".into(),
+        action: sent[0].clone(),
+        error: None,
+    });
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(accepted), window, cx);
+            assert!(this.extras.answers_sent);
+            assert_eq!(this.extras.answers[0].read(cx).value().as_ref(), "");
+            assert_eq!(this.extras.answers[1].read(cx).value().as_ref(), "eu-west");
+        })
+    });
+}
+
+fn async_view(extra: Vec<Item>) -> View {
+    let mut next = state("a");
+    let session = &mut Arc::make_mut(&mut next.sessions)[0];
+    session.provider = "codex".into();
+    session.state = "responding".into();
+    let mut items: Vec<Item> = serde_json::from_value(serde_json::json!([
+        {"kind":"user_message","text":"Set up the database"},
+        {"kind":"assistant_text","text":"Which database?\n- Postgres\n- SQLite","async":true,"item_id":"item-9",
+         "questions":[{"title":"Which database?","options":["Postgres","SQLite"]},{"title":"Anything else?","options":[]}]},
+        {"kind":"assistant_text","text":"Meanwhile, scaffolding the schema."}
+    ]))
+    .unwrap();
+    items.extend(extra);
+    next.transcript.snapshot(ConversationSnapshot {
+        seq: items.len() as u64,
+        first_seq: 1,
+        items,
+    });
+    next
+}
+
+/// Codex's async questions are a card in the transcript that never blocks
+/// the composer; answering sends Codex's reply envelope as an ordinary
+/// (steering) message, and the card then reads as answered.
+#[gpui::test]
+fn async_questions_answer_from_the_transcript_without_blocking_the_composer(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(1000.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.settings.enter_sends = false;
+            this.update_view(Arc::new(async_view(Vec::new())), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    bounds_of(&mut visual, "async-question-card");
+    // The composer still sends while the questions wait.
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.composer.update(cx, |input, cx| {
+                input.set_value("also add indexes", window, cx);
+                input.focus(window, cx);
+            })
+        })
+    });
+    visual.simulate_keystrokes("ctrl-enter");
+    assert!(
+        matches!(&sent_actions(&mut commands)[..], [Action::Send(t)] if t == "also add indexes")
+    );
+    click_selector(&mut visual, "async-option-0-0");
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let input = this
+                .async_questions_input("a\0item-9", 1)
+                .expect("typed-answer field");
+            input.update(cx, |input, cx| {
+                input.set_value("Use \"uuid\" keys", window, cx)
+            });
+        })
+    });
+    visual.run_until_parked();
+    click_selector(&mut visual, "async-submit");
+    let sent = sent_actions(&mut commands);
+    let [Action::Send(text)] = &sent[..] else {
+        panic!("{sent:?}")
+    };
+    let replies = wks_native::questions::parse_reply(text).expect("Codex's reply envelope");
+    assert_eq!(
+        replies
+            .iter()
+            .map(|r| (
+                r.question_item_id.as_str(),
+                r.question.as_str(),
+                r.answer.as_str()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("item-9", "Which database?", "Postgres"),
+            ("item-9", "Anything else?", "Use \"uuid\" keys")
+        ]
+    );
+    let mut accepted = async_view(Vec::new());
+    accepted.receipt = Some(Receipt {
+        number: 1,
+        session: "a".into(),
+        action: sent[0].clone(),
+        error: None,
+    });
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(accepted), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, _| {
+        assert!(
+            this.async_answered("a\0item-9"),
+            "an answered card has nothing left to send"
+        )
+    });
+}
+
+/// After a reload the reply in the transcript marks its card answered and
+/// reads as the answers, not the raw envelope.
+#[gpui::test]
+fn a_reply_in_the_transcript_answers_its_card_and_reads_as_answers(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(1000.)));
+    let reply =
+        wks_native::questions::reply_text("item-9", &[("Which database?".into(), "SQLite".into())]);
+    let view = async_view(vec![Item {
+        kind: "user_message".into(),
+        text: reply,
+        ..Default::default()
+    }]);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+    });
+    visual.run_until_parked();
+    bounds_of(&mut visual, "async-question-card");
+    bounds_of(&mut visual, "async-reply");
+    assert!(visual.debug_bounds("async-submit").is_none());
+    assert!(visual.debug_bounds("async-option-0-0").is_none());
+}

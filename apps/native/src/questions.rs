@@ -136,7 +136,9 @@ mod tests {
                 ("Anything else?".into(), tricky.into()),
             ],
         );
-        assert!(text.starts_with("<send_user_message_question_reply>[{\"questionItemId\":\"item-7\""));
+        assert!(
+            text.starts_with("<send_user_message_question_reply>[{\"questionItemId\":\"item-7\"")
+        );
         assert!(text.ends_with("}]</send_user_message_question_reply>"));
         let replies = parse_reply(&text).expect("an envelope");
         assert_eq!(replies.len(), 2);
@@ -148,7 +150,10 @@ mod tests {
         let ide = format!("# Context from my IDE setup:\n\nfiles\n## My request for Codex:\n{one}");
         assert_eq!(parse_reply(&ide).unwrap()[0].question, "Q");
         assert!(parse_reply("just text").is_none());
-        assert!(parse_reply("<send_user_message_question_reply>[]</send_user_message_question_reply>").is_none());
+        assert!(
+            parse_reply("<send_user_message_question_reply>[]</send_user_message_question_reply>")
+                .is_none()
+        );
         assert!(parse_reply(&format!("{one} and more")).is_none());
     }
 }

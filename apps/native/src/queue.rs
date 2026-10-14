@@ -104,10 +104,16 @@ impl Queue {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Op {
     Add(String),
-    Update { id: String, text: String },
+    Update {
+        id: String,
+        text: String,
+    },
     /// Removes an entry, or acknowledges the uncertain one by its id.
     Remove(String),
-    Move { id: String, index: usize },
+    Move {
+        id: String,
+        index: usize,
+    },
     /// Sends the entry now, interrupting or setting aside current work
     /// (`delivery: "now"`).
     SendNow(String),
@@ -115,7 +121,10 @@ pub enum Op {
     /// "Send again" for an uncertain send whose preview is the whole text:
     /// queue the text anew, then dismiss the uncertain record. Two calls, in
     /// that order, so a refused add never loses the record.
-    Resend { uncertain: String, text: String },
+    Resend {
+        uncertain: String,
+        text: String,
+    },
 }
 
 impl Op {
@@ -131,10 +140,7 @@ impl Op {
                 "sessions.queueUpdate",
                 json!({"sessionId":session,"id":id,"text":text}),
             ),
-            Self::Remove(id) => (
-                "sessions.queueRemove",
-                json!({"sessionId":session,"id":id}),
-            ),
+            Self::Remove(id) => ("sessions.queueRemove", json!({"sessionId":session,"id":id})),
             Self::Move { id, index } => (
                 "sessions.queueMove",
                 json!({"sessionId":session,"id":id,"index":index}),
@@ -183,7 +189,10 @@ mod tests {
     fn rows_with_the_list_carry_the_whole_queue_and_others_keep_it() {
         let mut queue = Queue::default();
         queue.merge(&json!({"sessionId":"a","label":"no queue yet"}));
-        assert!(!queue.visible(), "a session that never queued shows nothing");
+        assert!(
+            !queue.visible(),
+            "a session that never queued shows nothing"
+        );
         queue.merge(&json!({
             "queuedMessages":[
                 {"id":"q1","text":"first","createdAt":1},
@@ -195,7 +204,11 @@ mod tests {
             "queueUncertain":{"id":"q0","text":"maybe","at":3}
         }));
         assert_eq!(
-            queue.entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            queue
+                .entries
+                .iter()
+                .map(|e| e.id.as_str())
+                .collect::<Vec<_>>(),
             ["q1", "q2"]
         );
         assert!(queue.paused);
