@@ -1,5 +1,6 @@
 //! Delivery while the agent works (steer, queue, send now) and the hub's
 //! message queue docked above the composer.
+use super::super::queue::{Edit, Problem};
 use super::*;
 use wks_native::controller::PendingMessage;
 use wks_native::queue::{Entry, Op, Queue, UNCERTAIN_PREVIEW_CHARS, Uncertain};
@@ -258,10 +259,7 @@ fn queue_panel_edits_reorders_removes_and_sends_through_the_hub(cx: &mut TestApp
             },
             Op::SendNow("q1".into()),
             Op::Remove("q1".into()),
-            Op::Move {
-                id: "q1".into(),
-                index: 0
-            },
+            Op::Resume,
             Op::Resend {
                 uncertain: "q0".into(),
                 text: "maybe sent".into()
@@ -270,42 +268,348 @@ fn queue_panel_edits_reorders_removes_and_sends_through_the_hub(cx: &mut TestApp
             Op::Clear,
         ]
     );
-    // Inline edit: Enter saves the changed text, Escape cancels.
-    click(&mut visual, "queue-entry-0-edit");
-    bounds_of(&mut visual, "queue-editor");
+}
+
+fn type_edit(workspace: &Entity<Workspace>, visual: &mut VisualTestContext, text: &str) {
+    let text = text.to_owned();
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
             this.queue.editor.update(cx, |input, cx| {
-                input.set_value("first, edited", window, cx);
+                input.set_value(text, window, cx);
                 input.focus(window, cx);
             })
         })
     });
+    visual.run_until_parked();
+}
+
+fn edit_of(workspace: &Entity<Workspace>, visual: &VisualTestContext) -> Option<Edit> {
+    workspace.read_with(visual, |this, _| this.queue_edit().cloned())
+}
+
+/// Show `view` with a receipt for `action` (numbered past any earlier one).
+fn answer(
+    workspace: &Entity<Workspace>,
+    visual: &mut VisualTestContext,
+    mut view: View,
+    number: u64,
+    action: Action,
+    error: Option<&str>,
+) {
+    view.receipt = Some(Receipt {
+        number,
+        session: view.selected.clone().unwrap(),
+        action,
+        error: error.map(str::to_owned),
+    });
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+    });
+    visual.run_until_parked();
+}
+
+fn with_entry(view: View, ix: usize, text: &str) -> View {
+    let mut view = view;
+    Arc::make_mut(&mut view.sessions)[0].queue.entries[ix].text = text.into();
+    view
+}
+
+/// An untouched edit sends nothing; a real one saves against the text it
+/// started from (exactly, no trimming) and closes only once accepted.
+#[gpui::test]
+fn queue_edits_save_against_their_start_text_and_close_only_when_accepted(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(1000.)));
+    let base = with_entry(queued(), 0, "first\n");
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(base.clone()), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    click(&mut visual, "queue-entry-0-edit");
+    bounds_of(&mut visual, "queue-editor");
     visual.simulate_keystrokes("enter");
+    assert!(actions(&mut commands).is_empty(), "untouched: nothing sent");
+    assert!(edit_of(&workspace, &visual).is_none());
+    click(&mut visual, "queue-entry-0-edit");
+    type_edit(&workspace, &mut visual, "first, edited\n");
+    visual.simulate_keystrokes("enter");
+    let sent = actions(&mut commands);
     assert!(matches!(
-        &actions(&mut commands)[..],
-        [Action::Queue(Op::Update { id, text })] if id == "q1" && text == "first, edited"
+        &sent[..],
+        [Action::Queue(Op::Update { id, text, expected: Some(start) })]
+            if id == "q1" && text == "first, edited\n" && start == "first\n"
     ));
-    workspace.read_with(&visual, |this, _| assert!(this.queue.editing.is_none()));
+    let edit = edit_of(&workspace, &visual).expect("open until the hub answers");
+    assert!(edit.pending.is_some());
+    answer(&workspace, &mut visual, base, 1, sent[0].clone(), None);
+    assert!(edit_of(&workspace, &visual).is_none(), "accepted: closed");
     click(&mut visual, "queue-entry-1-edit");
     visual.simulate_keystrokes("escape");
-    workspace.read_with(&visual, |this, _| assert!(this.queue.editing.is_none()));
+    assert!(edit_of(&workspace, &visual).is_none());
     assert!(
         actions(&mut commands).is_empty(),
         "a cancelled edit sends nothing"
     );
-    // The hub sends the entry mid-edit: the typed text lands in the composer.
-    click(&mut visual, "queue-entry-1-edit");
+}
+
+/// Another client changed the entry: saving mine is refused, my text stays
+/// with theirs shown, and I choose Overwrite (against their text) or
+/// Discard mine.
+#[gpui::test]
+fn a_conflicting_edit_keeps_mine_and_offers_overwrite_or_discard(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(1000.)));
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
-            this.queue
-                .editor
-                .update(cx, |input, cx| input.set_value("my rewrite", window, cx));
-            let mut next = queued();
-            Arc::make_mut(&mut next.sessions)[0].queue.entries.pop();
+            this.update_view(Arc::new(queued()), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    click(&mut visual, "queue-entry-0-edit");
+    // Theirs lands while I edit; my edit still starts from "first".
+    let theirs = with_entry(queued(), 0, "theirs");
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(theirs.clone()), window, cx)
+        })
+    });
+    type_edit(&workspace, &mut visual, "mine");
+    visual.simulate_keystrokes("enter");
+    let sent = actions(&mut commands);
+    assert!(matches!(
+        &sent[..],
+        [Action::Queue(Op::Update { expected: Some(start), .. })] if start == "first"
+    ));
+    answer(
+        &workspace,
+        &mut visual,
+        theirs.clone(),
+        1,
+        sent[0].clone(),
+        Some("Queue change failed: queued message changed elsewhere"),
+    );
+    let edit = edit_of(&workspace, &visual).expect("kept");
+    assert_eq!(edit.problem, Some(Problem::Conflict("theirs".into())));
+    workspace.read_with(&visual, |this, cx| {
+        assert_eq!(this.queue.editor.read(cx).value().as_ref(), "mine")
+    });
+    bounds_of(&mut visual, "queue-edit-conflict");
+    click(&mut visual, "queue-edit-overwrite");
+    let sent = actions(&mut commands);
+    assert!(matches!(
+        &sent[..],
+        [Action::Queue(Op::Update { text, expected: Some(start), .. })]
+            if text == "mine" && start == "theirs"
+    ));
+    answer(
+        &workspace,
+        &mut visual,
+        theirs.clone(),
+        2,
+        sent[0].clone(),
+        None,
+    );
+    assert!(edit_of(&workspace, &visual).is_none());
+    // Discard mine ends a conflicting edit without sending anything.
+    click(&mut visual, "queue-entry-0-edit");
+    type_edit(&workspace, &mut visual, "mine again");
+    visual.simulate_keystrokes("enter");
+    let sent = actions(&mut commands);
+    answer(
+        &workspace,
+        &mut visual,
+        with_entry(queued(), 0, "newest"),
+        3,
+        sent[0].clone(),
+        Some("queued message changed elsewhere"),
+    );
+    click(&mut visual, "queue-edit-discard");
+    assert!(edit_of(&workspace, &visual).is_none());
+    assert!(actions(&mut commands).is_empty());
+}
+
+/// The entry left the queue mid-edit (or the save was refused): the text
+/// stays, with Queue as new and Copy to composer; nothing is lost.
+#[gpui::test]
+fn a_refused_or_vanished_edit_keeps_the_text_to_requeue_or_copy(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(1000.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(queued()), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    // Refused for another reason, entry unchanged: the reason, text kept.
+    click(&mut visual, "queue-entry-0-edit");
+    type_edit(&workspace, &mut visual, "too long");
+    visual.simulate_keystrokes("enter");
+    let sent = actions(&mut commands);
+    answer(
+        &workspace,
+        &mut visual,
+        queued(),
+        1,
+        sent[0].clone(),
+        Some("queued messages for this session would exceed 262144 bytes"),
+    );
+    assert!(matches!(
+        edit_of(&workspace, &visual).unwrap().problem,
+        Some(Problem::Refused(_))
+    ));
+    bounds_of(&mut visual, "queue-edit-refused");
+    click(&mut visual, "queue-edit-discard");
+    // The hub sends the entry while it is being edited.
+    click(&mut visual, "queue-entry-1-edit");
+    type_edit(&workspace, &mut visual, "my rewrite");
+    let mut gone = queued();
+    Arc::make_mut(&mut gone.sessions)[0].queue.entries.pop();
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(gone.clone()), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    assert_eq!(
+        edit_of(&workspace, &visual).unwrap().problem,
+        Some(Problem::Gone)
+    );
+    bounds_of(&mut visual, "queue-edit-gone");
+    bounds_of(&mut visual, "queue-editor");
+    // Survives later updates (the old notice did not).
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(gone.clone()), window, cx)
+        })
+    });
+    assert!(edit_of(&workspace, &visual).is_some());
+    click(&mut visual, "queue-edit-requeue");
+    let sent = actions(&mut commands);
+    assert!(matches!(&sent[..], [Action::Queue(Op::Add(text))] if text == "my rewrite"));
+    answer(
+        &workspace,
+        &mut visual,
+        gone.clone(),
+        2,
+        sent[0].clone(),
+        Some("Could not queue the message: message queue is full (50 entries)"),
+    );
+    let edit = edit_of(&workspace, &visual).expect("a refused re-queue keeps it");
+    assert_eq!(edit.problem, Some(Problem::Gone));
+    click(&mut visual, "queue-edit-copy");
+    assert!(edit_of(&workspace, &visual).is_none());
+    workspace.read_with(&visual, |this, cx| {
+        assert_eq!(this.composer.read(cx).value().as_ref(), "my rewrite")
+    });
+}
+
+/// An edit belongs to its session: switching away and back keeps it, and an
+/// entry that leaves the queue meanwhile is noticed there.
+#[gpui::test]
+fn an_edit_survives_switching_sessions(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(1000.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(queued()), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    click(&mut visual, "queue-entry-0-edit");
+    type_edit(&workspace, &mut visual, "half written");
+    let mut away = queued();
+    away.selected = Some("b".into());
+    Arc::make_mut(&mut away.sessions)[0].queue.entries.remove(0);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(away), window, cx);
+            assert!(this.queue_edit().is_none(), "b has no edit");
+            assert_eq!(this.queue.edits["a"].problem, Some(Problem::Gone));
+        })
+    });
+    let mut back = queued();
+    Arc::make_mut(&mut back.sessions)[0].queue.entries.remove(0);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(back), window, cx);
+            assert_eq!(this.queue.editor.read(cx).value().as_ref(), "half written");
+            assert!(this.queue_edit().is_some());
+        })
+    });
+}
+
+/// Tab during an IME composition belongs to the input method.
+#[gpui::test]
+fn tab_never_queues_mid_composition(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler;
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(working()), window, cx)
+        })
+    });
+    draft(&workspace, &mut visual, "draft ");
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.composer.update(cx, |input, cx| {
+                input.replace_and_mark_text_in_range(None, "に", None, window, cx)
+            })
+        })
+    });
+    visual.simulate_keystrokes("tab");
+    assert!(actions(&mut commands).is_empty());
+}
+
+/// A stopped session's queue can still be tidied (remove, clear, dismiss,
+/// resume); adding, editing and sending stay off.
+#[gpui::test]
+fn a_stopped_sessions_queue_can_still_be_tidied(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(1000.)));
+    let mut stopped = queued();
+    Arc::make_mut(&mut stopped.sessions)[0].state = "stopped".into();
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(stopped), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    click(&mut visual, "queue-entry-0-send");
+    click(&mut visual, "queue-entry-0-edit");
+    click(&mut visual, "queue-uncertain-resend");
+    assert!(
+        actions(&mut commands).is_empty(),
+        "nothing new on a stopped session"
+    );
+    click(&mut visual, "queue-entry-0-remove");
+    click(&mut visual, "queue-entry-1-up");
+    click(&mut visual, "queue-uncertain-dismiss");
+    click(&mut visual, "queue-resume");
+    click(&mut visual, "queue-clear");
+    assert_eq!(actions(&mut commands).len(), 5);
+}
+
+/// Send again says it queued again, and a timed-out one says its outcome
+/// is unknown instead of claiming a failure.
+#[gpui::test]
+fn resend_wording_is_consistent(cx: &mut TestAppContext) {
+    let resend = Op::Resend {
+        uncertain: "q0".into(),
+        text: "maybe sent".into(),
+    };
+    assert_eq!(resend.success(), "Queued again");
+    let unknown =
+        resend.failure("Request timed out; outcome unknown. Check the session before retrying");
+    assert!(unknown.contains("outcome is unknown"), "{unknown}");
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    let mut next = queued();
+    next.notice = unknown.clone();
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
             this.update_view(Arc::new(next), window, cx);
-            assert!(this.queue.editing.is_none());
-            assert_eq!(this.composer.read(cx).value().as_ref(), "my rewrite");
+            assert_eq!(this.title_notice(), unknown);
         })
     });
 }
@@ -324,10 +628,6 @@ fn a_cut_uncertain_preview_is_copied_never_resent(cx: &mut TestAppContext) {
     });
     visual.run_until_parked();
     assert!(visual.debug_bounds("queue-uncertain-resend").is_none());
-    assert!(
-        visual.debug_bounds("queue-resume").is_none(),
-        "nothing queued to resume"
-    );
     click(&mut visual, "queue-uncertain-copy");
     assert!(actions(&mut commands).is_empty());
     workspace.read_with(&visual, |this, cx| {

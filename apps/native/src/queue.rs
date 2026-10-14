@@ -104,9 +104,13 @@ impl Queue {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Op {
     Add(String),
+    /// Replace an entry's text. With `expected` (the text the edit started
+    /// from), the hub refuses the change when the entry was changed
+    /// elsewhere meanwhile, so an edit never overwrites someone else's.
     Update {
         id: String,
         text: String,
+        expected: Option<String>,
     },
     /// Removes an entry, or acknowledges the uncertain one by its id.
     Remove(String),
@@ -115,9 +119,12 @@ pub enum Op {
         index: usize,
     },
     /// Sends the entry now, interrupting or setting aside current work
-    /// (`delivery: "now"`).
+    /// (`delivery: "now"`). It also lifts a pause.
     SendNow(String),
     Clear,
+    /// Lifts a pause (`sessions.queueResume`). Nothing else resumes sending:
+    /// adding, editing or reordering a paused queue keeps it paused.
+    Resume,
     /// "Send again" for an uncertain send whose preview is the whole text:
     /// queue the text anew, then dismiss the uncertain record. Two calls, in
     /// that order, so a refused add never loses the record.
@@ -136,10 +143,13 @@ impl Op {
                 "sessions.queueAdd",
                 json!({"sessionId":session,"text":text}),
             ),
-            Self::Update { id, text } => (
-                "sessions.queueUpdate",
-                json!({"sessionId":session,"id":id,"text":text}),
-            ),
+            Self::Update { id, text, expected } => {
+                let mut params = json!({"sessionId":session,"id":id,"text":text});
+                if let Some(expected) = expected {
+                    params["expectedText"] = json!(expected);
+                }
+                ("sessions.queueUpdate", params)
+            }
             Self::Remove(id) => ("sessions.queueRemove", json!({"sessionId":session,"id":id})),
             Self::Move { id, index } => (
                 "sessions.queueMove",
@@ -150,6 +160,7 @@ impl Op {
                 json!({"sessionId":session,"id":id,"delivery":"now"}),
             ),
             Self::Clear => ("sessions.queueClear", json!({"sessionId":session})),
+            Self::Resume => ("sessions.queueResume", json!({"sessionId":session})),
         }
     }
 
@@ -171,12 +182,44 @@ impl Op {
         )
     }
 
-    /// What the notice says when the hub refuses this change.
-    pub fn failure(&self) -> &'static str {
-        match self {
-            Self::Add(_) | Self::Resend { .. } => "Could not queue the message",
+    /// What the notice says when the hub refuses this change (`error` is
+    /// its reason). A call that timed out says its outcome is unknown, and
+    /// nothing is retried for the user.
+    pub fn failure(&self, error: &str) -> String {
+        if error.contains("outcome unknown") || error.contains("outcome is unknown") {
+            let what = match self {
+                Self::Add(_) => "Queueing the message",
+                Self::Resend { .. } => "Queueing the message again",
+                Self::SendNow(_) => "Sending the queued message",
+                _ => "The queue change",
+            };
+            return format!(
+                "{what} timed out; its outcome is unknown. Check the queue and the conversation before trying again."
+            );
+        }
+        // The backend's own wording for a half-done resend already says
+        // what happened.
+        if error.starts_with("Queued again") {
+            return error.to_owned();
+        }
+        let what = match self {
+            Self::Add(_) => "Could not queue the message",
+            Self::Resend { .. } => {
+                "Could not queue the message again; the may-have-been-sent notice stays"
+            }
             Self::SendNow(_) => "Could not send the queued message",
+            Self::Resume => "Could not resume the queue",
             _ => "Queue change failed",
+        };
+        format!("{what}: {error}")
+    }
+
+    /// What the notice says when the change went through; most changes show
+    /// in the panel itself and say nothing.
+    pub fn success(&self) -> &'static str {
+        match self {
+            Self::Resend { .. } => "Queued again",
+            _ => "",
         }
     }
 }
@@ -243,6 +286,35 @@ mod tests {
         assert_eq!(params, json!({"sessionId":"a","text":"again"}));
         assert!(!Op::Clear.needs_live_session());
         assert!(Op::Add("x".into()).needs_live_session());
+    }
+
+    #[test]
+    fn notices_name_the_change_and_never_contradict_themselves() {
+        let resend = Op::Resend {
+            uncertain: "q0".into(),
+            text: "again".into(),
+        };
+        assert_eq!(resend.success(), "Queued again");
+        assert_eq!(
+            resend.failure("message queue is full (50 entries)"),
+            "Could not queue the message again; the may-have-been-sent notice stays: message queue is full (50 entries)"
+        );
+        let half = "Queued again, but the may-have-been-sent notice was not dismissed (busy)";
+        assert_eq!(resend.failure(half), half);
+        let unknown =
+            resend.failure("Request timed out; outcome unknown. Check the session before retrying");
+        assert!(
+            unknown.starts_with("Queueing the message again timed out; its outcome is unknown")
+        );
+        assert!(!unknown.contains("Could not"));
+        assert_eq!(Op::Clear.success(), "");
+        let update = Op::Update {
+            id: "q1".into(),
+            text: "mine".into(),
+            expected: Some("start".into()),
+        };
+        assert_eq!(update.wire("a").1["expectedText"], "start");
+        assert_eq!(Op::Resume.wire("a").0, "sessions.queueResume");
     }
 
     #[test]

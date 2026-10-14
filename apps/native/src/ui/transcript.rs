@@ -628,19 +628,12 @@ impl Workspace {
                         .child(div().flex_1().min_w_0().child(row.text.clone()));
                 }
                 "Questions" if !row.questions.is_empty() => {
-                    let ix = (namespace == "live")
-                        .then(|| {
-                            self.view
-                                .transcript
-                                .rows
-                                .iter()
-                                .position(|r| r.key == row.key)
-                        })
-                        .flatten();
-                    return div()
-                        .w_full()
-                        .py_1()
-                        .child(self.render_async_questions(row, ix, window, cx));
+                    return div().w_full().py_1().child(self.render_async_questions(
+                        row,
+                        namespace == "live",
+                        window,
+                        cx,
+                    ));
                 }
                 _ => {}
             }
@@ -1466,6 +1459,22 @@ impl Workspace {
         }
         body
     }
+}
+
+/// A cheap fingerprint of a transcript's contents, for caches of what is
+/// worked out from it: its revision (bumped by every read and delta) plus
+/// its extent, which tells apart transcripts that share a revision count.
+pub(super) fn transcript_stamp(transcript: &wks_native::model::Transcript) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (
+        transcript.revision,
+        transcript.rows.len(),
+        transcript.rows.front().map(|r| r.key),
+        transcript.rows.back().map(|r| Arc::as_ptr(r) as usize),
+    )
+        .hash(&mut hasher);
+    hasher.finish()
 }
 
 /// How an unechoed send went out, under its bubble.

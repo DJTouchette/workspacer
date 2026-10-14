@@ -437,17 +437,31 @@ Transcript rendering is described below.
   docks above the composer, below the other dock cards: each entry with its
   number and first line (**More** shows it all), **Move up/down**, **Edit**
   (inline; Enter saves, Shift+Enter adds a line, Esc cancels), **Send now**
-  and **Remove**, plus **Clear all**. Every control is a Tab stop. A paused
-  queue shows the hub's reason and **Resume** (re-placing the head, which any
-  change does). A send whose delivery is unknown shows as **May have been
-  sent** with **Dismiss** and **Send again** (queue it anew, then dismiss);
-  it is never resent automatically, and when the hub's 200-character preview
-  may be cut, **Copy to composer** replaces Send again. An entry the hub sends
-  while you edit it ends the edit with your text in the composer.
+  and **Remove**, plus **Clear all**. Every control is a Tab stop. A stopped
+  session's queue can still be tidied (remove, reorder, clear, dismiss,
+  resume); adding, editing and sending need a live session. A paused queue
+  shows the hub's reason and **Resume** (`sessions.queueResume`); adding,
+  editing or reordering keeps it paused, and only Resume or a Send now lifts
+  it. A send whose delivery is unknown shows as **May have been sent** with
+  **Dismiss** and **Send again** (queue it anew, then dismiss; the notice
+  reads **Queued again**, and a timed-out attempt says its outcome is
+  unknown). It is never resent automatically, and when the hub's
+  200-character preview may be cut, **Copy to composer** replaces Send again;
+  only Dismiss (or Clear all) acknowledges it.
+- **Editing a queued message** saves against the text the edit started from
+  (`expectedText`), exactly as typed: an untouched edit sends nothing, and the
+  editor closes only once the hub accepts the save. If another client changed
+  the entry meanwhile, your text stays with theirs shown and **Overwrite** /
+  **Discard mine**. A refused save, or an entry sent or removed elsewhere
+  while you edit it (worded by which, when the transcript shows it sent),
+  keeps your text with **Queue as new**, **Copy to composer** and
+  **Discard**. Each session keeps its own edit across switching away.
 - **Questions that don't block** (Codex `request_user_input_async`) are a card
   in the transcript where they were asked: each question with its options and
-  a typed answer (typing wins over a choice). The agent keeps working and the
-  composer stays usable. **Send answer(s)** sends the answered questions as one
+  a typed answer (typing wins over a choice); half-written answers stay with
+  their session. The agent keeps working and the composer stays usable.
+  **Send answer(s)**, Enter in an answer or Ctrl/Cmd+Enter inside the card
+  (never the composer's draft) sends the answered questions as one
   ordinary message (steering a running turn) in Codex's own reply envelope;
   the card then reads **Answered** with the answers. The reply reads as its
   answers in the transcript too, and marks its card answered after a reload
@@ -587,7 +601,7 @@ editing; this is Vim-style app navigation, not a modal text editor.
 | `Ctrl/Cmd+,` | Settings, including with Vim disabled |
 | `Ctrl/Cmd+Enter` | Send, start the agent, or pin the focused project-path field |
 | `Enter` / `Shift+Enter` | With **Send messages with Enter**: send / new line in the composer |
-| `Tab` | While the agent works, with a draft: queue it for the turn's end |
+| `Tab` | While the agent works, with a draft: queue it for the turn's end (not during an IME composition) |
 | `Ctrl/Cmd+Shift+Enter` (or `Ctrl/Cmd+Enter` when Enter sends) | While the agent works: send now |
 | `Ctrl/Cmd+Shift+E`, `g f` | Files: the editor on the selected session's folder |
 | ``Ctrl/Cmd+` ``, `g t` | Show or hide the selected agent's terminal |

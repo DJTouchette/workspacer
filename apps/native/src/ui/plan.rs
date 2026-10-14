@@ -8,12 +8,22 @@
 //! markers keep the history of how the list moved, expanding to the list as
 //! it was then.
 use super::*;
+use std::rc::Rc;
 use wks_native::plan::{self as task_plan, Status, Step};
+
+/// What the pinned plan was worked out from: session, transcript (by its stamp)
+/// and the row's own plan.
+type PlanSource = (String, u64, Option<wks_native::plan::Plan>);
+/// A worked-out pinned plan and what it came from.
+type PinnedPlan = (PlanSource, Option<Rc<Vec<Step>>>);
 
 #[derive(Default)]
 pub(super) struct PlanUi {
     /// Per session: the plan's signature and whether the reader opened it.
     open: HashMap<String, (String, bool)>,
+    /// The pinned plan, worked out again only when its sources change
+    /// rather than by scanning the transcript every frame.
+    pinned: std::cell::RefCell<Option<PinnedPlan>>,
 }
 
 /// What the reader's open/closed choice belongs to: the steps' text, not
@@ -77,12 +87,24 @@ pub(super) fn step_row(step: &Step, p: Palette, id: SharedString, live: bool) ->
 
 impl Workspace {
     /// The plan pinned for the selected conversation, if it has one.
-    pub(super) fn pinned_plan(&self) -> Option<Vec<Step>> {
+    pub(super) fn pinned_plan(&self) -> Option<Rc<Vec<Step>>> {
         if self.view.child.is_some() {
             return None;
         }
         let session = self.selected_session()?;
-        task_plan::current(&self.view.transcript, session.plan.as_ref())
+        let source = (
+            session.id.clone(),
+            super::transcript::transcript_stamp(&self.view.transcript),
+            session.plan.clone(),
+        );
+        if let Some((seen, steps)) = &*self.plan.pinned.borrow()
+            && *seen == source
+        {
+            return steps.clone();
+        }
+        let steps = task_plan::current(&self.view.transcript, session.plan.as_ref()).map(Rc::new);
+        *self.plan.pinned.borrow_mut() = Some((source, steps.clone()));
+        steps
     }
 
     pub(super) fn plan_open(&self, session: &str, steps: &[Step], compact: bool) -> bool {

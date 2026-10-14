@@ -363,6 +363,7 @@ actions!(
         QueueMessage,
         QueueEditSave,
         QueueEditCancel,
+        SubmitAsyncAnswers,
         SubmitAnswers,
         AnswerEnter,
         CreateSession,
@@ -498,6 +499,20 @@ pub fn bind_keys(cx: &mut App) {
             Some("QueueEditor > Input"),
         ),
         KeyBinding::new("escape", QueueEditCancel, Some("QueueEditor > Input")),
+        // An async question card: Ctrl/Cmd+Enter sends its answers, never the
+        // composer draft (the Workspace bindings above would).
+        KeyBinding::new("ctrl-enter", SubmitAsyncAnswers, Some("AsyncQuestion")),
+        KeyBinding::new("cmd-enter", SubmitAsyncAnswers, Some("AsyncQuestion")),
+        KeyBinding::new(
+            "ctrl-enter",
+            SubmitAsyncAnswers,
+            Some("AsyncQuestion > Input"),
+        ),
+        KeyBinding::new(
+            "cmd-enter",
+            SubmitAsyncAnswers,
+            Some("AsyncQuestion > Input"),
+        ),
         KeyBinding::new("alt-down", NextSession, Some("Workspace")),
         KeyBinding::new("alt-up", PreviousSession, Some("Workspace")),
         KeyBinding::new("ctrl-l", FocusComposer, Some("Workspace")),
@@ -1299,7 +1314,14 @@ impl Workspace {
     /// Tab with a draft while the agent works puts it on the hub's queue;
     /// otherwise Tab keeps its usual job in the composer.
     fn queue_message(&mut self, _: &QueueMessage, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.composer_busy() || self.composer.read(cx).value().trim().is_empty() {
+        // An open IME composition keeps its Tab, as it keeps its Enter.
+        let composing = self
+            .composer
+            .update(cx, |input, cx| {
+                gpui::EntityInputHandler::marked_text_range(input, window, cx)
+            })
+            .is_some_and(|range| !range.is_empty());
+        if composing || !self.composer_busy() || self.composer.read(cx).value().trim().is_empty() {
             cx.propagate();
             return;
         }

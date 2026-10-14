@@ -2076,7 +2076,7 @@ impl Worker {
                     Action::SetModel { .. } => format!("Model change refused: {error}"),
                     Action::SetEffort(_) => format!("Effort change refused: {error}"),
                     Action::SetPermission { .. } => format!("Access change refused: {error}"),
-                    Action::Queue(op) => format!("{}: {error}", op.failure()),
+                    Action::Queue(op) => op.failure(&error),
                     _ => error,
                 });
                 self.view.notice = error.clone().unwrap_or_else(|| {
@@ -2098,6 +2098,7 @@ impl Worker {
                             Action::SetPermission { label, .. } => {
                                 format!("Access change accepted: {label}")
                             }
+                            Action::Queue(op) => op.success().into(),
                             _ => String::new(),
                         }
                     }

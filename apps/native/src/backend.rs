@@ -298,7 +298,7 @@ impl Backend {
             return Ok(serde_json::json!({
                 "ok": false,
                 "error": format!(
-                    "the message is queued again, but its may-have-been-sent notice was not dismissed ({dismissed})"
+                    "Queued again, but the may-have-been-sent notice was not dismissed ({dismissed}); dismiss it yourself"
                 ),
             }));
         }

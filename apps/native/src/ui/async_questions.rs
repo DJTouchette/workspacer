@@ -8,10 +8,14 @@
 //! its reply, or once the transcript holds a reply naming its item; after a
 //! reload with that reply outside the window it shows as unanswered again.
 use super::*;
+use std::rc::Rc;
 use wks_native::questions::{self as aq, AsyncQuestion, Reply};
 
 /// `(question, answer)` pairs, in question order.
 type Answers = Vec<(String, String)>;
+
+/// Replies in one transcript, by the question item they answer.
+type Replies = Rc<HashMap<String, Answers>>;
 
 #[derive(Default)]
 pub(super) struct AsyncQuestionUi {
@@ -20,16 +24,21 @@ pub(super) struct AsyncQuestionUi {
     /// The reply in flight: card key, message text and its answers.
     submitting: Option<(String, String, Answers)>,
     errors: HashMap<String, String>,
-    /// The option chosen per (card key, question).
+    /// The option chosen per (card key, question). Card keys carry their
+    /// session, so each session keeps its own half-written answers.
     picks: HashMap<(String, usize), usize>,
-    /// Typed answers per (card key, question), made as cards render.
-    inputs: HashMap<(String, usize), Entity<InputState>>,
-    subscriptions: Vec<gpui::Subscription>,
-    /// The session the inputs above belong to.
-    session: Option<String>,
+    /// Typed answers per (card key, question), made as cards render, with
+    /// the subscription that redraws on typing.
+    inputs: HashMap<(String, usize), (Entity<InputState>, gpui::Subscription)>,
+    /// When each card was last drawn, for evicting the least recent.
+    used: HashMap<String, u64>,
+    clock: u64,
+    /// The transcript's replies, read once per transcript revision.
+    replies: std::cell::RefCell<Option<(String, u64, Replies)>>,
 }
 
-/// Inputs kept before the oldest are dropped (cards scrolled far away).
+/// Typed-answer fields kept; past this the least recently drawn card's
+/// drafts go (cards scrolled far away).
 const MAX_INPUTS: usize = 64;
 
 fn card_key(session: &str, item_id: &str) -> String {
@@ -37,16 +46,9 @@ fn card_key(session: &str, item_id: &str) -> String {
 }
 
 impl Workspace {
-    /// A finished reply marks its card answered (or shows why it failed); a
-    /// new selection starts with fresh inputs.
+    /// A finished reply marks its card answered (or shows why it failed).
     pub(super) fn sync_async_questions(&mut self, next: &View) {
         let ui = &mut self.async_questions;
-        if ui.session != next.selected {
-            ui.session = next.selected.clone();
-            ui.inputs.clear();
-            ui.picks.clear();
-            ui.subscriptions.clear();
-        }
         let Some(receipt) = next
             .receipt
             .as_ref()
@@ -78,30 +80,63 @@ impl Workspace {
         }
     }
 
-    /// What answered this card: this window's reply, or one in the transcript
-    /// after it naming the same item.
-    fn async_answers(
-        &self,
-        key: &str,
-        item_id: &str,
-        after: usize,
-    ) -> Option<Vec<(String, String)>> {
-        if let Some(sent) = self.async_questions.answered.get(key) {
-            return Some(sent.clone());
+    /// Every reply in the shown transcript, by question item: read once per
+    /// transcript revision rather than on every frame.
+    fn transcript_replies(&self) -> Replies {
+        let owner = self.chat_owner();
+        let revision = super::transcript::transcript_stamp(&self.view.transcript);
+        if let Some((cached_owner, cached, replies)) = &*self.async_questions.replies.borrow()
+            && *cached_owner == owner
+            && *cached == revision
+        {
+            return replies.clone();
         }
-        let found = self
+        let mut found: HashMap<String, Answers> = HashMap::new();
+        for reply in self
             .view
             .transcript
             .rows
             .iter()
-            .skip(after + 1)
             .filter(|r| r.role == "You")
             .filter_map(|r| aq::parse_reply(&r.text))
             .flatten()
-            .filter(|reply| reply.question_item_id == item_id)
-            .map(|reply| (reply.question, reply.answer))
-            .collect::<Vec<_>>();
-        (!found.is_empty()).then_some(found)
+        {
+            found
+                .entry(reply.question_item_id)
+                .or_default()
+                .push((reply.question, reply.answer));
+        }
+        let replies = Rc::new(found);
+        *self.async_questions.replies.borrow_mut() = Some((owner, revision, replies.clone()));
+        replies
+    }
+
+    /// What answered this card: this window's reply, or one in the
+    /// transcript naming the same item.
+    fn async_answers(&self, key: &str, item_id: &str) -> Option<Answers> {
+        if let Some(sent) = self.async_questions.answered.get(key) {
+            return Some(sent.clone());
+        }
+        self.transcript_replies().get(item_id).cloned()
+    }
+
+    /// Drop the least recently drawn card's drafts (never `keep`'s); false
+    /// when there is none to drop.
+    fn evict_async_drafts(&mut self, keep: &str) -> bool {
+        let ui = &mut self.async_questions;
+        let Some(oldest) = ui
+            .used
+            .iter()
+            .filter(|(key, _)| key.as_str() != keep)
+            .min_by_key(|(_, at)| **at)
+            .map(|(key, _)| key.clone())
+        else {
+            return false;
+        };
+        ui.used.remove(&oldest);
+        ui.inputs.retain(|(key, _), _| *key != oldest);
+        ui.picks.retain(|(key, _), _| *key != oldest);
+        true
     }
 
     fn async_input(
@@ -113,13 +148,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Entity<InputState> {
         let slot = (key.to_owned(), question);
-        if let Some(input) = self.async_questions.inputs.get(&slot) {
+        if let Some((input, _)) = self.async_questions.inputs.get(&slot) {
             return input.clone();
         }
-        if self.async_questions.inputs.len() >= MAX_INPUTS {
-            self.async_questions.inputs.clear();
-            self.async_questions.subscriptions.clear();
-        }
+        while self.async_questions.inputs.len() >= MAX_INPUTS && self.evict_async_drafts(key) {}
         let input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(if has_options {
                 "Or type a different answer"
@@ -128,7 +160,7 @@ impl Workspace {
             })
         });
         let owner = key.to_owned();
-        self.async_questions.subscriptions.push(cx.subscribe_in(
+        let subscription = cx.subscribe_in(
             &input,
             window,
             move |this, _, event: &gpui_component::input::InputEvent, _, cx| match event {
@@ -138,8 +170,10 @@ impl Workspace {
                 }
                 _ => {}
             },
-        ));
-        self.async_questions.inputs.insert(slot, input.clone());
+        );
+        self.async_questions
+            .inputs
+            .insert(slot, (input.clone(), subscription));
         input
     }
 
@@ -153,7 +187,7 @@ impl Workspace {
         self.async_questions
             .inputs
             .get(&(key.to_owned(), question))
-            .cloned()
+            .map(|(input, _)| input.clone())
     }
 
     /// This window sent the card's reply and the hub accepted it.
@@ -179,7 +213,7 @@ impl Workspace {
                     .async_questions
                     .inputs
                     .get(&slot)
-                    .map(|input| input.read(cx).value().trim().to_owned())
+                    .map(|(input, _)| input.read(cx).value().trim().to_owned())
                     .filter(|t| !t.is_empty());
                 let answer = typed.or_else(|| {
                     let pick = *self.async_questions.picks.get(&slot)?;
@@ -233,23 +267,37 @@ impl Workspace {
     pub(super) fn render_async_questions(
         &mut self,
         row: &wks_native::model::Row,
-        ix: Option<usize>,
+        live: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.appearance.palette();
         let session = self.view.selected.clone().unwrap_or_default();
         let key = card_key(&session, &row.item_id);
-        let live = ix.is_some() && !row.item_id.is_empty() && self.view.child.is_none();
-        let answered = ix.and_then(|ix| self.async_answers(&key, &row.item_id, ix));
+        let live = live && !row.item_id.is_empty() && self.view.child.is_none();
+        let answered = live
+            .then(|| self.async_answers(&key, &row.item_id))
+            .flatten();
         let enabled = live && answered.is_none() && self.async_enabled();
+        if live {
+            let ui = &mut self.async_questions;
+            ui.clock += 1;
+            ui.used.insert(key.clone(), ui.clock);
+        }
         let sending = self
             .async_questions
             .submitting
             .as_ref()
             .is_some_and(|(k, ..)| *k == key);
+        let submit_key = key.clone();
         let mut card = div()
             .debug_selector(|| "async-question-card".into())
+            // Its own key context: Ctrl/Cmd+Enter here sends the card's
+            // answers (Enter in a field does too), never the composer draft.
+            .key_context("AsyncQuestion")
+            .on_action(cx.listener(move |this, _: &SubmitAsyncAnswers, _, cx| {
+                this.submit_async_answers(&submit_key, cx)
+            }))
             .w_full()
             .p_3()
             .rounded(px(p.panel_radius))
@@ -310,7 +358,7 @@ impl Workspace {
                 .async_questions
                 .inputs
                 .get(&slot)
-                .is_some_and(|input| !input.read(cx).value().trim().is_empty());
+                .is_some_and(|(input, _)| !input.read(cx).value().trim().is_empty());
             let picked = (!typed)
                 .then(|| self.async_questions.picks.get(&slot).copied())
                 .flatten();
@@ -344,7 +392,8 @@ impl Workspace {
                     d.on_click(cx.listener(move |this, _, window, cx| {
                         let slot = (key.clone(), qix);
                         this.async_questions.picks.insert(slot.clone(), oix);
-                        if let Some(input) = this.async_questions.inputs.get(&slot).cloned() {
+                        if let Some((input, _)) = this.async_questions.inputs.get(&slot) {
+                            let input = input.clone();
                             input.update(cx, |input, cx| input.set_value("", window, cx));
                         }
                         cx.notify();

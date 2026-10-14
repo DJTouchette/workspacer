@@ -543,3 +543,50 @@ fn a_reply_in_the_transcript_answers_its_card_and_reads_as_answers(cx: &mut Test
     assert!(visual.debug_bounds("async-submit").is_none());
     assert!(visual.debug_bounds("async-option-0-0").is_none());
 }
+
+/// Ctrl/Cmd+Enter in a card's answer field sends the card's answers, never
+/// the composer's draft; half-written answers stay with their session.
+#[gpui::test]
+fn ctrl_enter_in_an_async_answer_sends_the_card_not_the_composer(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(1000.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.settings.enter_sends = false;
+            this.update_view(Arc::new(async_view(Vec::new())), window, cx);
+            this.composer
+                .update(cx, |input, cx| input.set_value("KEEP_DRAFT", window, cx));
+        })
+    });
+    visual.run_until_parked();
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let input = this.async_questions_input("a\0item-9", 1).unwrap();
+            input.update(cx, |input, cx| {
+                input.set_value("typed", window, cx);
+                input.focus(window, cx);
+            });
+        })
+    });
+    visual.run_until_parked();
+    visual.simulate_keystrokes("ctrl-enter");
+    let sent = sent_actions(&mut commands);
+    let [Action::Send(text)] = &sent[..] else {
+        panic!("{sent:?}")
+    };
+    assert!(wks_native::questions::parse_reply(text).is_some(), "{text}");
+    workspace.read_with(&visual, |this, cx| {
+        assert_eq!(this.composer.read(cx).value().as_ref(), "KEEP_DRAFT")
+    });
+    // Switching away and back keeps the typed answer.
+    let mut away = async_view(Vec::new());
+    away.selected = Some("b".into());
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(away), window, cx);
+            this.update_view(Arc::new(async_view(Vec::new())), window, cx);
+            let input = this.async_questions_input("a\0item-9", 1).unwrap();
+            assert_eq!(input.read(cx).value().as_ref(), "typed");
+        })
+    });
+}
