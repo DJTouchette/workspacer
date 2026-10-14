@@ -134,7 +134,13 @@
     "remote.tailscaleServe": "networkTrusted confines listener changes to the authenticated local owner. These changes can expose an already token-protected server, but cannot grant a scoped worker or peer host credentials or root commands. The private combined-node supervisor exposes only Tailscale status and this node's fixed HTTPS proxy.",
     "remote.setSharing": "networkTrusted confines listener changes to the authenticated local owner. These changes can expose an already token-protected server, but cannot grant a scoped worker or peer host credentials or root commands. The private combined-node supervisor exposes only Tailscale status and this node's fixed HTTPS proxy.",
     "sessionArchive.set": "the only caller values are `sessionId`, an opaque bounded id, and the boolean `archived`. It adds or removes that id in the hub's own session-archive.json, which clients read only to decide which sidebar rows to list. Never a path, argv or policy input, and never a lifecycle action: nothing is stopped, signalled, closed or deleted",
-    "sessions.taskStop": "sessionId plus taskId select a background task the daemon already lists as running on that session; the only effect is the CLI's own stop_task control request for that task. It can only ever STOP work, sends no signal, and takes no path, argv or policy value"
+    "sessions.taskStop": "sessionId plus taskId select a background task the daemon already lists as running on that session; the only effect is the CLI's own stop_task control request for that task. It can only ever STOP work, sends no signal, and takes no path, argv or policy value",
+    "sessions.queueAdd": "text is a prompt for an agent that is already running, held in the hub's own message-queues.json until the hub delivers it later through this hub's own agents.sendMessage path (the same reach, the same session, and only when that session is ready for input with no approval or question open). No path, argv or policy value; holding the capability is the gate, as for agents.sendMessage, and sessions.queueAdd + claude.approve is recorded beside agents.sendMessage + claude.approve",
+    "sessions.queueUpdate": "replaces the text of one entry this hub already queued for that session (selected by its opaque hub-minted id); the hub delivers it later through this hub's own agents.sendMessage path (the same reach, the same session, and only when that session is ready for input with no approval or question open). Nothing else about the entry or the session changes",
+    "sessions.queueMove": "reorders one entry this hub already queued for that session (selected by its opaque hub-minted id) to a bounded index. It changes only WHICH queued prompt the hub delivers it later through this hub's own agents.sendMessage path (the same reach, the same session, and only when that session is ready for input with no approval or question open)",
+    "sessions.queueSendNow": "removes one queued entry (selected by its opaque hub-minted id) and sends it immediately through this hub's own agents.sendMessage path — exactly agents.sendMessage's reach for text a caller holding this tier could have sent directly. The optional `delivery` value (\"steer\" or \"now\" only) is forwarded under that name to agents.sendMessage, which alone decides what it means; the queue itself gives it no effect",
+    "sessions.queueRemove": "deletes one entry this hub queued for that session (selected by its opaque hub-minted id); it can only withhold a prompt. Clearing a paused queue's error may let the remaining entries, already queued by sessions.queueAdd, be delivered when the session is ready",
+    "sessions.queueClear": "deletes every entry this hub queued for that session; it can only withhold prompts. No path, argv or policy value, and nothing is sent"
   },
   "inertMethods": {
     "fleet.dispatchTargets": "Read-only discovery of explicitly enabled paired or linked worker targets. Returns remote protocol, actual provider readiness and remote repository choices, never the pairing credential.",
@@ -885,6 +891,40 @@
       "cwd": {
         "kind": "path",
         "reason": "Canonical project selection for workflow/task ownership, never a task-store filename or process argv. Rust resolves real directory aliases before comparing selected project identity; offline exact-record history remains readable."
+      }
+    },
+    "sessions.queueAdd": {
+      "text": {
+        "kind": "shell",
+        "reason": "prompt text held in the hub's own queue and later delivered through agents.sendMessage's owned message endpoint to an already-running provider; never argv, a path or a raw PTY write"
+      }
+    },
+    "sessions.queueUpdate": {
+      "id": {
+        "kind": "id",
+        "reason": "an opaque hub-minted queue-entry id (q- plus hex) that selects an entry of that session's queue; never joined into a path"
+      },
+      "text": {
+        "kind": "shell",
+        "reason": "prompt text held in the hub's own queue and later delivered through agents.sendMessage's owned message endpoint to an already-running provider; never argv, a path or a raw PTY write"
+      }
+    },
+    "sessions.queueMove": {
+      "id": {
+        "kind": "id",
+        "reason": "an opaque hub-minted queue-entry id (q- plus hex) that selects an entry of that session's queue; never joined into a path"
+      }
+    },
+    "sessions.queueRemove": {
+      "id": {
+        "kind": "id",
+        "reason": "an opaque hub-minted queue-entry id (q- plus hex) that selects an entry of that session's queue; never joined into a path"
+      }
+    },
+    "sessions.queueSendNow": {
+      "id": {
+        "kind": "id",
+        "reason": "an opaque hub-minted queue-entry id (q- plus hex) that selects an entry of that session's queue; never joined into a path"
       }
     }
   },

@@ -163,6 +163,12 @@
     "sessions.kept",
     "sessions.list",
     "sessions.load",
+    "sessions.queueAdd",
+    "sessions.queueClear",
+    "sessions.queueMove",
+    "sessions.queueRemove",
+    "sessions.queueSendNow",
+    "sessions.queueUpdate",
     "sessions.recent",
     "sessions.save",
     "sessions.snapshot",
@@ -876,7 +882,13 @@
       "sessionArchive.set",
       "sessions.kept",
       "sessions.taskOutput",
-      "sessions.taskStop"
+      "sessions.taskStop",
+      "sessions.queueAdd",
+      "sessions.queueClear",
+      "sessions.queueMove",
+      "sessions.queueRemove",
+      "sessions.queueSendNow",
+      "sessions.queueUpdate"
     ],
     "view": [
       "remote.sharingInfo",
