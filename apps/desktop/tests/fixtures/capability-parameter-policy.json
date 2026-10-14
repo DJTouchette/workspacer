@@ -140,7 +140,10 @@
     "sessions.queueMove": "reorders one entry this hub already queued for that session (selected by its opaque hub-minted id) to a bounded index. It changes only WHICH queued prompt the hub delivers it later through this hub's own agents.sendMessage path (the same reach, the same session, and only when that session is ready for input with no approval or question open)",
     "sessions.queueSendNow": "removes one queued entry (selected by its opaque hub-minted id) and sends it immediately through this hub's own agents.sendMessage path — exactly agents.sendMessage's reach for text a caller holding this tier could have sent directly. The optional `delivery` value (\"steer\" or \"now\" only) is forwarded under that name to agents.sendMessage, which alone decides what it means; the queue itself gives it no effect",
     "sessions.queueRemove": "deletes one entry this hub queued for that session (selected by its opaque hub-minted id); it can only withhold a prompt. Clearing a paused queue's error may let the remaining entries, already queued by sessions.queueAdd, be delivered when the session is ready",
-    "sessions.queueClear": "deletes every entry this hub queued for that session; it can only withhold prompts. No path, argv or policy value, and nothing is sent"
+    "sessions.queueClear": "deletes every entry this hub queued for that session; it can only withhold prompts. No path, argv or policy value, and nothing is sent",
+    "claude.compact": "asks an agent that is already running to summarize its own conversation: claudemon hands it to that session's live driver, which sends the CLI's own /compact user message (Claude stream) or codex's thread/compact/start. The optional instructions are focus text for that summary, sent the way agents.sendMessage sends a prompt to the same session. No path, argv or policy value; holding the capability is the gate",
+    "claude.rewindFiles": "restores the files an already-running Claude stream session changed to their checkpoint at one of that session's own user messages, through the CLI's own rewind_files control request. The caller names the session and a message id only: which files and what content come from the CLI's own checkpoints, and the CLI refuses symlinks, hard links and parents that moved. dryRun only previews. No path, argv or policy value",
+    "claude.revert": "drops one turn and every later one from an already-running Codex session's thread history through codex's own thread/revert; files are untouched. The caller names the session and a message or turn id only; it can only remove conversation history, never add to it. No path, argv or policy value"
   },
   "inertMethods": {
     "fleet.dispatchTargets": "Read-only discovery of explicitly enabled paired or linked worker targets. Returns remote protocol, actual provider readiness and remote repository choices, never the pairing credential.",
@@ -925,6 +928,12 @@
       "id": {
         "kind": "id",
         "reason": "an opaque hub-minted queue-entry id (q- plus hex) that selects an entry of that session's queue; never joined into a path"
+      }
+    },
+    "claude.rewindFiles": {
+      "dryRun": {
+        "kind": "inert",
+        "reason": "a boolean that turns the CLI's rewind_files into a preview: with it set nothing on disk changes and only the would-be diff stats come back. Never a command, path or policy value"
       }
     }
   },

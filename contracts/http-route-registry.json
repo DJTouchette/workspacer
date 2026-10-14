@@ -199,6 +199,21 @@
     },
     {
       "server": "claudemon-api",
+      "pattern": "/sessions/:id/compact",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_compact"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "summarizes the session's conversation now: claudemon hands it to that session's live driver, which sends the CLI's own /compact user message (Claude stream) or codex's thread/compact/start. claude.compact is FULL-tier on the bus; the only caller value besides the session is optional focus text for the summary, never a path, argv or policy value",
+      "twin": "claude.compact",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
       "pattern": "/sessions/:id/conversation",
       "file": "services/claudemon/src/daemon/api.rs",
       "verbs": {
@@ -345,6 +360,36 @@
       "disposition": "loopback-confined",
       "reason": "resizes the session PTY — terminal geometry, operator-tier on the bus (terminals.*), harmless beyond the terminal it resizes",
       "twin": "sessions.attachTerminal",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/revert",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_revert"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "drops one turn and every later one from a Codex session's thread history through codex's own thread/revert (files are untouched). claude.revert is FULL-tier on the bus; the caller names a session and a message or turn id only",
+      "twin": "claude.revert",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/rewind-files",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_rewind_files"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "restores the files a Claude stream session's agent changed to their checkpoint at one of that session's own user messages, through the CLI's own rewind_files control request (the CLI refuses symlinks, hard links and parents that moved). claude.rewindFiles is FULL-tier on the bus; the caller names a session and a message id only, never a path",
+      "twin": "claude.rewindFiles",
       "twinKind": "bus-method"
     },
     {
