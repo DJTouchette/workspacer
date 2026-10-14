@@ -880,7 +880,9 @@ mod tests {
     fn elicitation_cards_carry_a_mark_input_can_never_forge() {
         let schema = json!({"type":"object","properties":{"repo":{"type":"string"}}});
         let (_, form) = form_card("github", "Pick", &schema, None).unwrap();
-        assert!(form.iter().all(|q| q.elicitation.as_deref() == Some("github")));
+        assert!(form
+            .iter()
+            .all(|q| q.elicitation.as_deref() == Some("github")));
         let (_, url) = url_card("auth", "", "https://example.com/x").unwrap();
         let wire = serde_json::to_value(&url).unwrap();
         assert_eq!(wire[0]["elicitation"], "auth");
@@ -891,10 +893,8 @@ mod tests {
         }]))
         .unwrap();
         assert!(forged[0].elicitation.is_none());
-        assert!(
-            serde_json::to_value(&forged).unwrap()[0]
-                .get("elicitation")
-                .is_none()
-        );
+        assert!(serde_json::to_value(&forged).unwrap()[0]
+            .get("elicitation")
+            .is_none());
     }
 }

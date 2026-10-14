@@ -222,8 +222,11 @@ pub fn compat(mut snapshot: Value) -> Value {
                     .then(|| marks.first().copied().flatten())
                     .flatten()
             });
-            snapshot["pendingQuestionSource"] =
-                json!(if server.is_some() { "elicitation" } else { "question" });
+            snapshot["pendingQuestionSource"] = json!(if server.is_some() {
+                "elicitation"
+            } else {
+                "question"
+            });
             if let Some(server) = server {
                 snapshot["elicitationServer"] = json!(server);
             }
