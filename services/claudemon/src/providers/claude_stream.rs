@@ -2082,9 +2082,18 @@ async fn run_session(
                     // "/foo" bubble.
                     // The echo carries the uuid the frame is sent with: the
                     // id `rewind_files` and a fork point name this message by.
+                    // NOT for a message sent while a turn runs: the CLI folds
+                    // a steer into the running turn under a uuid of its own
+                    // (observed live on 2.1.299: our stamped uuid never
+                    // reached the transcript), so no rewind or fork can name
+                    // it, and an echo without a uuid offers neither.
                     let uuid = uuid::Uuid::new_v4().to_string();
+                    let steering = matches!(
+                        cur_mode,
+                        SessionMode::Responding | SessionMode::Approval | SessionMode::Question
+                    );
                     let echo = slash_command_send_item(&text, &acc)
-                        .unwrap_or(ConversationItem::UserMessage { text: text.clone(), uuid: Some(uuid.clone()), timestamp: None });
+                        .unwrap_or(ConversationItem::UserMessage { text: text.clone(), uuid: (!steering).then(|| uuid.clone()), timestamp: None });
                     conv.push(&session_id, vec![echo]);
                     let sent = match pending_instructions.take() {
                         Some(instr) => format!("{instr}\n\n{text}"),
@@ -5221,6 +5230,95 @@ done
         perms.set_mode(0o755);
         std::fs::set_permissions(&path, perms).expect("chmod the stub CLI");
         path
+    }
+
+    /// A message sent while a turn runs (a steer) is echoed WITHOUT a uuid:
+    /// the CLI files it under its own, so nothing can rewind or fork at it.
+    /// A message that starts a turn keeps the uuid it was sent with.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_steered_message_carries_no_uuid() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = ScratchDir(
+            std::env::temp_dir().join(format!("claudemon-steer-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir_all(&dir.0).expect("scratch dir");
+        // The first prompt opens a turn that only the second one closes.
+        let bin = dir.0.join("stub-claude-steer");
+        std::fs::write(
+            &bin,
+            r#"#!/bin/sh
+n=0
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      n=$((n+1))
+      if [ "$n" = 1 ]; then
+        printf '%s\n' '{"type":"stream_event","event":{"type":"message_start","message":{"id":"m1","model":"claude-haiku-5-5"}}}'
+      else
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0}'
+      fi
+      ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let sid = "e2e-steer";
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed(sid, &dir.0.to_string_lossy(), "claude");
+        store.set_transport(sid, crate::session::state::Transport::Stream);
+        spawn_session(
+            store.clone(),
+            conv.clone(),
+            SpawnConfig {
+                session_id: sid.to_string(),
+                cwd: dir.0.to_string_lossy().to_string(),
+                bin: bin.to_string_lossy().to_string(),
+                model: None,
+                effort: None,
+                permission_mode: None,
+                resume: None,
+                fork_session: false,
+                resume_at: None,
+                extra_args: vec![],
+                env: HashMap::new(),
+                yolo: false,
+                facade: Facade::default(),
+            },
+        );
+        assert!(settles(|| store.is_managed(sid)).await);
+        let users = || {
+            conv.snapshot(sid)
+                .map(|(_, items)| items)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|i| match i {
+                    ConversationItem::UserMessage { text, uuid, .. } => Some((text, uuid)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        store.submit_message(sid, "first".into());
+        assert!(
+            settles(|| store
+                .get(sid)
+                .is_some_and(|s| s.mode == SessionMode::Responding)
+                && users().len() == 1)
+            .await
+        );
+        store.submit_message(sid, "steered".into());
+        assert!(settles(|| store.get(sid).is_some_and(|s| s.mode == SessionMode::Input)).await);
+        let users = users();
+        assert_eq!(users.len(), 2, "{users:?}");
+        assert!(
+            users[0].1.is_some(),
+            "a turn-starting message keeps its uuid"
+        );
+        assert_eq!(users[1], ("steered".to_string(), None));
+        store.terminate_managed(sid);
     }
 
     /// History controls end to end through the real driver: the user echo

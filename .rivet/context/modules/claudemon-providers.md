@@ -288,7 +288,7 @@ so older clients ignore them safely.
 | --- | --- |
 | `{kind:"reasoning", item_id, text, timestamp?}` | The model's shown reasoning. Streams as FRAGMENTS: same-`item_id` items append, like `assistant_text`; the retained log folds a trailing same-id fragment. Never merged into `assistant_text`. |
 | `{kind:"compaction", trigger?, pre_tokens?, post_tokens?, timestamp?}` | Everything before it was summarized out of context. `trigger` is `"manual"`/`"auto"` (Claude only). |
-| `user_message.uuid?` | The provider-facing id of that user message: the uuid the Claude stream driver stamps on the frame (= the CLI's message uuid, echoed back by `--replay-user-messages`), the transcript row's `uuid` on replay, or the echo id the Codex driver matches to codex's `userMessage` item. Absent when unknown. |
+| `user_message.uuid?` | The provider-facing id of that user message: the uuid the Claude stream driver stamps on the frame (= the CLI's message uuid, echoed back by `--replay-user-messages`), the transcript row's `uuid` on replay, or the echo id the Codex driver matches to codex's `userMessage` item. Absent when unknown, and on a Claude message sent while a turn runs (a steer): the CLI files it under a uuid of its own (observed live on 2.1.299), so no rewind or fork can name it — offer rewind/fork only on items that carry a `uuid`. |
 
 Session row: `compacting` (bool), `compaction_count`, `last_compact_at` are now
 also driven by managed drivers (`SessionStore::set_compacting` /
@@ -355,7 +355,7 @@ Fork (claudemon `/sessions/spawn-managed {provider, cwd, resume:<source>,
 fork:true, fork_before?:<user message uuid>}`): a NEW row id (never the
 source's). "Fork before message U" keeps the history before U. Claude runs
 `--resume <source> --fork-session --session-id <new> [--resume-session-at
-<U's transcript parentUuid>]`; forking before the first message is refused.
+<the nearest user/assistant entry up U's parent chain>]`; forking before the first message is refused, and so is a message absent from the source's visible history. The direct parent is often a `system` row (turn duration, hooks); a resume at one was refused live on 2.1.299 (`error_during_execution`), so those rows are skipped (the message-entry choice follows the CLI's "typically the kept turn's last entry" and has not been run live). `claude.compact` while a turn runs is fine: `/compact` with `priority:"next"` ran as the command after the turn, keeping its uuid (verified live).
 Codex bootstraps the new driver with `thread/fork {threadId:<source thread>,
 lastTurnId?, cwd}` as request id 101 (same capture as `thread/start`); the fork
 point (the turn before U's turn) comes from the LIVE source driver

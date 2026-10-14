@@ -848,17 +848,27 @@ async fn resolve_fork(
                     Err(err) => return Err((StatusCode::CONFLICT, err.to_string())),
                 }
             }
-            let history = if live.is_empty() {
+            let replayed = || async {
                 match &path {
                     Some(path) => replay_transcript(path).await.unwrap_or_default(),
                     None => Vec::new(),
                 }
-            } else {
-                live
             };
             plan.seed = match before {
-                Some(before) => items_before_user(&history, before).unwrap_or_default(),
-                None => history,
+                // The live log first, then the transcript (whose rows carry
+                // their own uuids). A fork point neither shows is refused
+                // rather than seeding an empty history.
+                Some(before) => match items_before_user(&live, before) {
+                    Some(seed) => seed,
+                    None => items_before_user(&replayed().await, before).ok_or_else(|| {
+                        bad(
+                            StatusCode::CONFLICT,
+                            "that message is not in the source's visible history",
+                        )
+                    })?,
+                },
+                None if live.is_empty() => replayed().await,
+                None => live,
             };
         }
         "codex" => {
@@ -902,7 +912,12 @@ async fn resolve_fork(
                     .get("lastTurnId")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
-                plan.seed = items_before_user(&live, before).unwrap_or_default();
+                plan.seed = items_before_user(&live, before).ok_or_else(|| {
+                    bad(
+                        StatusCode::CONFLICT,
+                        "that message is not in the source's visible history",
+                    )
+                })?;
             } else if live.is_empty() {
                 if let Some(path) = plan
                     .thread

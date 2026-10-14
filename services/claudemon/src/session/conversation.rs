@@ -134,11 +134,16 @@ pub async fn replay_transcript_plan(path: &str) -> std::io::Result<(TaskFold, Op
     Ok((fold, plan))
 }
 
-/// The chain parent of the transcript entry `uuid`: `Some(Some(parent))`
-/// for an entry with a parent, `Some(None)` for the first entry, `None`
-/// when no entry has that uuid. A fork that continues from BEFORE a user
-/// message resumes at its parent (`--resume-session-at` keeps through the
-/// named entry, inclusive).
+/// Where a fork that continues from BEFORE the transcript entry `uuid` must
+/// resume (`--resume-session-at` keeps through the named entry, inclusive):
+/// the nearest MESSAGE entry (`user` / `assistant`) up its parent chain.
+/// `Some(Some(entry))` for that entry, `Some(None)` when nothing precedes
+/// it, `None` when no entry has that uuid.
+///
+/// The direct parent is often not a message: a turn's `system` rows
+/// (durations, hooks) chain between the reply and the next prompt, and
+/// CLI 2.1.299 refused a resume at one live (`error_during_execution`, no
+/// turn), so system / attachment rows are skipped.
 pub async fn transcript_parent_of(
     path: &str,
     uuid: &str,
@@ -152,22 +157,41 @@ pub async fn transcript_parent_of(
     }
     let file = tokio::fs::File::open(path).await?;
     let mut lines = tokio::io::BufReader::new(file).lines();
+    // uuid -> (parentUuid, is a message entry)
+    let mut chain: std::collections::HashMap<String, (Option<String>, bool)> =
+        std::collections::HashMap::new();
     while let Some(line) = lines.next_line().await? {
-        if !line.contains(uuid) {
-            continue;
-        }
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if row.get("uuid").and_then(Value::as_str) == Some(uuid) {
-            return Ok(Some(
-                row.get("parentUuid")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-            ));
+        let Some(id) = row.get("uuid").and_then(Value::as_str) else {
+            continue;
+        };
+        let parent = row
+            .get("parentUuid")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let message = matches!(
+            row.get("type").and_then(Value::as_str),
+            Some("user" | "assistant")
+        ) && row.get("isMeta").and_then(Value::as_bool) != Some(true);
+        chain.insert(id.to_owned(), (parent, message));
+    }
+    let Some((mut next, _)) = chain.get(uuid).cloned() else {
+        return Ok(None);
+    };
+    // Bounded walk: a cyclic or broken chain ends the search, never loops.
+    for _ in 0..chain.len() {
+        let Some(id) = next else {
+            return Ok(Some(None));
+        };
+        match chain.get(&id) {
+            Some((_, true)) => return Ok(Some(Some(id))),
+            Some((parent, false)) => next = parent.clone(),
+            None => return Ok(Some(None)),
         }
     }
-    Ok(None)
+    Ok(Some(None))
 }
 
 /// The items before the user message `uuid`, or `None` when no user message
@@ -3346,7 +3370,9 @@ pub(crate) mod tests {
         let rows = vec![
             json!({"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"first"}}),
             json!({"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"one"}]}}),
-            json!({"type":"user","uuid":"u2","parentUuid":"a1","message":{"role":"user","content":"second"}}),
+            // A turn's system rows chain between the reply and the next prompt.
+            json!({"type":"system","subtype":"turn_duration","uuid":"s1","parentUuid":"a1"}),
+            json!({"type":"user","uuid":"u2","parentUuid":"s1","message":{"role":"user","content":"second"}}),
         ];
         let (_dir, path) = transcript_fixture(&rows);
         assert_eq!(
