@@ -1,5 +1,6 @@
 //! Session service over claudemon's in-process API and typed update stream.
 mod params;
+mod queue;
 mod titles;
 use super::{layout::Layout, snapshots};
 use crate::{Handle, Options, protocol::Event};
@@ -37,6 +38,8 @@ struct Sessions {
     workflow_artifacts: Option<Arc<super::workflow_artifacts::Service>>,
     /// Offers for the hub-owned automatic titler (see `titles`).
     titles: Option<tokio::sync::mpsc::Sender<String>>,
+    /// Hub-owned outbound message queues (see `queue`).
+    queue: Arc<super::message_queue::Queues>,
 }
 
 pub(crate) async fn install(
@@ -57,7 +60,15 @@ pub(crate) async fn install(
         }
         _ => (None, None),
     };
+    let queues = Arc::new(match &options.data_dir {
+        Some(directory) => {
+            super::message_queue::Queues::open(directory.join("message-queues.json"))
+        }
+        None => Default::default(),
+    });
+    let queue_kicks = queues.take_kicks();
     let service = Arc::new(Sessions {
+        queue: queues,
         titles: title_offers,
         workflow_artifacts: options.workflow_artifacts.clone(),
         dismissals: Default::default(),
@@ -138,12 +149,35 @@ pub(crate) async fn install(
             async move { service.call(method, params).await }
         });
     }
+    for method in [
+        "sessions.queueAdd",
+        "sessions.queueUpdate",
+        "sessions.queueRemove",
+        "sessions.queueMove",
+        "sessions.queueSendNow",
+        "sessions.queueClear",
+    ] {
+        let service = service.clone();
+        options = options.handler(method, move |_, params| {
+            let service = service.clone();
+            async move { service.queue_call(method, params).await }
+        });
+    }
     // The titler shares the observer's task, so stopping the session service
     // (or dropping the runtime) also cancels any title call in flight.
     let titles =
         title_worker.map(|(utilities, offers)| service.clone().run_titles(utilities, offers));
+    let queue_worker = queue_kicks.map(|kicks| service.clone().run_queue(kicks));
     let task = tokio::spawn(async move {
-        let observe = service.observe(updates);
+        let observe = async move {
+            let Some(queue_worker) = queue_worker else {
+                return service.observe(updates).await;
+            };
+            tokio::select! {
+                result = service.observe(updates) => result,
+                () = queue_worker => bail!("message queue worker stopped"),
+            }
+        };
         let Some(titles) = titles else {
             return observe.await;
         };
@@ -255,6 +289,11 @@ impl Sessions {
         }
         step("rows");
         self.dismissals.retain_inventory(&retained);
+        let mut queued: std::collections::BTreeSet<String> = rows.keys().cloned().collect();
+        if let Some(lifecycle) = &self.lifecycle {
+            queued.extend(lifecycle.session_ids());
+        }
+        self.queue_retain(&queued);
         self.confirmed.retain(&rows.keys().cloned().collect());
         let old = std::mem::replace(&mut *self.rows.write().unwrap(), rows.clone());
         let mut observations: Vec<_> = rows.values().cloned().collect();
@@ -322,6 +361,7 @@ impl Sessions {
             row
         };
         let row = snapshots::with_auto_title(row);
+        let row = self.queue.enrich(row);
         match &self.workflow_artifacts {
             Some(service) => service.enrich(row),
             None => row,
@@ -390,6 +430,7 @@ impl Sessions {
         }
     }
     async fn publish(&self, row: Value) -> Result<()> {
+        self.queue_observe(&row);
         let row = self.enrich(row);
         self.offer_title(&row);
         if let Some(wakes) = &self.wakes {
@@ -496,6 +537,7 @@ impl Sessions {
             if let Some(wakes) = &self.wakes {
                 wakes.forget(id);
             }
+            self.queue_forget(id).await;
             if was_live {
                 daemon = match tokio::time::timeout(
                     std::time::Duration::from_secs(5),
@@ -963,6 +1005,7 @@ mod projection_tests {
             wakes: None,
             workflow_artifacts: None,
             titles: None,
+            queue: Default::default(),
         });
         let http = reqwest::Client::new();
         for (id, event) in [("worker", "SessionStart"), ("worker", "UserPromptSubmit")] {

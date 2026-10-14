@@ -124,6 +124,12 @@
     "sessions.attachTerminal",
     "sessions.delete",
     "sessions.load",
+    "sessions.queueAdd",
+    "sessions.queueClear",
+    "sessions.queueMove",
+    "sessions.queueRemove",
+    "sessions.queueSendNow",
+    "sessions.queueUpdate",
     "sessions.save",
     "sessions.taskStop",
     "sessions.terminalInput",
@@ -244,6 +250,15 @@
       "acceptedIn": [
         "triage"
       ]
+    },
+    {
+      "name": "sessions.queueAdd defers the same instruction agents.sendMessage injects, and claude.approve resolves the prompt it raises",
+      "a": "sessions.queueAdd",
+      "b": "claude.approve",
+      "closedProof": null,
+      "acceptedIn": [
+        "triage"
+      ]
     }
   ],
   "acknowledgedActors": {
@@ -263,7 +278,13 @@
       "push.unsubscribe",
       "files.upload",
       "sessionArchive.set",
-      "sessions.taskStop"
+      "sessions.taskStop",
+      "sessions.queueAdd",
+      "sessions.queueClear",
+      "sessions.queueMove",
+      "sessions.queueRemove",
+      "sessions.queueSendNow",
+      "sessions.queueUpdate"
     ]
   }
 }

@@ -31,6 +31,7 @@ pub mod live_controls;
 pub mod machine_power;
 pub mod manager_replacements;
 pub mod manager_requests;
+pub mod message_queue;
 pub mod models;
 pub mod nodes;
 pub mod paths;

@@ -598,6 +598,60 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'sessions.queueAdd': {
+    reason: '',
+    witnesses: [],
+  },
+  'sessions.queueUpdate': {
+    reason:
+      "replaces the `text` of one entry this hub already queued for that session, selected by its opaque hub-minted `id`. The text is prompt text the hub later delivers through its own agents.sendMessage path when the session is ready for input, which is sessions.queueAdd's reach and no more",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['text', 'id'],
+      },
+    ],
+  },
+  'sessions.queueMove': {
+    reason:
+      'reorders one entry this hub already queued for that session, selected by its opaque hub-minted `id`, to a bounded index. It only changes WHICH queued prompt the hub delivers next through agents.sendMessage; it adds no text and no reach',
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['id'],
+      },
+    ],
+  },
+  'sessions.queueSendNow': {
+    reason:
+      "removes one queued entry, selected by its opaque hub-minted `id`, and sends it immediately through the hub's own agents.sendMessage path: exactly agents.sendMessage's reach for text this tier could have sent directly",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['id'],
+      },
+    ],
+  },
+  'sessions.queueRemove': {
+    reason:
+      'deletes one entry this hub queued for that session. It can only withhold a prompt, never add one; the ADD direction is sessions.queueAdd, whose recorded pair with claude.approve is where this queue\'s composition lives. The opaque hub-minted `id` is never joined into a path',
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['id'],
+      },
+    ],
+  },
+  'sessions.queueClear': {
+    reason:
+      'deletes every entry this hub queued for the session named by sessionId. It can only withhold prompts: nothing is sent, and it takes no path, argv or policy value',
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['sessionId'],
+      },
+    ],
+  },
   'sessionArchive.set': {
     reason:
       "adds or removes one opaque `sessionId` in the hub's own session-archive.json, which every client reads only to decide which sidebar rows to LIST. WRITE-THEN-INTERPRET: nothing reads that file as config, code, argv, path or policy; the id is validated as bounded text and never joined into a path or matched against a live process. WIDEN-THEN-USE: it changes no grant, no root, no permission mode, no approval gate, and it is deliberately not a lifecycle action — no stop, signal, close or delete is reachable from it, and an archived session keeps running. Restoring is the same call with archived:false",
@@ -1314,6 +1368,46 @@ export const parameterDecisions: Record<
   string,
   Record<string, { kind: string; reason: string }>
 > = {
+  'sessions.queueUpdate': {
+    text: {
+      kind: 'shell',
+      reason:
+        "prompt text held in the hub's own queue and later delivered through agents.sendMessage's owned message endpoint; never argv, a path or a raw PTY write",
+    },
+    id: {
+      kind: 'id',
+      reason:
+        'an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session\'s queue; never joined into a path',
+    },
+  },
+  'sessions.queueMove': {
+    id: {
+      kind: 'id',
+      reason:
+        'an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session\'s queue; never joined into a path',
+    },
+  },
+  'sessions.queueSendNow': {
+    id: {
+      kind: 'id',
+      reason:
+        'an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session\'s queue; never joined into a path',
+    },
+  },
+  'sessions.queueRemove': {
+    id: {
+      kind: 'id',
+      reason:
+        'an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session\'s queue; never joined into a path',
+    },
+  },
+  'sessions.queueClear': {
+    sessionId: {
+      kind: 'id',
+      reason:
+        'selects the session whose hub-held queue is emptied; validated as one plain id segment and never joined into a path',
+    },
+  },
   'sessions.taskStop': {
     taskId: {
       kind: 'id',
@@ -1727,6 +1821,12 @@ export const actors: string[] = [
   'sessions.attachTerminal',
   'sessions.delete',
   'sessions.load',
+  'sessions.queueAdd',
+  'sessions.queueClear',
+  'sessions.queueMove',
+  'sessions.queueRemove',
+  'sessions.queueSendNow',
+  'sessions.queueUpdate',
   'sessions.save',
   'sessions.taskStop',
   'sessions.terminalInput',
@@ -1815,5 +1915,13 @@ export const crossings = [
     B: 'claude.approve',
     Crossing:
       "agents.sendMessage's own excuse is that 'the agent's own tool approvals are the gate', and claude.approve is the RESOLVER of exactly those approvals \u2014 its own entry says so. A tier holding both can tell an agent that may run a shell to run one, and then approve it, without holding terminals.create, sessions.terminalInput, fs.write, git.* or agents.spawn. claude.gate is NOT a prerequisite: gate only ADDS parking, and the agent's own prompts already exist. `decision:\"always\"` persists a standing allow, so subsequent calls of that tool are not parked at all.",
+  },
+  {
+    Name: 'sessions.queueAdd defers the same instruction agents.sendMessage injects, and claude.approve resolves the prompt it raises',
+    Shape: 'ShapeWidenThenUse',
+    A: 'sessions.queueAdd',
+    B: 'claude.approve',
+    Crossing:
+      "the hub-owned message queue is a deferred agents.sendMessage: a queued entry is delivered through that same path when the session finishes its turn. The composition is therefore agents.sendMessage + claude.approve's, recorded again so the queue cannot be the unrecorded second door onto it: a tier holding both can queue an instruction for an agent that may run a shell and then approve the prompt it raises.",
   },
 ];
