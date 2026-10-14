@@ -344,7 +344,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            with_markers("look".into(), &[image.clone()]),
+            with_markers("look".into(), std::slice::from_ref(&image)),
             "[Image: /tmp/u/m-1-abcdef01.png]\nlook"
         );
         assert_eq!(with_markers("look".into(), &[]), "look");
