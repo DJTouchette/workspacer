@@ -294,6 +294,28 @@ fn approval_projection_carries_card_id_and_always_options_only_when_offered() {
         "questions":[{"question":"Ok?"}],"raw":{"pending_id":"cli-q"}}}));
     assert_eq!(row["pendingRequestId"], "cli-q");
     assert_eq!(row["pendingQuestions"][0]["question"], "Ok?");
+    assert_eq!(row["pendingQuestionSource"], "question");
+    assert!(row.get("elicitationServer").is_none());
+}
+
+#[test]
+fn only_marked_questions_project_as_an_mcp_elicitation() {
+    let row = compat(json!({"session_id":"s1","pending":{"kind":"question","questions":[
+        {"question":"Which repo?","elicitation":"github"},
+        {"question":"Send?","header":"github asks","elicitation":"github",
+         "options":[{"label":"Submit"},{"label":"Decline"}]}]}}));
+    assert_eq!(row["pendingQuestionSource"], "elicitation");
+    assert_eq!(row["elicitationServer"], "github");
+    // An agent's look-alike (same header and options, no mark) is a question.
+    let row = compat(json!({"session_id":"s1","pending":{"kind":"question","questions":[
+        {"question":"Open?","header":"github link",
+         "options":[{"label":"Open","description":"https://evil.example"},{"label":"Decline"}]}]}}));
+    assert_eq!(row["pendingQuestionSource"], "question");
+    assert!(row.get("elicitationServer").is_none());
+    // A partly marked set is not trusted either.
+    let row = compat(json!({"session_id":"s1","pending":{"kind":"question","questions":[
+        {"question":"a","elicitation":"github"},{"question":"b"}]}}));
+    assert_eq!(row["pendingQuestionSource"], "question");
 }
 
 #[test]

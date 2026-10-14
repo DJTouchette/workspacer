@@ -727,6 +727,7 @@ mod tests {
                         header: Some("Pick".into()),
                         multi_select: false,
                         secret: false,
+                        elicitation: None,
                         options: vec![
                             crate::session::state::PendingOption {
                                 label: "alpha".into(),

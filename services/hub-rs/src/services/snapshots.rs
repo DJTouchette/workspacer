@@ -195,7 +195,29 @@ pub fn compat(mut snapshot: Value) -> Value {
                 snapshot["pendingApproval"]["requestId"] = id.clone();
             }
         }
-        Some("question") => snapshot["pendingQuestions"] = pending["questions"].clone(),
+        Some("question") => {
+            snapshot["pendingQuestions"] = pending["questions"].clone();
+            // Who is asking: an MCP server (every question carries the mark
+            // only claudemon's elicitation mapping sets, never input) or the
+            // agent itself. Clients offer elicitation consent and links only
+            // for `"elicitation"`.
+            let server = pending["questions"].as_array().and_then(|questions| {
+                let marks: Vec<Option<&str>> = questions
+                    .iter()
+                    .map(|q| q["elicitation"].as_str().filter(|s| !s.is_empty()))
+                    .collect();
+                marks
+                    .iter()
+                    .all(Option::is_some)
+                    .then(|| marks.first().copied().flatten())
+                    .flatten()
+            });
+            snapshot["pendingQuestionSource"] =
+                json!(if server.is_some() { "elicitation" } else { "question" });
+            if let Some(server) = server {
+                snapshot["elicitationServer"] = json!(server);
+            }
+        }
         _ => (),
     }
     // The shown card's id, echoed as `requestId` on `claude.approve` /

@@ -4312,6 +4312,7 @@ mod tests {
                         multi_select: false,
                         options: Vec::new(),
                         secret: false,
+                        elicitation: None,
                     }],
                     raw: Value::Null,
                 },
@@ -4350,6 +4351,7 @@ mod tests {
                 multi_select: false,
                 options: Vec::new(),
                 secret: false,
+                elicitation: None,
             }],
             raw: Value::Null,
         };

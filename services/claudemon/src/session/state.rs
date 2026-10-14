@@ -160,6 +160,12 @@ pub struct PendingQuestion {
     /// from the wire when false, so Claude's questions serialize unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub secret: bool,
+    /// Set only by the drivers' MCP-elicitation mapping
+    /// (`providers::elicitation`): the MCP server asking. Never read from
+    /// input (`skip_deserializing`), so an agent's own AskUserQuestion can
+    /// never pass for an MCP server's request; clients trust only this mark.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub elicitation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

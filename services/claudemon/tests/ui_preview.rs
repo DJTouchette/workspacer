@@ -185,6 +185,7 @@ fn preview_chat_with_pending_question() {
                         header: Some("Library".into()),
                         multi_select: false,
                         secret: false,
+                        elicitation: None,
                         options: vec![
                             PendingOption {
                                 label: "date-fns".into(),

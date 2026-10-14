@@ -246,6 +246,15 @@ you to open:\n<url>``.
 - An answer the schema rejects is declined, and a notice explains why. Nothing
   is ever sent wrong.
 
+**Who is asking.** Every question of an elicitation card carries
+`PendingQuestion.elicitation = Some(<server>)`, set only by `form_card` /
+`url_card`. The field is `skip_deserializing`, so an AskUserQuestion input (hook
+`tool_input`, the MCP ask shim's arguments) can never set it. The hub projects
+`pendingQuestionSource: "elicitation" | "question"` and `elicitationServer`
+(only when every question is marked). Clients must treat a card as an MCP
+elicitation, offer consent wording or open a link ONLY on that mark, never on
+the card's shape: an agent can word its own question identically.
+
 **Unsupported:** nested objects, arrays of objects, and other modes
 (`openai/form`, `openai/userVerification`, …). Claude declines these, and so
 does headless Codex; hybrid Codex leaves them for the TUI. Each case leaves a

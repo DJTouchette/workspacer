@@ -1563,6 +1563,7 @@ fn user_input_card(questions: &[Value]) -> Vec<PendingQuestion> {
                     })
                     .collect(),
                 secret: q.get("isSecret").and_then(Value::as_bool) == Some(true),
+                elicitation: None,
             }
         })
         .collect()

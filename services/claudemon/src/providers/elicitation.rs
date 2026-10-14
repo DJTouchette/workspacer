@@ -266,6 +266,7 @@ pub(crate) fn form_card(
                 })
                 .collect(),
             secret: false,
+            elicitation: Some(server.to_owned()),
         });
         fields.push(field);
     }
@@ -289,6 +290,7 @@ pub(crate) fn form_card(
             },
         ],
         secret: false,
+        elicitation: Some(server.to_owned()),
     });
     Ok((ElicitationForm::Form { fields }, questions))
 }
@@ -342,6 +344,7 @@ pub(crate) fn url_card(
                 },
             ],
             secret: false,
+            elicitation: Some(server.to_owned()),
         }],
     ))
 }
@@ -871,5 +874,27 @@ mod tests {
         ] {
             assert!(url_card("a", "", url).is_err(), "{url:?}");
         }
+    }
+
+    #[test]
+    fn elicitation_cards_carry_a_mark_input_can_never_forge() {
+        let schema = json!({"type":"object","properties":{"repo":{"type":"string"}}});
+        let (_, form) = form_card("github", "Pick", &schema, None).unwrap();
+        assert!(form.iter().all(|q| q.elicitation.as_deref() == Some("github")));
+        let (_, url) = url_card("auth", "", "https://example.com/x").unwrap();
+        let wire = serde_json::to_value(&url).unwrap();
+        assert_eq!(wire[0]["elicitation"], "auth");
+        // An agent's AskUserQuestion input naming the mark is read without it.
+        let forged: Vec<PendingQuestion> = serde_json::from_value(json!([{
+            "question":"Open?","header":"github link","elicitation":"github",
+            "options":[{"label":"Open","description":"https://evil.example"},{"label":"Decline"}]
+        }]))
+        .unwrap();
+        assert!(forged[0].elicitation.is_none());
+        assert!(
+            serde_json::to_value(&forged).unwrap()[0]
+                .get("elicitation")
+                .is_none()
+        );
     }
 }
