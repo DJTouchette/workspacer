@@ -14,6 +14,9 @@ pub const MAX_IMAGES: usize = 8;
 /// API's per-image limit (claudemon `session::images::MAX_IMAGE_BYTES`). A
 /// larger attachment still goes, as a path the agent reads.
 pub const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024 / 4 * 3;
+/// Most image data one message sends as real images: 20 MiB of base64
+/// (claudemon `session::images::MAX_INLINE_BYTES`); the rest go as paths.
+pub const MAX_IMAGES_TOTAL: u64 = 20 * 1024 * 1024 / 4 * 3;
 
 /// The owner's writes to a job from the Jobs view. Creating and editing jobs
 /// is left to agents; `Save` only ever carries a listed spec with one change

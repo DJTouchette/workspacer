@@ -1140,9 +1140,27 @@ fn slash_menu_filters_inserts_and_yields_its_keys_once_closed(cx: &mut TestAppCo
     visual.simulate_input("a");
     visual.run_until_parked();
     workspace.read_with(&visual, |this, cx| assert_eq!(this.slash_menu(cx).len(), 1));
+    // A dismissal belongs to its session: another session's Esc on the
+    // same draft leaves this menu open.
+    workspace.update(&mut visual, |this, cx| {
+        this.extras.slash_dismissed = Some(("b".into(), "/compa".into()));
+        assert_eq!(this.slash_menu(cx).len(), 1);
+    });
     // A click inserts too.
     let item = visual.debug_bounds("slash-item-0").unwrap();
     visual.simulate_click(item.center(), gpui::Modifiers::none());
     visual.run_until_parked();
     assert_eq!(composer_value(&workspace, &mut visual), "/compact ");
+    // A draft that already is the command: Enter sends it rather than
+    // adding a space (Tab would still insert).
+    composer_draft(&workspace, &mut visual, "");
+    visual.simulate_input("/compact");
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, cx| assert_eq!(this.slash_menu(cx).len(), 1));
+    visual.simulate_keystrokes("enter");
+    let sent = sent_actions(&mut commands);
+    assert!(
+        matches!(&sent[..], [Action::Send(text)] if text == "/compact"),
+        "{sent:?}"
+    );
 }

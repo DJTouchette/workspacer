@@ -327,8 +327,9 @@ Captured during a real Codex round trip through an isolated backend:
   filters it (names starting with the text first, then names containing it).
   `↑`/`↓` move, **Enter** or **Tab** inserts the command and a space, **Esc**
   closes it until the draft changes, and a click inserts too. While the menu
-  is open it owns those keys; once it closes (an argument typed, Esc, or no
-  match) Enter sends and Tab queues as usual.
+  is open it owns those keys (an IME composition keeps them); once it closes
+  (an argument typed, Esc, or no match) Enter sends and Tab queues as usual.
+  Enter on a draft that already is the command (`/compact`) sends it.
 - Scrollback retains its position while new text arrives. Jump to latest resumes
   following the conversation.
 
@@ -801,7 +802,12 @@ be expanded, and attachment controls share the composer action row.
   larger image, a PDF, and every attachment on other sessions or on a resume
   is sent as an `[Image: path]` / `[PDF: path]` marker the agent reads the
   file by. Images can't be queued: **Queue** (or Tab) with images attached
-  says so and keeps the draft; steer or send now instead.
+  says so and keeps the draft; steer or send now instead. When the hub can
+  only pass the images on as file paths (the message is held for a
+  manager handoff, or the session has no image input), a notice says so;
+  Codex adds a conversation note when its thread was not ready. The daemon
+  also refuses an image over 8000 px on a side or a message whose inline
+  images exceed 20 MiB encoded.
 - **Question choices** dock above the composer as one card: each question
   shows its position, header and whether to choose one or any, then numbered
   (single) or checkbox (multiple) option rows with descriptions and a typed

@@ -5,7 +5,9 @@
 //!
 //! The menu owns Up, Down, Enter, Tab and Esc only while it shows rows (its
 //! `SlashMenu` key context exists only then), so the busy composer's Tab
-//! queue and Enter send are untouched the moment it closes.
+//! queue and Enter send are untouched the moment it closes. An IME
+//! composition keeps those keys, and Enter on a draft that already is the
+//! highlighted command sends it rather than inserting it again.
 use super::*;
 use wks_native::model::{SlashCommand, slash_matches};
 
@@ -19,7 +21,7 @@ impl Workspace {
             return Vec::new();
         };
         let draft = self.composer.read(cx).value();
-        if self.extras.slash_dismissed.as_deref() == Some(draft.as_ref()) {
+        if self.extras.slash_dismissed.as_ref() == Some(&(session.id.clone(), draft.to_string())) {
             return Vec::new();
         }
         slash_matches(&session.slash_commands, draft.as_ref())
@@ -31,51 +33,97 @@ impl Workspace {
     /// The highlighted row: it belongs to the draft it was moved on, so
     /// typing another character starts again from the first match.
     pub(super) fn slash_highlight(&self, rows: usize, cx: &App) -> usize {
-        let draft = self.composer.read(cx).value();
         match &self.extras.slash_cursor {
-            Some((owner, ix)) if owner.as_str() == draft.as_ref() => {
-                (*ix).min(rows.saturating_sub(1))
+            Some(owner) if Some(owner) == self.slash_owner(cx).as_ref() => {
+                owner.2.min(rows.saturating_sub(1))
             }
             _ => 0,
         }
     }
 
-    fn slash_move(&mut self, step: isize, cx: &mut Context<Self>) {
+    /// The (session, draft) a highlight or a dismissal belongs to, with the
+    /// highlight's row (0 when only the owner is wanted).
+    fn slash_owner(&self, cx: &App) -> Option<(String, String, usize)> {
+        let session = self.view.selected.clone()?;
+        let draft = self.composer.read(cx).value().to_string();
+        let ix = self.extras.slash_cursor.as_ref().map_or(0, |c| c.2);
+        Some((session, draft, ix))
+    }
+
+    /// An IME composition keeps its keys, as it keeps Enter and Tab.
+    fn slash_composing(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.composer
+            .update(cx, |input, cx| {
+                gpui::EntityInputHandler::marked_text_range(input, window, cx)
+            })
+            .is_some_and(|range| !range.is_empty())
+    }
+
+    fn slash_move(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
         let rows = self.slash_menu(cx).len();
-        if rows == 0 {
+        if rows == 0 || self.slash_composing(window, cx) {
             cx.propagate();
             return;
         }
         let current = self.slash_highlight(rows, cx) as isize;
         let next = (current + step).rem_euclid(rows as isize) as usize;
-        let draft = self.composer.read(cx).value().to_string();
-        self.extras.slash_cursor = Some((draft, next));
+        self.extras.slash_cursor = self
+            .slash_owner(cx)
+            .map(|(session, draft, _)| (session, draft, next));
         cx.notify();
     }
 
-    pub(super) fn slash_up(&mut self, _: &SlashUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.slash_move(-1, cx);
+    pub(super) fn slash_up(&mut self, _: &SlashUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.slash_move(-1, window, cx);
     }
 
-    pub(super) fn slash_down(&mut self, _: &SlashDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.slash_move(1, cx);
+    pub(super) fn slash_down(
+        &mut self,
+        _: &SlashDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.slash_move(1, window, cx);
     }
 
-    /// Enter or Tab on the open menu: put the highlighted command in the
-    /// composer, followed by a space for its arguments.
+    /// The highlighted row, unless the menu is shut or an IME composes.
+    fn slash_pick(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<SlashCommand> {
+        let rows = self.slash_menu(cx);
+        if rows.is_empty() || self.slash_composing(window, cx) {
+            return None;
+        }
+        let ix = self.slash_highlight(rows.len(), cx);
+        rows.into_iter().nth(ix)
+    }
+
+    /// Tab on the open menu: put the highlighted command in the composer,
+    /// followed by a space for its arguments.
     pub(super) fn slash_accept(
         &mut self,
         _: &SlashAccept,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let rows = self.slash_menu(cx);
-        if rows.is_empty() {
-            cx.propagate();
-            return;
+        match self.slash_pick(window, cx) {
+            Some(command) => self.slash_insert(&command, window, cx),
+            None => cx.propagate(),
         }
-        let ix = self.slash_highlight(rows.len(), cx);
-        self.slash_insert(&rows[ix], window, cx);
+    }
+
+    /// Enter on the open menu inserts like Tab — except when the draft
+    /// already IS the highlighted command (`/compact`), when Enter keeps its
+    /// ordinary job (send, with Enter sending) instead of adding a space.
+    pub(super) fn slash_enter(
+        &mut self,
+        _: &SlashEnter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let draft = self.composer.read(cx).value().to_string();
+        match self.slash_pick(window, cx) {
+            Some(command) if command.insert != draft => self.slash_insert(&command, window, cx),
+            _ => cx.propagate(),
+        }
     }
 
     pub(super) fn slash_insert(
@@ -102,7 +150,9 @@ impl Workspace {
             cx.propagate();
             return;
         }
-        self.extras.slash_dismissed = Some(self.composer.read(cx).value().to_string());
+        self.extras.slash_dismissed = self
+            .slash_owner(cx)
+            .map(|(session, draft, _)| (session, draft));
         cx.notify();
     }
 

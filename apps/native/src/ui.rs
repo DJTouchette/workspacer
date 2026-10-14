@@ -365,6 +365,7 @@ actions!(
         SlashUp,
         SlashDown,
         SlashAccept,
+        SlashEnter,
         SlashClose,
         QueueEditSave,
         QueueEditCancel,
@@ -499,7 +500,7 @@ pub fn bind_keys(cx: &mut App) {
         // composer's own Enter, Tab and arrows.
         KeyBinding::new("up", SlashUp, Some("SlashMenu > Input")),
         KeyBinding::new("down", SlashDown, Some("SlashMenu > Input")),
-        KeyBinding::new("enter", SlashAccept, Some("SlashMenu > Input")),
+        KeyBinding::new("enter", SlashEnter, Some("SlashMenu > Input")),
         KeyBinding::new("tab", SlashAccept, Some("SlashMenu > Input")),
         KeyBinding::new("escape", SlashClose, Some("SlashMenu > Input")),
         // The queue panel's inline editor.

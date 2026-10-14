@@ -29,6 +29,10 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 /// and each "earlier messages" step widens the window by one more.
 pub const CONVERSATION_PAGE: usize = 200;
 
+/// The notice when a send's images reached the agent only as file paths.
+pub const IMAGES_AS_MARKERS: &str =
+    "Images were sent as file paths; the agent reads them from disk.";
+
 #[derive(Clone, Debug)]
 pub enum Action {
     /// `agents.sendMessage` with the hub's default delivery: while a turn
@@ -2072,6 +2076,9 @@ impl Worker {
                 let queued = result
                     .as_ref()
                     .is_ok_and(|v| v["queued"] == true || v["disposition"] == "queued");
+                // The hub could only hand the images over as file paths
+                // (held for later, or a session without image input).
+                let as_markers = result.as_ref().is_ok_and(|v| v["imagesAsMarkers"] == true);
                 let error = result
                     .and_then(|v| {
                         anyhow::ensure!(
@@ -2125,6 +2132,7 @@ impl Worker {
                                 format!("Access change accepted: {label}")
                             }
                             Action::Queue(op) => op.success().into(),
+                            Action::SendImages { .. } if as_markers => IMAGES_AS_MARKERS.into(),
                             _ => String::new(),
                         }
                     }

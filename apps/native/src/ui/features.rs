@@ -68,10 +68,11 @@ pub(super) struct Extras {
     /// Uploaded size by hub path, from each `files.upload` result: decides
     /// whether an image is small enough to send as real image input.
     pub attachment_sizes: HashMap<String, u64>,
-    /// The composer's `/` menu: highlighted row, and the draft the user
-    /// dismissed it for with Esc (it stays shut until the draft changes).
-    pub slash_cursor: Option<(String, usize)>,
-    pub slash_dismissed: Option<String>,
+    /// The composer's `/` menu: the highlighted row, and the draft the user
+    /// dismissed it for with Esc (it stays shut until the draft changes),
+    /// each keyed by (session, draft).
+    pub slash_cursor: Option<(String, String, usize)>,
+    pub slash_dismissed: Option<(String, String)>,
     pub sent_drafts: HashMap<String, String>,
     pub answer_watches: Vec<gpui::Subscription>,
     pub sent_attachments: HashMap<String, Vec<(String, String)>>,

@@ -315,10 +315,12 @@ impl Workspace {
 
     /// The draft's attachments the hub hands the provider as real images:
     /// images (by extension) of a session that takes them, small enough for
-    /// the provider's per-image limit, at most [`MAX_IMAGES`] of them. Every
+    /// the provider's per-image limit, at most [`MAX_IMAGES`] of them and
+    /// [`MAX_IMAGES_TOTAL`] together. Every
     /// other attachment travels as a path marker in [`Self::attachment_text`].
     ///
     /// [`MAX_IMAGES`]: wks_native::features::MAX_IMAGES
+    /// [`MAX_IMAGES_TOTAL`]: wks_native::features::MAX_IMAGES_TOTAL
     pub(super) fn attachment_images(&self, id: &str) -> Vec<String> {
         let takes = self
             .view
@@ -334,19 +336,22 @@ impl Workspace {
             .get(id)
             .into_iter()
             .flatten()
-            .filter(|(name, path)| {
+            .filter_map(|(name, path)| {
                 let ext = name.rsplit_once('.').map(|(_, e)| e.to_lowercase());
-                matches!(
+                let size = *self.extras.attachment_sizes.get(path)?;
+                (matches!(
                     ext.as_deref(),
                     Some("png" | "jpg" | "jpeg" | "gif" | "webp")
-                ) && self
-                    .extras
-                    .attachment_sizes
-                    .get(path)
-                    .is_some_and(|size| *size <= wks_native::features::MAX_IMAGE_BYTES)
+                ) && size <= wks_native::features::MAX_IMAGE_BYTES)
+                    .then_some((path, size))
             })
+            .scan(0u64, |total, (path, size)| {
+                *total += size;
+                Some((path, *total <= wks_native::features::MAX_IMAGES_TOTAL))
+            })
+            .filter(|(_, fits)| *fits)
             .take(wks_native::features::MAX_IMAGES)
-            .map(|(_, path)| path.clone())
+            .map(|(path, _)| path.clone())
             .collect()
     }
 
