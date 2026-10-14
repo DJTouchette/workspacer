@@ -131,11 +131,26 @@ pub fn from_codex_skills(result: &Value) -> Vec<SlashCommand> {
 }
 
 /// The Codex request that lists this session's skills (`cwds` empty: the
-/// app-server's own working directory, which is the session's).
-pub fn codex_skills_request() -> Value {
+/// app-server's own working directory, which is the session's), as ask
+/// number `ask` — its id is `workspacer-skills-list-<ask>`. `force_reload`
+/// re-scans disk (after the skill roots change).
+pub fn codex_skills_request(ask: u64, force_reload: bool) -> Value {
+    let mut params = serde_json::json!({});
+    if force_reload {
+        params["forceReload"] = Value::Bool(true);
+    }
     serde_json::json!({
-        "jsonrpc": "2.0", "id": CODEX_SKILLS_RPC_ID, "method": "skills/list", "params": {}
+        "jsonrpc": "2.0", "id": format!("{CODEX_SKILLS_RPC_ID}-{ask}"),
+        "method": "skills/list", "params": params
     })
+}
+
+/// The ask number of a `skills/list` answer's id, if it is one of ours.
+pub fn codex_skills_answer(id: &str) -> Option<u64> {
+    id.strip_prefix(CODEX_SKILLS_RPC_ID)?
+        .strip_prefix('-')?
+        .parse()
+        .ok()
 }
 
 #[cfg(test)]
@@ -204,6 +219,12 @@ mod tests {
             ]
         );
         assert!(from_codex_skills(&json!({})).is_empty());
-        assert_eq!(codex_skills_request()["method"], "skills/list");
+        let ask = codex_skills_request(3, true);
+        assert_eq!(ask["method"], "skills/list");
+        assert_eq!(ask["params"], json!({ "forceReload": true }));
+        assert_eq!(codex_skills_answer(ask["id"].as_str().unwrap()), Some(3));
+        assert_eq!(codex_skills_request(1, false)["params"], json!({}));
+        assert_eq!(codex_skills_answer(CODEX_SKILLS_RPC_ID), None);
+        assert_eq!(codex_skills_answer("workspacer-skill-roots"), None);
     }
 }

@@ -138,6 +138,9 @@ impl Drop for TrackedDelivery {
 pub struct DeliveryResult {
     pub held: bool,
     pub outcome: SendOutcome,
+    /// The message's images reached the agent only as `[Image: <path>]`
+    /// markers (held for later, or a session without image input).
+    pub images_as_markers: bool,
 }
 impl DeliveryResult {
     pub fn accepted(&self) -> bool {
@@ -145,6 +148,9 @@ impl DeliveryResult {
     }
     pub fn wire(&self) -> Value {
         match &self.outcome {
+            SendOutcome::Accepted if self.images_as_markers => {
+                json!({"ok":true,"held":self.held,"imagesAsMarkers":true})
+            }
             SendOutcome::Accepted => json!({"ok":true,"held":self.held}),
             SendOutcome::Rejected { status, reason } => {
                 json!({"ok":false,"status":status,"delivery":"rejected","error":reason})
@@ -232,6 +238,7 @@ pub async fn send_engine_with(
             return Ok(DeliveryResult {
                 held: false,
                 outcome: SendOutcome::Accepted,
+                images_as_markers: false,
             });
         }
         if attempt["status"] != "pending" {
@@ -272,6 +279,7 @@ pub async fn send_engine_with(
             return Ok(DeliveryResult {
                 held: true,
                 outcome: SendOutcome::Accepted,
+                images_as_markers: !images.is_empty(),
             });
         }
         BeginDelivery::Send(delivery) => delivery,
@@ -283,6 +291,7 @@ pub async fn send_engine_with(
             "unknown",
         )?;
     }
+    let mut images_as_markers = false;
     let outcome = match tokio::time::timeout(
         std::time::Duration::from_secs(15),
         engine.request(Command::Message {
@@ -295,7 +304,10 @@ pub async fn send_engine_with(
     )
     .await
     {
-        Ok(Ok(_)) => SendOutcome::Accepted,
+        Ok(Ok(reply)) => {
+            images_as_markers = reply["imagesAsMarkers"] == true;
+            SendOutcome::Accepted
+        }
         Ok(Err(error)) => {
             if let Some(rejected) = error.downcast_ref::<CommandRejected>() {
                 SendOutcome::Rejected {
@@ -323,5 +335,6 @@ pub async fn send_engine_with(
     Ok(DeliveryResult {
         held: false,
         outcome,
+        images_as_markers,
     })
 }

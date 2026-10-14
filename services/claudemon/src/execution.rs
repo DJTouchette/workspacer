@@ -79,6 +79,12 @@ pub(crate) trait ExecutionEngineV1: Send + Sync {
         let _ = (delivery, sender);
         self.send(store, id, text)
     }
+    /// Whether this engine hands images to providers structurally; when
+    /// not, [`Self::send_images`] delivers markers and the daemon reads no
+    /// image bytes for it.
+    fn takes_images(&self) -> bool {
+        false
+    }
     /// `send_with` carrying validated images. Engines without structured
     /// image input deliver them as `[Image: <path>]` markers ahead of the text.
     fn send_images(
@@ -230,6 +236,9 @@ impl ExecutionEngineV1 for ClaudemonEngine {
         sender: MessageSender,
     ) -> MessageOutcome {
         store.native_submit_message_from(id, text, delivery, sender)
+    }
+    fn takes_images(&self) -> bool {
+        true
     }
     fn send_images(
         &self,

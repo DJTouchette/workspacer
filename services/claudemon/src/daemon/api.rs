@@ -649,20 +649,49 @@ async fn post_message(
     // flushed on the next `Input` transition otherwise (cold start, mid-turn,
     // or an open approval/question dialog). Only a stopped session rejects.
     // See `SessionStore::submit_message`.
+    use crate::session::images::{self, ImageUse};
     let paths: Vec<String> = payload.images.into_iter().map(|i| i.path).collect();
-    let images = match crate::session::images::load_all(&paths) {
-        Ok(images) => images,
-        Err(error) => {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({ "error": error })),
-            )
-                .into_response()
+    let usage = store.image_use(&id);
+    // Confining, reading, sniffing and copying are file I/O: off the workers.
+    let images = if paths.is_empty() {
+        Vec::new()
+    } else {
+        let dir = images::upload_dir();
+        match tokio::task::spawn_blocking(move || images::prepare_in(&paths, usage, &dir)).await {
+            Ok(Ok(images)) => images,
+            Ok(Err(error)) => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": error })),
+                )
+                    .into_response()
+            }
+            Err(_) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "image preparation failed",
+                )
+                    .into_response()
+            }
         }
     };
-    match store.submit_message_images(&id, payload.text, payload.delivery, payload.sender, images) {
-        MessageOutcome::Sent => Json(json!({ "ok": true })).into_response(),
-        MessageOutcome::Queued => Json(json!({ "ok": true, "queued": true })).into_response(),
+    // The client asked for images; say when they went as path markers.
+    let markers = !images.is_empty() && usage == ImageUse::Markers;
+    let copies = images.clone();
+    let outcome =
+        store.submit_message_images(&id, payload.text, payload.delivery, payload.sender, images);
+    if !matches!(outcome, MessageOutcome::Sent | MessageOutcome::Queued) {
+        images::discard(&copies);
+    }
+    let accepted = |mut body: Value| {
+        if markers {
+            body["imagesAsMarkers"] = json!(true);
+        }
+        Json(body).into_response()
+    };
+    match outcome {
+        MessageOutcome::Sent => accepted(json!({ "ok": true })),
+        MessageOutcome::Queued => accepted(json!({ "ok": true, "queued": true })),
         MessageOutcome::Rejected(mode) => (
             StatusCode::CONFLICT,
             Json(json!({
@@ -3559,19 +3588,10 @@ mod tests {
     #[tokio::test]
     async fn post_message_attaches_confined_uploads_and_refuses_any_other_path() {
         use crate::session::ManagedPrompt;
-        let dir = crate::session::images::upload_dir();
-        let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            // The hub's upload handler insists the directory stays private.
-            builder.mode(0o700);
-        }
-        builder.create(&dir).unwrap();
-        let tag = &uuid::Uuid::new_v4().simple().to_string()[..8];
-        let upload = dir.join(format!("m-1-{tag}.png"));
-        std::fs::write(&upload, b"\x89PNG\r\n\x1a\nfixture").unwrap();
+        let uploads = crate::session::images::tests::UploadDir::new();
+        let dir = uploads.path.clone();
+        let upload = dir.join("m-1-abcdef01.png");
+        std::fs::write(&upload, crate::session::images::tests::png(2, 2)).unwrap();
         let path = upload.to_string_lossy().into_owned();
 
         let state = test_state();
@@ -3594,6 +3614,10 @@ mod tests {
         assert_eq!(prompt.images.len(), 1);
         assert_eq!(prompt.images[0].media_type, "image/png");
         assert_eq!(prompt.images[0].path, upload);
+        assert!(
+            !prompt.images[0].data.is_empty(),
+            "Claude reads the bytes inline"
+        );
 
         // Any path that is not an upload is refused before the driver sees it.
         for refused in [
@@ -3614,11 +3638,35 @@ mod tests {
         }
         assert!(rx.try_recv().is_err());
 
-        // A text-only driver is told where the file is instead.
+        // Codex reads a daemon-owned copy, never the client's file.
+        state.store.register_managed("sess-3", "/tmp/proj", "codex");
+        let (tx, mut codex_rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        state.store.register_managed_prompt("sess-3", tx);
+        let (status, body) = request(
+            state.clone(),
+            post_json(
+                "/sessions/sess-3/message",
+                json!({ "text": "look", "images": [{ "path": path }] }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(serde_json::from_slice::<Value>(&body)
+            .unwrap()
+            .get("imagesAsMarkers")
+            .is_none());
+        let codex = codex_rx.try_recv().unwrap();
+        assert!(codex.images[0].owned_copy());
+        assert!(codex.images[0].data.is_empty());
+        assert_eq!(codex.images[0].source, upload);
+        crate::session::images::discard(&codex.images);
+
+        // A text-only driver is told where the file is instead, and the
+        // reply says the images went as markers.
         state.store.register_managed("sess-2", "/tmp/proj", "pi");
         let (tx, mut text_rx) = mpsc::unbounded_channel::<String>();
         state.store.register_managed_input("sess-2", tx);
-        let (status, _) = request(
+        let (status, body) = request(
             state,
             post_json(
                 "/sessions/sess-2/message",
@@ -3628,10 +3676,13 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["imagesAsMarkers"],
+            true
+        );
+        assert_eq!(
             text_rx.try_recv().unwrap(),
             format!("[Image: {}]\nlook", upload.display())
         );
-        let _ = std::fs::remove_file(&upload);
     }
 
     #[tokio::test]

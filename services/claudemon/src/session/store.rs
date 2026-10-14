@@ -3151,6 +3151,36 @@ impl SessionStore {
         self.native_submit_message_images(session_id, text, delivery, sender, images)
     }
 
+    /// How this session takes a message's images: inline (a Claude stream
+    /// driver), as a daemon-owned copy (a Codex driver), or as markers
+    /// (everything else — PTY, text-only drivers, engines without images).
+    pub fn image_use(&self, session_id: &str) -> super::images::ImageUse {
+        use super::images::ImageUse;
+        if self
+            .engines
+            .bound(session_id)
+            .is_some_and(|engine| !engine.takes_images())
+        {
+            return ImageUse::Markers;
+        }
+        if !matches!(
+            self.managed_input(session_id),
+            Some(ManagedInput::Prompt(_))
+        ) {
+            return ImageUse::Markers;
+        }
+        match self
+            .states
+            .get(session_id)
+            .map(|s| s.provider.clone())
+            .as_deref()
+        {
+            Some("claude") => ImageUse::Inline,
+            Some("codex") => ImageUse::Copy,
+            _ => ImageUse::Markers,
+        }
+    }
+
     pub(crate) fn native_submit_message_images(
         &self,
         session_id: &str,

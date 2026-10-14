@@ -2363,6 +2363,9 @@ fn codex_override_args(
     argv
 }
 
+/// What the conversation says when images had to go to codex as paths.
+const MARKER_NOTICE: &str = "Images were sent to Codex as file paths (its thread was not ready), so it reads them from disk.";
+
 /// JSON-RPC id for the one `skills/extraRoots/set` request. A string, so it can
 /// never collide with the numeric ids the bootstrap and user turns count up.
 const SKILL_ROOTS_RPC_ID: &str = "workspacer-skill-roots";
@@ -2500,9 +2503,6 @@ async fn run_session(
     if let Some(request) = skill_roots_request(&extras.skill_roots) {
         let _ = out_tx.send(request);
     }
-    // The skills its composer offers on `/` (asked again once the roots
-    // above land, so Workspacer's own skills are listed too).
-    let _ = out_tx.send(crate::session::slash_commands::codex_skills_request());
 
     #[cfg(test)]
     evidence.before_registration();
@@ -2647,6 +2647,9 @@ async fn run_session(
     // The running turn (which `turn/interrupt` and `turn/steer` must name),
     // our requests in flight, and messages waiting for a turn to take them.
     let mut input = TurnInput::default();
+    // The skills its composer offers on `/` (asked again, reloading, once
+    // the skill roots land, and whenever codex says they changed).
+    input.ask_skills(&out_tx, false);
     // A closed answer channel (session terminating) only disables
     // its arm; the input channel closing is what ends the driver.
     let mut answers_open = true;
@@ -2821,17 +2824,43 @@ async fn run_session(
             let sent = with_instructions(&mut pending_instructions, text);
             match &thread_id {
                 Some(tid) => {
-                    let images = images.into_iter().map(|image| image.path).collect();
                     input.submit_images(&out_tx, &mut req_id, tid, sent, images, delivery, &policy)
                 }
                 // Thread not open yet — buffer the (already-wrapped) prompt;
-                // the buffer is text, so images travel as path markers.
-                None => pending_prompts.push(crate::session::images::with_markers(sent, &images)),
+                // the buffer is text, so images travel as path markers to the
+                // uploads (the daemon's copies are not needed) — and say so.
+                None => {
+                    if !images.is_empty() {
+                        crate::session::images::discard(&images);
+                        apply_updates(
+                            store,
+                            conv,
+                            session_id,
+                            vec![AgentUpdate::Notice(MARKER_NOTICE.into())],
+                            &mut cur_mode,
+                            &mut acc,
+                        );
+                    }
+                    pending_prompts.push(crate::session::images::with_markers(sent, &images))
+                }
             }
         }
     };
 
     evidence.reason = reason;
+    // Messages still waiting for a turn go to the rollout fallback as text,
+    // their images as markers to the uploads; the daemon's copies go now.
+    let held_images = input.held.iter().any(|held| !held.images.is_empty());
+    let held_texts: Vec<String> = if needs_fallback {
+        input
+            .held
+            .drain(..)
+            .map(|held| crate::session::images::with_markers(held.text, &held.images))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    input.discard_images();
 
     // Tear down the ws attempt (app-server + the `--remote` TUI) before any
     // fallback, so the rollout path starts from a clean slate.
@@ -2857,15 +2886,17 @@ async fn run_session(
     // as sent still reaches the agent.
     if needs_fallback {
         // Anything still waiting for a turn has not reached the agent either.
-        pending_prompts.extend(input.held.drain(..).map(|held| {
-            let mut text: String = held
-                .images
-                .iter()
-                .map(|path| format!("[Image: {}]\n", path.display()))
-                .collect();
-            text.push_str(&held.text);
-            text
-        }));
+        pending_prompts.extend(held_texts);
+        if held_images {
+            apply_updates(
+                store,
+                conv,
+                session_id,
+                vec![AgentUpdate::Notice(MARKER_NOTICE.into())],
+                &mut cur_mode,
+                &mut acc,
+            );
+        }
         return run_rollout_fallback(
             store,
             conv,
@@ -3012,6 +3043,12 @@ fn handle_message(
         pending_switch,
         headless,
     );
+    match value.get("method").and_then(Value::as_str) {
+        // The turn that read the images is over: their copies can go.
+        Some("turn/completed" | "turn/failed") => input.reap_images(),
+        Some("skills/changed") => input.ask_skills(out_tx, true),
+        _ => {}
+    }
     // Deliver whatever the turn state now allows: a held message steers into
     // a turn whose id just arrived, or starts the next turn once one ends.
     if let Some(tid) = thread_id.as_deref() {
@@ -3081,12 +3118,17 @@ fn handle_message_inner(
                 tracing::warn!(session = %session_id, error = %err,
                     "codex skills/extraRoots/set failed — Workspacer skills reach this session only through its instructions");
             }
-            let _ = out_tx.send(crate::session::slash_commands::codex_skills_request());
+            input.ask_skills(out_tx, true);
             return;
         }
-        if value.get("id").and_then(Value::as_str)
-            == Some(crate::session::slash_commands::CODEX_SKILLS_RPC_ID)
+        if let Some(asked) = value
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(crate::session::slash_commands::codex_skills_answer)
         {
+            if asked != input.skills_asked {
+                return; // a stale answer: a newer ask is outstanding
+            }
             match value.get("result") {
                 Some(result) => store.set_slash_commands(
                     session_id,
@@ -3436,7 +3478,7 @@ fn turn_start_request_with(
     id: u64,
     thread_id: &str,
     text: &str,
-    images: &[std::path::PathBuf],
+    images: &[crate::session::images::ImageInput],
     policy: &TurnPolicy,
 ) -> Value {
     let mut params = json!({
@@ -3573,7 +3615,7 @@ enum Inflight {
     Steer {
         text: String,
         /// Attached uploads (`localImage` items), re-sent with a refused steer.
-        images: Vec<std::path::PathBuf>,
+        images: Vec<crate::session::images::ImageInput>,
         expected: String,
         attempts: u8,
         since: std::time::Instant,
@@ -3587,7 +3629,7 @@ enum Inflight {
 struct Held {
     text: String,
     /// Uploads to send as `localImage` items ahead of the text.
-    images: Vec<std::path::PathBuf>,
+    images: Vec<crate::session::images::ImageInput>,
     /// Deliver only once no turn is running (`turn/start`), never as a steer:
     /// a `delivery: "now"` send waiting out its interrupt, or a steer the
     /// running turn refused as not steerable (a review or compaction turn).
@@ -3629,11 +3671,60 @@ struct TurnInput {
     turns: TurnTracker,
     inflight: HashMap<u64, Inflight>,
     held: VecDeque<Held>,
+    /// Images already handed to codex (`localImage` copies the daemon owns),
+    /// deleted once the turn that read them ends ([`Self::reap_images`]).
+    sent_images: Vec<crate::session::images::ImageInput>,
+    /// The latest `skills/list` asked for; an older answer is stale.
+    skills_asked: u64,
 }
 
 impl TurnInput {
     fn track(&mut self, id: u64, request: Inflight) {
         self.inflight.insert(id, request);
+    }
+
+    /// Delete the daemon's image copies codex has read: those sent with a
+    /// turn that has now ended, unless a refused steer still carries them.
+    fn reap_images(&mut self) {
+        let pending: Vec<&std::path::Path> = self
+            .held
+            .iter()
+            .flat_map(|held| held.images.iter())
+            .chain(self.inflight.values().flat_map(|request| match request {
+                Inflight::Steer { images, .. } => images.as_slice(),
+                _ => &[],
+            }))
+            .map(|image| image.path.as_path())
+            .collect();
+        let (keep, done): (Vec<_>, Vec<_>) = std::mem::take(&mut self.sent_images)
+            .into_iter()
+            .partition(|image| pending.contains(&image.path.as_path()));
+        crate::session::images::discard(&done);
+        self.sent_images = keep;
+    }
+
+    /// The session is over: delete every image copy it still owns.
+    fn discard_images(&mut self) {
+        crate::session::images::discard(&self.sent_images);
+        self.sent_images.clear();
+        for held in &self.held {
+            crate::session::images::discard(&held.images);
+        }
+        for request in self.inflight.values() {
+            if let Inflight::Steer { images, .. } = request {
+                crate::session::images::discard(images);
+            }
+        }
+    }
+
+    /// Ask for the skills the composer offers, under a fresh id; only the
+    /// answer to the latest ask is applied.
+    fn ask_skills(&mut self, out_tx: &mpsc::UnboundedSender<Value>, force_reload: bool) {
+        self.skills_asked += 1;
+        let _ = out_tx.send(crate::session::slash_commands::codex_skills_request(
+            self.skills_asked,
+            force_reload,
+        ));
     }
 
     fn steer_pending(&self) -> bool {
@@ -3673,7 +3764,7 @@ impl TurnInput {
         req_id: &mut u64,
         thread_id: &str,
         text: String,
-        images: Vec<std::path::PathBuf>,
+        images: Vec<crate::session::images::ImageInput>,
         delivery: Delivery,
         policy: &TurnPolicy,
     ) {
@@ -3717,6 +3808,7 @@ impl TurnInput {
         *req_id += 1;
         self.track(*req_id, Inflight::TurnStart);
         send_turn(out_tx, *req_id, thread_id, &held.text, &held.images, policy);
+        self.sent_images.extend(held.images.iter().cloned());
         // Whatever waited for a turn to end now joins the new one.
         for rest in &mut self.held {
             rest.after_turn = false;
@@ -3761,6 +3853,7 @@ impl TurnInput {
                 &held.text,
                 &held.images,
             ));
+            self.sent_images.extend(held.images.iter().cloned());
             self.track(
                 *req_id,
                 Inflight::Steer {
@@ -3914,7 +4007,7 @@ fn turn_steer_request_with(
     thread_id: &str,
     turn_id: &str,
     text: &str,
-    images: &[std::path::PathBuf],
+    images: &[crate::session::images::ImageInput],
 ) -> Value {
     json!({
         "jsonrpc": "2.0", "id": id, "method": "turn/steer",
@@ -3939,7 +4032,7 @@ fn send_turn(
     id: u64,
     thread_id: &str,
     text: &str,
-    images: &[std::path::PathBuf],
+    images: &[crate::session::images::ImageInput],
     policy: &TurnPolicy,
 ) {
     let _ = out_tx.send(turn_start_request_with(id, thread_id, text, images, policy));
@@ -6465,13 +6558,50 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let mut requests = ServerRequests::default();
         let mut input = TurnInput::default();
         let mut pending_switch = None;
-        let reply = json!({ "jsonrpc": "2.0", "id": CODEX_SKILLS_RPC_ID, "result": { "data": [
+        input.skills_asked = 2;
+        let stale = json!({ "jsonrpc": "2.0", "id": format!("{CODEX_SKILLS_RPC_ID}-1"),
+            "result": { "data": [ { "cwd": "/w", "errors": [], "skills": [
+                { "name": "old", "description": "stale", "enabled": true } ] } ] } });
+        let reply = json!({ "jsonrpc": "2.0", "id": format!("{CODEX_SKILLS_RPC_ID}-2"), "result": { "data": [
             { "cwd": "/w", "errors": [], "skills": [
                 { "name": "review-pr", "description": "Review a PR", "enabled": true }
             ] }
         ] } });
+        // A `skills/changed` notification asks again, reloading.
+        let changed = json!({ "jsonrpc": "2.0", "method": "skills/changed", "params": {} });
+        for message in [&changed, &reply, &stale] {
+            handle_message(
+                message,
+                &store,
+                &conv,
+                "s",
+                &out_tx,
+                &mut thread_id,
+                &mut subscribed,
+                &mut pending_prompts,
+                &mut req_id,
+                &mut cur_mode,
+                &mut acc,
+                &policy,
+                &mut requests,
+                &mut input,
+                &mut pending_switch,
+                false,
+            );
+        }
+        assert!(thread_id.is_none());
+        let ask = out_rx.try_recv().unwrap();
+        assert_eq!(ask["method"], "skills/list");
+        assert_eq!(ask["params"]["forceReload"], true);
+        assert_eq!(input.skills_asked, 3);
+        assert!(out_rx.try_recv().is_err());
+        // The answer to ask 2 arrived after ask 3 went out: stale too, so
+        // only a fresh answer would change the menu. Feed ask 3's answer.
+        assert!(store.get("s").unwrap().slash_commands.is_empty());
+        let mut fresh = reply.clone();
+        fresh["id"] = json!(format!("{CODEX_SKILLS_RPC_ID}-3"));
         handle_message(
-            &reply,
+            &fresh,
             &store,
             &conv,
             "s",
@@ -6488,8 +6618,6 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &mut pending_switch,
             false,
         );
-        assert!(thread_id.is_none());
-        assert!(out_rx.try_recv().is_err());
         let commands = store.get("s").unwrap().slash_commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].insert, "$review-pr");
@@ -6541,7 +6669,9 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             assert!(!subscribed);
             assert_eq!(pending_prompts, vec!["hello".to_string()]);
             // Only the skill list is asked for again, now the roots landed.
-            assert_eq!(out_rx.try_recv().unwrap()["method"], "skills/list");
+            let ask = out_rx.try_recv().unwrap();
+            assert_eq!(ask["method"], "skills/list");
+            assert_eq!(ask["params"]["forceReload"], true);
             assert!(out_rx.try_recv().is_err(), "nothing else is sent in reply");
         }
     }
@@ -7405,15 +7535,20 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
 
     #[test]
     fn attached_images_ride_turn_start_and_steer_as_local_image_items() {
+        use crate::session::images::{self, tests as fixture, ImageUse};
+        let dir = fixture::dir();
+        let upload = fixture::put(&dir, "m-1-abcdef01.png", &fixture::png(2, 2));
+        let copy =
+            || images::prepare_in(std::slice::from_ref(&upload), ImageUse::Copy, &dir).unwrap();
         let mut d = Driver::new(false);
-        let image = std::path::PathBuf::from("/tmp/uploads/m-1-abcdef01.png");
         let tid = d.thread_id.clone().unwrap();
+        let first = copy();
         d.input.submit_images(
             &d.out_tx,
             &mut d.req_id,
             &tid,
             "what is this".into(),
-            vec![image.clone()],
+            first.clone(),
             Delivery::Steer,
             &d.policy,
         );
@@ -7422,31 +7557,57 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         assert_eq!(
             start["params"]["input"],
             json!([
-                { "type": "localImage", "path": "/tmp/uploads/m-1-abcdef01.png" },
+                { "type": "localImage", "path": first[0].path },
                 { "type": "text", "text": "what is this" }
             ])
+        );
+        assert_ne!(
+            first[0].path.to_string_lossy(),
+            upload,
+            "codex reads a copy"
         );
         // Mid-turn the same message steers, and a refused steer re-sends the
         // image with it.
         d.started("u1");
+        let second = copy();
         d.input.submit_images(
             &d.out_tx,
             &mut d.req_id,
             &tid,
             "and this".into(),
-            vec![image],
+            second.clone(),
             Delivery::Steer,
             &d.policy,
         );
         let steer = d.sent().remove(0);
         assert_eq!(steer["method"], "turn/steer");
         assert_eq!(steer["params"]["input"][0]["type"], "localImage");
+        // The turn that read the first copy ends: it goes; the steer still
+        // waiting on its answer keeps its copy.
         d.completed("u1", "completed");
+        assert!(!first[0].path.exists());
+        assert!(second[0].path.exists());
         d.feed(json!({ "id": steer["id"], "error": { "code": -32600, "message": "no active turn to steer" } }));
         let retry = d.sent().remove(0);
         assert_eq!(retry["method"], "turn/start");
-        assert_eq!(retry["params"]["input"][0]["type"], "localImage");
+        assert_eq!(retry["params"]["input"][0]["path"], json!(second[0].path));
         assert_eq!(retry["params"]["input"][1]["text"], "and this");
+        assert!(second[0].path.exists());
+        d.started("u2");
+        d.completed("u2", "completed");
+        assert!(!second[0].path.exists(), "deleted once its turn ended");
+        assert!(std::path::Path::new(&upload).exists(), "the upload stays");
+        // A session that ends deletes whatever copies it still holds.
+        let third = copy();
+        d.input.held.push_back(Held {
+            text: "later".into(),
+            images: third.clone(),
+            after_turn: true,
+            attempts: 0,
+            since: std::time::Instant::now(),
+        });
+        d.input.discard_images();
+        assert!(!third[0].path.exists());
     }
 
     #[test]

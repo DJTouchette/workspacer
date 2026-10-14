@@ -4784,6 +4784,43 @@ done
         store.terminate_managed(sid);
     }
 
+    /// Attached uploads reach the CLI's stdin as base64 image blocks ahead
+    /// of the text, in the one user frame.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn attached_images_reach_the_cli_as_image_blocks_before_the_text() {
+        use crate::session::images::{self, tests as fixture, ImageUse};
+        let (_dir, store, _conv, log) = spawn_logging("image-blocks");
+        let sid = "image-blocks";
+        assert!(settles(|| store.is_managed(sid)).await);
+        assert_eq!(store.image_use(sid), ImageUse::Inline);
+        let uploads = fixture::dir();
+        let upload = fixture::put(&uploads, "m-1-abcdef01.png", &fixture::png(3, 4));
+        let prepared = images::prepare_in(&[upload], ImageUse::Inline, &uploads).unwrap();
+        assert!(matches!(
+            store.submit_message_images(
+                sid,
+                "what is this?".into(),
+                Delivery::Steer,
+                crate::session::MessageSender::Human,
+                prepared.clone(),
+            ),
+            crate::session::MessageOutcome::Sent
+        ));
+        assert!(settles(|| logged(&log).iter().any(|v| v["type"] == "user")).await);
+        let frames = logged(&log);
+        let user = frames.iter().find(|v| v["type"] == "user").unwrap();
+        assert_eq!(
+            user["message"]["content"],
+            json!([
+                { "type": "image", "source": { "type": "base64",
+                    "media_type": "image/png", "data": prepared[0].data } },
+                { "type": "text", "text": "what is this?" }
+            ])
+        );
+        store.terminate_managed(sid);
+    }
+
     /// `/model`'s confirming path: the answer is the CLI's own verdict, and a
     /// refusal never becomes a "⚠️ Error:" item in the conversation.
     #[cfg(unix)]

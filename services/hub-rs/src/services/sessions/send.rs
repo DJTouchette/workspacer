@@ -40,6 +40,16 @@ impl MessageOutcome {
 /// a caller can never point the agent at any other file this way. The shape
 /// was checked in `params`; the daemon re-checks, sniffs and size-caps the
 /// bytes when it loads them.
+pub(super) async fn confined_images_off_thread(images: &Value) -> anyhow::Result<Vec<String>> {
+    if images.as_array().is_none_or(Vec::is_empty) {
+        return Ok(Vec::new());
+    }
+    // Canonicalizing and stat-ing are file I/O: off the async workers.
+    let images = images.clone();
+    tokio::task::spawn_blocking(move || confined_images(&images)).await?
+}
+
+/// [`confined_images_off_thread`]'s blocking check.
 pub(super) fn confined_images(images: &Value) -> anyhow::Result<Vec<String>> {
     let Some(images) = images.as_array() else {
         return Ok(Vec::new());
@@ -147,6 +157,9 @@ impl Sessions {
             .request("POST", format!("/sessions/{id}/message"), Some(body))
             .await
         {
+            Ok(reply) if reply["imagesAsMarkers"] == true => {
+                MessageOutcome::Delivered(json!({"ok":true,"imagesAsMarkers":true}))
+            }
             Ok(_) => MessageOutcome::Delivered(json!({"ok":true})),
             Err(error) if error.downcast_ref::<CommandRejected>().is_some() => {
                 MessageOutcome::Rejected(error)
@@ -173,7 +186,11 @@ mod tests {
             json!([{"path": "relative/m-1-abcdef01.png"}]),
         ] {
             let error = confined_images(&refused).unwrap_err().to_string();
-            assert!(error.contains("not a file uploaded"), "{refused}: {error}");
+            // (A missing upload directory is refused as such.)
+            assert!(
+                error.contains("not a file uploaded") || error.contains("upload directory"),
+                "{refused}: {error}"
+            );
         }
     }
 }

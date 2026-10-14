@@ -69,10 +69,11 @@ pub fn compat(mut snapshot: Value) -> Value {
     }
     // The composer's `/` menu (claudemon `session::slash_commands`): each
     // entry is `{name, insert, description?, kind}`, already camel-safe.
+    // Carried once: the snake_case original is moved, not copied.
     if let Some(commands) = snapshot
-        .get("slash_commands")
-        .filter(|v| v.is_array())
-        .cloned()
+        .as_object_mut()
+        .and_then(|row| row.remove("slash_commands"))
+        .filter(Value::is_array)
     {
         snapshot["slashCommands"] = commands;
     }
@@ -358,6 +359,7 @@ mod confirmed_control_tests {
         let commands = json!([{"name": "compact", "insert": "/compact", "kind": "command"}]);
         let row = compat(json!({"session_id": "s", "slash_commands": commands.clone()}));
         assert_eq!(row["slashCommands"], commands);
+        assert!(row.get("slash_commands").is_none(), "one copy only");
         assert!(
             compat(json!({"session_id": "s"}))
                 .get("slashCommands")
