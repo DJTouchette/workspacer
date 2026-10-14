@@ -634,7 +634,7 @@ export const claims: Record<string, Claim> = {
   },
   'sessions.queueRemove': {
     reason:
-      'deletes one entry this hub queued for that session. It can only withhold a prompt, never add one; the ADD direction is sessions.queueAdd, whose recorded pair with claude.approve is where this queue\'s composition lives. The opaque hub-minted `id` is never joined into a path',
+      "deletes one entry this hub queued for that session. It can only withhold a prompt, never add one; the ADD direction is sessions.queueAdd, whose recorded pair with claude.approve is where this queue's composition lives. The opaque hub-minted `id` is never joined into a path",
     witnesses: [
       {
         kind: 'params',
@@ -1407,28 +1407,28 @@ export const parameterDecisions: Record<
     id: {
       kind: 'id',
       reason:
-        'an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session\'s queue; never joined into a path',
+        "an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session's queue; never joined into a path",
     },
   },
   'sessions.queueMove': {
     id: {
       kind: 'id',
       reason:
-        'an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session\'s queue; never joined into a path',
+        "an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session's queue; never joined into a path",
     },
   },
   'sessions.queueSendNow': {
     id: {
       kind: 'id',
       reason:
-        'an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session\'s queue; never joined into a path',
+        "an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session's queue; never joined into a path",
     },
   },
   'sessions.queueRemove': {
     id: {
       kind: 'id',
       reason:
-        'an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session\'s queue; never joined into a path',
+        "an opaque hub-minted queue-entry id (q- plus hex) selecting one entry of that session's queue; never joined into a path",
     },
   },
   'sessions.queueClear': {
