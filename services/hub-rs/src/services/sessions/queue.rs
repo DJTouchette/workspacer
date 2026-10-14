@@ -64,9 +64,13 @@ impl Sessions {
         let mut reply = json!({});
         let outcome = match method {
             "sessions.queueAdd" => {
-                if params.get("attachments").is_some_and(|a| !a.is_null()) {
+                // A queued entry is replayed later as plain text; images ride
+                // only an immediate agents.sendMessage.
+                if params.get("attachments").is_some_and(|a| !a.is_null())
+                    || params.get("images").is_some_and(|a| !a.is_null())
+                {
                     bail!(
-                        "queued messages cannot carry attachments (agents.sendMessage takes none)"
+                        "queued messages cannot carry images or attachments; send them with agents.sendMessage"
                     );
                 }
                 if !self.rows.read().unwrap().contains_key(&id) {
@@ -149,7 +153,7 @@ impl Sessions {
     /// human who queued it (no sending session), with `delivery` honoured.
     async fn deliver(&self, id: &str, entry: Entry, delivery: SendDelivery) -> Delivery {
         classify(
-            self.send_message(id, Some(&entry.text), delivery, None)
+            self.send_message(id, Some(&entry.text), delivery, None, &[])
                 .await,
         )
     }

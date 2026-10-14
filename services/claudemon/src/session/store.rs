@@ -474,6 +474,9 @@ pub struct ManagedPrompt {
     pub text: String,
     pub delivery: Delivery,
     pub sender: MessageSender,
+    /// Validated uploads to show the agent ahead of `text`
+    /// ([`super::images`]); empty for an ordinary message.
+    pub images: Vec<super::images::ImageInput>,
 }
 
 /// A live model/effort switch whose driver answers only once the provider
@@ -500,13 +503,25 @@ enum ManagedInput {
 
 impl ManagedInput {
     fn send(&self, text: String, delivery: Delivery, sender: MessageSender) -> bool {
+        self.send_images(text, delivery, sender, Vec::new())
+    }
+
+    /// A text-only driver gets the images as `[Image: <path>]` markers.
+    fn send_images(
+        &self,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        images: Vec<super::images::ImageInput>,
+    ) -> bool {
         match self {
-            Self::Text(tx) => tx.send(text).is_ok(),
+            Self::Text(tx) => tx.send(super::images::with_markers(text, &images)).is_ok(),
             Self::Prompt(tx) => tx
                 .send(ManagedPrompt {
                     text,
                     delivery,
                     sender,
+                    images,
                 })
                 .is_ok(),
         }
@@ -2469,6 +2484,31 @@ impl SessionStore {
         });
     }
 
+    /// Replace the commands the composer offers on `/`. Broadcasts only on
+    /// change. No-op for unknown ids.
+    pub fn set_slash_commands(
+        &self,
+        session_id: &str,
+        commands: Vec<super::slash_commands::SlashCommand>,
+    ) {
+        let state = {
+            let Some(mut entry) = self.states.get_mut(session_id) else {
+                return;
+            };
+            if entry.slash_commands == commands {
+                return;
+            }
+            entry.slash_commands = commands;
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state,
+        });
+    }
+
     /// Upsert one managed-provider subagent row and mirror its live count into
     /// `background_tasks`, the field existing clients already use for ambient
     /// work. Claude hook/artifact enrichment uses a separate path that preserves
@@ -3089,15 +3129,47 @@ impl SessionStore {
         delivery: Delivery,
         sender: MessageSender,
     ) -> MessageOutcome {
+        self.native_submit_message_images(session_id, text, delivery, sender, Vec::new())
+    }
+
+    /// [`Self::submit_message_from`] carrying validated images
+    /// ([`super::images::load_all`]). A driver that takes images structurally
+    /// receives them on its [`ManagedPrompt`]; a text-only driver, a PTY
+    /// session and a non-native engine get `[Image: <path>]` markers ahead of
+    /// the text instead.
+    pub fn submit_message_images(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        images: Vec<super::images::ImageInput>,
+    ) -> MessageOutcome {
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.send_images(self, session_id, text, delivery, sender, images);
+        }
+        self.native_submit_message_images(session_id, text, delivery, sender, images)
+    }
+
+    pub(crate) fn native_submit_message_images(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        images: Vec<super::images::ImageInput>,
+    ) -> MessageOutcome {
         // Managed (adapter-driven) sessions forward the prompt to the provider's
         // own API via the driver task — no PTY, no Input-mode gating.
         if let Some(tx) = self.managed_input(session_id) {
-            return if tx.send(text, delivery, sender) {
+            return if tx.send_images(text, delivery, sender, images) {
                 MessageOutcome::Sent
             } else {
                 MessageOutcome::WrapperGone
             };
         }
+        // A terminal can only be told where the file is.
+        let text = super::images::with_markers(text, &images);
         let Some(mode) = self.states.get(session_id).map(|s| s.mode) else {
             return MessageOutcome::NoSession;
         };

@@ -1723,7 +1723,7 @@ async fn run_session(
                 Err(err) => return Err(err.into()),
             },
             msg = rx.recv() => match msg {
-                Some(ManagedPrompt { text, delivery, sender }) => {
+                Some(ManagedPrompt { text, delivery, sender, images }) => {
                     // Echo the user's message, but prepend the role
                     // instructions (once) to what's actually sent to the agent.
                     // A message invoking a known slash command echoes as the
@@ -1753,8 +1753,10 @@ async fn run_session(
                         cur_mode,
                         SessionMode::Responding | SessionMode::Approval | SessionMode::Question
                     );
-                    let (interrupt_first, frame) =
+                    let (interrupt_first, mut frame) =
                         user_frame(&sent, &uuid, delivery, sender, &totals.protocol, busy);
+                    // Attached uploads ride ahead of the text as image blocks.
+                    crate::session::images::prepend_claude_blocks(&mut frame, &images);
                     if interrupt_first {
                         totals.protocol.fallback_interrupt_owed = true;
                         // An older CLI can't be told "now": stop the turn, and

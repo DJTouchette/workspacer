@@ -1184,6 +1184,10 @@ fn apply_updates_current(
                 },
             ),
             AgentUpdate::Capabilities(caps) => {
+                store.set_slash_commands(
+                    session_id,
+                    crate::session::slash_commands::from_claude_inventory(caps.inventory.as_ref()),
+                );
                 acc.capabilities = Some(caps.clone());
                 usage_changed = true;
             }
@@ -2162,6 +2166,33 @@ mod tests {
         );
         assert_eq!(cur, SessionMode::Input);
         assert!(store.get("s-mix").is_some_and(|s| s.pending().is_none()));
+    }
+
+    #[test]
+    fn claude_capabilities_publish_the_composer_slash_commands() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed("s-cmd", "/tmp/proj", "claude");
+        let caps = Capabilities {
+            inventory: Some(crate::session::state::ContextInventory {
+                slash_commands: vec!["compact".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        apply_updates(
+            &store,
+            &conv,
+            "s-cmd",
+            vec![AgentUpdate::Capabilities(caps)],
+            &mut SessionMode::Input,
+            &mut UsageAcc::new(),
+        );
+        let state = serde_json::to_value(store.get("s-cmd").unwrap()).unwrap();
+        assert_eq!(
+            state["slash_commands"],
+            serde_json::json!([{ "name": "compact", "insert": "/compact", "kind": "command" }])
+        );
     }
 
     #[test]

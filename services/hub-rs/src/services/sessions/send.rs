@@ -33,11 +33,35 @@ impl MessageOutcome {
     }
 }
 
+/// The `images` of an `agents.sendMessage`: `[{path}]` naming files this
+/// host's `files.upload` wrote. Each path must be one of those uploads
+/// (confined by [`claudemon::session::images::confine`]: directly inside the
+/// private upload directory, under the hub-composed name, a regular file) —
+/// a caller can never point the agent at any other file this way. The shape
+/// was checked in `params`; the daemon re-checks, sniffs and size-caps the
+/// bytes when it loads them.
+pub(super) fn confined_images(images: &Value) -> anyhow::Result<Vec<String>> {
+    let Some(images) = images.as_array() else {
+        return Ok(Vec::new());
+    };
+    images
+        .iter()
+        .map(|image| {
+            let path = image["path"].as_str().unwrap_or("");
+            claudemon::session::images::confine(path)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| anyhow!(error))
+        })
+        .collect()
+}
+
 impl Sessions {
     /// Send `text` to session `id`. `from` names a sending session: present,
     /// the message is agent-to-agent (sender `Agent`, attributed with a
     /// sender header); absent, it comes from a person (sender `Human`) — only
     /// a person's `now` may claim `origin: {kind: "human"}`.
+    ///
+    /// `images` are already-confined upload paths ([`confined_images`]).
     ///
     /// The caller has already validated `id` (`segment`) and the wire params.
     pub(super) async fn send_message(
@@ -46,6 +70,7 @@ impl Sessions {
         text: Option<&str>,
         delivery: Delivery,
         from: Option<&str>,
+        images: &[String],
     ) -> MessageOutcome {
         let Some(text) = text.filter(|s| !s.is_empty()) else {
             return MessageOutcome::Rejected(anyhow!(
@@ -91,6 +116,7 @@ impl Sessions {
                 self.requests.as_deref(),
                 delivery,
                 sender,
+                images,
             )
             .await
             {
@@ -113,12 +139,12 @@ impl Sessions {
                 }
             };
         }
+        let mut body = json!({"text":text,"delivery":delivery,"sender":sender});
+        if !images.is_empty() {
+            body["images"] = images.iter().map(|path| json!({"path":path})).collect();
+        }
         match self
-            .request(
-                "POST",
-                format!("/sessions/{id}/message"),
-                Some(json!({"text":text,"delivery":delivery,"sender":sender})),
-            )
+            .request("POST", format!("/sessions/{id}/message"), Some(body))
             .await
         {
             Ok(_) => MessageOutcome::Delivered(json!({"ok":true})),
@@ -126,6 +152,28 @@ impl Sessions {
                 MessageOutcome::Rejected(error)
             }
             Err(error) => MessageOutcome::Uncertain(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::confined_images;
+    use serde_json::json;
+
+    #[test]
+    fn images_must_name_this_hosts_uploads() {
+        assert!(confined_images(&json!(null)).unwrap().is_empty());
+        assert!(confined_images(&json!([])).unwrap().is_empty());
+        let dir = claudemon::session::images::upload_dir();
+        for refused in [
+            json!([{"path": "/etc/passwd"}]),
+            json!([{"path": dir.join("m-1-abcdef01.txt")}]),
+            json!([{"path": dir.join("m-1-ffffffff.png")}]),
+            json!([{"path": "relative/m-1-abcdef01.png"}]),
+        ] {
+            let error = confined_images(&refused).unwrap_err().to_string();
+            assert!(error.contains("not a file uploaded"), "{refused}: {error}");
         }
     }
 }

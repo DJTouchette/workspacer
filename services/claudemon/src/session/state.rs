@@ -906,6 +906,10 @@ pub struct SessionState {
     /// Additive/back-compatible: omitted when empty, absent rows read empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub background_task_list: Vec<super::background_tasks::BackgroundTask>,
+    /// What the composer offers on `/` — Claude's init commands and skills,
+    /// Codex's skills ([`super::slash_commands`]). Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slash_commands: Vec<super::slash_commands::SlashCommand>,
     /// Count of background subagents (async Agent/Task tool) currently running,
     /// tracked from the `SubagentStart`/`SubagentStop` hooks. While this is
     /// non-zero, a parent `Stop` does NOT idle the session — the parent's own
@@ -1013,6 +1017,7 @@ impl SessionState {
             compaction_count: 0,
             background_tasks: 0,
             background_task_list: Vec::new(),
+            slash_commands: Vec::new(),
             live_subagents: 0,
             parent_turn_ended: false,
             requested_model: None,

@@ -2500,6 +2500,9 @@ async fn run_session(
     if let Some(request) = skill_roots_request(&extras.skill_roots) {
         let _ = out_tx.send(request);
     }
+    // The skills its composer offers on `/` (asked again once the roots
+    // above land, so Workspacer's own skills are listed too).
+    let _ = out_tx.send(crate::session::slash_commands::codex_skills_request());
 
     #[cfg(test)]
     evidence.before_registration();
@@ -2793,7 +2796,13 @@ async fn run_session(
         }
         // A user message, from either send channel. Echo it verbatim, but
         // prepend the role instructions (once) to what's actually sent.
-        if let Some(ManagedPrompt { text, delivery, .. }) = incoming {
+        if let Some(ManagedPrompt {
+            text,
+            delivery,
+            images,
+            ..
+        }) = incoming
+        {
             if store
                 .with_generation(session_id, evidence.generation, || {
                     conv.push(
@@ -2811,9 +2820,13 @@ async fn run_session(
             }
             let sent = with_instructions(&mut pending_instructions, text);
             match &thread_id {
-                Some(tid) => input.submit(&out_tx, &mut req_id, tid, sent, delivery, &policy),
-                // Thread not open yet — buffer the (already-wrapped) prompt.
-                None => pending_prompts.push(sent),
+                Some(tid) => {
+                    let images = images.into_iter().map(|image| image.path).collect();
+                    input.submit_images(&out_tx, &mut req_id, tid, sent, images, delivery, &policy)
+                }
+                // Thread not open yet — buffer the (already-wrapped) prompt;
+                // the buffer is text, so images travel as path markers.
+                None => pending_prompts.push(crate::session::images::with_markers(sent, &images)),
             }
         }
     };
@@ -2844,7 +2857,15 @@ async fn run_session(
     // as sent still reaches the agent.
     if needs_fallback {
         // Anything still waiting for a turn has not reached the agent either.
-        pending_prompts.extend(input.held.drain(..).map(|held| held.text));
+        pending_prompts.extend(input.held.drain(..).map(|held| {
+            let mut text: String = held
+                .images
+                .iter()
+                .map(|path| format!("[Image: {}]\n", path.display()))
+                .collect();
+            text.push_str(&held.text);
+            text
+        }));
         return run_rollout_fallback(
             store,
             conv,
@@ -3059,6 +3080,20 @@ fn handle_message_inner(
             if let Some(err) = value.get("error") {
                 tracing::warn!(session = %session_id, error = %err,
                     "codex skills/extraRoots/set failed — Workspacer skills reach this session only through its instructions");
+            }
+            let _ = out_tx.send(crate::session::slash_commands::codex_skills_request());
+            return;
+        }
+        if value.get("id").and_then(Value::as_str)
+            == Some(crate::session::slash_commands::CODEX_SKILLS_RPC_ID)
+        {
+            match value.get("result") {
+                Some(result) => store.set_slash_commands(
+                    session_id,
+                    crate::session::slash_commands::from_codex_skills(result),
+                ),
+                None => tracing::debug!(session = %session_id, error = ?value.get("error"),
+                    "codex skills/list failed — no skills in the composer menu"),
             }
             return;
         }
@@ -3391,10 +3426,22 @@ impl TurnPolicy {
 
 /// Build a `turn/start` request. Headless sessions carry the sandbox/approval
 /// posture on every turn (see [`TurnPolicy`]); hybrid carries neither.
+#[cfg(test)]
 fn turn_start_request(id: u64, thread_id: &str, text: &str, policy: &TurnPolicy) -> Value {
+    turn_start_request_with(id, thread_id, text, &[], policy)
+}
+
+/// [`turn_start_request`] with attached uploads as `localImage` items.
+fn turn_start_request_with(
+    id: u64,
+    thread_id: &str,
+    text: &str,
+    images: &[std::path::PathBuf],
+    policy: &TurnPolicy,
+) -> Value {
     let mut params = json!({
         "threadId": thread_id,
-        "input": [ { "type": "text", "text": text } ]
+        "input": crate::session::images::codex_input(text, images)
     });
     if let Some((sandbox, approval)) = policy.turn_params() {
         params["sandboxPolicy"] = sandbox;
@@ -3525,6 +3572,8 @@ enum Inflight {
     TurnStart,
     Steer {
         text: String,
+        /// Attached uploads (`localImage` items), re-sent with a refused steer.
+        images: Vec<std::path::PathBuf>,
         expected: String,
         attempts: u8,
         since: std::time::Instant,
@@ -3537,6 +3586,8 @@ enum Inflight {
 #[derive(Debug)]
 struct Held {
     text: String,
+    /// Uploads to send as `localImage` items ahead of the text.
+    images: Vec<std::path::PathBuf>,
     /// Deliver only once no turn is running (`turn/start`), never as a steer:
     /// a `delivery: "now"` send waiting out its interrupt, or a steer the
     /// running turn refused as not steerable (a review or compaction turn).
@@ -3602,6 +3653,30 @@ impl TurnInput {
         delivery: Delivery,
         policy: &TurnPolicy,
     ) {
+        self.submit_images(
+            out_tx,
+            req_id,
+            thread_id,
+            text,
+            Vec::new(),
+            delivery,
+            policy,
+        );
+    }
+
+    /// [`Self::submit`] with attached uploads, delivered as `localImage`
+    /// input items on whichever `turn/start` or `turn/steer` carries it.
+    #[allow(clippy::too_many_arguments)]
+    fn submit_images(
+        &mut self,
+        out_tx: &mpsc::UnboundedSender<Value>,
+        req_id: &mut u64,
+        thread_id: &str,
+        text: String,
+        images: Vec<std::path::PathBuf>,
+        delivery: Delivery,
+        policy: &TurnPolicy,
+    ) {
         let after_turn = delivery == Delivery::Now && {
             if let Some(turn) = self.turns.request_interrupt() {
                 self.send_interrupt(out_tx, req_id, thread_id, &turn);
@@ -3610,6 +3685,7 @@ impl TurnInput {
         };
         self.held.push_back(Held {
             text,
+            images,
             after_turn,
             attempts: 0,
             since: std::time::Instant::now(),
@@ -3640,7 +3716,7 @@ impl TurnInput {
         self.turns.sent_turn();
         *req_id += 1;
         self.track(*req_id, Inflight::TurnStart);
-        send_turn(out_tx, *req_id, thread_id, &held.text, policy);
+        send_turn(out_tx, *req_id, thread_id, &held.text, &held.images, policy);
         // Whatever waited for a turn to end now joins the new one.
         for rest in &mut self.held {
             rest.after_turn = false;
@@ -3678,11 +3754,18 @@ impl TurnInput {
                 return;
             };
             *req_id += 1;
-            let _ = out_tx.send(turn_steer_request(*req_id, thread_id, &turn, &held.text));
+            let _ = out_tx.send(turn_steer_request_with(
+                *req_id,
+                thread_id,
+                &turn,
+                &held.text,
+                &held.images,
+            ));
             self.track(
                 *req_id,
                 Inflight::Steer {
                     text: held.text,
+                    images: held.images,
                     expected: turn,
                     attempts: held.attempts + 1,
                     since: held.since,
@@ -3757,6 +3840,7 @@ impl TurnInput {
             }
             Inflight::Steer {
                 text,
+                images,
                 expected,
                 attempts,
                 since,
@@ -3785,6 +3869,7 @@ impl TurnInput {
                 };
                 self.held.push_front(Held {
                     text,
+                    images,
                     after_turn,
                     attempts,
                     since,
@@ -3823,14 +3908,21 @@ fn steer_mismatch_found(msg: &str) -> Option<String> {
 /// `turn/steer`: add input to the RUNNING turn. `expectedTurnId` is a
 /// precondition the server checks; a fresh `clientUserMessageId` lets codex
 /// tie the echoed user message back to this send.
-fn turn_steer_request(id: u64, thread_id: &str, turn_id: &str, text: &str) -> Value {
+/// Attached uploads ride as `localImage` items ahead of the text.
+fn turn_steer_request_with(
+    id: u64,
+    thread_id: &str,
+    turn_id: &str,
+    text: &str,
+    images: &[std::path::PathBuf],
+) -> Value {
     json!({
         "jsonrpc": "2.0", "id": id, "method": "turn/steer",
         "params": {
             "threadId": thread_id,
             "expectedTurnId": turn_id,
             "clientUserMessageId": uuid::Uuid::new_v4().to_string(),
-            "input": [ { "type": "text", "text": text } ]
+            "input": crate::session::images::codex_input(text, images)
         }
     })
 }
@@ -3847,9 +3939,10 @@ fn send_turn(
     id: u64,
     thread_id: &str,
     text: &str,
+    images: &[std::path::PathBuf],
     policy: &TurnPolicy,
 ) {
-    let _ = out_tx.send(turn_start_request(id, thread_id, text, policy));
+    let _ = out_tx.send(turn_start_request_with(id, thread_id, text, images, policy));
 }
 
 /// Push a `thread/settings/update` for a live model/effort switch. Partial params
@@ -6356,6 +6449,53 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
     }
 
     #[test]
+    fn skills_list_response_fills_the_composer_menu_and_nothing_else() {
+        use crate::session::slash_commands::CODEX_SKILLS_RPC_ID;
+        let store = SessionStore::new();
+        store.register_managed("s", "/w", "codex");
+        let conv = ConversationStore::new();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+        let mut thread_id: Option<String> = None;
+        let mut subscribed = false;
+        let mut pending_prompts = Vec::new();
+        let mut req_id = 2u64;
+        let mut cur_mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+        let policy = policy_for(false, false);
+        let mut requests = ServerRequests::default();
+        let mut input = TurnInput::default();
+        let mut pending_switch = None;
+        let reply = json!({ "jsonrpc": "2.0", "id": CODEX_SKILLS_RPC_ID, "result": { "data": [
+            { "cwd": "/w", "errors": [], "skills": [
+                { "name": "review-pr", "description": "Review a PR", "enabled": true }
+            ] }
+        ] } });
+        handle_message(
+            &reply,
+            &store,
+            &conv,
+            "s",
+            &out_tx,
+            &mut thread_id,
+            &mut subscribed,
+            &mut pending_prompts,
+            &mut req_id,
+            &mut cur_mode,
+            &mut acc,
+            &policy,
+            &mut requests,
+            &mut input,
+            &mut pending_switch,
+            false,
+        );
+        assert!(thread_id.is_none());
+        assert!(out_rx.try_recv().is_err());
+        let commands = store.get("s").unwrap().slash_commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].insert, "$review-pr");
+    }
+
+    #[test]
     fn skill_roots_response_is_consumed_without_touching_thread_discovery() {
         // A hybrid session discovers its TUI thread from the first response that
         // carries `result.data`; the skill-roots reply must never be mistaken
@@ -6400,7 +6540,9 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             assert!(thread_id.is_none());
             assert!(!subscribed);
             assert_eq!(pending_prompts, vec!["hello".to_string()]);
-            assert!(out_rx.try_recv().is_err(), "nothing is sent in reply");
+            // Only the skill list is asked for again, now the roots landed.
+            assert_eq!(out_rx.try_recv().unwrap()["method"], "skills/list");
+            assert!(out_rx.try_recv().is_err(), "nothing else is sent in reply");
         }
     }
 
@@ -7259,6 +7401,52 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let sent = d.sent();
         assert_eq!(sent[0]["method"], "turn/steer");
         assert_eq!(sent[0]["params"]["expectedTurnId"], "a2");
+    }
+
+    #[test]
+    fn attached_images_ride_turn_start_and_steer_as_local_image_items() {
+        let mut d = Driver::new(false);
+        let image = std::path::PathBuf::from("/tmp/uploads/m-1-abcdef01.png");
+        let tid = d.thread_id.clone().unwrap();
+        d.input.submit_images(
+            &d.out_tx,
+            &mut d.req_id,
+            &tid,
+            "what is this".into(),
+            vec![image.clone()],
+            Delivery::Steer,
+            &d.policy,
+        );
+        let start = d.sent().remove(0);
+        assert_eq!(start["method"], "turn/start");
+        assert_eq!(
+            start["params"]["input"],
+            json!([
+                { "type": "localImage", "path": "/tmp/uploads/m-1-abcdef01.png" },
+                { "type": "text", "text": "what is this" }
+            ])
+        );
+        // Mid-turn the same message steers, and a refused steer re-sends the
+        // image with it.
+        d.started("u1");
+        d.input.submit_images(
+            &d.out_tx,
+            &mut d.req_id,
+            &tid,
+            "and this".into(),
+            vec![image],
+            Delivery::Steer,
+            &d.policy,
+        );
+        let steer = d.sent().remove(0);
+        assert_eq!(steer["method"], "turn/steer");
+        assert_eq!(steer["params"]["input"][0]["type"], "localImage");
+        d.completed("u1", "completed");
+        d.feed(json!({ "id": steer["id"], "error": { "code": -32600, "message": "no active turn to steer" } }));
+        let retry = d.sent().remove(0);
+        assert_eq!(retry["method"], "turn/start");
+        assert_eq!(retry["params"]["input"][0]["type"], "localImage");
+        assert_eq!(retry["params"]["input"][1]["text"], "and this");
     }
 
     #[test]

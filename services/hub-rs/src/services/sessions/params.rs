@@ -26,6 +26,26 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
     {
         bail!("delivery must be \"steer\" or \"now\"");
     }
+    if method == "agents.sendMessage"
+        && let Some(images) = params.get("images").filter(|value| !value.is_null())
+    {
+        let Some(images) = images.as_array() else {
+            bail!("images must be an array of {{path}}");
+        };
+        if images.len() > claudemon::session::images::MAX_IMAGES {
+            bail!(
+                "a message may carry at most {} images",
+                claudemon::session::images::MAX_IMAGES
+            );
+        }
+        if images.iter().any(|image| {
+            !image.as_object().is_some_and(|image| {
+                image.len() == 1 && image.get("path").is_some_and(Value::is_string)
+            })
+        }) {
+            bail!("images must be an array of {{path}}");
+        }
+    }
     let integer = match method {
         "sessions.conversation" => Some("sinceSeq"),
         "claude.answer" => Some("option"),
@@ -128,5 +148,33 @@ mod tests {
         }
         // The field means nothing to other methods and is not policed there.
         assert!(validate("claude.approve", &mut json!({"delivery":"later"})).is_ok());
+    }
+
+    #[test]
+    fn send_message_images_are_a_bounded_list_of_paths() {
+        for ok in [
+            json!({"text":"hi"}),
+            json!({"text":"hi","images":null}),
+            json!({"text":"hi","images":[]}),
+            json!({"text":"hi","images":[{"path":"/tmp/x/m-1-abcdef01.png"}]}),
+        ] {
+            assert!(
+                validate("agents.sendMessage", &mut ok.clone()).is_ok(),
+                "{ok}"
+            );
+        }
+        for bad in [
+            json!({"images":"/etc/passwd"}),
+            json!({"images":["/etc/passwd"]}),
+            json!({"images":[{"path":7}]}),
+            json!({"images":[{"path":"/a","cwd":"/"}]}),
+            json!({"images":[{}]}),
+            json!({"images":vec![json!({"path":"/a"}); 9]}),
+        ] {
+            assert!(
+                validate("agents.sendMessage", &mut bad.clone()).is_err(),
+                "{bad}"
+            );
+        }
     }
 }

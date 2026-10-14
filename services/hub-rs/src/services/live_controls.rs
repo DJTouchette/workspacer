@@ -301,6 +301,7 @@ impl Controls {
                         text: instruction,
                         delivery: Default::default(),
                         sender: Default::default(),
+                        images: Vec::new(),
                     })
                     .await
                     .map(|value| value["ok"] != false)
@@ -385,6 +386,7 @@ fn effort_command(provider: &str, transport: &str, id: &str, effort: &str) -> Co
             text: format!("/effort {effort}"),
             delivery: Default::default(),
             sender: Default::default(),
+            images: Vec::new(),
         }
     } else {
         Command::Request {

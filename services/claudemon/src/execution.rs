@@ -79,6 +79,20 @@ pub(crate) trait ExecutionEngineV1: Send + Sync {
         let _ = (delivery, sender);
         self.send(store, id, text)
     }
+    /// `send_with` carrying validated images. Engines without structured
+    /// image input deliver them as `[Image: <path>]` markers ahead of the text.
+    fn send_images(
+        &self,
+        store: &SessionStore,
+        id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        images: Vec<crate::session::images::ImageInput>,
+    ) -> MessageOutcome {
+        let text = crate::session::images::with_markers(text, &images);
+        self.send_with(store, id, text, delivery, sender)
+    }
     fn decide(&self, store: &SessionStore, id: &str, approve: bool) -> bool;
     fn cancel(&self, store: &SessionStore, id: &str) -> bool;
     fn stop(&self, store: &SessionStore, id: &str) -> bool;
@@ -216,6 +230,17 @@ impl ExecutionEngineV1 for ClaudemonEngine {
         sender: MessageSender,
     ) -> MessageOutcome {
         store.native_submit_message_from(id, text, delivery, sender)
+    }
+    fn send_images(
+        &self,
+        store: &SessionStore,
+        id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        images: Vec<crate::session::images::ImageInput>,
+    ) -> MessageOutcome {
+        store.native_submit_message_images(id, text, delivery, sender, images)
     }
     fn decide(&self, store: &SessionStore, id: &str, approve: bool) -> bool {
         store.native_submit_managed_decision(id, approve)

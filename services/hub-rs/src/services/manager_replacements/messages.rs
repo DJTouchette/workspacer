@@ -179,6 +179,7 @@ pub async fn send_engine(
         inbox,
         claudemon::session::Delivery::Steer,
         claudemon::session::MessageSender::Agent,
+        &[],
     )
     .await
 }
@@ -188,6 +189,11 @@ pub async fn send_engine(
 /// plain steer, because by then the turn it was meant to cut into is gone.
 /// (`send_engine` itself names the sender `Agent`: its callers are fleet
 /// wakes, progress and workflow deliveries — never a person typing.)
+///
+/// `images` are `files.upload` paths the caller already confined; the daemon
+/// loads them for the immediate send. A HELD message has no image channel to
+/// replay through, so it is journaled with `[Image: <path>]` markers ahead of
+/// its text and reaches the agent that way.
 #[allow(clippy::too_many_arguments)]
 pub async fn send_engine_with(
     engine: &claudemon::daemon::embedded::EmbeddedClient,
@@ -200,6 +206,7 @@ pub async fn send_engine_with(
     inbox: Option<&crate::services::manager_requests::ManagerRequests>,
     delivery: claudemon::session::Delivery,
     sender: claudemon::session::MessageSender,
+    images: &[String],
 ) -> Result<DeliveryResult> {
     use anyhow::{Context, bail};
     use claudemon::daemon::embedded::{Command, CommandRejected};
@@ -244,16 +251,31 @@ pub async fn send_engine_with(
             );
         }
     }
-    let tracked =
-        match tracker.begin(target, &content, signatures, source_request.clone(), outbox)? {
-            BeginDelivery::Held => {
-                return Ok(DeliveryResult {
-                    held: true,
-                    outcome: SendOutcome::Accepted,
-                });
-            }
-            BeginDelivery::Send(delivery) => delivery,
-        };
+    let journaled = if images.is_empty() {
+        content.clone()
+    } else {
+        let mut marked: String = images
+            .iter()
+            .map(|path| format!("[Image: {path}]\n"))
+            .collect();
+        marked.push_str(&content);
+        marked
+    };
+    let tracked = match tracker.begin(
+        target,
+        &journaled,
+        signatures,
+        source_request.clone(),
+        outbox,
+    )? {
+        BeginDelivery::Held => {
+            return Ok(DeliveryResult {
+                held: true,
+                outcome: SendOutcome::Accepted,
+            });
+        }
+        BeginDelivery::Send(delivery) => delivery,
+    };
     if let Some(source) = &source_request {
         inbox.unwrap().finish_delivery(
             source["requestId"].as_str().unwrap_or(""),
@@ -268,6 +290,7 @@ pub async fn send_engine_with(
             text: content,
             delivery,
             sender,
+            images: images.to_vec(),
         }),
     )
     .await

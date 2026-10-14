@@ -67,6 +67,15 @@ pub fn compat(mut snapshot: Value) -> Value {
     if let Some(value) = snapshot.get("tool_calls").cloned() {
         snapshot["totalToolCalls"] = value;
     }
+    // The composer's `/` menu (claudemon `session::slash_commands`): each
+    // entry is `{name, insert, description?, kind}`, already camel-safe.
+    if let Some(commands) = snapshot
+        .get("slash_commands")
+        .filter(|v| v.is_array())
+        .cloned()
+    {
+        snapshot["slashCommands"] = commands;
+    }
     if let Some(selection) = snapshot["requested_selection"].as_object() {
         let mut mapped = json!({});
         for (from, to) in [("model", "model"), ("context_window", "contextWindow")] {
@@ -343,6 +352,17 @@ mod confirmed_control_tests {
         fn revoke<'a>(&'a self, _: &'a str, _: &'a str) -> Operation<'a, ()> {
             Box::pin(async { Ok(()) })
         }
+    }
+    #[test]
+    fn slash_commands_reach_clients_as_slash_commands() {
+        let commands = json!([{"name": "compact", "insert": "/compact", "kind": "command"}]);
+        let row = compat(json!({"session_id": "s", "slash_commands": commands.clone()}));
+        assert_eq!(row["slashCommands"], commands);
+        assert!(
+            compat(json!({"session_id": "s"}))
+                .get("slashCommands")
+                .is_none()
+        );
     }
     #[test]
     fn prompt_cache_reaches_clients_in_camel_case() {

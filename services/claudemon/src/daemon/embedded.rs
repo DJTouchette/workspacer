@@ -67,6 +67,9 @@ pub enum Command {
         delivery: crate::session::Delivery,
         /// Who wrote it; see [`crate::session::MessageSender`].
         sender: crate::session::MessageSender,
+        /// `files.upload` paths to attach as images; the daemon confines and
+        /// loads them ([`crate::session::images`]). Empty for plain text.
+        images: Vec<String>,
     },
     Approve {
         id: String,
@@ -439,10 +442,14 @@ async fn dispatch(router: Router, command: Command) -> Result<Value> {
             text,
             delivery,
             sender,
-        } => (
-            session_path(&id, "message")?,
-            Some(json!({"text": text, "delivery": delivery, "sender": sender})),
-        ),
+            images,
+        } => {
+            let mut payload = json!({"text": text, "delivery": delivery, "sender": sender});
+            if !images.is_empty() {
+                payload["images"] = images.iter().map(|path| json!({"path": path})).collect();
+            }
+            (session_path(&id, "message")?, Some(payload))
+        }
         Command::Approve { id, decision } => (
             session_path(&id, "approve")?,
             Some(json!({"decision": decision})),

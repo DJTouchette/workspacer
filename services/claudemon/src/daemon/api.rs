@@ -627,6 +627,16 @@ struct MessagePayload {
     /// `origin: {kind: "human"}` on Claude stream.
     #[serde(default)]
     sender: crate::session::MessageSender,
+    /// Uploads (`files.upload` paths) to show the agent ahead of `text`;
+    /// confined and capped by [`crate::session::images`].
+    #[serde(default)]
+    images: Vec<ImageRef>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImageRef {
+    path: String,
 }
 
 async fn post_message(
@@ -639,7 +649,18 @@ async fn post_message(
     // flushed on the next `Input` transition otherwise (cold start, mid-turn,
     // or an open approval/question dialog). Only a stopped session rejects.
     // See `SessionStore::submit_message`.
-    match store.submit_message_from(&id, payload.text, payload.delivery, payload.sender) {
+    let paths: Vec<String> = payload.images.into_iter().map(|i| i.path).collect();
+    let images = match crate::session::images::load_all(&paths) {
+        Ok(images) => images,
+        Err(error) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+                .into_response()
+        }
+    };
+    match store.submit_message_images(&id, payload.text, payload.delivery, payload.sender, images) {
         MessageOutcome::Sent => Json(json!({ "ok": true })).into_response(),
         MessageOutcome::Queued => Json(json!({ "ok": true, "queued": true })).into_response(),
         MessageOutcome::Rejected(mode) => (
@@ -3517,7 +3538,8 @@ mod tests {
                 ManagedPrompt {
                     text,
                     delivery,
-                    sender: crate::session::MessageSender::Human
+                    sender: crate::session::MessageSender::Human,
+                    images: Vec::new(),
                 }
             );
         }
@@ -3532,6 +3554,84 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn post_message_attaches_confined_uploads_and_refuses_any_other_path() {
+        use crate::session::ManagedPrompt;
+        let dir = crate::session::images::upload_dir();
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            // The hub's upload handler insists the directory stays private.
+            builder.mode(0o700);
+        }
+        builder.create(&dir).unwrap();
+        let tag = &uuid::Uuid::new_v4().simple().to_string()[..8];
+        let upload = dir.join(format!("m-1-{tag}.png"));
+        std::fs::write(&upload, b"\x89PNG\r\n\x1a\nfixture").unwrap();
+        let path = upload.to_string_lossy().into_owned();
+
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let (tx, mut rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        state.store.register_managed_prompt("sess-1", tx);
+        let (status, _) = request(
+            state.clone(),
+            post_json(
+                "/sessions/sess-1/message",
+                json!({ "text": "look", "images": [{ "path": path }] }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let prompt = rx.try_recv().unwrap();
+        assert_eq!(prompt.text, "look");
+        assert_eq!(prompt.images.len(), 1);
+        assert_eq!(prompt.images[0].media_type, "image/png");
+        assert_eq!(prompt.images[0].path, upload);
+
+        // Any path that is not an upload is refused before the driver sees it.
+        for refused in [
+            json!([{ "path": "/etc/passwd" }]),
+            json!([{ "path": dir.join("notes.png") }]),
+            json!([{ "path": path, "extra": true }]),
+            json!(["bare-string"]),
+        ] {
+            let (status, _) = request(
+                state.clone(),
+                post_json(
+                    "/sessions/sess-1/message",
+                    json!({ "text": "x", "images": refused }),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+        }
+        assert!(rx.try_recv().is_err());
+
+        // A text-only driver is told where the file is instead.
+        state.store.register_managed("sess-2", "/tmp/proj", "pi");
+        let (tx, mut text_rx) = mpsc::unbounded_channel::<String>();
+        state.store.register_managed_input("sess-2", tx);
+        let (status, _) = request(
+            state,
+            post_json(
+                "/sessions/sess-2/message",
+                json!({ "text": "look", "images": [{ "path": path }] }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            text_rx.try_recv().unwrap(),
+            format!("[Image: {}]\nlook", upload.display())
+        );
+        let _ = std::fs::remove_file(&upload);
     }
 
     #[tokio::test]
@@ -3557,7 +3657,8 @@ mod tests {
             ManagedPrompt {
                 text: "x".into(),
                 delivery: Delivery::Now,
-                sender: MessageSender::Agent
+                sender: MessageSender::Agent,
+                images: Vec::new(),
             }
         );
     }

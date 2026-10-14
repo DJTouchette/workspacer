@@ -54,6 +54,7 @@ async fn lifecycle_commands_failure_cleanup_and_restart() {
                 text: "hello".into(),
                 delivery: Default::default(),
                 sender: Default::default(),
+                images: Vec::new(),
             })
             .await
             .unwrap_err()
@@ -68,6 +69,7 @@ async fn lifecycle_commands_failure_cleanup_and_restart() {
                 text: "hello".into(),
                 delivery: claudemon::session::Delivery::Now,
                 sender: claudemon::session::MessageSender::Agent,
+                images: Vec::new(),
             })
             .await
             .unwrap_err()
