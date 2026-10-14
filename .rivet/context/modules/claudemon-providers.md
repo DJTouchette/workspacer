@@ -106,9 +106,9 @@ projection copies them in camelCase.
 
 | Claudemon key | Hub key | Shape |
 | --- | --- | --- |
-| `message_receipts` | `messageReceipts` | `[{uuid, state, at}]`, newest last, at most 32. `state` uses the CLI's words: `queued`, `started`, `completed` and `cancelled`. |
+| `message_receipts` | `messageReceipts` | `[{uuid, state, at}]`, newest last: at most 32, at most 10 settled (`completed`/`cancelled`), none older than 10 minutes. `state` uses the CLI's words: `queued`, `started`, `completed` and `cancelled`. |
 | `mcp_servers` | `mcpServers` | `[{name, status, error?}]`. `status` is `connected`, `failed`, `needs-auth`, `pending` or `disabled`; Codex statuses are mapped onto that set. |
-| `active_hooks` | `activeHooks` | `[{id, name, event, started_at}]` (`startedAt` on the hub). Hooks are removed when they respond and cleared when the session stops. |
+| `active_hooks` | `activeHooks` | `[{id, name, event, started_at}]` (`startedAt` on the hub). Hooks are removed when they respond, and cleared at turn end (a main-thread `result`, Codex `turn/completed`), on a driver respawn and when the session stops. |
 | `fast_mode` / `fast_mode_disabled_reason` | `fastMode` / `fastModeDisabledReason` | The CLI's own `fast_mode_state` (`on`, `off` or `cooldown`) and its reason. It is never set from what we requested. |
 
 `claude_status.rs` and `codex_status.rs` see each provider message before the
@@ -165,7 +165,17 @@ hook shapes come from the schema only:
   Only `status:"failed"` adds a notice.
 - Fast mode and interrupt receipts are refused on Codex.
 
-Daemon routes: `POST /sessions/:id/mcp-status`, which returns
+The hub projection moves these fields to camelCase; it does not duplicate the
+snake_case spelling. Changes apply to the row at once, but the row is published
+at most once per 150 ms per session (`STATUS_PUBLISH_DEBOUNCE`). Fast mode and
+MCP updates also rewrite the status line's older `capabilities.fast_mode`, MCP
+count and `inventory.mcp_servers` status, so the two views agree. Only one MCP
+status read per session is in flight at a time; concurrent callers share its
+answer. The embedded engine runs `mcp-status` and `mcp-reconnect` in their own
+two-slot pool, so they never hold the eight command slots that message sends
+use. A message held before its driver registered keeps its reported uuid.
+
+Daemon routes: `POST /sessions/:id/mcp-status` (waits at most 5 s), which returns
 `{ok, mcp_servers}`; `POST /sessions/:id/mcp-reconnect {server}`, which only
 accepts a server the row lists; and `POST /sessions/:id/fast-mode {enabled}`.
 A session without a status driver gets 501, and a provider refusal gets 502.
