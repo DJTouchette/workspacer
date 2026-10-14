@@ -393,3 +393,68 @@ async fn a_held_command_does_not_block_a_fast_sibling() {
     http_owner.await.unwrap();
     assert!(independent,"owned command queue held an unrelated fast read behind a gated route, although the same HTTP router answered immediately");
 }
+
+#[tokio::test]
+async fn mcp_status_reads_run_in_their_own_pool_and_never_take_command_slots() {
+    use axum::routing::post;
+    assert_eq!(STATUS_CONCURRENCY, 2);
+    let counts = Arc::new(Counts::default());
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let (held_counts, held_gate) = (counts.clone(), gate.clone());
+    let router = Router::new()
+        .route(
+            "/sessions/s1/mcp-status",
+            post(move || {
+                let (counts, gate) = (held_counts.clone(), held_gate.clone());
+                async move {
+                    let _active = Active::new(counts.clone());
+                    gate.acquire().await.unwrap().forget();
+                    Json(json!({"ok":true}))
+                }
+            }),
+        )
+        .route("/fast", get(|| async { Json(json!({"fast":true})) }));
+    let (client, task) = owner(router);
+    let status = |client: &EmbeddedClient| {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .request(Command::Request {
+                    method: "POST".into(),
+                    path: "/sessions/s1/mcp-status".into(),
+                    payload: Some(json!({})),
+                })
+                .await
+        })
+    };
+    // More status reads than BOTH pools hold: only two run at once…
+    let reads: Vec<_> = (0..COMMAND_CONCURRENCY + 2)
+        .map(|_| status(&client))
+        .collect();
+    started(&counts, STATUS_CONCURRENCY).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(counts.active.load(Ordering::SeqCst), STATUS_CONCURRENCY);
+    // …and an ordinary command still runs at once.
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), client.request(request("/fast")))
+            .await
+            .unwrap()
+            .unwrap(),
+        json!({"fast":true})
+    );
+    gate.add_permits(COMMAND_CONCURRENCY + 2);
+    for read in reads {
+        tokio::time::timeout(Duration::from_secs(3), read)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+    assert_eq!(counts.peak.load(Ordering::SeqCst), STATUS_CONCURRENCY);
+    assert!(!is_status_command(&request("/fast")));
+    drop(client);
+    tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap();
+}

@@ -820,6 +820,25 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'claude.mcpReconnect': {
+    reason:
+      "reconnects one MCP server the session already lists. On Claude it is the CLI's own `mcp_reconnect` of that server; Codex has no per-server reconnect, so there it reloads the whole MCP configuration (`config/mcpServer/reload`), which can start servers added to the config since launch. It writes no config and takes no path, argv or policy value. `server` must name a server on the session's own row; operator-tier because of the Codex reload",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['server'],
+      },
+    ],
+  },
+  'claude.setFastMode': {
+    reason:
+      "turns fast mode on or off through the CLI's own `apply_flag_settings {fastMode}`, from the next turn. The only value is the boolean `enabled`; like the model and effort it is a parameter of generation that no guard consults. NOTHING HERE IS MACHINE-CHECKED beyond the boolean",
+    witnesses: [
+      {
+        kind: 'none',
+      },
+    ],
+  },
   'claude.signal': {
     reason:
       'sends an interrupt/stop signal to a running agent. It can only ever STOP work; nothing consults it. NOTHING HERE IS MACHINE-CHECKED: the method carries no classified value and no guard names it, so this sentence is the whole of the evidence',
@@ -1745,6 +1764,13 @@ export const parameterDecisions: Record<
         'delivered structurally only for managed providers. A Claude PTY request that includes effort is refused before queue/persistence mutation because its daemon-built `/model` command cannot apply effort; callers must use claude.setEffort, whose separate `/effort` message path genuinely delivers it',
     },
   },
+  'claude.mcpReconnect': {
+    server: {
+      kind: 'id',
+      reason:
+        "names one MCP server the session's own row already lists; claudemon refuses any other name, and it is never a path, a command or a config value",
+    },
+  },
   'claude.setEffort': {
     effort: {
       kind: 'shell',
@@ -1897,6 +1923,7 @@ export const actors: string[] = [
   'claude.gate',
   'claude.handoffAgentBrief',
   'claude.handoffBrief',
+  'claude.mcpReconnect',
   'claude.profiles.add',
   'claude.profiles.remove',
   'claude.profiles.update',
@@ -1904,6 +1931,7 @@ export const actors: string[] = [
   'claude.rewindFiles',
   'claude.sessionsForDir',
   'claude.setEffort',
+  'claude.setFastMode',
   'claude.setModel',
   'claude.setPermissionMode',
   'claude.signal',

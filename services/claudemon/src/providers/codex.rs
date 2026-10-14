@@ -2916,6 +2916,10 @@ pub(super) async fn run_session(
         // `thread/revert` and fork points (see `HistoryControls`).
         let (sctx, scrx) = mpsc::unbounded_channel::<ManagedSessionControl>();
         store.register_managed_session_control(session_id, sctx);
+        // Live status: MCP server list/reload (see `codex_status`).
+        let (sttx, strx) =
+            mpsc::unbounded_channel::<crate::session::provider_status::StatusControl>();
+        store.register_managed_status_control(session_id, sttx);
         // Approval policy, live-switchable via `/permission-mode`: the adapter
         // mediates every approval request on this ws path, so flipping the flag
         // takes effect on the next request without touching the session. A
@@ -2959,10 +2963,19 @@ pub(super) async fn run_session(
             )
         };
 
-        (rx, drx, mrx, irx, arx, scrx, policy, tui_pty)
+        (rx, drx, mrx, irx, arx, scrx, strx, policy, tui_pty)
     });
-    let Some((mut rx, mut drx, mut mrx, mut irx, mut arx, mut scrx, policy, tui_pty)) =
-        registration
+    let Some((
+        mut rx,
+        mut drx,
+        mut mrx,
+        mut irx,
+        mut arx,
+        mut scrx,
+        mut status_rx,
+        policy,
+        tui_pty,
+    )) = registration
     else {
         evidence.reason = DriverExit::Superseded;
         evidence.cleanup = child.cleanup().await;
@@ -3063,6 +3076,11 @@ pub(super) async fn run_session(
     // dead thread. try_wait is cheap; a coarse tick is fine.
     let mut upkeep = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
+    // MCP server health and running hooks (see `codex_status`).
+    let mut live_status = super::codex_status::CodexStatus::default();
+    // A respawned driver starts with no hook of its previous life running.
+    super::claude_status::reset(store, session_id);
+    let mut status_open = true;
 
     let reason = 'driver: loop {
         let mut incoming: Option<ManagedPrompt> = None;
@@ -3098,12 +3116,17 @@ pub(super) async fn run_session(
                         if let Some(method) = value.get("method").and_then(Value::as_str) {
                             history.observe(method, value.get("params").unwrap_or(&Value::Null));
                         }
-                        let applied = store.with_generation(session_id, evidence.generation, || handle_message(
-                            &value, store, conv, session_id, &out_tx,
-                            &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
-                            &mut cur_mode, &mut acc, &policy, &mut requests, &mut input,
-                            &mut pending_switch, headless,
-                        ));
+                        let applied = store.with_generation(session_id, evidence.generation, || {
+                            if live_status.observe(&value, store, conv, session_id, thread_id.as_deref()) {
+                                return;
+                            }
+                            handle_message(
+                                &value, store, conv, session_id, &out_tx,
+                                &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
+                                &mut cur_mode, &mut acc, &policy, &mut requests, &mut input,
+                                &mut pending_switch, headless,
+                            )
+                        });
                         if applied.is_none() { break 'driver DriverExit::Superseded; }
                         if store.with_generation(session_id, evidence.generation, || {
                             aux.observe(&value, store, conv, &out_tx, thread_id.as_deref(), subscribed)
@@ -3160,7 +3183,7 @@ pub(super) async fn run_session(
                     // A deny's note follows the bare `decline` as a steer into
                     // the turn, through the same path a typed message takes.
                     if let Some(text) = steer {
-                        incoming = Some(ManagedPrompt { text, delivery: Delivery::Steer, sender: MessageSender::Human });
+                        incoming = Some(ManagedPrompt { text, delivery: Delivery::Steer, sender: MessageSender::Human, uuid: None });
                     }
                 }
                 None => break DriverExit::DecisionClosed,
@@ -3185,6 +3208,10 @@ pub(super) async fn run_session(
                         input.watchdog(now, &out_tx, &mut req_id, tid, &policy);
                     }
                 }).is_none() { break DriverExit::Superseded; }
+            },
+            control = status_rx.recv(), if status_open => match control {
+                Some(control) => live_status.request(&out_tx, thread_id.as_deref(), control),
+                None => status_open = false,
             },
             intr = irx.recv() => match intr {
                 Some(()) => {

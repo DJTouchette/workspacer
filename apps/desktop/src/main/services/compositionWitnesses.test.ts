@@ -24,6 +24,8 @@ const NONE = [
   'fs.write',
   'search.project',
   'providers.listModels',
+  // Only a boolean reaches the CLI's own apply_flag_settings {fastMode}.
+  'claude.setFastMode',
 ];
 // Closed vocabulary: new exemptions must change both a claim and this verifier.
 const INVERSE = [

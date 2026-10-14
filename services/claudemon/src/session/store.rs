@@ -46,13 +46,22 @@ enum PendingMessageKind {
 struct PendingMessage {
     text: String,
     kind: PendingMessageKind,
+    /// The frame uuid the caller was told (`message_uuid`) for a message
+    /// held before its managed driver registered; the drain hands it to the
+    /// driver so the reported uuid is the one actually sent.
+    uuid: Option<String>,
 }
 
 impl PendingMessage {
     fn chat(text: String) -> Self {
+        Self::chat_with(text, None)
+    }
+
+    fn chat_with(text: String, uuid: Option<String>) -> Self {
         Self {
             text,
             kind: PendingMessageKind::Chat,
+            uuid,
         }
     }
 
@@ -60,6 +69,7 @@ impl PendingMessage {
         Self {
             text,
             kind: PendingMessageKind::PtyModelControl,
+            uuid: None,
         }
     }
 
@@ -381,6 +391,14 @@ pub struct SessionStore {
     /// Codex ws sessions' extras channel (review, goals, thread name, Windows
     /// sandbox setup) and plan-mode state — see `session::codex_controls`.
     codex_controls: Arc<DashMap<String, super::codex_controls::CodexControlHandle>>,
+    /// Live-status control requests (MCP status/reconnect, fast mode, the
+    /// receipt-reporting interrupt) for drivers that implement them. See
+    /// [`super::provider_status::StatusControl`].
+    managed_status_controls:
+        Arc<DashMap<String, mpsc::UnboundedSender<super::provider_status::StatusControl>>>,
+    /// Sessions with a provider-status publish scheduled (see
+    /// [`Self::update_provider_status`]).
+    status_publishes: Arc<DashSet<String>>,
     /// Latest account-level rate-limit reading from the OAuth usage endpoint
     /// (see `session::account_usage`), keyed by Claude config root (`""` = the
     /// daemon's default). One entry per logged-in account: a profile spawn
@@ -476,6 +494,11 @@ pub struct ManagedPrompt {
     pub text: String,
     pub delivery: Delivery,
     pub sender: MessageSender,
+    /// The uuid the driver stamps on this message's provider frame, when the
+    /// caller chose one (`POST /sessions/:id/message {uuid}`); the driver mints
+    /// one otherwise. Claude stream names messages by it in `command_lifecycle`
+    /// receipts and interrupt receipts; other drivers ignore it.
+    pub uuid: Option<String>,
 }
 
 /// A live model/effort switch whose driver answers only once the provider
@@ -487,6 +510,9 @@ pub struct ConfirmedModelSwitch {
     pub switch: ModelSwitch,
     pub reply: oneshot::Sender<Result<(), String>>,
 }
+
+/// How long provider-status changes are gathered into one row publish.
+pub const STATUS_PUBLISH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// How long `POST /sessions/:id/model` waits for a confirming driver.
 pub const MODEL_SWITCH_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -501,7 +527,13 @@ enum ManagedInput {
 }
 
 impl ManagedInput {
-    fn send(&self, text: String, delivery: Delivery, sender: MessageSender) -> bool {
+    fn send(
+        &self,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        uuid: Option<String>,
+    ) -> bool {
         match self {
             Self::Text(tx) => tx.send(text).is_ok(),
             Self::Prompt(tx) => tx
@@ -509,6 +541,7 @@ impl ManagedInput {
                     text,
                     delivery,
                     sender,
+                    uuid,
                 })
                 .is_ok(),
         }
@@ -879,6 +912,8 @@ impl SessionStore {
             managed_task_controls: Arc::new(DashMap::new()),
             managed_session_controls: Arc::new(DashMap::new()),
             codex_controls: Arc::new(DashMap::new()),
+            managed_status_controls: Arc::new(DashMap::new()),
+            status_publishes: Arc::new(DashSet::new()),
             account_usage: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             account_usage_errors: Arc::new(
                 std::sync::RwLock::new(std::collections::HashMap::new()),
@@ -2104,8 +2139,8 @@ impl SessionStore {
         // enqueues it while still inside the spawn handler, before the 200, and
         // this drain runs the instant the driver's channel is live. There is no
         // window in between for the caller to have to guess at.
-        for text in self.take_pending_messages(session_id) {
-            if !tx.send(text, Delivery::Steer, MessageSender::Human) {
+        for (text, uuid) in self.take_pending_prompts(session_id) {
+            if !tx.send(text, Delivery::Steer, MessageSender::Human, uuid) {
                 tracing::warn!(session_id, "managed prompt channel closed before the queued first message could be delivered");
                 break;
             }
@@ -2226,6 +2261,94 @@ impl SessionStore {
     /// stream driver's SIGINT equivalent — an `interrupt` control request).
     pub fn register_managed_interrupt(&self, session_id: &str, tx: mpsc::UnboundedSender<()>) {
         self.managed_interrupts.insert(session_id.to_string(), tx);
+    }
+
+    /// Register a driver's live-status control channel (see
+    /// [`super::provider_status::StatusControl`]).
+    pub fn register_managed_status_control(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<super::provider_status::StatusControl>,
+    ) {
+        self.managed_status_controls
+            .insert(session_id.to_string(), tx);
+    }
+
+    /// Hand a live-status request to the session's driver. `Err` gives the
+    /// request back when the session has no such driver (or it is gone), so
+    /// the caller can answer with that instead of waiting.
+    pub fn submit_status_control(
+        &self,
+        session_id: &str,
+        control: super::provider_status::StatusControl,
+    ) -> Result<(), super::provider_status::StatusControl> {
+        let Some(tx) = self
+            .managed_status_controls
+            .get(session_id)
+            .map(|tx| tx.clone())
+        else {
+            return Err(control);
+        };
+        tx.send(control).map_err(|error| error.0)
+    }
+
+    /// Whether the session's driver takes live-status requests.
+    pub fn has_status_control(&self, session_id: &str) -> bool {
+        self.managed_status_controls.contains_key(session_id)
+    }
+
+    /// Apply `f` to the session's [`super::provider_status::ProviderStatus`]
+    /// and publish the row when `f` reports a change.
+    pub fn update_provider_status(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&mut super::provider_status::ProviderStatus) -> bool,
+    ) -> bool {
+        let state = {
+            let Some(mut entry) = self.states.get_mut(session_id) else {
+                return false;
+            };
+            if !f(&mut entry.provider_status) {
+                return false;
+            }
+            let entry = &mut *entry;
+            if let Some(caps) = entry
+                .status_line
+                .as_mut()
+                .and_then(|line| line.capabilities.as_mut())
+            {
+                entry.provider_status.sync_capabilities(caps);
+            }
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        // A message's queued/started/completed and a hook's start/response
+        // land milliseconds apart: the row is current at once (any read sees
+        // it), but the full-row publish is coalesced per session.
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            let _ = self.update_tx.send(SessionUpdate {
+                session_id: session_id.to_string(),
+                event: "Managed".to_string(),
+                state,
+            });
+            return true;
+        };
+        if self.status_publishes.insert(session_id.to_string()) {
+            let store = self.clone();
+            let session_id = session_id.to_string();
+            runtime.spawn(async move {
+                tokio::time::sleep(STATUS_PUBLISH_DEBOUNCE).await;
+                store.status_publishes.remove(&session_id);
+                if let Some(state) = store.states.get(&session_id).map(|s| s.clone()) {
+                    let _ = store.update_tx.send(SessionUpdate {
+                        session_id,
+                        event: "Managed".to_string(),
+                        state,
+                    });
+                }
+            });
+        }
+        true
     }
 
     /// Register a stream session's background-task control (see
@@ -2530,6 +2653,7 @@ impl SessionStore {
         self.managed_task_controls.remove(session_id);
         self.managed_session_controls.remove(session_id);
         self.codex_controls.remove(session_id);
+        self.managed_status_controls.remove(session_id);
         existed
     }
 
@@ -2592,6 +2716,7 @@ impl SessionStore {
         self.managed_task_controls.remove(session_id);
         self.managed_session_controls.remove(session_id);
         self.codex_controls.remove(session_id);
+        self.managed_status_controls.remove(session_id);
         // Release the hybrid Term view's resources (attached by `attach_pty`).
         // The 256 KiB byte ring per session is the bulk of a managed session's
         // memory; leaving it (and the input wrapper + broadcast) around after the
@@ -2610,6 +2735,7 @@ impl SessionStore {
             // Nor is it compacting: a compaction cut short by the end of the
             // session must not leave the flag up (a queue waits on it).
             entry.compacting = false;
+            entry.provider_status.end();
             let completed_at = now_millis();
             super::background_tasks::end_all(&mut entry.background_task_list, completed_at);
             for sub in &mut entry.subagents {
@@ -3343,10 +3469,38 @@ impl SessionStore {
         delivery: Delivery,
         sender: MessageSender,
     ) -> MessageOutcome {
+        self.native_submit_message_tracked(session_id, text, delivery, sender, None)
+    }
+
+    /// [`Self::submit_message_from`] with the uuid the driver must stamp on
+    /// the message (see [`ManagedPrompt::uuid`]). Only delivery-aware managed
+    /// drivers see it; every other path delivers exactly as without it.
+    pub fn submit_message_tracked(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        uuid: Option<String>,
+    ) -> MessageOutcome {
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.send_tracked(self, session_id, text, delivery, sender, uuid);
+        }
+        self.native_submit_message_tracked(session_id, text, delivery, sender, uuid)
+    }
+
+    pub(crate) fn native_submit_message_tracked(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        uuid: Option<String>,
+    ) -> MessageOutcome {
         // Managed (adapter-driven) sessions forward the prompt to the provider's
         // own API via the driver task — no PTY, no Input-mode gating.
         if let Some(tx) = self.managed_input(session_id) {
-            return if tx.send(text, delivery, sender) {
+            return if tx.send(text, delivery, sender, uuid) {
                 MessageOutcome::Sent
             } else {
                 MessageOutcome::WrapperGone
@@ -3368,14 +3522,16 @@ impl SessionStore {
                 // queued one. The flush settles FLUSH_DELAY_MS past the Input
                 // transition (a no-op wait when the prompt has been idle) and
                 // then verifies the submit took.
-                if !self.enqueue_message(session_id, text) {
+                if !self.enqueue_pending_message(session_id, PendingMessage::chat_with(text, uuid))
+                {
                     return MessageOutcome::QueueFull;
                 }
                 self.schedule_pending_flush(session_id);
                 MessageOutcome::Sent
             }
             _ => {
-                if !self.enqueue_message(session_id, text) {
+                if !self.enqueue_pending_message(session_id, PendingMessage::chat_with(text, uuid))
+                {
                     return MessageOutcome::QueueFull;
                 }
                 // Guard the read-then-enqueue against a concurrent transition:
@@ -3663,6 +3819,17 @@ impl SessionStore {
     /// delivery to the caller. The PTY flush writes the batch to the child;
     /// `register_managed_input` pushes it down the provider's prompt channel.
     /// Atomicity is what lets the two drains coexist without ever double-sending.
+    /// [`Self::take_pending_messages`] keeping each message's frame uuid.
+    fn take_pending_prompts(&self, session_id: &str) -> Vec<(String, Option<String>)> {
+        self.pending_messages
+            .get_mut(session_id)
+            .map(|mut q| std::mem::take(&mut *q))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|message| (message.text, message.uuid))
+            .collect()
+    }
+
     fn take_pending_messages(&self, session_id: &str) -> Vec<String> {
         self.pending_messages
             .get_mut(session_id)
@@ -3815,6 +3982,60 @@ impl Default for SessionStore {
 mod tests {
     use super::*;
     use crate::session::state::ContextHealth;
+
+    /// A burst of provider-status changes is read at once but published as
+    /// one row carrying all of them.
+    #[tokio::test]
+    async fn provider_status_bursts_publish_one_row() {
+        let store = SessionStore::new();
+        store.register_managed("burst", "/tmp", "claude");
+        let mut updates = store.subscribe();
+        for state in ["queued", "started", "completed"] {
+            assert!(store.update_provider_status("burst", |s| s.record_receipt("u1", state, 1)));
+        }
+        assert_eq!(
+            store.get("burst").unwrap().provider_status.message_receipts[0].state,
+            "completed",
+            "reads see the change at once"
+        );
+        assert!(updates.try_recv().is_err(), "nothing published yet");
+        let update = tokio::time::timeout(std::time::Duration::from_secs(2), updates.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            update.state.provider_status.message_receipts[0].state,
+            "completed"
+        );
+        tokio::time::sleep(STATUS_PUBLISH_DEBOUNCE * 2).await;
+        assert!(updates.try_recv().is_err(), "one publish for the burst");
+    }
+
+    /// A message held before the managed driver registered keeps the uuid
+    /// its sender was told: the drain hands that uuid to the driver.
+    #[test]
+    fn a_held_message_reaches_the_driver_with_its_reported_uuid() {
+        let store = SessionStore::new();
+        store.register_managed("held", "/tmp", "claude");
+        store.set_transport("held", Transport::Stream);
+        store.states.get_mut("held").unwrap().mode = SessionMode::Unknown;
+        let uuid = "6f1c0d52-0000-4000-8000-0000000000aa".to_string();
+        assert_eq!(
+            store.submit_message_tracked(
+                "held",
+                "early".into(),
+                Delivery::Steer,
+                MessageSender::Human,
+                Some(uuid.clone()),
+            ),
+            MessageOutcome::Queued
+        );
+        let (tx, mut rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        store.register_managed_prompt("held", tx);
+        let prompt = rx.try_recv().unwrap();
+        assert_eq!(prompt.text, "early");
+        assert_eq!(prompt.uuid, Some(uuid));
+    }
 
     #[test]
     fn post_switch_context_confirmation_policy_is_evidence_backed() {

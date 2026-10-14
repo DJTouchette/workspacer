@@ -147,6 +147,9 @@ pub(crate) async fn install(
         "claude.compact",
         "claude.rewindFiles",
         "claude.revert",
+        "sessions.mcpStatus",
+        "claude.mcpReconnect",
+        "claude.setFastMode",
     ] {
         let service = service.clone();
         options = options.handler(method, move |_, params| {
@@ -812,6 +815,7 @@ impl Sessions {
                     params["text"].as_str(),
                     delivery,
                     params["fromSessionId"].as_str(),
+                    None,
                 )
                 .await
                 .into_result()
@@ -861,13 +865,52 @@ impl Sessions {
                     .as_str()
                     .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow!("claude.signal requires {{ sessionId, signal }}"))?;
+                let reply = self
+                    .request(
+                        "POST",
+                        format!("{root}/signal"),
+                        Some(json!({"signal":signal})),
+                    )
+                    .await?;
+                Ok(signal_result(&reply))
+            }
+            // Refresh the session's MCP server list from the provider (Claude
+            // `mcp_status`, Codex `mcpServerStatus/list`); the snapshot's
+            // `mcpServers` follows.
+            "sessions.mcpStatus" => {
+                let reply = self
+                    .request("POST", format!("{root}/mcp-status"), Some(json!({})))
+                    .await?;
+                Ok(json!({"ok":true,"mcpServers":reply["mcp_servers"]}))
+            }
+            "claude.mcpReconnect" => {
+                let server = params["server"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        anyhow!("claude.mcpReconnect requires {{ sessionId, server }}")
+                    })?;
                 self.request(
                     "POST",
-                    format!("{root}/signal"),
-                    Some(json!({"signal":signal})),
+                    format!("{root}/mcp-reconnect"),
+                    Some(json!({"server":server})),
                 )
                 .await?;
-                Ok(json!({"ok":true}))
+                Ok(json!({"ok":true,"server":server}))
+            }
+            // `ok` is the CLI accepting the setting; whether fast mode is ON
+            // is the snapshot's `fastMode`, as the CLI reports it.
+            "claude.setFastMode" => {
+                let enabled = params["enabled"].as_bool().ok_or_else(|| {
+                    anyhow!("claude.setFastMode requires {{ sessionId, enabled }}")
+                })?;
+                self.request(
+                    "POST",
+                    format!("{root}/fast-mode"),
+                    Some(json!({"enabled":enabled})),
+                )
+                .await?;
+                Ok(json!({"ok":true,"enabled":enabled}))
             }
             "claude.gate" => {
                 self.request(
@@ -956,6 +999,52 @@ impl Sessions {
             }
             _ => bail!("unknown session method"),
         }
+    }
+}
+
+/// `claude.signal`'s result: `{ok}`, plus the interrupt receipt a Claude
+/// stream SIGINT reports — `interrupt: {supported, stillQueued, cancelled}`
+/// (uuids of OUR messages; `stillQueued` ones run after the interrupt and must
+/// never be resent), or `interrupt: null` when the CLI sent none in time.
+fn signal_result(reply: &Value) -> Value {
+    let mut result = json!({"ok":true});
+    match reply.get("interrupt") {
+        Some(Value::Object(receipt)) => {
+            result["interrupt"] = json!({
+                "supported": receipt.get("supported").cloned().unwrap_or(json!(false)),
+                "stillQueued": receipt.get("still_queued").cloned().unwrap_or(json!([])),
+                "cancelled": receipt.get("cancelled").cloned().unwrap_or(json!([])),
+            });
+        }
+        Some(Value::Null) => result["interrupt"] = Value::Null,
+        _ => {}
+    }
+    if let Some(error) = reply.get("interrupt_error").filter(|e| !e.is_null()) {
+        result["interruptError"] = error.clone();
+    }
+    result
+}
+
+#[cfg(test)]
+mod signal_tests {
+    use super::*;
+
+    #[test]
+    fn signal_results_carry_the_interrupt_receipt_in_camel_case() {
+        assert_eq!(
+            signal_result(&json!({"ok":true,"signal":"SIGTERM"})),
+            json!({"ok":true})
+        );
+        assert_eq!(
+            signal_result(
+                &json!({"ok":true,"interrupt":{"supported":true,"still_queued":["u1"],"cancelled":[]}})
+            ),
+            json!({"ok":true,"interrupt":{"supported":true,"stillQueued":["u1"],"cancelled":[]}})
+        );
+        assert_eq!(
+            signal_result(&json!({"ok":true,"interrupt":null,"interrupt_error":"no"})),
+            json!({"ok":true,"interrupt":null,"interruptError":"no"})
+        );
     }
 }
 

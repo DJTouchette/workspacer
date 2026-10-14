@@ -64,6 +64,33 @@ pub fn compat(mut snapshot: Value) -> Value {
         }
         snapshot["promptCache"] = mapped;
     }
+    // Live provider status (claudemon `session::provider_status`): delivery
+    // receipts, MCP servers, running hooks and the CLI-reported fast mode.
+    // Absent upstream means "nothing reported", and stays absent here. These
+    // fields are new, so no client reads their snake_case spelling: they are
+    // MOVED to camelCase rather than duplicated on every row.
+    let object = snapshot
+        .as_object_mut()
+        .expect("a snapshot with a session id");
+    for (from, to) in [
+        ("message_receipts", "messageReceipts"),
+        ("mcp_servers", "mcpServers"),
+        ("fast_mode", "fastMode"),
+        ("fast_mode_disabled_reason", "fastModeDisabledReason"),
+    ] {
+        if let Some(value) = object.remove(from).filter(|v| !v.is_null()) {
+            object.insert(to.into(), value);
+        }
+    }
+    if let Some(Value::Array(hooks)) = object.remove("active_hooks") {
+        let mapped: Vec<Value> = hooks
+            .iter()
+            .map(|hook| {
+                json!({"id":hook["id"],"name":hook["name"],"event":hook["event"],"startedAt":hook["started_at"]})
+            })
+            .collect();
+        object.insert("activeHooks".into(), json!(mapped));
+    }
     if let Some(value) = snapshot.get("tool_calls").cloned() {
         snapshot["totalToolCalls"] = value;
     }

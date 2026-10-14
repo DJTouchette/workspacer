@@ -24,10 +24,15 @@ def emit(value):
     print(json.dumps(value), flush=True)
 
 
+current = {"uuid": None}
+
+
 def finish(reply):
     emit({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": reply}}})
-    emit({"type": "result", "subtype": "success", "is_error": False, "total_cost_usd": 0,
+    emit({"type": "result", "subtype": "success", "is_error": False, "total_cost_usd": 0, "fast_mode_state": "off",
           "usage": {"input_tokens": 1, "output_tokens": 1}, "modelUsage": {"claude-sonnet-4-6": {"contextWindow": 200000}}})
+    if current["uuid"]:
+        emit({"type": "command_lifecycle", "command_uuid": current["uuid"], "state": "completed"})
 
 
 # A CLI new enough for `priority` / `origin` on user frames, so the test can see
@@ -40,7 +45,10 @@ for line in sys.stdin:
         finish("answered")
         continue
     if frame.get("type") == "control_request":
-        emit({"type": "control_response", "response": {"subtype": "success", "request_id": frame["request_id"], "response": {}}})
+        response = {}
+        if frame.get("request", {}).get("subtype") == "mcp_status":
+            response = {"mcpServers": [{"name": "fixture-mcp", "status": "connected"}]}
+        emit({"type": "control_response", "response": {"subtype": "success", "request_id": frame["request_id"], "response": response}})
         continue
     if frame.get("type") != "user":
         continue
@@ -50,6 +58,10 @@ for line in sys.stdin:
     else:
         prompt = "\n".join(block.get("text", "") for block in content if block.get("type") == "text")
     record({"message": prompt, "priority": frame.get("priority"), "origin": frame.get("origin")})
+    # CLI 2.1.299's delivery receipts, keyed by the uuid the driver stamped.
+    current["uuid"] = frame.get("uuid")
+    if current["uuid"]:
+        emit({"type": "command_lifecycle", "command_uuid": current["uuid"], "state": "started"})
     if "ask-question" in prompt:
         emit({"type": "control_request", "request_id": "queue-question", "request": {
             "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [

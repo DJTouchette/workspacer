@@ -18,6 +18,20 @@ use tower::ServiceExt;
 
 const COMMAND_QUEUE: usize = 64;
 const COMMAND_CONCURRENCY: usize = 8;
+/// MCP status reads and reconnects wait on the provider (seconds), so they run
+/// in their own small pool and can never occupy the command slots a message
+/// send's acknowledgement waits for. Beyond the pool they wait in a bounded
+/// backlog, outside both.
+const STATUS_CONCURRENCY: usize = 2;
+
+/// Whether `command` is a provider-status read/repair (see
+/// [`STATUS_CONCURRENCY`]).
+fn is_status_command(command: &Command) -> bool {
+    matches!(command, Command::Request { method, path, .. }
+        if method == "POST"
+            && path.starts_with("/sessions/")
+            && (path.ends_with("/mcp-status") || path.ends_with("/mcp-reconnect")))
+}
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
@@ -67,6 +81,17 @@ pub enum Command {
         delivery: crate::session::Delivery,
         /// Who wrote it; see [`crate::session::MessageSender`].
         sender: crate::session::MessageSender,
+    },
+    /// [`Command::Message`] naming the uuid the driver stamps on the
+    /// message's provider frame (Claude stream), so a caller that never sees
+    /// the reply still knows which delivery receipt is its message. Must be
+    /// a UUID. The reply carries `message_uuid` when the driver stamps it.
+    IdentifiedMessage {
+        id: String,
+        text: String,
+        delivery: crate::session::Delivery,
+        sender: crate::session::MessageSender,
+        uuid: String,
     },
     Approve {
         id: String,
@@ -365,14 +390,34 @@ pub(super) fn serve_commands(
         // and joining it drops every active dispatch and queued reply. A normal
         // sender close instead drains requests that were already admitted.
         let mut pending = FuturesUnordered::new();
+        let mut status = FuturesUnordered::new();
+        let mut status_backlog = std::collections::VecDeque::<Envelope>::new();
+        let run = |router: Router, envelope: Envelope| async move {
+            // Once started, caller cancellation does not undo a
+            // possible effect. Keep the existing unknown-outcome
+            // semantics and finish under the same dispatch bound.
+            let result = tokio::time::timeout(COMMAND_TIMEOUT, dispatch(router, envelope.command))
+                .await
+                .unwrap_or_else(|_| Err(anyhow!("embedded command timed out; outcome is unknown, do not automatically retry")));
+            let _ = envelope.reply.send(result);
+        };
         let mut receiving = true;
         loop {
-            if !receiving && pending.is_empty() {
+            if !receiving && pending.is_empty() && status.is_empty() && status_backlog.is_empty() {
                 break;
+            }
+            while status.len() < STATUS_CONCURRENCY {
+                let Some(envelope) = status_backlog.pop_front() else {
+                    break;
+                };
+                if !envelope.reply.is_closed() {
+                    status.push(run(router.clone(), envelope));
+                }
             }
             tokio::select! {
                 biased;
                 _ = pending.next(), if !pending.is_empty() => {},
+                _ = status.next(), if !status.is_empty() => {},
                 envelope = control.receiver.recv(), if receiving && pending.len() < COMMAND_CONCURRENCY => {
                     let Some(envelope) = envelope else {
                         receiving = false;
@@ -381,16 +426,18 @@ pub(super) fn serve_commands(
                     if envelope.reply.is_closed() {
                         continue;
                     }
-                    let router = router.clone();
-                    pending.push(async move {
-                        // Once started, caller cancellation does not undo a
-                        // possible effect. Keep the existing unknown-outcome
-                        // semantics and finish under the same dispatch bound.
-                        let result = tokio::time::timeout(COMMAND_TIMEOUT, dispatch(router, envelope.command))
-                            .await
-                            .unwrap_or_else(|_| Err(anyhow!("embedded command timed out; outcome is unknown, do not automatically retry")));
-                        let _ = envelope.reply.send(result);
-                    });
+                    if is_status_command(&envelope.command) {
+                        if status_backlog.len() >= COMMAND_QUEUE {
+                            let _ = envelope.reply.send(Err(anyhow!(CommandRejected {
+                                status: 503,
+                                message: "too many MCP status requests are waiting".into(),
+                            })));
+                        } else {
+                            status_backlog.push_back(envelope);
+                        }
+                        continue;
+                    }
+                    pending.push(run(router.clone(), envelope));
                 }
             }
         }
@@ -442,6 +489,16 @@ async fn dispatch(router: Router, command: Command) -> Result<Value> {
         } => (
             session_path(&id, "message")?,
             Some(json!({"text": text, "delivery": delivery, "sender": sender})),
+        ),
+        Command::IdentifiedMessage {
+            id,
+            text,
+            delivery,
+            sender,
+            uuid,
+        } => (
+            session_path(&id, "message")?,
+            Some(json!({"text": text, "delivery": delivery, "sender": sender, "uuid": uuid})),
         ),
         Command::Approve { id, decision } => (
             session_path(&id, "approve")?,
