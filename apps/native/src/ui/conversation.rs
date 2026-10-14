@@ -523,11 +523,13 @@ impl Workspace {
                     }))
                     .child({
                         let card = card.clone();
-                        self.button("deny", "Deny", enabled).debug_selector(|| "deny".into()).when(enabled, |d| {
-                            d.on_click(cx.listener(move |this, _, _, cx| {
-                                this.act(Action::Approve(false, card.clone()), cx)
-                            }))
-                        })
+                        self.button("deny", "Deny", enabled)
+                            .debug_selector(|| "deny".into())
+                            .when(enabled, |d| {
+                                d.on_click(cx.listener(move |this, _, _, cx| {
+                                    this.act(Action::Approve(false, card.clone()), cx)
+                                }))
+                            })
                     })
                     // Claude reads a deny's note (stream: the deny message; PTY:
                     // the hook's reason); Codex gets it as a user message

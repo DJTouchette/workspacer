@@ -388,6 +388,8 @@ pub struct PendingMessage {
     /// provider that cannot steer).
     pub queued: bool,
     pub accepted: bool,
+    /// The uuid the hub stamped on it (`messageUuid`, Claude stream).
+    pub uuid: Option<String>,
     pub before: Option<crate::reading::Anchor>,
 }
 
@@ -1710,6 +1712,7 @@ impl Worker {
                     now: matches!(action, Action::SendNow(_)),
                     queued: false,
                     accepted: false,
+                    uuid: None,
                     before,
                 });
             }
@@ -2260,10 +2263,33 @@ impl Worker {
                                     .rev()
                                     .find(|r| r.role == "You" && r.uuid == uuid)
                                     .map(|r| r.text.clone())
+                                    .or_else(|| {
+                                        self.view
+                                            .pending_messages
+                                            .iter()
+                                            .find(|p| p.uuid.as_deref() == Some(uuid))
+                                            .map(|p| p.text.clone())
+                                    })
+                            })
+                        })
+                        .or_else(|| {
+                            reply["interruptError"].as_str().map(|e| {
+                                format!(
+                                    "Stopped. The agent did not say which of your messages still run: {}",
+                                    crate::transcript::head(e, 300)
+                                )
                             })
                         }),
                     _ => None,
                 };
+                // The uuid stamped on a delivered send, so its receipts and an
+                // interrupt's report can name it.
+                let message_uuid = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|v| v["messageUuid"].as_str())
+                    .filter(|u| crate::session_controls::usable_uuid(u))
+                    .map(str::to_owned);
                 let error = result
                     .and_then(|v| {
                         anyhow::ensure!(
@@ -2285,6 +2311,7 @@ impl Worker {
                 {
                     pending.accepted = true;
                     pending.queued |= queued && !pending.now;
+                    pending.uuid = message_uuid;
                 }
                 // A refused live switch says what was refused: the title chip
                 // keeps the hub's recorded value, so the notice is the only

@@ -882,11 +882,14 @@ be expanded, and attachment controls share the composer action row.
 - **Provider status.** When the agent reports them, the title capsule shows
   a running hook (**Hook: lint**), failed MCP servers (**MCP · 1 failed**,
   which opens Session details, where an **MCP servers** card lists each
-  server with **Reconnect** for a failed one and **Refresh**), and fast mode
+  server with **Reconnect** for a failed one and **Refresh**; on Codex a
+  reconnect reloads every MCP server of the session, and the card says so),
+  and fast mode
   (**Fast**, **Fast · cooling down**, **Fast off**; a click toggles it with
   `claude.setFastMode` unless the CLI says it is unavailable, and the chip
   follows what the CLI reports). After **Stop**, the notice names any of your
-  messages that will still run, and any that were cancelled. A queued send
+  messages that will still run (they are never sent again), and any that were
+  cancelled; when the CLI could not say, the notice says that instead. A queued send
   whose delivery was uncertain and that the agent's receipt later confirmed
   shows in the queue panel as **Delivered — confirmed by the agent**, with
   **Dismiss**; a paused queue still waits for its own **Resume**.

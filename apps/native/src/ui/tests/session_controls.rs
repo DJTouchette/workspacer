@@ -234,7 +234,9 @@ fn rewind_files_previews_first_and_only_then_restores(cx: &mut TestAppContext) {
     visual.run_until_parked();
     assert!(visual.debug_bounds("message-action-status").is_some());
     tap(&mut visual, "message-action-cancel");
-    workspace.read_with(&visual, |this, _| assert!(this.tools.message_action.is_none()));
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.tools.message_action.is_none())
+    });
 }
 
 #[gpui::test]

@@ -716,6 +716,15 @@ impl Workspace {
                                 }),
                         ),
                 )
+                .when(s.provider_id() == "codex" && servers.iter().any(|m| m.failed()), |d| {
+                    d.child(
+                        div()
+                            .debug_selector(|| "mcp-codex-reload".into())
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .child("Codex reconnects by reloading every MCP server of this session, not only the one you choose."),
+                    )
+                })
                 .when(servers.is_empty(), |d| {
                     d.child(
                         div()

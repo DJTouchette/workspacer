@@ -124,6 +124,7 @@ fn steered_messages_read_as_sent_not_queued(cx: &mut TestAppContext) {
         now,
         queued,
         accepted,
+        uuid: None,
         before: None,
     };
     use super::super::transcript::pending_status;
