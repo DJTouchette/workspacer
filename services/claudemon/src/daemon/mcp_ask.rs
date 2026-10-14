@@ -548,6 +548,7 @@ mod tests {
                 text: None,
                 answers: None,
                 answer_kinds: None,
+                request_id: None,
             },
         ));
 
@@ -618,6 +619,7 @@ mod tests {
                 text: None,
                 answers: None,
                 answer_kinds: None,
+                request_id: None,
             },
         ));
     }
@@ -693,6 +695,7 @@ mod tests {
                 text: None,
                 answers: None,
                 answer_kinds: None,
+                request_id: None,
             },
         ));
         let v = call.await.expect("call task");
@@ -755,6 +758,7 @@ mod tests {
             text: None,
             answers: Some(vec!["1".into(), "call it claudemon".into()]),
             answer_kinds: None,
+            request_id: None,
         };
         assert_eq!(
             summarize(&questions, &answer),
@@ -777,6 +781,7 @@ mod tests {
             text: None,
             answers: Some(answers.into_iter().map(str::to_owned).collect()),
             answer_kinds: None,
+            request_id: None,
         };
 
         // Out-of-range numbers must pass through verbatim as free text —
@@ -799,6 +804,7 @@ mod tests {
             text: None,
             answers: None,
             answer_kinds: None,
+            request_id: None,
         };
         assert_eq!(
             summarize(&questions, &single),

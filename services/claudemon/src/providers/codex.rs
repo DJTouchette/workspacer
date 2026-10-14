@@ -54,7 +54,8 @@ use crate::session::state::{
     SubagentStatus, SubagentUpdate,
 };
 use crate::session::{
-    ConversationStore, Delivery, ManagedAnswer, ManagedPrompt, MessageSender, SessionStore,
+    ConversationStore, Delivery, ManagedAnswer, ManagedDecision, ManagedPrompt, MessageSender,
+    SessionStore,
 };
 use crate::wrapper::pty;
 
@@ -1016,6 +1017,16 @@ fn park_request(
             !stale
         });
     }
+    let mut parked = parked;
+    let pid = pending_id(&parked.id);
+    let raw = match &mut parked.kind {
+        ParkedKind::Approval { raw, .. }
+        | ParkedKind::Question { raw, .. }
+        | ParkedKind::Form { raw, .. } => raw,
+    };
+    if let Some(obj) = raw.as_object_mut() {
+        obj.insert("pending_id".into(), json!(pid));
+    }
     requests.queue.push_back(parked);
     let shown = matches!(*cur_mode, SessionMode::Approval | SessionMode::Question);
     if requests.queue.len() == 1 || !shown {
@@ -1032,9 +1043,10 @@ fn park_request(
 ///   `accept` with empty content is a plain "Allow" (codex's
 ///   `parse_mcp_tool_approval_elicitation_response`), `decline` a rejection.
 ///
-/// `always` ("Always allow", `/approve {decision:"always"}`) asks for the
-/// session-scoped form of the approve, where the request offers one (see
-/// [`always_options`]); otherwise it is a plain approve:
+/// `session` (the user picked the card's "Always allow" option, `/approve
+/// {decision:"yes", alwaysOption}`) sends the session-scoped form of the
+/// approve the request offers (see [`always_options`]). The legacy
+/// `decision:"always"` is a plain approve and never reaches here as session:
 /// - a command approval: `acceptForSession` when its `availableDecisions`
 ///   lists it (codex's own default list often does not — never the
 ///   persistent `acceptWithExecpolicyAmendment`, which writes a rule file);
@@ -1044,8 +1056,8 @@ fn park_request(
 ///   offers `"session"` (codex 0.159 `mcp_tool_call.rs`, read as
 ///   `ReviewDecision::ApprovedForSession`) — never `"always"`, which
 ///   persists the approval into config.
-fn approval_result(method: &str, params: &Value, approve: bool, always: bool) -> Value {
-    let session = always && approve && session_grant(method, params).is_some();
+fn approval_result(method: &str, params: &Value, approve: bool, session: bool) -> Value {
+    let session = session && approve && session_grant(method, params).is_some();
     match method {
         "item/permissions/requestApproval" => {
             let mut granted = serde_json::Map::new();
@@ -1082,24 +1094,36 @@ fn approval_result(method: &str, params: &Value, approve: bool, always: bool) ->
 /// The session-scoped grant this approval request offers, as
 /// `(kind, label)` — `None` when it offers none (an "always" is then a plain
 /// approve). `kind` is the wire decision it maps to.
-fn session_grant(method: &str, params: &Value) -> Option<(&'static str, &'static str)> {
+fn session_grant(method: &str, params: &Value) -> Option<(&'static str, String)> {
     match method {
         "item/commandExecution/requestApproval" => params
             .get("availableDecisions")
             .and_then(Value::as_array)?
             .iter()
             .any(|d| d.as_str() == Some("acceptForSession"))
-            .then_some((
-                "acceptForSession",
-                "Always allow this command for this session",
-            )),
+            .then(|| {
+                (
+                    "acceptForSession",
+                    "Always allow this command for this session".to_string(),
+                )
+            }),
+        // A request for write access under a root (`grantRoot`) says so: the
+        // session grant then covers that whole root, not just these files.
         "item/fileChange/requestApproval" => Some((
             "acceptForSession",
-            "Always allow changes to these files for this session",
+            match params
+                .get("grantRoot")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+            {
+                Some(root) => format!("Always allow writes under {root} for this session"),
+                None => "Always allow changes to these files for this session".to_string(),
+            },
         )),
         "item/permissions/requestApproval" => Some((
             "permissionsSession",
-            "Grant these permissions for this session",
+            "Grant these permissions for this session".to_string(),
         )),
         "mcpServer/elicitation/request" => {
             let persist = elicitation_body(params).pointer("/_meta/persist")?;
@@ -1108,23 +1132,40 @@ fn session_grant(method: &str, params: &Value) -> Option<(&'static str, &'static
                 Value::Array(list) => list.iter().any(|p| p.as_str() == Some("session")),
                 _ => false,
             };
-            offered.then_some((
-                "mcpPersistSession",
-                "Always allow this tool for this session",
-            ))
+            offered.then(|| {
+                (
+                    "mcpPersistSession",
+                    "Always allow this tool for this session".to_string(),
+                )
+            })
         }
         _ => None,
     }
 }
 
 /// The card's `raw.always_options` (same shape as the Claude stream's):
-/// `[{label, scope:"session", kind}]`, empty when "always" would only
-/// approve once.
-fn always_options(method: &str, params: &Value) -> Value {
+/// `[{id, label, scope:"session", kind}]` — at most one entry for codex, id
+/// `<pending_id>:0` — and empty when the request offers no session grant.
+fn always_options(method: &str, params: &Value, pending_id: &str) -> Value {
     match session_grant(method, params) {
-        Some((kind, label)) => json!([{ "label": label, "scope": "session", "kind": kind }]),
+        Some((kind, label)) => json!([{
+            "id": format!("{pending_id}:0"), "label": label, "scope": "session", "kind": kind
+        }]),
         None => json!([]),
     }
+}
+
+/// The card id clients echo back (`requestId` on `/approve` and `/answer`):
+/// the JSON-RPC request id as a string.
+fn pending_id(id: &Value) -> String {
+    id.as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| id.to_string())
+}
+
+/// Whether an answer naming `named` (a `pending_id`) may answer `head`.
+fn names_head(named: Option<&str>, head: &ParkedRequest) -> bool {
+    named.is_none_or(|n| n == pending_id(&head.id))
 }
 
 /// An `mcpServer/elicitation/request`'s request fields. The app-server
@@ -1139,22 +1180,14 @@ fn elicitation_body(params: &Value) -> &Value {
     }
 }
 
-/// The user's answer to an approval card: `/approve`'s decision plus its
-/// side-channel flags (`SessionStore::take_approve_always`,
-/// `SessionStore::take_deny_reason`).
-#[derive(Debug, Clone, Default, PartialEq)]
-struct Decision {
-    approve: bool,
-    always: bool,
-    /// The note given with a deny.
-    note: Option<String>,
-}
-
 /// Answer the FIFO head with the user's approval decision, then surface the
 /// next parked request (parallel tool calls can park several) or release the
 /// card. Answering the head (the request `surface_parked` displayed) is what
 /// guarantees the user approves the card they actually saw; a decision while
 /// a question is the head is dropped.
+///
+/// A decision naming another card (`request_id`), or an always option the
+/// head does not offer, is dropped too — never applied to the wrong request.
 ///
 /// Returns the message to steer into the turn, if any: codex's `decline`
 /// carries no reason, so a deny with a note is followed by the note as an
@@ -1165,16 +1198,36 @@ fn resolve_approval(
     out_tx: &mpsc::UnboundedSender<Value>,
     requests: &mut ServerRequests,
     cur_mode: &mut SessionMode,
-    decision: Decision,
+    decision: &ManagedDecision,
     turn_running: bool,
 ) -> Option<String> {
-    let Some(ParkedRequest {
-        kind: ParkedKind::Approval { .. },
-        ..
-    }) = requests.queue.front()
+    let Some(
+        head @ ParkedRequest {
+            kind: ParkedKind::Approval { raw, .. },
+            ..
+        },
+    ) = requests.queue.front()
     else {
         tracing::debug!(session = %session_id, "codex: decision with no parked approval at the head — dropped");
         return None;
+    };
+    if !names_head(decision.request_id.as_deref(), head) {
+        tracing::debug!(session = %session_id, "codex: decision for a card that is not the head — dropped");
+        return None;
+    }
+    let session = match &decision.always_option {
+        None => false,
+        Some(option) => {
+            let offered = raw["always_options"].as_array().is_some_and(|o| {
+                o.iter()
+                    .any(|o| o.get("id").and_then(Value::as_str) == Some(option.as_str()))
+            });
+            if !offered {
+                tracing::debug!(session = %session_id, "codex: always option the head does not offer — dropped");
+                return None;
+            }
+            true
+        }
     };
     let Some(ParkedRequest {
         id,
@@ -1190,11 +1243,12 @@ fn resolve_approval(
     else {
         return None;
     };
-    let result = approval_result(&method, &raw, decision.approve, decision.always);
+    let result = approval_result(&method, &raw, decision.approve, session);
     let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
     surface_next(store, session_id, requests, cur_mode, turn_running);
     let note = decision
         .note
+        .clone()
         .filter(|_| !decision.approve)
         .map(|n| n.trim().to_owned())
         .filter(|n| !n.is_empty())?;
@@ -1220,14 +1274,20 @@ fn resolve_question(
     answer: &ManagedAnswer,
     turn_running: bool,
 ) -> Option<String> {
-    let Some(ParkedRequest {
-        kind: ParkedKind::Question { .. } | ParkedKind::Form { .. },
-        ..
-    }) = requests.queue.front()
+    let Some(
+        head @ ParkedRequest {
+            kind: ParkedKind::Question { .. } | ParkedKind::Form { .. },
+            ..
+        },
+    ) = requests.queue.front()
     else {
         tracing::debug!(session = %session_id, "codex: answer with no parked question at the head — dropped");
         return None;
     };
+    if !names_head(answer.request_id.as_deref(), head) {
+        tracing::debug!(session = %session_id, "codex: answer for a card that is not the head — dropped");
+        return None;
+    }
     let ParkedRequest { id, kind, .. } = requests.queue.pop_front()?;
     // The answers themselves are never logged: a question may be `isSecret`.
     let (result, invalid) = match kind {
@@ -1501,7 +1561,10 @@ fn handle_server_request(
                 approval_card.unwrap_or((None, None, params.clone()))
             };
             if let Some(obj) = raw.as_object_mut() {
-                obj.insert("always_options".into(), always_options(method, params));
+                obj.insert(
+                    "always_options".into(),
+                    always_options(method, params, &pending_id(&id)),
+                );
             }
             park_request(
                 store,
@@ -1573,10 +1636,11 @@ fn handle_server_request(
             let body = elicitation_body(params);
             let message = body.get("message").and_then(Value::as_str).unwrap_or("");
             let card = match body.get("mode").and_then(Value::as_str) {
-                Some("url") => match body.get("url").and_then(Value::as_str) {
-                    Some(url) => Ok(elicitation::url_card(server, message, url)),
-                    None => Err(FormError::Unsupported("a url request with no url".into())),
-                },
+                Some("url") => elicitation::url_card(
+                    server,
+                    message,
+                    body.get("url").and_then(Value::as_str).unwrap_or(""),
+                ),
                 None | Some("form") => elicitation::form_card(
                     server,
                     message,
@@ -2687,7 +2751,7 @@ async fn run_session(
         // so messages reach the driver in the order they were sent.
         let (tx, rx) = mpsc::unbounded_channel::<ManagedPrompt>();
         store.register_managed_prompt(session_id, tx);
-        let (dtx, drx) = mpsc::unbounded_channel::<bool>();
+        let (dtx, drx) = mpsc::unbounded_channel::<crate::session::ManagedDecision>();
         store.register_managed_decision(session_id, dtx);
         // Live model/effort switch (POST /sessions/:id/model): applied to the
         // running thread via `thread/settings/update`, so subsequent turns — from
@@ -2905,14 +2969,9 @@ async fn run_session(
                 None => break DriverExit::InputClosed, // managed input dropped → terminated
             },
             decision = drx.recv() => match decision {
-                Some(approve) => {
-                    let decision = Decision {
-                        approve,
-                        always: store.take_approve_always(session_id),
-                        note: if approve { None } else { store.take_deny_reason(session_id) },
-                    };
+                Some(decision) => {
                     let Some(steer) = store.with_generation(session_id, evidence.generation, || {
-                        resolve_approval(store, session_id, &out_tx, &mut requests, &mut cur_mode, decision, input.turns.running())
+                        resolve_approval(store, session_id, &out_tx, &mut requests, &mut cur_mode, &decision, input.turns.running())
                     }) else { break DriverExit::Superseded; };
                     // A deny's note follows the bare `decline` as a steer into
                     // the turn, through the same path a typed message takes.
@@ -4707,6 +4766,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 text: None,
                 answers: Some(vec!["2".into()]),
                 answer_kinds: None,
+                request_id: None,
             },
         ));
         assert!(until(|| sent().iter().any(|v| v["id"] == json!(900))).await);
@@ -5168,7 +5228,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             store.submit_message(sid, "successor input".into());
             assert_eq!(rx.try_recv().unwrap(), "successor input");
             assert!(store.submit_managed_decision(sid, true));
-            assert!(drx.try_recv().unwrap());
+            assert!(drx.try_recv().unwrap().approve);
             store
                 .set_managed_model(
                     sid,
@@ -6877,10 +6937,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &out_tx,
             &mut pending_approvals,
             &mut cur_mode,
-            Decision {
-                approve: false,
-                ..Decision::default()
-            },
+            &ManagedDecision::from(false),
             true,
         );
         let sent = out_rx.try_recv().expect("first decision forwarded");
@@ -6897,10 +6954,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &out_tx,
             &mut pending_approvals,
             &mut cur_mode,
-            Decision {
-                approve: true,
-                ..Decision::default()
-            },
+            &ManagedDecision::from(true),
             true,
         );
         let sent = out_rx.try_recv().expect("second decision forwarded");
@@ -6917,10 +6971,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &out_tx,
             &mut pending_approvals,
             &mut cur_mode,
-            Decision {
-                approve: true,
-                ..Decision::default()
-            },
+            &ManagedDecision::from(true),
             true,
         );
         assert!(out_rx.try_recv().is_err());
@@ -7068,20 +7119,17 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         }
 
         fn decide(&mut self, approve: bool) {
-            self.decide_with(Decision {
-                approve,
-                ..Decision::default()
-            });
+            self.decide_with(ManagedDecision::from(approve));
         }
 
-        fn decide_with(&mut self, decision: Decision) -> Option<String> {
+        fn decide_with(&mut self, decision: ManagedDecision) -> Option<String> {
             resolve_approval(
                 &self.store,
                 self.sid,
                 &self.out_tx,
                 &mut self.requests,
                 &mut self.cur_mode,
-                decision,
+                &decision,
                 self.input.turns.running(),
             )
         }
@@ -7139,6 +7187,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             text: None,
             answers: Some(list.iter().map(|s| s.to_string()).collect()),
             answer_kinds: Some(kinds.iter().map(|s| s.to_string()).collect()),
+            request_id: None,
         }
     }
 
@@ -7219,6 +7268,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 text: None,
                 answers: None,
                 answer_kinds: None,
+                request_id: None,
             },
         );
         assert_eq!(r["answers"]["scope"]["answers"], json!(["Narrow"]));
@@ -7654,10 +7704,12 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         assert!(d.requests.queue.is_empty());
     }
 
-    fn always(approve: bool) -> Decision {
-        Decision {
-            approve,
-            always: true,
+    /// Approve request `id` with its card's (only) always option.
+    fn always(id: u64) -> ManagedDecision {
+        ManagedDecision {
+            approve: true,
+            always_option: Some(format!("{id}:0")),
+            request_id: Some(id.to_string()),
             note: None,
         }
     }
@@ -7678,62 +7730,112 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
     }
 
     #[test]
-    fn always_is_accept_for_session_when_the_command_offers_it() {
+    fn an_always_option_is_accept_for_session_when_the_command_offers_it() {
         let mut d = Driver::new(false);
         d.started("u1");
         d.feed(command_approval(
             80,
             json!(["accept", "acceptForSession", "decline", "cancel"]),
         ));
+        let Some(Pending::Approval { raw, .. }) = d.pending() else {
+            panic!("expected an approval card");
+        };
+        assert_eq!(raw["pending_id"], "80");
         assert_eq!(
             always_options_of(&d),
-            json!([{ "label": "Always allow this command for this session",
+            json!([{ "id": "80:0", "label": "Always allow this command for this session",
                      "scope": "session", "kind": "acceptForSession" }])
         );
-        assert_eq!(d.decide_with(always(true)), None);
+        assert_eq!(d.decide_with(always(80)), None);
         assert_eq!(
             d.sent()[0]["result"],
             json!({ "decision": "acceptForSession" })
         );
 
         // codex's own default list often has no session option (just accept,
-        // an execpolicy amendment, cancel): always is then a plain accept —
-        // never the persistent amendment.
+        // an execpolicy amendment, cancel): nothing is offered, and an option
+        // id naming one is refused — never the persistent amendment.
         d.feed(command_approval(81, json!(["accept",
             { "acceptWithExecpolicyAmendment": { "execpolicy_amendment": ["cargo", "test"] } }, "cancel"])));
         assert_eq!(always_options_of(&d), json!([]));
-        d.decide_with(always(true));
+        d.decide_with(always(81));
+        assert!(d.sent().is_empty(), "an option the card lacks is dropped");
+        d.decide(true);
         assert_eq!(d.sent()[0]["result"], json!({ "decision": "accept" }));
-        // A plain yes stays a plain accept even when the session option exists.
+        // A plain yes — which is what the legacy `decision:"always"` becomes —
+        // stays a plain accept even when the session option exists.
         d.feed(command_approval(82, json!(["accept", "acceptForSession"])));
         d.decide(true);
         assert_eq!(d.sent()[0]["result"], json!({ "decision": "accept" }));
-        // Always on a deny is a deny.
+        // A deny is a deny.
         d.feed(command_approval(83, json!(["accept", "acceptForSession"])));
-        d.decide_with(always(false));
+        d.decide(false);
         assert_eq!(d.sent()[0]["result"], json!({ "decision": "decline" }));
     }
 
     #[test]
-    fn always_scopes_file_changes_permissions_and_mcp_tools_to_the_session() {
+    fn a_stale_always_option_or_card_id_never_reaches_the_next_request() {
+        let mut d = Driver::new(false);
+        d.started("u1");
+        d.feed(command_approval(70, json!(["accept", "acceptForSession"])));
+        d.feed(command_approval(71, json!(["accept", "acceptForSession"])));
+        // Two clients answer the shown card at once with its always option.
+        assert_eq!(d.decide_with(always(70)), None);
+        assert_eq!(d.decide_with(always(70)), None);
+        let sent = d.sent();
+        assert_eq!(
+            sent.len(),
+            1,
+            "the second decision named a card no longer shown"
+        );
+        assert_eq!(sent[0]["id"], json!(70));
+        assert_eq!(sent[0]["result"], json!({ "decision": "acceptForSession" }));
+        // 70's option id cannot grant 71, even without a card id.
+        d.decide_with(ManagedDecision {
+            request_id: None,
+            ..always(70)
+        });
+        assert!(d.sent().is_empty());
+        d.decide(true);
+        assert_eq!(d.sent()[0]["result"], json!({ "decision": "accept" }));
+    }
+
+    #[test]
+    fn always_options_scope_file_changes_permissions_and_mcp_tools_to_the_session() {
         let mut d = Driver::new(false);
         d.started("u1");
         d.feed(json!({
             "jsonrpc": "2.0", "id": 84, "method": "item/fileChange/requestApproval",
             "params": { "threadId": "th", "turnId": "u1", "itemId": "f1", "startedAtMs": 1 }
         }));
-        d.decide_with(always(true));
+        assert_eq!(
+            always_options_of(&d)[0]["label"],
+            "Always allow changes to these files for this session"
+        );
+        d.decide_with(always(84));
         assert_eq!(
             d.sent()[0]["result"],
             json!({ "decision": "acceptForSession" })
         );
+        // A write-access request under a root says so.
+        d.feed(json!({
+            "jsonrpc": "2.0", "id": 89, "method": "item/fileChange/requestApproval",
+            "params": { "threadId": "th", "turnId": "u1", "itemId": "f2", "startedAtMs": 1,
+                        "grantRoot": "/w/out" }
+        }));
+        assert_eq!(
+            always_options_of(&d)[0]["label"],
+            "Always allow writes under /w/out for this session"
+        );
+        d.decide(true);
+        assert_eq!(d.sent()[0]["result"], json!({ "decision": "accept" }));
 
         d.feed(json!({
             "jsonrpc": "2.0", "id": 85, "method": "item/permissions/requestApproval",
             "params": { "threadId": "th", "turnId": "u1", "itemId": "p", "startedAtMs": 1,
                         "permissions": { "network": { "enabled": true } } }
         }));
-        d.decide_with(always(true));
+        d.decide_with(always(85));
         assert_eq!(
             d.sent()[0]["result"],
             json!({ "permissions": { "network": { "enabled": true } }, "scope": "session" })
@@ -7742,19 +7844,27 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         d.feed(mcp_tool_approval(86));
         assert_eq!(
             always_options_of(&d),
-            json!([{ "label": "Always allow this tool for this session",
+            json!([{ "id": "86:0", "label": "Always allow this tool for this session",
                      "scope": "session", "kind": "mcpPersistSession" }])
         );
-        d.decide_with(always(true));
+        d.decide_with(always(86));
         assert_eq!(
             d.sent()[0]["result"],
             json!({ "action": "accept", "content": {}, "_meta": { "persist": "session" } })
         );
-        // No session persistence offered → a plain accept.
+        // A plain yes on the same card never persists.
+        d.feed(mcp_tool_approval(90));
+        d.decide(true);
+        assert_eq!(
+            d.sent()[0]["result"],
+            json!({ "action": "accept", "content": {}, "_meta": null })
+        );
+        // No session persistence offered → no option.
         let mut request = mcp_tool_approval(87);
         request["params"]["_meta"]["persist"] = json!("always");
         d.feed(request);
-        d.decide_with(always(true));
+        assert_eq!(always_options_of(&d), json!([]));
+        d.decide(true);
         assert_eq!(
             d.sent()[0]["result"],
             json!({ "action": "accept", "content": {}, "_meta": null })
@@ -7769,7 +7879,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         params.insert("request".into(), Value::Object(body));
         d.feed(nested);
         assert_eq!(d.cur_mode, SessionMode::Approval);
-        d.decide_with(always(true));
+        d.decide_with(always(88));
         assert_eq!(
             d.sent()[0]["result"]["_meta"],
             json!({ "persist": "session" })
@@ -7781,28 +7891,36 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let mut d = Driver::new(false);
         d.started("u1");
         d.feed(command_approval(90, json!(["accept", "decline"])));
-        let steer = d.decide_with(Decision {
+        // A second approval is queued behind the denied one.
+        d.feed(command_approval(93, json!(["accept", "decline"])));
+        let steer = d.decide_with(ManagedDecision {
             approve: false,
-            always: false,
             note: Some("  use the fixture instead ".into()),
+            ..ManagedDecision::default()
         });
-        assert_eq!(d.sent()[0]["result"], json!({ "decision": "decline" }));
+        let sent = d.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["id"], json!(90));
+        assert_eq!(sent[0]["result"], json!({ "decision": "decline" }));
         let text = steer.expect("a note to steer");
         assert!(text.starts_with("Denied "), "{text}");
         assert!(text.ends_with(": use the fixture instead"), "{text}");
-        // The run loop sends it through the ordinary steer path.
+        // The queued approval is the card now, untouched by the note.
+        assert_eq!(d.cur_mode, SessionMode::Approval);
+        assert_eq!(d.requests.queue.len(), 1);
+        assert_eq!(d.requests.queue[0].id, json!(93));
+        // The run loop sends the note through the ordinary steer path.
         d.send(&text, Delivery::Steer);
         let sent = d.sent();
         assert_eq!(sent[0]["method"], "turn/steer");
         assert_eq!(sent[0]["params"]["input"][0]["text"], text);
         // No note, or an approve, steers nothing.
-        d.feed(command_approval(91, json!(["accept", "decline"])));
-        assert_eq!(d.decide_with(Decision::default()), None);
+        assert_eq!(d.decide_with(ManagedDecision::default()), None);
         d.feed(command_approval(92, json!(["accept", "decline"])));
-        let approved = d.decide_with(Decision {
+        let approved = d.decide_with(ManagedDecision {
             approve: true,
-            always: false,
             note: Some("ignored".into()),
+            ..ManagedDecision::default()
         });
         assert_eq!(approved, None);
     }
@@ -7835,6 +7953,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             panic!("expected a question card, got {:?}", d.pending());
         };
         assert_eq!(raw["serverName"], "jira");
+        assert_eq!(raw["pending_id"], "93");
         // serde_json's map is sorted: kind, points, title, urgent, then consent.
         let headers: Vec<_> = questions
             .iter()
@@ -7844,8 +7963,8 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         assert_eq!(questions[0].options[1].label, "Task");
         assert_eq!(
             d.answer(answers(
-                &["2", "5", "Login fails", "Yes"],
-                &["option", "text", "text", "option"]
+                &["2", "5", "Login fails", "Yes", "Submit"],
+                &["option", "text", "text", "option", "option"]
             )),
             None
         );
@@ -7865,14 +7984,21 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         );
         // An answer the schema rejects is declined, with a notice to show.
         d.feed(form_elicitation(95));
-        let notice = d.answer(answers(&["", "lots", "x"], &[]));
+        let notice = d.answer(answers(&["", "lots", "x", "", "1"], &[]));
         assert_eq!(d.sent()[0]["result"]["action"], "decline");
         assert!(notice.expect("a notice").contains("whole number"));
-        // An approval decision while the form is the head is dropped.
+        // An approval decision while the form is the head is dropped, and so
+        // is an answer naming another card.
         d.feed(form_elicitation(96));
         d.decide(true);
+        let mut stale = answers(&["", "", "x", "", "1"], &[]);
+        stale.request_id = Some("95".into());
+        assert_eq!(d.answer(stale), None);
         assert!(d.sent().is_empty());
         assert_eq!(d.requests.queue.len(), 1);
+        // Free text on the consent question is not a Submit.
+        d.answer(answers(&["", "", "x", "", "send it"], &[]));
+        assert_eq!(d.sent()[0]["result"]["action"], "decline");
     }
 
     #[test]
@@ -7907,6 +8033,15 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             ..Default::default()
         });
         assert_eq!(d.sent()[0]["result"]["action"], "decline");
+        // Only http(s) is ever offered: anything else is declined at once.
+        let mut bad = url(99);
+        bad["params"]["url"] = json!("javascript:alert(1)");
+        d.feed(bad);
+        let sent = d.sent();
+        assert_eq!(sent[0]["id"], json!(99));
+        assert_eq!(sent[0]["result"]["action"], "decline");
+        assert!(d.requests.queue.is_empty());
+        assert!(d.conversation_text().contains("asked for input"));
     }
 
     #[test]

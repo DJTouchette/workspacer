@@ -97,106 +97,176 @@ background counts together.
 Inventory enrichment is disk-backed after the init frame; translation remains
 pure. See [Claude asset roots](claude-asset-roots.md) for path/origin resolution.
 
-### "Always allow" approvals (all managed providers)
+### Card ids, decisions and "Always allow" (managed providers)
 
-`POST /sessions/:id/approve {decision:"always"}` (hub `claude.approve`, passed
-through verbatim) is an approve on the bool decision channel plus a one-shot
-side flag (`SessionStore::set_approve_always` / `take_approve_always`, set and
-cleared beside the deny note, so a stale flag never widens a later `yes`).
-Providers without a session grant (OpenCode, Pi) just see an approve.
+**Card id.** Every card the Claude stream and Codex drivers park carries
+`pending.raw.pending_id` (a string: the CLI control `request_id` / the codex
+JSON-RPC id). The hub projects it as top-level `pendingRequestId`, and for an
+approval also as `pendingApproval.requestId`. Clients echo it as `requestId` on
+`claude.approve` / `claude.answer` (claudemon `/approve` and `/answer`
+`requestId`).
+- claudemon refuses a `requestId` that names a card other than the one shown,
+  with 409 `{error, requestId, current}`.
+- When an older client sends none, claudemon binds the decision or answer to the
+  card shown when it arrived.
+- The driver then drops it if its queue head has moved on. So an in-flight answer
+  can never land on a newer card.
 
-The approval card says what "always" would grant. Wire fields:
+OpenCode, Pi and hook approvals have no card id, and behave as before.
 
+**Decision channel.** The decision goes to the driver as ONE message,
+`ManagedDecision {approve, always_option, note, request_id}`, on the decision
+channel. There are no per-session side flags, so a second client's decision
+cannot consume a flag that was meant for another card. `submit_managed_decision`
+also accepts a bare `bool`: a plain yes/no.
+
+**Legacy `decision:"always"` is exactly `"yes"`.** It is a plain allow on every
+provider, with no `updatedPermissions`, `acceptForSession` or `persist`. Shipped
+clients send it for their "Allow all" button on every approval, without having
+shown anything that would be granted.
+
+**Explicit always option.** The card lists what it offers:
 - claudemon `pending.raw.always_options` (approval cards only):
-  `Array<{label: string, scope: "session", kind: string}>`, `[]` when "always"
-  would only approve once.
-- hub snapshot `pendingApproval.alwaysOptions`: the same array, present only
-  when non-empty (absent = offer no "Always" button). `toolName` / `toolInput`
-  are unchanged, so the frozen `contracts/hub-snapshot-cases.json` rows still hold.
+  `Array<{id: string, label: string, scope: "session", kind: string}>`, `[]`
+  when nothing is offered.
+- The hub projects the same array as `pendingApproval.alwaysOptions`, present
+  only when non-empty. The frozen `contracts/hub-snapshot-cases.json` rows
+  still hold.
+- `id` is `<pending_id>:<index>`, unique to that request.
 
-Claude stream: `can_use_tool` carries `permission_suggestions` (CLI
-`PermissionUpdate[]`). Kept: `addRules` / `replaceRules` with `behavior:"allow"`,
-`setMode` (never `bypassPermissions`), `addDirectories`. Each is rewritten to
-`destination:"session"`, so "always" never writes a settings file. `kind` is the
-update's `type`. Labels look like `Always allow Bash(npm test:*) this session`,
-`Allow all edits this session`, `Always allow access to /x this session`. The
-answer is `{behavior:"allow", updatedInput, updatedPermissions:[…session updates],
-decisionClassification:"user_permanent"}`, and a plain allow when nothing usable
-was suggested. The response schema was read from the CLI 2.1.299 bundle (`WA`
-/ `Lt`). An end-to-end stub test checks what we send. A live CLI applying the
-rule has not been verified.
+The user grants exactly ONE option with `claude.approve {sessionId,
+decision:"yes", alwaysOption:<id>, requestId:<pending_id>}`.
+- The hub rejects `alwaysOption` with any decision other than `"yes"`. claudemon
+  also answers 400 for that.
+- claudemon answers 409 unless the shown card offers that `id`.
+- The driver drops the decision if the option is not on its head card.
 
-Codex: `always` maps to the session-scoped answer where the request offers one,
-and to a plain accept otherwise:
+Claude stream suggestions come from `can_use_tool.permission_suggestions` (CLI
+`PermissionUpdate[]`), allow-listed and rewritten to `destination:"session"`:
+- Offered, one option each:
+  - `addRules` with `behavior:"allow"`. `kind` is `addRules`; the label is
+    `Always allow Bash(npm test:*) this session`.
+  - `setMode` to `acceptEdits` only. The label is `Allow all edits this
+    session`.
+  - `addDirectories`. The label is `Always allow access to /x this session`.
+- Dropped: `replaceRules` (it can wipe earlier session grants), removals,
+  deny/ask rules, and any other mode (`auto`, `dontAsk`, `bypassPermissions`,
+  `plan`).
+- When the request has `suppress_always_allow_rule:true`, nothing is offered.
 
-| request | `kind` | always → |
-|---|---|---|
-| `item/commandExecution/requestApproval` with `"acceptForSession"` in `availableDecisions` | `acceptForSession` | `{decision:"acceptForSession"}` |
-| `item/fileChange/requestApproval` | `acceptForSession` | `{decision:"acceptForSession"}` |
-| `item/permissions/requestApproval` | `permissionsSession` | `{permissions, scope:"session"}` |
-| MCP tool-call elicitation whose `_meta.persist` includes `"session"` | `mcpPersistSession` | `{action:"accept", content:{}, _meta:{persist:"session"}}` |
+The answer is `{behavior:"allow", updatedInput, updatedPermissions:[<that one
+update>], decisionClassification:"user_permanent"}`. The schema was read from
+the CLI 2.1.299 bundle, and a stub test covers the end-to-end path. A live CLI
+applying the rule is unverified.
 
-`acceptWithExecpolicyAmendment` and `persist:"always"` are deliberately never
-sent: they persist beyond the session. Codex's own default command decision list
-(`default_available_decisions`) often omits `acceptForSession`.
+The CLI's own permission mode is mirrored as claudemon `permission_mode`, which
+the hub exposes as `observedPermissionMode`. It comes from `permissionMode` on
+`system/init` and `system/status`, and from a confirmed `set_permission_mode`.
+So an "Allow all edits" grant shows up in the session's state.
 
-Deny with a note: Claude keeps `{behavior:"deny", message:"The user denied this
-tool use and said: <note>"}`. Codex's `decline` has no message, so the driver
-answers `decline` first. It then sends the note as a `Delivery::Steer` user
-message, `Denied <tool or summary>: <note>`, through the ordinary prompt path.
-That message is echoed in the conversation and steers into the running turn, or
-starts one.
+Codex offers at most one option, with id `<pending_id>:0`:
+
+| request | `kind` | label | option → |
+|---|---|---|---|
+| command approval with `"acceptForSession"` in `availableDecisions` | `acceptForSession` | Always allow this command for this session | `{decision:"acceptForSession"}` |
+| `item/fileChange/requestApproval` | `acceptForSession` | Always allow changes to these files / writes under `<grantRoot>` for this session | `{decision:"acceptForSession"}` |
+| `item/permissions/requestApproval` | `permissionsSession` | Grant these permissions for this session | `{permissions, scope:"session"}` |
+| MCP tool-call elicitation whose `_meta.persist` includes `"session"` | `mcpPersistSession` | Always allow this tool for this session | `{action:"accept", content:{}, _meta:{persist:"session"}}` |
+
+`acceptWithExecpolicyAmendment` and `persist:"always"` are never sent: they
+persist beyond the session. Codex's own default command decision list often
+omits `acceptForSession`; when it does, no option is offered.
+
+**Deny with a note.** Claude keeps `{behavior:"deny", message:"The user denied
+this tool use and said: <note>"}`. Codex's `decline` carries no message, so the
+driver does two things:
+1. It answers `decline`.
+2. It sends the note as a `Delivery::Steer` user message, `Denied <tool or
+   summary>: <note>`, through the ordinary prompt path. The message is echoed
+   in the conversation.
+
+Any queued approval stays the card.
+
+### Claude stream request queue
+
+`can_use_tool` approvals, AskUserQuestion and MCP elicitations share ONE FIFO
+(`ParkedCanUse`, `ParkedKind`), as the CLI's own UI queues its dialogs.
+- Only the head is the card.
+- `/approve` answers only an approval at the head; `/answer` answers only a
+  question or elicitation at the head.
+- Answering the head surfaces the next request of any kind, or releases the card
+  to `Responding`.
+- Nothing is cancelled or denied as "superseded".
+- A turn-closing `result` drops the queue.
 
 ### MCP elicitations on the question card (Claude stream + Codex)
 
 `providers::elicitation` maps an MCP elicitation onto `Pending::Question`, the
-one card every client already renders and answers via `/answer`. Claude and
+one card every client already renders and answers through `/answer`. Claude and
 Codex share the mapping. Elicitations park under YOLO too: they ask for the
 user's data, not permission.
 
-- Form mode adds one question per top-level property, in the order below:
-  - `enum` / `oneOf` const → options (labels from `enumNames` / `title`). The
-    answer sends the underlying value.
-  - `boolean` → `Yes` / `No`.
-  - `string` / `number` / `integer` → free text, parsed per type.
-  - `array` of enum → `multi_select`; the answer is comma-separated.
+**Form mode** adds one question per top-level property:
+- `enum` / `oneOf` const → options, labelled from `enumNames` / `title`. The
+  answer sends the underlying value.
+- `boolean` → `Yes` / `No`.
+- `string`, `number` and `integer` → free text, parsed per type.
+- `array` of enum → `multi_select`. The answer is comma-separated, and a
+  comma-only answer counts as empty.
 
-  `header` is the property `title` (or key). `question` is its `description`
-  (or title), plus ` (required)`. Order: Claude's `property_order`, else map
-  order (serde_json sorts keys). A final consent question closes the card:
-  header `<server> asks`, the server's `message`, options `Submit` / `Decline`.
-  Unanswered counts as Submit.
-- Url mode is one question: the message, then `The MCP server `<server>` asks you
-  to open:\n<url>`. Options are `Open` (its `description` is the URL, so a UI can
-  open it) and `Decline`. `Open` → `{action:"accept"}`. A UI opens the URL itself.
-- Answer → `{action:"accept", content:{key: typed value}}`. An empty optional
-  field uses its `default` or is omitted. `Decline` → `{action:"decline"}`. An
-  answer the schema rejects (required field empty, `"abc"` for a number, a value
-  outside the enum) is declined and a notice explains why. It is never sent
-  wrong.
-- Nested objects, arrays of objects, other modes (`openai/form`,
-  `openai/userVerification`, …) are unsupported. Claude declines them, and so
-  does Codex headless; Codex hybrid leaves them for the TUI. All three leave a
-  notice.
+Each question's `header` is the property `title` (or its key). Its `question` is
+the `description` (or title), plus ` (required)`. Questions follow Claude's
+`property_order`; otherwise they follow the map order, which serde_json sorts.
 
-Claude wire (CLI 2.1.299 bundle schema `ba` / `aAo`; there is no live MCP probe):
-`control_request {subtype:"elicitation", mcp_server_name, message, mode?, url?,
-elicitation_id?, requested_schema?, property_order?, title?, display_name?,
-description?}` is answered `control_response success {action, content?}`. Before,
-it got an error reply, which the CLI turns into `cancel`. The elicitation rides
-the stream driver's single `pending_question` slot. A newer question displacing
-it answers it first (`cancel`; an AskUserQuestion is denied) rather than leaving
-the CLI blocked forever. `pending.raw` is the CLI request.
+A final consent question closes the card. Its header is `<server> asks`, its
+text is the server's `message`, and its options are `Submit` / `Decline`. ONLY
+an explicit Submit sends the user's data: option 1, or the label in any case.
+Everything else declines, including unanswered, free text, an out-of-range
+number, and a literal-text `"1"`.
 
-Codex wire: `mcpServer/elicitation/request` params are FLAT (`threadId`,
+The schema's limits are checked before anything is sent: `minimum`, `maximum`,
+`minLength`, `maxLength`, `format` (email / uri / date / date-time),
+`minItems` and `maxItems`.
+
+**Url mode** is one question: the message, then ``The MCP server `<server>` asks
+you to open:\n<url>``.
+- The options are `Open` and `Decline`. `Open`'s `description` is the URL, so a
+  UI can open it itself.
+- Only `Open` (option 1, or the label) accepts, as `{action:"accept"}`.
+- Only an absolute `http(s)` URL with a host is offered. Anything else is
+  declined, with a notice.
+
+**Replies.**
+- An accepted form replies `{action:"accept", content:{key: typed value}}`. An
+  empty optional field uses its `default` or is omitted.
+- A decline replies `{action:"decline"}`.
+- An answer the schema rejects is declined, and a notice explains why. Nothing
+  is ever sent wrong.
+
+**Unsupported:** nested objects, arrays of objects, and other modes
+(`openai/form`, `openai/userVerification`, …). Claude declines these, and so
+does headless Codex; hybrid Codex leaves them for the TUI. Each case leaves a
+notice.
+
+**Claude wire**, from the CLI 2.1.299 bundle schemas `ba` / `aAo` (there was no
+live MCP probe): the CLI sends `control_request {subtype:"elicitation",
+mcp_server_name, message, mode?, url?, elicitation_id?, requested_schema?,
+property_order?, title?, display_name?, description?}`. The driver answers
+`control_response success {action, content?}`. Previously it answered with an
+error reply, which the CLI turns into `cancel`. `pending.raw` is the CLI request
+plus `pending_id`.
+
+**Codex wire:** `mcpServer/elicitation/request` params are FLAT: `threadId`,
 `turnId`, `serverName`, `mode`, `message`, `requestedSchema` | `url` +
-`elicitationId`, `_meta`). See 0.159 `v2/mcp.rs` `#[serde(flatten)]` and its
-serialization test. Until 2026-10-13 the driver read `params.request._meta…`, so
-on the real wire MCP tool-call approvals never matched; headless declined them
-as unshowable. `elicitation_body` reads flat params and also accepts a nested
-`request`. Forms park as `ParkedKind::Form` in the same FIFO as approvals and
-questions. `/answer` answers it only at the head. The reply adds `_meta:null`.
-`pending.raw` is the request params.
+`elicitationId`, and `_meta`. See 0.159 `v2/mcp.rs` `#[serde(flatten)]` and its
+serialization test.
+- Until 2026-10-13 the driver read `params.request._meta…`, so on the real wire
+  MCP tool-call approvals never matched, and headless sessions declined them as
+  unshowable.
+- `elicitation_body` reads the flat params and still accepts a nested `request`.
+- Forms park as `ParkedKind::Form` in the same FIFO as approvals and questions,
+  and the reply adds `_meta:null`.
+- `pending.raw` is the request params plus `pending_id`.
 
 ## Native child cards and Claude artifact replay
 

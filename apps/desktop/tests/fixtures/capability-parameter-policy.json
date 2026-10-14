@@ -685,7 +685,7 @@
     "claude.approve": {
       "decision": {
         "kind": "permission",
-        "reason": "'yes'|'no'|'always' -> claudemon answers Claude Code's PreToolUse hook with {\"decision\":\"approve\"} on stdout, or sends allow=true down a managed adapter's can_use_tool channel; nothing downstream re-asks, so this value alone decides whether a queued tool call runs on the host"
+        "reason": "'yes'|'no'|'always' -> claudemon answers Claude Code's PreToolUse hook with {\"decision\":\"approve\"} on stdout, or sends allow=true down a managed adapter's can_use_tool channel; nothing downstream re-asks, so this value alone decides whether a queued tool call runs on the host. 'always' is exactly 'yes' (a plain allow of this one request). With alwaysOption (an id from the shown card's alwaysOptions, refused unless that card offers it) a 'yes' also grants that ONE session-scoped rule on the managed driver, so later matching calls in the session run without asking"
       }
     },
     "claude.gate": {

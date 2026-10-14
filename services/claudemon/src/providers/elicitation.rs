@@ -13,11 +13,13 @@
 //!   `Yes` / `No`, a string / number / integer is free text. A multi-select
 //!   (`type:"array"` of an enum) is a `multi_select` question. A final
 //!   consent question — `Submit` / `Decline` — closes the card, because an
-//!   MCP form sends the user's data to a third party and every MCP client
-//!   offers an explicit decline.
+//!   MCP form sends the user's data to a third party: ONLY an explicit
+//!   `Submit` sends it, and anything else declines. Schema limits (`minimum`,
+//!   `maximum`, `minLength`, `maxLength`, simple `format`s, `minItems`,
+//!   `maxItems`) are checked before anything is sent.
 //! * **url mode** — a single question whose text carries the URL, with
 //!   options `Open` (its description is the URL itself, for a client that
-//!   opens it) and `Decline`.
+//!   opens it) and `Decline`. Only `http(s)` URLs are offered.
 //!
 //! Anything else (a nested object or array of objects, a provider-private
 //! mode) is [`Unsupported`](FormError::Unsupported): the drivers decline it
@@ -32,8 +34,8 @@ use serde_json::{json, Map, Value};
 use crate::session::state::{PendingOption, PendingQuestion};
 use crate::session::ManagedAnswer;
 
-/// The consent question's options. `Submit` is option 1, so a client that
-/// leaves it unanswered (or a bare `option: 1`) sends the form.
+/// The consent question's options. Only an explicit `Submit` (option 1, or
+/// the label in any case) sends the form; everything else declines.
 pub(crate) const SUBMIT_LABEL: &str = "Submit";
 pub(crate) const DECLINE_LABEL: &str = "Decline";
 /// url mode's options.
@@ -63,6 +65,21 @@ pub(crate) struct Field {
     default: Option<Value>,
     /// The card's option labels, index-aligned with an enum's `values`.
     labels: Vec<String>,
+    limits: Limits,
+}
+
+/// The schema constraints checked before an answer is sent: `minimum` /
+/// `maximum` (numbers), `minLength` / `maxLength` / `format` (strings),
+/// `minItems` / `maxItems` (multi-selects).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct Limits {
+    min: Option<f64>,
+    max: Option<f64>,
+    min_len: Option<u64>,
+    max_len: Option<u64>,
+    format: Option<String>,
+    min_items: Option<u64>,
+    max_items: Option<u64>,
 }
 
 /// A parked elicitation's answer key: what each question of its card means.
@@ -164,12 +181,26 @@ fn field_from(key: &str, schema: &Value, required: bool) -> Result<Field, FormEr
     if labels.is_empty() && matches!(kind, FieldKind::Enum { .. } | FieldKind::MultiEnum { .. }) {
         return Err(unsupported());
     }
+    let num = |k: &str| schema.get(k).and_then(Value::as_f64);
+    let count = |k: &str| schema.get(k).and_then(Value::as_u64);
     Ok(Field {
         key: key.to_owned(),
         kind,
         required,
         default: schema.get("default").cloned().filter(|d| !d.is_null()),
         labels,
+        limits: Limits {
+            min: num("minimum"),
+            max: num("maximum"),
+            min_len: count("minLength"),
+            max_len: count("maxLength"),
+            format: schema
+                .get("format")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            min_items: count("minItems"),
+            max_items: count("maxItems"),
+        },
     })
 }
 
@@ -262,20 +293,39 @@ pub(crate) fn form_card(
     Ok((ElicitationForm::Form { fields }, questions))
 }
 
+/// Whether `url` is an absolute `http`/`https` URL with a host — the only
+/// kind a url-mode card offers to open.
+fn web_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    let rest = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"));
+    rest.is_some_and(|r| {
+        let host = r.split(['/', '?', '#']).next().unwrap_or("");
+        !host.is_empty() && !host.starts_with('@') && !r.contains(char::is_whitespace)
+    })
+}
+
 /// Map a url-mode elicitation onto a single Open / Decline question. The
-/// `Open` option's description is the URL, so a client can open it.
+/// `Open` option's description is the URL, so a client can open it. Only an
+/// `http(s)` URL is offered; anything else (`file:`, `javascript:`, a bare
+/// path, nothing) is unsupported.
 pub(crate) fn url_card(
     server: &str,
     message: &str,
     url: &str,
-) -> (ElicitationForm, Vec<PendingQuestion>) {
+) -> Result<(ElicitationForm, Vec<PendingQuestion>), FormError> {
+    if !web_url(url) {
+        return Err(FormError::Unsupported("a url that is not http(s)".into()));
+    }
+    let url = url.trim();
     let ask = message.trim();
     let question = if ask.is_empty() {
         format!("The MCP server `{server}` asks you to open:\n{url}")
     } else {
         format!("{ask}\n\nThe MCP server `{server}` asks you to open:\n{url}")
     };
-    (
+    Ok((
         ElicitationForm::Url,
         vec![PendingQuestion {
             question,
@@ -293,7 +343,7 @@ pub(crate) fn url_card(
             ],
             secret: false,
         }],
-    )
+    ))
 }
 
 /// The raw answer string for question `i` and whether it is literal text
@@ -335,20 +385,93 @@ fn pick(entry: &str, literal: bool, labels: &[String], values: Option<&[String]>
         .or_else(|| values.and_then(|v| v.iter().position(|v| v == entry)))
 }
 
+/// A trivially checkable `format`: `email` (`a@b`), `uri` (`scheme:…`),
+/// `date` (`YYYY-MM-DD`), `date-time` (a date, then `T`). Unknown formats
+/// pass — the server validates what we cannot.
+fn format_ok(format: &str, v: &str) -> bool {
+    let date = |d: &str| {
+        let b = d.as_bytes();
+        b.len() == 10
+            && b[4] == b'-'
+            && b[7] == b'-'
+            && b.iter()
+                .enumerate()
+                .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+    };
+    match format {
+        "email" => {
+            v.split_once('@')
+                .is_some_and(|(a, b)| !a.is_empty() && b.contains('.') && !b.starts_with('.'))
+                && !v.contains(char::is_whitespace)
+        }
+        "uri" => {
+            v.split_once(':').is_some_and(|(scheme, rest)| {
+                !rest.is_empty()
+                    && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+                    && scheme
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
+            }) && !v.contains(char::is_whitespace)
+        }
+        "date" => date(v),
+        "date-time" => {
+            v.len() > 11 && date(&v[..10]) && v.as_bytes()[10].eq_ignore_ascii_case(&b'T')
+        }
+        _ => true,
+    }
+}
+
 fn field_value(field: &Field, raw: &str, literal: bool) -> Result<Value, String> {
     let bad = |what: &str| format!("`{}` needs {what}, got “{raw}”", field.key);
+    let l = &field.limits;
+    let in_range = |n: f64| {
+        if l.min.is_some_and(|m| n < m) || l.max.is_some_and(|m| n > m) {
+            let range = match (l.min, l.max) {
+                (Some(a), Some(b)) => format!("a number from {a} to {b}"),
+                (Some(a), None) => format!("a number of at least {a}"),
+                (None, Some(b)) => format!("a number of at most {b}"),
+                (None, None) => unreachable!(),
+            };
+            Err(bad(&range))
+        } else {
+            Ok(())
+        }
+    };
     match &field.kind {
-        FieldKind::Text => Ok(Value::String(raw.to_owned())),
-        FieldKind::Number { integer: true } => raw
-            .parse::<i64>()
-            .map(Value::from)
-            .map_err(|_| bad("a whole number")),
-        FieldKind::Number { integer: false } => raw
-            .parse::<f64>()
-            .ok()
-            .and_then(serde_json::Number::from_f64)
-            .map(Value::Number)
-            .ok_or_else(|| bad("a number")),
+        FieldKind::Text => {
+            let len = raw.chars().count() as u64;
+            if l.min_len.is_some_and(|m| len < m) || l.max_len.is_some_and(|m| len > m) {
+                return Err(bad(&format!(
+                    "{}–{} characters",
+                    l.min_len.unwrap_or(0),
+                    l.max_len
+                        .map(|m| m.to_string())
+                        .unwrap_or_else(|| "any".into())
+                )));
+            }
+            if let Some(format) = &l.format {
+                if !format_ok(format, raw) {
+                    return Err(bad(&format!("a valid {format}")));
+                }
+            }
+            Ok(Value::String(raw.to_owned()))
+        }
+        FieldKind::Number { integer: true } => {
+            let n = raw.parse::<i64>().map_err(|_| bad("a whole number"))?;
+            in_range(n as f64)?;
+            Ok(Value::from(n))
+        }
+        FieldKind::Number { integer: false } => {
+            let n = raw
+                .parse::<f64>()
+                .ok()
+                .filter(|n| n.is_finite())
+                .ok_or_else(|| bad("a number"))?;
+            in_range(n)?;
+            serde_json::Number::from_f64(n)
+                .map(Value::Number)
+                .ok_or_else(|| bad("a number"))
+        }
         FieldKind::Bool => match pick(raw, literal, &field.labels, None) {
             Some(0) => Ok(Value::Bool(true)),
             Some(_) => Ok(Value::Bool(false)),
@@ -361,18 +484,36 @@ fn field_value(field: &Field, raw: &str, literal: bool) -> Result<Value, String>
         FieldKind::Enum { values } => pick(raw, literal, &field.labels, Some(values))
             .map(|i| Value::String(values[i].clone()))
             .ok_or_else(|| bad(&format!("one of {}", field.labels.join(", ")))),
-        FieldKind::MultiEnum { values } => raw
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|entry| {
-                pick(entry, literal, &field.labels, Some(values))
-                    .map(|i| Value::String(values[i].clone()))
-                    .ok_or_else(|| bad(&format!("some of {}", field.labels.join(", "))))
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(Value::Array),
+        FieldKind::MultiEnum { values } => {
+            let picked = raw
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|entry| {
+                    pick(entry, literal, &field.labels, Some(values))
+                        .map(|i| Value::String(values[i].clone()))
+                        .ok_or_else(|| bad(&format!("some of {}", field.labels.join(", "))))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let n = picked.len() as u64;
+            if l.min_items.is_some_and(|m| n < m) || l.max_items.is_some_and(|m| n > m) {
+                return Err(bad(&format!(
+                    "{}–{} choices",
+                    l.min_items.unwrap_or(0),
+                    l.max_items
+                        .map(|m| m.to_string())
+                        .unwrap_or_else(|| "any".into())
+                )));
+            }
+            Ok(Value::Array(picked))
+        }
     }
+}
+
+/// Whether a raw multi-select answer picks nothing (`""`, `" , ,"`): it is
+/// then an EMPTY answer — required fields fail, optional ones are omitted.
+fn picks_nothing(field: &Field, raw: &str) -> bool {
+    matches!(field.kind, FieldKind::MultiEnum { .. }) && raw.split(',').all(|s| s.trim().is_empty())
 }
 
 /// Convert the user's `/answer` into the elicitation result.
@@ -389,17 +530,25 @@ pub(crate) fn reply(form: &ElicitationForm, answer: &ManagedAnswer) -> Elicitati
             (None, _) => ElicitationReply::Decline,
         },
         ElicitationForm::Form { fields } => {
-            // The consent question follows the fields. Unanswered = submitted
-            // (the client sent the form); only an explicit Decline declines.
+            // The consent question follows the fields. ONLY an explicit
+            // Submit — its option number or its label (any case) — sends the
+            // user's data; anything else (unanswered, Decline, free text, an
+            // out-of-range number) declines.
             let consent = [SUBMIT_LABEL.to_owned(), DECLINE_LABEL.to_owned()];
-            if let (Some(raw), literal) = raw_answer(answer, fields.len()) {
-                if pick(&raw, literal, &consent, None) == Some(1) {
-                    return ElicitationReply::Decline;
-                }
+            let submitted = match raw_answer(answer, fields.len()) {
+                (Some(raw), literal) => pick(&raw, literal, &consent, None) == Some(0),
+                (None, _) => false,
+            };
+            if !submitted {
+                return ElicitationReply::Decline;
             }
             let mut content = Map::new();
             for (i, field) in fields.iter().enumerate() {
-                match raw_answer(answer, i) {
+                let raw = match raw_answer(answer, i) {
+                    (Some(raw), _) if picks_nothing(field, &raw) => (None, false),
+                    other => other,
+                };
+                match raw {
                     (Some(raw), literal) => match field_value(field, &raw, literal) {
                         Ok(v) => {
                             content.insert(field.key.clone(), v);
@@ -434,6 +583,17 @@ mod tests {
         }
     }
 
+    fn option(n: u8) -> ManagedAnswer {
+        ManagedAnswer {
+            option: Some(n),
+            ..Default::default()
+        }
+    }
+
+    fn labels(q: &PendingQuestion) -> Vec<&str> {
+        q.options.iter().map(|o| o.label.as_str()).collect()
+    }
+
     fn schema() -> Value {
         json!({
             "type": "object",
@@ -459,6 +619,18 @@ mod tests {
         ORDER.iter().map(|s| s.to_string()).collect()
     }
 
+    fn form() -> ElicitationForm {
+        form_card("gh", "", &schema(), Some(&order())).unwrap().0
+    }
+
+    /// Eight field answers, then the consent answer.
+    fn with_consent(fields: &[&str], consent: &str) -> ManagedAnswer {
+        let mut list: Vec<&str> = fields.to_vec();
+        list.resize(8, "");
+        list.push(consent);
+        answers(&list)
+    }
+
     #[test]
     fn a_flat_form_maps_to_one_question_per_field_plus_consent() {
         let (_, qs) = form_card("gh", "Fill this in", &schema(), Some(&order())).unwrap();
@@ -466,107 +638,188 @@ mod tests {
         assert_eq!(qs[0].header.as_deref(), Some("Repository"));
         assert_eq!(qs[0].question, "Which repository? (required)");
         assert!(qs[0].options.is_empty(), "free text");
-        assert_eq!(
-            qs[3]
-                .options
-                .iter()
-                .map(|o| o.label.as_str())
-                .collect::<Vec<_>>(),
-            ["Yes", "No"]
-        );
-        assert_eq!(
-            qs[4]
-                .options
-                .iter()
-                .map(|o| o.label.as_str())
-                .collect::<Vec<_>>(),
-            ["Red", "Green"]
-        );
-        assert_eq!(
-            qs[5]
-                .options
-                .iter()
-                .map(|o| o.label.as_str())
-                .collect::<Vec<_>>(),
-            ["Small", "Large"]
-        );
+        assert_eq!(labels(&qs[3]), ["Yes", "No"]);
+        assert_eq!(labels(&qs[4]), ["Red", "Green"]);
+        assert_eq!(labels(&qs[5]), ["Small", "Large"]);
         assert!(qs[6].multi_select);
         let consent = &qs[8];
         assert!(consent.question.starts_with("Fill this in"));
-        assert_eq!(consent.options[0].label, SUBMIT_LABEL);
-        assert_eq!(consent.options[1].label, DECLINE_LABEL);
+        assert_eq!(labels(consent), [SUBMIT_LABEL, DECLINE_LABEL]);
     }
 
     #[test]
     fn answers_are_typed_per_schema() {
-        let (form, _) = form_card("gh", "", &schema(), Some(&order())).unwrap();
         let got = reply(
-            &form,
+            &form(),
             &answers(&["acme/web", "3", "0.5", "1", "Green", "s", "a, 3", "", "1"]),
         );
-        assert_eq!(
-            got,
-            ElicitationReply::Accept(Some(json!({
-                "repo": "acme/web", "count": 3, "ratio": 0.5, "private": true,
-                "color": "g", "size": "s", "tags": ["a", "c"], "note": "none"
-            })))
-        );
+        let content = json!({
+            "repo": "acme/web", "count": 3, "ratio": 0.5, "private": true,
+            "color": "g", "size": "s", "tags": ["a", "c"], "note": "none"
+        });
+        assert_eq!(got, ElicitationReply::Accept(Some(content.clone())));
         assert_eq!(
             got.result(),
-            json!({ "action": "accept", "content": {
-                "repo": "acme/web", "count": 3, "ratio": 0.5, "private": true,
-                "color": "g", "size": "s", "tags": ["a", "c"], "note": "none"
-            } })
+            json!({ "action": "accept", "content": content })
         );
-        // Optional fields left empty are omitted; consent unanswered submits.
-        let got = reply(&form, &answers(&["x", "1"]));
+        // Optional fields left empty are omitted (or take their default).
         assert_eq!(
-            got,
+            reply(&form(), &with_consent(&["x", "1"], "submit")),
             ElicitationReply::Accept(Some(json!({ "repo": "x", "count": 1, "note": "none" })))
         );
     }
 
     #[test]
-    fn decline_and_invalid_answers_never_send_content() {
-        let (form, _) = form_card("gh", "", &schema(), Some(&order())).unwrap();
-        let declined = reply(
-            &form,
-            &answers(&["x", "1", "", "", "", "", "", "", "Decline"]),
-        );
-        assert_eq!(declined, ElicitationReply::Decline);
+    fn only_an_explicit_submit_sends_the_form() {
+        let fields = ["x", "1"];
+        for consent in ["1", "Submit", "SUBMIT", " submit "] {
+            assert!(
+                matches!(
+                    reply(&form(), &with_consent(&fields, consent)),
+                    ElicitationReply::Accept(_)
+                ),
+                "{consent:?} submits"
+            );
+        }
+        for consent in [
+            "", "2", "3", "0", "-1", "Decline", "yes", "ok", "send it", "Submit!",
+        ] {
+            assert_eq!(
+                reply(&form(), &with_consent(&fields, consent)),
+                ElicitationReply::Decline,
+                "{consent:?} must decline"
+            );
+        }
+        // Unanswered consent (the answers stop at the fields) declines.
         assert_eq!(
-            declined.result(),
+            reply(&form(), &answers(&["x", "1"])),
+            ElicitationReply::Decline
+        );
+        // A literal-text "1" is not option 1.
+        let mut literal = with_consent(&fields, "1");
+        let mut kinds = vec!["text".to_string(); 9];
+        kinds[8] = "text".into();
+        literal.answer_kinds = Some(kinds);
+        assert_eq!(reply(&form(), &literal), ElicitationReply::Decline);
+        // An empty form: only option 1 / "Submit" accepts; free text declines.
+        let (empty, qs) = form_card(
+            "s",
+            "Proceed?",
+            &json!({ "type": "object", "properties": {} }),
+            None,
+        )
+        .unwrap();
+        assert_eq!(qs.len(), 1);
+        assert_eq!(
+            reply(&empty, &option(1)),
+            ElicitationReply::Accept(Some(json!({})))
+        );
+        for bad in [
+            option(2),
+            option(9),
+            answers(&["sure"]),
+            ManagedAnswer::default(),
+        ] {
+            assert_eq!(reply(&empty, &bad), ElicitationReply::Decline, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_answers_never_send_content() {
+        assert_eq!(
+            reply(&form(), &with_consent(&["x", "1"], "Decline")).result(),
             json!({ "action": "decline", "content": null })
         );
+        for bad in [
+            with_consent(&["x", "many"], "1"),
+            with_consent(&["", "1"], "1"),
+            with_consent(&["x", "1", "", "", "Blue"], "1"),
+            with_consent(&["x", "1", "abc"], "1"),
+        ] {
+            assert!(
+                matches!(reply(&form(), &bad), ElicitationReply::Invalid(_)),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_limits_and_formats_are_enforced() {
+        let s = json!({
+            "type": "object",
+            "properties": {
+                "n": { "type": "integer", "minimum": 1, "maximum": 5 },
+                "r": { "type": "number", "minimum": 0.5 },
+                "name": { "type": "string", "minLength": 2, "maxLength": 4 },
+                "mail": { "type": "string", "format": "email" },
+                "site": { "type": "string", "format": "uri" },
+                "day": { "type": "string", "format": "date" },
+                "at": { "type": "string", "format": "date-time" },
+                "tags": { "type": "array", "minItems": 1, "maxItems": 2,
+                          "items": { "type": "string", "enum": ["a", "b", "c"] } }
+            },
+            "required": ["tags"]
+        });
+        let order: Vec<String> = ["n", "r", "name", "mail", "site", "day", "at", "tags"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (form, _) = form_card("s", "", &s, Some(&order)).unwrap();
+        let ok = [
+            "3",
+            "0.5",
+            "abc",
+            "a@b.io",
+            "https://x.test",
+            "2026-10-13",
+            "2026-10-13T10:00:00Z",
+            "a,b",
+            "1",
+        ];
         assert!(matches!(
-            reply(&form, &answers(&["x", "many"])),
+            reply(&form, &answers(&ok)),
+            ElicitationReply::Accept(_)
+        ));
+        for (i, bad) in [
+            (0, "9"),
+            (0, "0"),
+            (1, "0.1"),
+            (1, "NaN"),
+            (2, "a"),
+            (2, "abcde"),
+            (3, "nobody"),
+            (4, "not a uri"),
+            (5, "13/10/2026"),
+            (6, "2026-10-13"),
+            (7, "a,b,c"),
+        ] {
+            let mut list = ok;
+            list[i] = bad;
+            assert!(
+                matches!(reply(&form, &answers(&list)), ElicitationReply::Invalid(_)),
+                "field {i} = {bad:?} must be rejected"
+            );
+        }
+        // A comma-only multi-select picks nothing: required → invalid.
+        let mut list = ok;
+        list[7] = " , ,";
+        assert!(matches!(
+            reply(&form, &answers(&list)),
             ElicitationReply::Invalid(_)
         ));
-        assert!(matches!(
-            reply(&form, &answers(&["", "1"])),
-            ElicitationReply::Invalid(_)
-        ));
-        assert!(matches!(
-            reply(&form, &answers(&["x", "1", "", "", "Blue"])),
-            ElicitationReply::Invalid(_)
-        ));
-        assert_eq!(
-            reply(&form, &answers(&["x", "1"])).result()["action"],
-            "accept"
-        );
     }
 
     #[test]
     fn a_literal_text_answer_is_not_an_option_number() {
         let s = json!({ "type": "object", "properties": { "pick": { "type": "string", "enum": ["1", "2", "3"] } } });
         let (form, _) = form_card("s", "", &s, None).unwrap();
-        let mut a = answers(&["3"]);
+        let mut a = answers(&["3", "1"]);
         assert_eq!(
             reply(&form, &a),
             ElicitationReply::Accept(Some(json!({ "pick": "3" })))
         );
-        a.answers = Some(vec!["1".into()]);
-        a.answer_kinds = Some(vec!["text".into()]);
+        a.answers = Some(vec!["1".into(), "1".into()]);
+        a.answer_kinds = Some(vec!["text".into(), "option".into()]);
         assert_eq!(
             reply(&form, &a),
             ElicitationReply::Accept(Some(json!({ "pick": "1" })))
@@ -582,53 +835,41 @@ mod tests {
         ] {
             assert!(form_card("s", "", &s, None).is_err(), "{s}");
         }
-        // An empty form is a bare confirmation.
-        let (form, qs) = form_card(
-            "s",
-            "Proceed?",
-            &json!({ "type": "object", "properties": {} }),
-            None,
-        )
-        .unwrap();
-        assert_eq!(qs.len(), 1);
-        assert_eq!(
-            reply(
-                &form,
-                &ManagedAnswer {
-                    option: Some(1),
-                    ..Default::default()
-                }
-            ),
-            ElicitationReply::Accept(Some(json!({})))
-        );
     }
 
     #[test]
-    fn url_mode_is_open_or_decline() {
-        let (form, qs) = url_card("auth", "Sign in", "https://example.test/login");
+    fn url_mode_is_open_or_decline_and_only_http() {
+        let (form, qs) = url_card("auth", "Sign in", "https://example.test/login").unwrap();
         assert!(qs[0].question.contains("https://example.test/login"));
         assert_eq!(
             qs[0].options[0].description.as_deref(),
             Some("https://example.test/login")
         );
+        assert_eq!(reply(&form, &option(1)), ElicitationReply::Accept(None));
         assert_eq!(
-            reply(
-                &form,
-                &ManagedAnswer {
-                    option: Some(1),
-                    ..Default::default()
-                }
-            ),
-            ElicitationReply::Accept(None)
-        );
-        assert_eq!(
-            reply(&form, &answers(&["Open"])).result(),
+            reply(&form, &answers(&["open"])).result(),
             json!({ "action": "accept", "content": null })
         );
-        assert_eq!(reply(&form, &answers(&["2"])), ElicitationReply::Decline);
-        assert_eq!(
-            reply(&form, &ManagedAnswer::default()),
-            ElicitationReply::Decline
-        );
+        for bad in [
+            option(2),
+            option(3),
+            answers(&["sure"]),
+            ManagedAnswer::default(),
+        ] {
+            assert_eq!(reply(&form, &bad), ElicitationReply::Decline, "{bad:?}");
+        }
+        assert!(url_card("a", "", "http://localhost:8080/cb").is_ok());
+        for url in [
+            "",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "/relative",
+            "https://",
+            "https://@evil",
+            "ftp://x.test",
+            "https://x.test/a b",
+        ] {
+            assert!(url_card("a", "", url).is_err(), "{url:?}");
+        }
     }
 }

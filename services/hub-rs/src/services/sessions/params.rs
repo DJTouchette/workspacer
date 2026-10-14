@@ -5,9 +5,9 @@ use serde_json::Value;
 pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
     let texts: &[&str] = match method {
         "sessions.transcript" => &["cwd"],
-        "claude.approve" => &["reason"],
+        "claude.approve" => &["reason", "alwaysOption", "requestId"],
         "agents.sendMessage" => &["fromSessionId"],
-        "claude.answer" => &["text"],
+        "claude.answer" => &["text", "requestId"],
         _ => &[],
     };
     for key in texts {
@@ -128,5 +128,20 @@ mod tests {
         }
         // The field means nothing to other methods and is not policed there.
         assert!(validate("claude.approve", &mut json!({"delivery":"later"})).is_ok());
+    }
+
+    #[test]
+    fn card_bindings_and_always_options_must_be_text() {
+        for (method, key) in [
+            ("claude.approve", "alwaysOption"),
+            ("claude.approve", "requestId"),
+            ("claude.answer", "requestId"),
+        ] {
+            for bad in [json!(3), json!(["x"]), json!({"id":"x"}), json!(true)] {
+                let error = validate(method, &mut json!({ key: bad })).unwrap_err();
+                assert!(error.to_string().contains("must be text"), "{method} {key}");
+            }
+            assert!(validate(method, &mut json!({ key: "req-1:0" })).is_ok());
+        }
     }
 }

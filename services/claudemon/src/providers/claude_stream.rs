@@ -45,8 +45,8 @@ use crate::session::state::{
     PendingWrite, SessionMode, CLAUDE_FIVE_HOUR_WINDOW_MINUTES, CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
 };
 use crate::session::store::{
-    ConfirmedModelSwitch, Delivery, ManagedAnswer, ManagedPermissionSwitch, ManagedPrompt,
-    ManagedTaskControl, ManagedTaskStop, MessageSender,
+    ConfirmedModelSwitch, Delivery, ManagedAnswer, ManagedDecision, ManagedPermissionSwitch,
+    ManagedPrompt, ManagedTaskControl, ManagedTaskStop, MessageSender,
 };
 use crate::session::transcript::{blocks, flatten_tool_result, Block};
 use crate::session::{ConversationStore, SessionStore};
@@ -1222,25 +1222,52 @@ fn context_tokens_from(usage: Option<&Value>) -> Option<u64> {
 
 // ── Control protocol ─────────────────────────────────────────────────────────
 
-/// A `can_use_tool` control request parked while the user decides. Holds
-/// everything needed to answer it: the CLI's request id and the tool's input
-/// (an allow must echo `updatedInput`, and an AskUserQuestion answer is the
-/// input plus the chosen `answers`) — plus the approval-card display fields
-/// (`tool`/`summary`/`raw`), so a request parked *behind* the displayed one
-/// can be re-surfaced when it reaches the front of the queue. The display
-/// fields are unused for the separately-parked AskUserQuestion.
+/// What a parked control request is: it picks the card and the answer.
+#[derive(Debug)]
+enum ParkedKind {
+    /// A `can_use_tool` permission request: answered by `/approve`.
+    Approval,
+    /// `can_use_tool` for AskUserQuestion: answered by `/answer` as an
+    /// `allow` whose `updatedInput` carries the chosen `answers`.
+    Question,
+    /// An MCP elicitation (`control_request {subtype:"elicitation"}`) on the
+    /// question card: answered by `/answer` as `{action, content}`.
+    Elicitation(ElicitationForm),
+}
+
+/// A control request the CLI is blocked on while the user decides. ONE FIFO
+/// holds approvals, questions and elicitations, as the CLI's own UI queues
+/// its dialogs: the store's pending slot is a single card, so only the head
+/// is ever shown, an answer applies only to the head (and only when it names
+/// the head's `pending_id`, if it names one), and nothing is answered
+/// behind the user's back — answering the head surfaces the next.
 #[derive(Debug)]
 struct ParkedCanUse {
     request_id: Value,
+    /// The tool's input (an allow must echo `updatedInput`; an
+    /// AskUserQuestion answer is the input plus the chosen `answers`).
     input: Value,
-    tool: Option<String>,
-    summary: Option<String>,
-    raw: Value,
-    /// Set when the parked "question" is really an MCP elicitation
-    /// (`control_request {subtype:"elicitation"}`) shown on the question
-    /// card: its answer key, and its reply is `{action, content}` rather
-    /// than an AskUserQuestion `allow`.
-    elicitation: Option<ElicitationForm>,
+    /// The card shown while this request is the head. Its `raw.pending_id`
+    /// is [`pending_id`] of `request_id`.
+    card: Pending,
+    kind: ParkedKind,
+}
+
+impl ParkedCanUse {
+    fn raw(&self) -> &Value {
+        match &self.card {
+            Pending::Approval { raw, .. } | Pending::Question { raw, .. } => raw,
+        }
+    }
+}
+
+/// The card id clients echo back (`requestId` on `/approve` and `/answer`):
+/// the CLI's control `request_id` as a string.
+fn pending_id(request_id: &Value) -> String {
+    request_id
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| request_id.to_string())
 }
 
 /// What we're waiting on for a control request *we* sent to the CLI.
@@ -1361,40 +1388,55 @@ fn questions_from(input: &Value) -> Vec<PendingQuestion> {
 
 /// A `Pending::Approval` raw payload in the same shape hook approvals carry
 /// (`tool_name` / `tool_input` / …) so the GUI's existing approval card
-/// renders stream approvals identically.
-fn approval_raw(request: &Value) -> Value {
+/// renders stream approvals identically, plus the card id (`pending_id`) and
+/// the "Always allow" choices (`always_options`, see [`always_options`]).
+fn approval_raw(request: &Value, pending_id: &str) -> Value {
     json!({
         "tool_name": request.get("tool_name").cloned().unwrap_or(Value::Null),
         "tool_input": request.get("input").cloned().unwrap_or(Value::Null),
         "tool_use_id": request.get("tool_use_id").cloned().unwrap_or(Value::Null),
         "description": request.get("description").cloned().unwrap_or(Value::Null),
         "permission_suggestions": request.get("permission_suggestions").cloned().unwrap_or(Value::Null),
-        "always_options": always_options(request.get("permission_suggestions").unwrap_or(&Value::Null)),
+        "suppress_always_allow_rule": request.get("suppress_always_allow_rule").cloned().unwrap_or(Value::Null),
+        "pending_id": pending_id,
+        "always_options": always_options(request, pending_id),
     })
 }
 
-/// The `permission_suggestions` (CLI `PermissionUpdate`s) an "always allow"
-/// may apply: rule grants with `behavior:"allow"`, a mode switch (never to
-/// `bypassPermissions`) and added directories — each rewritten to
-/// `destination:"session"`, so "always" lasts for this session and never
-/// writes a settings file behind the user's back. Removals and deny/ask
-/// rules are not "allow" and are dropped.
-fn session_permission_updates(suggestions: &Value) -> Vec<Value> {
-    suggestions
-        .as_array()
+/// The `permission_suggestions` (CLI `PermissionUpdate`s) an "Always allow"
+/// may offer, each rewritten to `destination:"session"` so it never writes a
+/// settings file behind the user's back. An allow-list:
+///
+/// * `addRules` with `behavior:"allow"` and at least one rule;
+/// * `setMode` to `acceptEdits` only — never `auto`, `dontAsk`,
+///   `bypassPermissions` or `plan`;
+/// * `addDirectories` with at least one directory.
+///
+/// `replaceRules` is dropped (it can wipe earlier session grants under an
+/// innocent "Always allow X" label), as are removals and deny/ask rules. A
+/// request flagged `suppress_always_allow_rule` (the CLI: "hosts … should
+/// omit any persistent-rule affordance") offers nothing.
+fn session_permission_updates(request: &Value) -> Vec<Value> {
+    if request
+        .get("suppress_always_allow_rule")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return Vec::new();
+    }
+    request
+        .get("permission_suggestions")
+        .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter(|u| match u.get("type").and_then(Value::as_str) {
-            Some("addRules" | "replaceRules") => {
+            Some("addRules") => {
                 u.get("behavior").and_then(Value::as_str) == Some("allow")
                     && u.get("rules")
                         .and_then(Value::as_array)
                         .is_some_and(|r| !r.is_empty())
             }
-            Some("setMode") => u
-                .get("mode")
-                .and_then(Value::as_str)
-                .is_some_and(|m| m != "bypassPermissions"),
+            Some("setMode") => u.get("mode").and_then(Value::as_str) == Some("acceptEdits"),
             Some("addDirectories") => u
                 .get("directories")
                 .and_then(Value::as_array)
@@ -1409,21 +1451,18 @@ fn session_permission_updates(suggestions: &Value) -> Vec<Value> {
         .collect()
 }
 
-/// What "Always allow" on this card grants, for a client to label the
-/// button: `[{label, scope:"session", kind}]`, one entry per
-/// [`session_permission_updates`] update (`kind` is its `type`). Empty when
-/// the request carries no usable suggestion — "always" then answers as a
-/// plain allow.
-fn always_options(suggestions: &Value) -> Value {
-    let options: Vec<Value> = session_permission_updates(suggestions)
+/// The card's "Always allow" choices: one `{id, label, scope:"session",
+/// kind}` per [`session_permission_updates`] entry, index-aligned with it.
+/// `id` is `<pending_id>:<index>` — unique to this request, so a stale card
+/// can never name another request's option. `kind` is the update's `type`.
+fn always_options(request: &Value, pending_id: &str) -> Value {
+    let options: Vec<Value> = session_permission_updates(request)
         .iter()
-        .map(|u| {
+        .enumerate()
+        .map(|(i, u)| {
             let kind = u.get("type").and_then(Value::as_str).unwrap_or("");
             let label = match kind {
-                "setMode" => match u.get("mode").and_then(Value::as_str).unwrap_or("") {
-                    "acceptEdits" => "Allow all edits this session".to_string(),
-                    mode => format!("Switch to {mode} mode for this session"),
-                },
+                "setMode" => "Allow all edits this session".to_string(),
                 "addDirectories" => format!(
                     "Always allow access to {} this session",
                     u["directories"]
@@ -1453,34 +1492,177 @@ fn always_options(suggestions: &Value) -> Value {
                         .join(", ")
                 ),
             };
-            json!({ "label": label, "scope": "session", "kind": kind })
+            json!({ "id": format!("{pending_id}:{i}"), "label": label, "scope": "session", "kind": kind })
         })
         .collect();
     Value::Array(options)
 }
 
-/// The `can_use_tool` answer for the parked approval at the queue head.
-/// `always` adds the session-scoped `updatedPermissions` (and classifies the
-/// decision `user_permanent`, the CLI's telemetry vocabulary for an
-/// always-allow); with no usable suggestion it is a plain allow.
-fn approval_response(
-    parked: &ParkedCanUse,
-    approve: bool,
-    always: bool,
-    deny_reason: Option<String>,
-) -> Value {
-    if !approve {
-        return json!({ "behavior": "deny", "message": deny_message(deny_reason), "interrupt": false });
+/// The `can_use_tool` answer for the parked approval at the queue head, or
+/// `None` when the decision names an always option this card does not offer
+/// (a stale card — the decision is dropped, never widened or narrowed).
+///
+/// A plain yes (including the legacy `decision:"always"`) is a plain allow.
+/// An always option adds exactly that ONE session-scoped update as
+/// `updatedPermissions` and classifies the decision `user_permanent` (the
+/// CLI's telemetry vocabulary for an always-allow).
+fn approval_response(parked: &ParkedCanUse, decision: &ManagedDecision) -> Option<Value> {
+    if !decision.approve {
+        return Some(
+            json!({ "behavior": "deny", "message": deny_message(decision.note.clone()), "interrupt": false }),
+        );
     }
     let mut response = json!({ "behavior": "allow", "updatedInput": parked.input });
-    if always {
-        let updates = session_permission_updates(&parked.raw["permission_suggestions"]);
-        if !updates.is_empty() {
-            response["updatedPermissions"] = Value::Array(updates);
-            response["decisionClassification"] = json!("user_permanent");
-        }
+    if let Some(option) = &decision.always_option {
+        let raw = parked.raw();
+        let index = raw["always_options"]
+            .as_array()?
+            .iter()
+            .position(|o| o.get("id").and_then(Value::as_str) == Some(option.as_str()))?;
+        let request = json!({
+            "permission_suggestions": raw["permission_suggestions"],
+            "suppress_always_allow_rule": raw["suppress_always_allow_rule"],
+        });
+        let update = session_permission_updates(&request)
+            .into_iter()
+            .nth(index)?;
+        response["updatedPermissions"] = json!([update]);
+        response["decisionClassification"] = json!("user_permanent");
     }
-    response
+    Some(response)
+}
+
+/// Show the queue head as the session's card, or — when nothing is parked —
+/// release the card (the turn resumes).
+fn surface_head(
+    store: &SessionStore,
+    session_id: &str,
+    cur_mode: &mut SessionMode,
+    parked: &VecDeque<ParkedCanUse>,
+) {
+    match parked.front() {
+        Some(head) => {
+            let mode = match head.card {
+                Pending::Approval { .. } => SessionMode::Approval,
+                Pending::Question { .. } => SessionMode::Question,
+            };
+            set_mode(
+                store,
+                session_id,
+                mode,
+                PendingWrite::Park(PendingOwner::Primary, head.card.clone()),
+                cur_mode,
+            );
+        }
+        None => set_mode(
+            store,
+            session_id,
+            SessionMode::Responding,
+            PendingWrite::Resolve(PendingOwner::Primary),
+            cur_mode,
+        ),
+    }
+}
+
+/// Queue a control request; it is shown at once only when it is the head.
+fn park(
+    store: &SessionStore,
+    session_id: &str,
+    cur_mode: &mut SessionMode,
+    parked: &mut VecDeque<ParkedCanUse>,
+    request: ParkedCanUse,
+) {
+    parked.push_back(request);
+    if parked.len() == 1 {
+        surface_head(store, session_id, cur_mode, parked);
+    }
+}
+
+/// Whether an answer naming `named` (a `pending_id`) may answer `head`.
+fn names_head(named: Option<&str>, head: &ParkedCanUse) -> bool {
+    named.is_none_or(|n| n == pending_id(&head.request_id))
+}
+
+/// Answer the head approval with the user's decision, then surface the next
+/// parked request (of any kind) or release the card. A decision is dropped
+/// when the head is not an approval, names another card, or names an always
+/// option the head does not offer.
+fn resolve_approval(
+    store: &SessionStore,
+    session_id: &str,
+    out_tx: &mpsc::UnboundedSender<Value>,
+    cur_mode: &mut SessionMode,
+    parked: &mut VecDeque<ParkedCanUse>,
+    decision: &ManagedDecision,
+) -> bool {
+    let Some(head) = parked.front() else {
+        tracing::debug!(session = %session_id, "claude stream: decision with nothing parked — dropped");
+        return false;
+    };
+    if !matches!(head.kind, ParkedKind::Approval)
+        || !names_head(decision.request_id.as_deref(), head)
+    {
+        tracing::debug!(session = %session_id, "claude stream: decision for a card that is not the head — dropped");
+        return false;
+    }
+    let Some(response) = approval_response(head, decision) else {
+        tracing::debug!(session = %session_id, "claude stream: always option the head does not offer — dropped");
+        return false;
+    };
+    let _ = out_tx.send(control_success(&head.request_id, response));
+    parked.pop_front();
+    surface_head(store, session_id, cur_mode, parked);
+    true
+}
+
+/// Answer the head question / elicitation with the user's choices, then
+/// surface the next parked request or release the card. Dropped when the head
+/// is not a question or the answer names another card.
+#[allow(clippy::too_many_arguments)]
+fn resolve_question(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    out_tx: &mpsc::UnboundedSender<Value>,
+    cur_mode: &mut SessionMode,
+    acc: &mut UsageAcc,
+    parked: &mut VecDeque<ParkedCanUse>,
+    ans: &ManagedAnswer,
+) -> bool {
+    let Some(head) = parked.front() else {
+        return false;
+    };
+    if matches!(head.kind, ParkedKind::Approval) || !names_head(ans.request_id.as_deref(), head) {
+        tracing::debug!(session = %session_id, "claude stream: answer for a card that is not the head — dropped");
+        return false;
+    }
+    let mut notice = None;
+    let response = match &head.kind {
+        ParkedKind::Elicitation(form) => {
+            let reply = elicitation::reply(form, ans);
+            if let ElicitationReply::Invalid(why) = &reply {
+                notice = Some(format!(
+                    "⚠️ The answer couldn't be sent to the MCP server ({why}), so its request was declined."
+                ));
+            }
+            reply.result()
+        }
+        _ => json!({ "behavior": "allow", "updatedInput": answered_input(&head.input, ans) }),
+    };
+    let _ = out_tx.send(control_success(&head.request_id, response));
+    parked.pop_front();
+    surface_head(store, session_id, cur_mode, parked);
+    if let Some(notice) = notice {
+        apply_updates(
+            store,
+            conv,
+            session_id,
+            vec![AgentUpdate::Notice(notice)],
+            cur_mode,
+            acc,
+        );
+    }
+    true
 }
 
 /// If the user's sent text invokes a slash command the CLI reported at init
@@ -1527,32 +1709,6 @@ fn approval_summary(request: &Value) -> Option<String> {
                 .and_then(Value::as_str)
         })
         .map(str::to_owned)
-}
-
-/// Surface a parked approval as the session's pending card. The store holds a
-/// single pending slot, so only the *front* of `pending_approvals` is ever
-/// displayed — later requests wait parked and are re-surfaced here when the
-/// front is answered, keeping the displayed card and the FIFO answer in sync.
-fn surface_approval(
-    store: &SessionStore,
-    session_id: &str,
-    cur_mode: &mut SessionMode,
-    parked: &ParkedCanUse,
-) {
-    set_mode(
-        store,
-        session_id,
-        SessionMode::Approval,
-        PendingWrite::Park(
-            PendingOwner::Primary,
-            Pending::Approval {
-                tool: parked.tool.clone(),
-                summary: parked.summary.clone(),
-                raw: parked.raw.clone(),
-            },
-        ),
-        cur_mode,
-    );
 }
 
 // ── Live driver ──────────────────────────────────────────────────────────────
@@ -1747,7 +1903,7 @@ async fn run_session(
     // permission modes, interrupts.
     let (tx, mut rx) = mpsc::unbounded_channel::<ManagedPrompt>();
     store.register_managed_prompt(&session_id, tx);
-    let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
+    let (dtx, mut drx) = mpsc::unbounded_channel::<crate::session::ManagedDecision>();
     store.register_managed_decision(&session_id, dtx);
     let (atx, mut arx) = mpsc::unbounded_channel::<ManagedAnswer>();
     store.register_managed_answer(&session_id, atx);
@@ -1796,11 +1952,9 @@ async fn run_session(
         tasks: seeded_tasks,
         ..StreamTotals::default()
     };
-    // Approvals awaiting the user's /approve, FIFO (two requests can arrive
-    // before the first is answered). AskUserQuestion parks separately — it's
-    // answered with content, not a yes/no.
-    let mut pending_approvals: VecDeque<ParkedCanUse> = VecDeque::new();
-    let mut pending_question: Option<ParkedCanUse> = None;
+    // Control requests awaiting the user — approvals, questions and MCP
+    // elicitations — in ONE FIFO whose head is the card (see ParkedCanUse).
+    let mut parked: VecDeque<ParkedCanUse> = VecDeque::new();
     // Whether an async Agent/Task SUBAGENT is running in the background. While
     // true, the parent's dispatch-turn `result` is held busy instead of idling
     // the session (the subagent is still working). Ambient background tasks
@@ -1832,7 +1986,7 @@ async fn run_session(
                     handle_line(
                         &value, store, conv, &session_id, &out_tx,
                         &mut cur_mode, &mut acc, &mut totals,
-                        &yolo_live, &mut pending_approvals, &mut pending_question,
+                        &yolo_live, &mut parked,
                         &mut pending_controls, &mut bg_tasks_active, &mut idle_suppressed,
                     );
                 }
@@ -1892,60 +2046,14 @@ async fn run_session(
                 None => break, // managed input dropped → terminated
             },
             decision = drx.recv() => match decision {
-                Some(approve) => {
-                    let always = store.take_approve_always(&session_id);
-                    if let Some(parked) = pending_approvals.pop_front() {
-                        let deny_reason = if approve { None } else { store.take_deny_reason(&session_id) };
-                        let response = approval_response(&parked, approve, always, deny_reason);
-                        let _ = out_tx.send(control_success(&parked.request_id, response));
-                        // Another request may have parked behind the one just
-                        // answered (parallel tool calls) — surface it so the
-                        // user gets its card; otherwise the turn resumes.
-                        match pending_approvals.front() {
-                            Some(next) => surface_approval(store, &session_id, &mut cur_mode, next),
-                            None => set_mode(
-                                store,
-                                &session_id,
-                                SessionMode::Responding,
-                                PendingWrite::Resolve(PendingOwner::Primary),
-                                &mut cur_mode,
-                            ),
-                        }
-                    } else {
-                        tracing::debug!(session = %session_id, "claude stream: decision with no parked approval — dropped");
-                    }
+                Some(decision) => {
+                    resolve_approval(store, &session_id, &out_tx, &mut cur_mode, &mut parked, &decision);
                 }
                 None => break,
             },
             answer = arx.recv() => match answer {
                 Some(ans) => {
-                    if let Some(parked) = pending_question.take() {
-                        let response = match &parked.elicitation {
-                            Some(form) => {
-                                let reply = elicitation::reply(form, &ans);
-                                if let ElicitationReply::Invalid(why) = &reply {
-                                    apply_updates(store, conv, &session_id, vec![AgentUpdate::Notice(format!(
-                                        "⚠️ The answer couldn't be sent to the MCP server ({why}), so its request was declined."
-                                    ))], &mut cur_mode, &mut acc);
-                                }
-                                reply.result()
-                            }
-                            None => json!({ "behavior": "allow", "updatedInput": answered_input(&parked.input, &ans) }),
-                        };
-                        let _ = out_tx.send(control_success(&parked.request_id, response));
-                        // An approval parked while the question was displayed
-                        // must re-surface rather than being wiped to Responding.
-                        match pending_approvals.front() {
-                            Some(next) => surface_approval(store, &session_id, &mut cur_mode, next),
-                            None => set_mode(
-                                store,
-                                &session_id,
-                                SessionMode::Responding,
-                                PendingWrite::Resolve(PendingOwner::Primary),
-                                &mut cur_mode,
-                            ),
-                        }
-                    }
+                    resolve_question(store, conv, &session_id, &out_tx, &mut cur_mode, &mut acc, &mut parked, &ans);
                 }
                 None => break,
             },
@@ -2027,7 +2135,7 @@ async fn run_session(
                     handle_line(
                         &value, store, conv, &session_id, &out_tx,
                         &mut cur_mode, &mut acc, &mut totals,
-                        &yolo_live, &mut pending_approvals, &mut pending_question,
+                        &yolo_live, &mut parked,
                         &mut pending_controls, &mut bg_tasks_active, &mut idle_suppressed,
                     );
                 }
@@ -2050,6 +2158,29 @@ fn unix_ms() -> i64 {
 /// Fold a frame's `task_*` / live-set / launch-result facts into the session's
 /// background-task list, then try to PROVE the process behind any running
 /// shell that has none yet (see [`background_tasks::discover_process`]).
+/// The CLI reports its permission mode on `system/init` and on every
+/// `system/status` (including a change the CLI made itself — a
+/// `setMode` session grant, or the user's own Shift+Tab in an attached TUI).
+/// Mirror it onto the session so clients see the mode actually in force.
+fn observe_permission_mode(store: &SessionStore, session_id: &str, value: &Value) {
+    if value.get("type").and_then(Value::as_str) != Some("system") {
+        return;
+    }
+    if !matches!(
+        value.get("subtype").and_then(Value::as_str),
+        Some("init" | "status")
+    ) {
+        return;
+    }
+    if let Some(mode) = value
+        .get("permissionMode")
+        .and_then(Value::as_str)
+        .filter(|m| !m.is_empty())
+    {
+        store.set_observed_permission_mode(session_id, mode);
+    }
+}
+
 fn observe_background_tasks(store: &SessionStore, session_id: &str, value: &Value) {
     let events = background_tasks::parse_frame(value);
     if events.is_empty() {
@@ -2148,18 +2279,6 @@ fn send_control(
     }));
 }
 
-/// Answer a parked question that a newer one displaces: an elicitation is
-/// cancelled, an AskUserQuestion denied. Never just dropped — the CLI would
-/// wait on it forever.
-fn supersede_question(out_tx: &mpsc::UnboundedSender<Value>, old: &ParkedCanUse) {
-    let response = if old.elicitation.is_some() {
-        json!({ "action": "cancel" })
-    } else {
-        json!({ "behavior": "deny", "message": "Superseded by another question before the user answered.", "interrupt": false })
-    };
-    let _ = out_tx.send(control_success(&old.request_id, response));
-}
-
 /// The CLI relays an MCP server's elicitation (`elicitation/create`) as
 /// `control_request {subtype:"elicitation", mcp_server_name, message,
 /// mode?:"form"|"url", url?, elicitation_id?, requested_schema?,
@@ -2167,9 +2286,10 @@ fn supersede_question(out_tx: &mpsc::UnboundedSender<Value>, old: &ParkedCanUse)
 /// `{action:"accept"|"decline"|"cancel", content?}` (CLI 2.1.299's own
 /// control schema; with no answer — or an error reply — it cancels).
 ///
-/// It parks as the question card (see [`super::elicitation`]) — even under
-/// yolo, since it asks for the user's data, not permission. A schema the card
-/// cannot express is declined with a visible notice.
+/// It queues as a question card (see [`super::elicitation`]) behind whatever
+/// is already parked — even under yolo, since it asks for the user's data,
+/// not permission. A schema the card cannot express, or a url that is not
+/// http(s), is declined with a visible notice.
 #[allow(clippy::too_many_arguments)]
 fn park_elicitation(
     store: &SessionStore,
@@ -2178,7 +2298,7 @@ fn park_elicitation(
     out_tx: &mpsc::UnboundedSender<Value>,
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
-    pending_question: &mut Option<ParkedCanUse>,
+    parked: &mut VecDeque<ParkedCanUse>,
     request_id: Value,
     request: &Value,
 ) {
@@ -2190,10 +2310,11 @@ fn park_elicitation(
         .unwrap_or("an MCP server");
     let message = request.get("message").and_then(Value::as_str).unwrap_or("");
     let card = match request.get("mode").and_then(Value::as_str) {
-        Some("url") => match request.get("url").and_then(Value::as_str) {
-            Some(url) => Ok(elicitation::url_card(server, message, url)),
-            None => Err(FormError::Unsupported("a url request with no url".into())),
-        },
+        Some("url") => elicitation::url_card(
+            server,
+            message,
+            request.get("url").and_then(Value::as_str).unwrap_or(""),
+        ),
         None | Some("form") => {
             let order: Option<Vec<String>> = request
                 .get("property_order")
@@ -2229,30 +2350,22 @@ fn park_elicitation(
             return;
         }
     };
-    if let Some(old) = pending_question.take() {
-        supersede_question(out_tx, &old);
+    let mut raw = request.clone();
+    if let Some(obj) = raw.as_object_mut() {
+        obj.insert("pending_id".into(), json!(pending_id(&request_id)));
     }
-    set_mode(
+    park(
         store,
         session_id,
-        SessionMode::Question,
-        PendingWrite::Park(
-            PendingOwner::Primary,
-            Pending::Question {
-                questions,
-                raw: request.clone(),
-            },
-        ),
         cur_mode,
+        parked,
+        ParkedCanUse {
+            request_id,
+            input: Value::Null,
+            card: Pending::Question { questions, raw },
+            kind: ParkedKind::Elicitation(form),
+        },
     );
-    *pending_question = Some(ParkedCanUse {
-        request_id,
-        input: Value::Null,
-        tool: None,
-        summary: None,
-        raw: Value::Null,
-        elicitation: Some(form),
-    });
 }
 
 /// Handle one stdout line: our control responses, the CLI's control requests
@@ -2268,8 +2381,7 @@ fn handle_line(
     acc: &mut UsageAcc,
     totals: &mut StreamTotals,
     yolo: &AtomicBool,
-    pending_approvals: &mut VecDeque<ParkedCanUse>,
-    pending_question: &mut Option<ParkedCanUse>,
+    parked: &mut VecDeque<ParkedCanUse>,
     pending_controls: &mut HashMap<String, PendingControl>,
     bg_tasks_active: &mut bool,
     idle_suppressed: &mut bool,
@@ -2277,6 +2389,7 @@ fn handle_line(
     // Background-task enrichment rides beside, never inside, the state
     // machine below: it reads the same frames and owns only the task list.
     observe_background_tasks(store, session_id, value);
+    observe_permission_mode(store, session_id, value);
     // Subagent rows from the same task frames, so children show without
     // depending on hook delivery (see claude_subagents::stream_frame).
     store.observe_claude_stream_subagents(session_id, value);
@@ -2378,6 +2491,7 @@ fn handle_line(
                         .and_then(Value::as_str)
                         .unwrap_or(&psw.mode)
                         .to_string();
+                    store.set_observed_permission_mode(session_id, &confirmed);
                     let _ = psw.reply.send(Ok(confirmed));
                 }
                 (PendingControl::SetPermissionMode(psw), Some(err)) => {
@@ -2395,15 +2509,7 @@ fn handle_line(
             let subtype = request.get("subtype").and_then(Value::as_str).unwrap_or("");
             if subtype == "elicitation" {
                 park_elicitation(
-                    store,
-                    conv,
-                    session_id,
-                    out_tx,
-                    cur_mode,
-                    acc,
-                    pending_question,
-                    request_id,
-                    request,
+                    store, conv, session_id, out_tx, cur_mode, acc, parked, request_id, request,
                 );
                 return;
             }
@@ -2421,35 +2527,26 @@ fn handle_line(
                 .unwrap_or("");
             let input = request.get("input").cloned().unwrap_or(Value::Null);
             if tool == "AskUserQuestion" {
-                // A question for the human — park it as `Question` even under
+                // A question for the human — queued as `Question` even under
                 // yolo (auto-approving it without answers would be nonsense).
-                // A question already parked (an elicitation, say) is answered
-                // first: dropping it would leave the CLI blocked forever.
-                if let Some(old) = pending_question.take() {
-                    supersede_question(out_tx, &old);
+                let pid = pending_id(&request_id);
+                let mut raw = input.clone();
+                if let Some(obj) = raw.as_object_mut() {
+                    obj.insert("pending_id".into(), json!(pid));
                 }
                 let questions = questions_from(&input);
-                set_mode(
+                park(
                     store,
                     session_id,
-                    SessionMode::Question,
-                    PendingWrite::Park(
-                        PendingOwner::Primary,
-                        Pending::Question {
-                            questions,
-                            raw: input.clone(),
-                        },
-                    ),
                     cur_mode,
+                    parked,
+                    ParkedCanUse {
+                        request_id,
+                        input,
+                        card: Pending::Question { questions, raw },
+                        kind: ParkedKind::Question,
+                    },
                 );
-                *pending_question = Some(ParkedCanUse {
-                    request_id,
-                    input,
-                    tool: Some(tool.to_string()),
-                    summary: None,
-                    raw: Value::Null,
-                    elicitation: None,
-                });
                 return;
             }
             if yolo.load(Ordering::Relaxed) {
@@ -2459,25 +2556,24 @@ fn handle_line(
                 ));
                 return;
             }
-            pending_approvals.push_back(ParkedCanUse {
-                request_id,
-                input,
-                tool: Some(tool.to_string()),
-                summary: approval_summary(request),
-                raw: approval_raw(request),
-                elicitation: None,
-            });
-            // Only the queue head is displayed: the store's pending is a single
-            // slot, so a request arriving while another is awaiting the user
-            // stays parked and re-surfaces when the head is answered (the drx
-            // branch) — the displayed card always matches the FIFO answer.
-            // A live AskUserQuestion also owns that single slot; don't overwrite
-            // it — the approval re-surfaces via the arx branch once the question
-            // is answered (otherwise the question is never answered and the CLI
-            // turn wedges forever).
-            if pending_approvals.len() == 1 && pending_question.is_none() {
-                surface_approval(store, session_id, cur_mode, &pending_approvals[0]);
-            }
+            // Queued behind whatever is parked; shown when it is the head.
+            let pid = pending_id(&request_id);
+            park(
+                store,
+                session_id,
+                cur_mode,
+                parked,
+                ParkedCanUse {
+                    request_id,
+                    input,
+                    card: Pending::Approval {
+                        tool: Some(tool.to_string()),
+                        summary: approval_summary(request),
+                        raw: approval_raw(request, &pid),
+                    },
+                    kind: ParkedKind::Approval,
+                },
+            );
         }
         _ => {
             // The async Agent/Task tool runs as a *background task*: the parent's
@@ -2548,8 +2644,7 @@ fn handle_line(
             // one. A mid-subagent dispatch `result` is NOT the end — keep the
             // parked cards.
             if is_result && !suppress_idle {
-                pending_approvals.clear();
-                *pending_question = None;
+                parked.clear();
             }
             let mut updates = translate(value, totals);
             if owed_interrupt {
@@ -3872,6 +3967,7 @@ mod tests {
                 text: None,
                 answers: Some(vec!["2".into(), "sparkles".into()]),
                 answer_kinds: None,
+                request_id: None,
             },
         );
         assert_eq!(out["answers"]["Pick a color"], "Blue");
@@ -3888,6 +3984,7 @@ mod tests {
                 text: None,
                 answers: None,
                 answer_kinds: None,
+                request_id: None,
             },
         );
         assert_eq!(out["answers"]["Pick a color"], "Red");
@@ -3900,6 +3997,7 @@ mod tests {
                 text: Some("Chartreuse".into()),
                 answers: None,
                 answer_kinds: None,
+                request_id: None,
             },
         );
         assert_eq!(out["answers"]["Pick a color"], "Chartreuse");
@@ -3924,6 +4022,7 @@ mod tests {
                 text: None,
                 answers: Some(vec!["3".into(), "2".into()]),
                 answer_kinds: Some(vec!["text".into(), "option".into()]),
+                request_id: None,
             },
         );
         // kind=text → literal, NOT options[2].label ("Three").
@@ -3937,9 +4036,10 @@ mod tests {
         let request = json!({ "subtype": "can_use_tool", "tool_name": "Bash",
             "input": { "command": "rm -rf build" }, "tool_use_id": "tu1",
             "permission_suggestions": [ { "type": "setMode", "mode": "acceptEdits" } ] });
-        let raw = approval_raw(&request);
+        let raw = approval_raw(&request, "cli-1");
         assert_eq!(raw["tool_name"], "Bash");
         assert_eq!(raw["tool_input"]["command"], "rm -rf build");
+        assert_eq!(raw["pending_id"], "cli-1");
         assert_eq!(approval_summary(&request).as_deref(), Some("rm -rf build"));
     }
 
@@ -3948,75 +4048,111 @@ mod tests {
             { "type": "addRules", "rules": [ { "toolName": "Bash", "ruleContent": "npm test:*" } ],
               "behavior": "allow", "destination": "localSettings" },
             { "type": "addRules", "rules": [ { "toolName": "Bash" } ], "behavior": "deny", "destination": "session" },
+            { "type": "replaceRules", "rules": [ { "toolName": "Bash" } ], "behavior": "allow", "destination": "session" },
             { "type": "setMode", "mode": "acceptEdits", "destination": "session" },
             { "type": "setMode", "mode": "bypassPermissions", "destination": "session" },
+            { "type": "setMode", "mode": "auto", "destination": "session" },
+            { "type": "setMode", "mode": "dontAsk", "destination": "session" },
+            { "type": "setMode", "mode": "plan", "destination": "session" },
             { "type": "addDirectories", "directories": ["/tmp/x"], "destination": "projectSettings" },
             { "type": "removeRules", "rules": [ { "toolName": "Read" } ], "behavior": "allow", "destination": "session" }
         ])
     }
 
-    #[test]
-    fn always_options_name_what_a_session_grant_would_allow() {
-        let request = json!({ "subtype": "can_use_tool", "tool_name": "Bash",
-            "input": { "command": "npm test" }, "permission_suggestions": suggestions() });
-        let raw = approval_raw(&request);
-        assert_eq!(
-            raw["always_options"],
-            json!([
-                { "label": "Always allow Bash(npm test:*) this session", "scope": "session", "kind": "addRules" },
-                { "label": "Allow all edits this session", "scope": "session", "kind": "setMode" },
-                { "label": "Always allow access to /tmp/x this session", "scope": "session", "kind": "addDirectories" }
-            ])
-        );
-        // No suggestions → no options (the card shows no "always" choice).
-        let bare = approval_raw(&json!({ "tool_name": "Bash", "input": {} }));
-        assert_eq!(bare["always_options"], json!([]));
+    fn bash_request() -> Value {
+        json!({ "subtype": "can_use_tool", "tool_name": "Bash",
+            "input": { "command": "npm test" }, "permission_suggestions": suggestions() })
     }
 
     #[test]
-    fn always_answers_with_session_scoped_updated_permissions() {
-        let request = json!({ "subtype": "can_use_tool", "tool_name": "Bash",
-            "input": { "command": "npm test" }, "permission_suggestions": suggestions() });
-        let parked = ParkedCanUse {
-            request_id: json!("cli-1"),
-            input: json!({ "command": "npm test" }),
-            tool: Some("Bash".into()),
-            summary: None,
-            raw: approval_raw(&request),
-            elicitation: None,
-        };
+    fn always_options_are_an_allow_list_one_per_suggestion() {
+        let raw = approval_raw(&bash_request(), "cli-1");
+        // replaceRules, deny rules, removals and every mode but acceptEdits
+        // (auto, dontAsk, bypassPermissions, plan) are never offered.
         assert_eq!(
-            approval_response(&parked, true, true, None),
-            json!({
+            raw["always_options"],
+            json!([
+                { "id": "cli-1:0", "label": "Always allow Bash(npm test:*) this session", "scope": "session", "kind": "addRules" },
+                { "id": "cli-1:1", "label": "Allow all edits this session", "scope": "session", "kind": "setMode" },
+                { "id": "cli-1:2", "label": "Always allow access to /tmp/x this session", "scope": "session", "kind": "addDirectories" }
+            ])
+        );
+        // No suggestions → no options (the card shows no "always" choice).
+        let bare = approval_raw(&json!({ "tool_name": "Bash", "input": {} }), "cli-2");
+        assert_eq!(bare["always_options"], json!([]));
+        // The CLI says this ask must not offer a persistent rule: nothing.
+        let mut suppressed = bash_request();
+        suppressed["suppress_always_allow_rule"] = json!(true);
+        assert_eq!(
+            approval_raw(&suppressed, "cli-3")["always_options"],
+            json!([])
+        );
+    }
+
+    fn parked_approval(request: &Value, id: &str) -> ParkedCanUse {
+        ParkedCanUse {
+            request_id: json!(id),
+            input: request["input"].clone(),
+            card: Pending::Approval {
+                tool: Some("Bash".into()),
+                summary: None,
+                raw: approval_raw(request, id),
+            },
+            kind: ParkedKind::Approval,
+        }
+    }
+
+    fn decide(approve: bool, option: Option<&str>) -> ManagedDecision {
+        ManagedDecision {
+            approve,
+            always_option: option.map(str::to_owned),
+            ..ManagedDecision::default()
+        }
+    }
+
+    #[test]
+    fn an_always_option_grants_exactly_that_one_update() {
+        let parked = parked_approval(&bash_request(), "cli-1");
+        assert_eq!(
+            approval_response(&parked, &decide(true, Some("cli-1:0"))),
+            Some(json!({
                 "behavior": "allow",
                 "updatedInput": { "command": "npm test" },
                 "updatedPermissions": [
                     { "type": "addRules", "rules": [ { "toolName": "Bash", "ruleContent": "npm test:*" } ],
-                      "behavior": "allow", "destination": "session" },
-                    { "type": "setMode", "mode": "acceptEdits", "destination": "session" },
-                    { "type": "addDirectories", "directories": ["/tmp/x"], "destination": "session" }
+                      "behavior": "allow", "destination": "session" }
                 ],
                 "decisionClassification": "user_permanent"
-            })
+            }))
         );
-        // A plain yes is unchanged.
         assert_eq!(
-            approval_response(&parked, true, false, None),
-            json!({ "behavior": "allow", "updatedInput": { "command": "npm test" } })
+            approval_response(&parked, &decide(true, Some("cli-1:1"))).unwrap()
+                ["updatedPermissions"],
+            json!([{ "type": "setMode", "mode": "acceptEdits", "destination": "session" }])
         );
+        // A plain yes — and so the legacy `decision:"always"` — is a plain allow.
+        assert_eq!(
+            approval_response(&parked, &decide(true, None)),
+            Some(json!({ "behavior": "allow", "updatedInput": { "command": "npm test" } }))
+        );
+        // An option this card does not offer (another request's, an index
+        // past the end) is refused outright, never widened or narrowed.
+        for stale in ["cli-0:0", "cli-1:3", "cli-1", ""] {
+            assert_eq!(
+                approval_response(&parked, &decide(true, Some(stale))),
+                None,
+                "{stale:?}"
+            );
+        }
         // Deny keeps its note.
+        let deny = ManagedDecision {
+            note: Some("not now".into()),
+            ..decide(false, None)
+        };
         assert_eq!(
-            approval_response(&parked, false, true, Some("not now".into()))["message"],
+            approval_response(&parked, &deny).unwrap()["message"],
             "The user denied this tool use and said: not now"
         );
-        // Always with nothing to grant is a plain allow.
-        let bare = ParkedCanUse {
-            raw: approval_raw(&json!({ "tool_name": "Bash" })),
-            ..parked
-        };
-        assert!(approval_response(&bare, true, true, None)
-            .get("updatedPermissions")
-            .is_none());
     }
 
     /// Feed lines through `handle_line` with fresh per-test driver state.
@@ -4029,8 +4165,7 @@ mod tests {
         acc: UsageAcc,
         totals: StreamTotals,
         yolo: AtomicBool,
-        approvals: VecDeque<ParkedCanUse>,
-        question: Option<ParkedCanUse>,
+        parked: VecDeque<ParkedCanUse>,
         controls: HashMap<String, PendingControl>,
     }
 
@@ -4048,8 +4183,7 @@ mod tests {
                 acc: UsageAcc::default(),
                 totals: StreamTotals::default(),
                 yolo: AtomicBool::new(yolo),
-                approvals: VecDeque::new(),
-                question: None,
+                parked: VecDeque::new(),
                 controls: HashMap::new(),
             }
         }
@@ -4065,12 +4199,33 @@ mod tests {
                 &mut self.acc,
                 &mut self.totals,
                 &self.yolo,
-                &mut self.approvals,
-                &mut self.question,
+                &mut self.parked,
                 &mut self.controls,
                 &mut bg,
                 &mut idle,
             );
+        }
+        fn decide(&mut self, decision: ManagedDecision) -> bool {
+            resolve_approval(
+                &self.store,
+                "sid-e",
+                &self.out_tx,
+                &mut self.cur_mode,
+                &mut self.parked,
+                &decision,
+            )
+        }
+        fn answer(&mut self, answer: ManagedAnswer) -> bool {
+            resolve_question(
+                &self.store,
+                &self.conv,
+                "sid-e",
+                &self.out_tx,
+                &mut self.cur_mode,
+                &mut self.acc,
+                &mut self.parked,
+                &answer,
+            )
         }
         fn sent(&mut self) -> Vec<Value> {
             std::iter::from_fn(|| self.out_rx.try_recv().ok()).collect()
@@ -4078,11 +4233,39 @@ mod tests {
         fn pending(&self) -> Option<Pending> {
             self.store.get("sid-e").unwrap().pending().cloned()
         }
+        fn shown_id(&self) -> Option<String> {
+            match self.pending()? {
+                Pending::Approval { raw, .. } | Pending::Question { raw, .. } => {
+                    raw["pending_id"].as_str().map(str::to_owned)
+                }
+            }
+        }
     }
 
     fn elicitation_request(id: &str, mut request: Value) -> Value {
         request["subtype"] = json!("elicitation");
         json!({ "type": "control_request", "request_id": id, "request": request })
+    }
+
+    fn approval_request(id: &str) -> Value {
+        let mut request = bash_request();
+        request["tool_use_id"] = json!(format!("tu-{id}"));
+        json!({ "type": "control_request", "request_id": id, "request": request })
+    }
+
+    fn url_elicitation(id: &str) -> Value {
+        elicitation_request(
+            id,
+            json!({ "mcp_server_name": "auth", "message": "Sign in", "mode": "url",
+                    "url": "https://example.test/login", "elicitation_id": "el-1" }),
+        )
+    }
+
+    fn option(n: u8) -> ManagedAnswer {
+        ManagedAnswer {
+            option: Some(n),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -4105,45 +4288,54 @@ mod tests {
             panic!("expected a question card, got {:?}", l.pending());
         };
         assert_eq!(raw["mcp_server_name"], "jira");
+        assert_eq!(raw["pending_id"], "cli-e1");
         // The server's property order is kept; the consent question closes it.
         let headers: Vec<_> = questions
             .iter()
             .map(|q| q.header.clone().unwrap())
             .collect();
         assert_eq!(headers, ["urgent", "Project key", "jira asks"]);
-        let parked = l.question.as_ref().expect("parked");
-        let form = parked.elicitation.as_ref().expect("an elicitation key");
-        let answer = ManagedAnswer {
-            answers: Some(vec!["2".into(), "DOCS".into()]),
+        assert!(l.answer(ManagedAnswer {
+            answers: Some(vec!["2".into(), "DOCS".into(), "Submit".into()]),
             ..Default::default()
-        };
+        }));
+        let sent = l.sent();
+        assert_eq!(sent[0]["response"]["request_id"], "cli-e1");
         assert_eq!(
-            elicitation::reply(form, &answer).result(),
+            sent[0]["response"]["response"],
             json!({ "action": "accept", "content": { "urgent": false, "project_key": "DOCS" } })
         );
+        assert!(l.pending().is_none());
+        assert_eq!(l.cur_mode, SessionMode::Responding);
     }
 
     #[test]
     fn an_unsupported_elicitation_is_declined_with_a_notice() {
         let mut l = Line::new(false);
-        l.feed(elicitation_request(
-            "cli-e2",
-            json!({
-                "mcp_server_name": "jira", "message": "Nested?",
-                "requested_schema": { "type": "object", "properties": {
-                    "who": { "type": "object", "properties": {} }
-                } }
-            }),
-        ));
-        let sent = l.sent();
-        assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0]["response"]["request_id"], "cli-e2");
-        assert_eq!(sent[0]["response"]["subtype"], "success");
-        assert_eq!(
-            sent[0]["response"]["response"],
-            json!({ "action": "decline" })
-        );
-        assert!(l.question.is_none());
+        for (id, request) in [
+            (
+                "cli-e2",
+                json!({ "mcp_server_name": "jira", "message": "Nested?",
+                    "requested_schema": { "type": "object", "properties": {
+                        "who": { "type": "object", "properties": {} } } } }),
+            ),
+            (
+                "cli-e3",
+                json!({ "mcp_server_name": "auth", "mode": "url", "message": "x",
+                        "url": "file:///etc/passwd" }),
+            ),
+        ] {
+            l.feed(elicitation_request(id, request));
+            let sent = l.sent();
+            assert_eq!(sent.len(), 1);
+            assert_eq!(sent[0]["response"]["request_id"], id);
+            assert_eq!(sent[0]["response"]["subtype"], "success");
+            assert_eq!(
+                sent[0]["response"]["response"],
+                json!({ "action": "decline" })
+            );
+            assert!(l.parked.is_empty());
+        }
         let text = l
             .conv
             .snapshot("sid-e")
@@ -4153,37 +4345,119 @@ mod tests {
     }
 
     #[test]
-    fn a_url_elicitation_parks_open_or_decline_and_a_newer_question_cancels_it() {
+    fn questions_and_elicitations_queue_behind_each_other_never_cancelled() {
         let mut l = Line::new(false);
-        l.feed(elicitation_request(
-            "cli-e3",
-            json!({
-                "mcp_server_name": "auth", "message": "Sign in", "mode": "url",
-                "url": "https://example.test/login", "elicitation_id": "el-1"
-            }),
-        ));
+        l.feed(url_elicitation("cli-e3"));
         let Some(Pending::Question { questions, .. }) = l.pending() else {
             panic!("expected a question card");
         };
-        assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].options[0].label, "Open");
-        assert_eq!(
-            questions[0].options[0].description.as_deref(),
-            Some("https://example.test/login")
-        );
-        // An AskUserQuestion arriving now answers the elicitation rather than
-        // dropping it (the CLI would block on it forever).
+        // An AskUserQuestion arriving now queues: nothing is cancelled.
         l.feed(json!({ "type": "control_request", "request_id": "cli-q", "request": {
             "subtype": "can_use_tool", "tool_name": "AskUserQuestion",
             "input": { "questions": [ { "question": "Ok?", "options": [ { "label": "Yes" } ] } ] } } }));
+        assert!(l.sent().is_empty(), "the elicitation is not superseded");
+        assert_eq!(l.parked.len(), 2);
+        assert_eq!(l.shown_id().as_deref(), Some("cli-e3"));
+        // An answer naming the queued question (not on screen) is dropped.
+        let mut early = option(1);
+        early.request_id = Some("cli-q".into());
+        assert!(!l.answer(early));
+        assert!(l.sent().is_empty());
+        // Answering the shown head answers it and shows the next.
+        let mut open = option(1);
+        open.request_id = Some("cli-e3".into());
+        assert!(l.answer(open));
         let sent = l.sent();
-        assert_eq!(sent.len(), 1);
         assert_eq!(sent[0]["response"]["request_id"], "cli-e3");
         assert_eq!(
             sent[0]["response"]["response"],
-            json!({ "action": "cancel" })
+            json!({ "action": "accept", "content": null })
         );
-        assert!(l.question.as_ref().unwrap().elicitation.is_none());
+        assert_eq!(l.shown_id().as_deref(), Some("cli-q"));
+        assert!(l.answer(option(1)));
+        assert_eq!(l.sent()[0]["response"]["request_id"], "cli-q");
+        assert!(l.pending().is_none());
+    }
+
+    #[test]
+    fn an_elicitation_queued_behind_an_approval_surfaces_once_it_is_decided() {
+        let mut l = Line::new(false);
+        l.feed(approval_request("cli-a1"));
+        l.feed(url_elicitation("cli-e1"));
+        assert_eq!(l.cur_mode, SessionMode::Approval);
+        assert_eq!(l.shown_id().as_deref(), Some("cli-a1"));
+        // An answer while the approval is shown is dropped.
+        assert!(!l.answer(option(1)));
+        assert!(l.decide(decide(true, None)));
+        let sent = l.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["response"]["request_id"], "cli-a1");
+        // The elicitation is the card now — never released to Responding
+        // while the CLI is still blocked on it.
+        assert_eq!(l.cur_mode, SessionMode::Question);
+        assert_eq!(l.shown_id().as_deref(), Some("cli-e1"));
+        // A decision now (no approval at the head) is dropped.
+        assert!(!l.decide(decide(true, None)));
+        assert!(l.sent().is_empty());
+        assert!(l.answer(option(2)));
+        assert_eq!(
+            l.sent()[0]["response"]["response"],
+            json!({ "action": "decline", "content": null })
+        );
+        assert!(l.pending().is_none());
+    }
+
+    #[test]
+    fn a_decision_binds_to_the_card_it_names_and_its_option() {
+        let mut l = Line::new(false);
+        l.feed(approval_request("cli-a1"));
+        l.feed(approval_request("cli-a2"));
+        // Two clients decide at once, both with an always option of the shown
+        // card: the first applies, the second names a card no longer shown.
+        let first = ManagedDecision {
+            request_id: Some("cli-a1".into()),
+            ..decide(true, Some("cli-a1:0"))
+        };
+        let second = first.clone();
+        assert!(l.decide(first));
+        assert!(!l.decide(second), "a stale decision never reaches cli-a2");
+        let sent = l.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            sent[0]["response"]["response"]["updatedPermissions"][0]["rules"][0]["ruleContent"],
+            "npm test:*"
+        );
+        assert_eq!(l.shown_id().as_deref(), Some("cli-a2"));
+        // cli-a1's option id cannot grant anything on cli-a2.
+        assert!(!l.decide(decide(true, Some("cli-a1:0"))));
+        assert!(l.sent().is_empty());
+        assert!(l.decide(decide(true, None)));
+        assert_eq!(
+            l.sent()[0]["response"]["response"],
+            json!({ "behavior": "allow", "updatedInput": { "command": "npm test" } })
+        );
+    }
+
+    #[test]
+    fn the_cli_reported_permission_mode_is_mirrored_on_the_session() {
+        let mut l = Line::new(false);
+        let mode = |l: &Line| l.store.get("sid-e").unwrap().permission_mode;
+        assert_eq!(mode(&l), None);
+        l.feed(
+            json!({ "type": "system", "subtype": "init", "session_id": "x",
+                       "permissionMode": "default", "tools": [] }),
+        );
+        assert_eq!(mode(&l).as_deref(), Some("default"));
+        // An "Allow all edits this session" grant flips the CLI's mode, which
+        // it reports on its next status frame.
+        l.feed(
+            json!({ "type": "system", "subtype": "status", "status": null,
+                       "permissionMode": "acceptEdits" }),
+        );
+        assert_eq!(mode(&l).as_deref(), Some("acceptEdits"));
+        let wire = serde_json::to_value(l.store.get("sid-e").unwrap()).unwrap();
+        assert_eq!(wire["permission_mode"], "acceptEdits");
     }
 
     #[test]
@@ -4243,8 +4517,7 @@ mod tests {
         let mut acc = UsageAcc::default();
         let mut totals = StreamTotals::default();
         let yolo = AtomicBool::new(false);
-        let mut pending_approvals: VecDeque<ParkedCanUse> = VecDeque::new();
-        let mut pending_question: Option<ParkedCanUse> = None;
+        let mut parked: VecDeque<ParkedCanUse> = VecDeque::new();
         let mut pending_controls: HashMap<String, PendingControl> = HashMap::new();
         let mut bg_tasks_active = false;
         let mut idle_suppressed = false;
@@ -4265,8 +4538,7 @@ mod tests {
             &mut acc,
             &mut totals,
             &yolo,
-            &mut pending_approvals,
-            &mut pending_question,
+            &mut parked,
             &mut pending_controls,
             &mut bg_tasks_active,
             &mut idle_suppressed,
@@ -4276,7 +4548,7 @@ mod tests {
             SessionMode::Question,
             "question should be displayed"
         );
-        assert!(pending_question.is_some(), "question should be parked");
+        assert_eq!(parked.len(), 1, "question should be parked");
 
         // 2) A parallel Bash approval arrives while the question is still open.
         handle_line(
@@ -4292,8 +4564,7 @@ mod tests {
             &mut acc,
             &mut totals,
             &yolo,
-            &mut pending_approvals,
-            &mut pending_question,
+            &mut parked,
             &mut pending_controls,
             &mut bg_tasks_active,
             &mut idle_suppressed,
@@ -4301,11 +4572,14 @@ mod tests {
 
         // The question must survive: the approval parks silently behind it and
         // re-surfaces only once the question is answered (the arx branch).
-        assert!(pending_question.is_some(), "question must stay parked");
+        assert!(
+            matches!(parked[0].kind, ParkedKind::Question),
+            "question must stay the head"
+        );
         assert_eq!(
-            pending_approvals.len(),
-            1,
-            "the Bash approval should be parked, not dropped"
+            parked.len(),
+            2,
+            "the Bash approval should be queued behind it, not dropped"
         );
         assert_eq!(
             cur_mode,
@@ -4354,8 +4628,7 @@ mod tests {
             let mut acc = UsageAcc::default();
             let mut totals = StreamTotals::default();
             let yolo = AtomicBool::new(false);
-            let mut pending_approvals: VecDeque<ParkedCanUse> = VecDeque::new();
-            let mut pending_question: Option<ParkedCanUse> = None;
+            let mut parked: VecDeque<ParkedCanUse> = VecDeque::new();
             let mut pending_controls: HashMap<String, PendingControl> = HashMap::new();
             let mut bg_tasks_active = false;
             let mut idle_suppressed = false;
@@ -4374,8 +4647,7 @@ mod tests {
                 &mut acc,
                 &mut totals,
                 &yolo,
-                &mut pending_approvals,
-                &mut pending_question,
+                &mut parked,
                 &mut pending_controls,
                 &mut bg_tasks_active,
                 &mut idle_suppressed,
@@ -4450,8 +4722,7 @@ mod tests {
         let mut acc = UsageAcc::default();
         let mut totals = StreamTotals::default();
         let yolo = AtomicBool::new(false);
-        let mut pending_approvals: VecDeque<ParkedCanUse> = VecDeque::new();
-        let mut pending_question: Option<ParkedCanUse> = None;
+        let mut parked: VecDeque<ParkedCanUse> = VecDeque::new();
         let mut pending_controls: HashMap<String, PendingControl> = HashMap::new();
         let mut bg_tasks_active = false;
         let mut idle_suppressed = false;
@@ -4460,13 +4731,11 @@ mod tests {
                    bg: &mut bool,
                    sup: &mut bool,
                    pa: &mut VecDeque<ParkedCanUse>,
-                   pq: &mut Option<ParkedCanUse>,
                    pc: &mut HashMap<String, PendingControl>,
                    acc: &mut UsageAcc,
                    totals: &mut StreamTotals| {
             handle_line(
-                value, &store, &conv, sid, &out_tx, cur_mode, acc, totals, &yolo, pa, pq, pc, bg,
-                sup,
+                value, &store, &conv, sid, &out_tx, cur_mode, acc, totals, &yolo, pa, pc, bg, sup,
             );
         };
 
@@ -4477,8 +4746,7 @@ mod tests {
             &mut cur_mode,
             &mut bg_tasks_active,
             &mut idle_suppressed,
-            &mut pending_approvals,
-            &mut pending_question,
+            &mut parked,
             &mut pending_controls,
             &mut acc,
             &mut totals,
@@ -4496,8 +4764,7 @@ mod tests {
             &mut cur_mode,
             &mut bg_tasks_active,
             &mut idle_suppressed,
-            &mut pending_approvals,
-            &mut pending_question,
+            &mut parked,
             &mut pending_controls,
             &mut acc,
             &mut totals,
@@ -4517,8 +4784,7 @@ mod tests {
             &mut cur_mode,
             &mut bg_tasks_active,
             &mut idle_suppressed,
-            &mut pending_approvals,
-            &mut pending_question,
+            &mut parked,
             &mut pending_controls,
             &mut acc,
             &mut totals,
@@ -4530,8 +4796,7 @@ mod tests {
             &mut cur_mode,
             &mut bg_tasks_active,
             &mut idle_suppressed,
-            &mut pending_approvals,
-            &mut pending_question,
+            &mut parked,
             &mut pending_controls,
             &mut acc,
             &mut totals,
@@ -4551,8 +4816,7 @@ mod tests {
             &mut cur_mode,
             &mut bg_tasks_active,
             &mut idle_suppressed,
-            &mut pending_approvals,
-            &mut pending_question,
+            &mut parked,
             &mut pending_controls,
             &mut acc,
             &mut totals,
@@ -4586,7 +4850,6 @@ mod tests {
         let mut totals = StreamTotals::default();
         let yolo = AtomicBool::new(false);
         let mut pa: VecDeque<ParkedCanUse> = VecDeque::new();
-        let mut pq: Option<ParkedCanUse> = None;
         let mut pc: HashMap<String, PendingControl> = HashMap::new();
         let mut bg = false;
         let mut sup = false;
@@ -4598,7 +4861,7 @@ mod tests {
                         totals: &mut StreamTotals| {
             handle_line(
                 &value, &store, &conv, sid, &out_tx, cur_mode, acc, totals, &yolo, &mut pa,
-                &mut pq, &mut pc, bg, sup,
+                &mut pc, bg, sup,
             );
         };
 
@@ -4926,9 +5189,18 @@ done
             raw["always_options"][0]["label"],
             "Always allow Bash(npm test:*) this session"
         );
-        // What `POST /approve {decision:"always"}` does.
-        store.set_approve_always(sid, true);
-        assert!(store.submit_managed_decision(sid, true));
+        // What `POST /approve {decision:"yes", alwaysOption}` sends.
+        let option = raw["always_options"][0]["id"].as_str().unwrap().to_owned();
+        assert_eq!(option, "cli-1:0");
+        assert!(store.submit_managed_decision(
+            sid,
+            crate::session::ManagedDecision {
+                approve: true,
+                always_option: Some(option),
+                request_id: Some("cli-1".into()),
+                ..Default::default()
+            }
+        ));
         assert!(
             settles(|| store
                 .get(sid)
@@ -4938,7 +5210,7 @@ done
         assert!(store.submit_managed_answer(
             sid,
             ManagedAnswer {
-                answers: Some(vec!["ABC-1".into()]),
+                answers: Some(vec!["ABC-1".into(), "Submit".into()]),
                 ..Default::default()
             }
         ));
@@ -5233,7 +5505,6 @@ kill "$bg" 2>/dev/null
         totals.protocol.fallback_interrupt_owed = true;
         let yolo = AtomicBool::new(false);
         let mut pa: VecDeque<ParkedCanUse> = VecDeque::new();
-        let mut pq: Option<ParkedCanUse> = None;
         let mut pc: HashMap<String, PendingControl> = HashMap::new();
         let (mut bg, mut sup) = (false, false);
         let aborted = json!({ "type": "result", "subtype": "error_during_execution",
@@ -5249,7 +5520,6 @@ kill "$bg" 2>/dev/null
             &mut totals,
             &yolo,
             &mut pa,
-            &mut pq,
             &mut pc,
             &mut bg,
             &mut sup,
@@ -5273,7 +5543,6 @@ kill "$bg" 2>/dev/null
             &mut totals,
             &yolo,
             &mut pa,
-            &mut pq,
             &mut pc,
             &mut bg,
             &mut sup,

@@ -824,7 +824,7 @@ async fn run_tui_session(
     store.register_managed_input(session_id, tx);
     // Approvals happen in the Term in this mode; accept and drop decisions so a
     // stray /approve can't wedge the caller.
-    let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
+    let (dtx, mut drx) = mpsc::unbounded_channel::<crate::session::ManagedDecision>();
     store.register_managed_decision(session_id, dtx);
     let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
 
@@ -913,7 +913,7 @@ async fn run_session(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     store.register_managed_input(session_id, tx);
-    let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
+    let (dtx, mut drx) = mpsc::unbounded_channel::<crate::session::ManagedDecision>();
     store.register_managed_decision(session_id, dtx);
     // Live model switch (POST /sessions/:id/model): Pi's RPC applies it mid-session
     // via `set_model`, so subsequent turns use the new model. The stdin is ready
@@ -984,7 +984,7 @@ async fn run_session(
                 None => break, // managed input dropped → terminated
             },
             decision = drx.recv() => match decision {
-                Some(approve) => {
+                Some(crate::session::ManagedDecision { approve, .. }) => {
                     if let Some(req) = resolve_dialog(
                         store,
                         conv,

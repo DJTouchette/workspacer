@@ -867,6 +867,12 @@ pub struct SessionState {
     /// transport-specific affordances (e.g. no Term view for `stream`).
     #[serde(default)]
     pub transport: Transport,
+    /// The permission mode the provider itself last reported (Claude stream:
+    /// `system/init` and `system/status` `permissionMode`, and a confirmed
+    /// `set_permission_mode`) — so a mode the CLI changed on its own (an
+    /// "Allow all edits this session" grant) is visible. Omitted until known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
     /// The agent's current plan / checklist, last-write-wins. Additive and
     /// back-compatible like `provider` — absent until the agent writes a plan,
     /// and omitted from the wire when empty. Fed by `SessionStore::set_plan`.
@@ -1006,6 +1012,7 @@ impl SessionState {
             status_line: None,
             provider: default_provider(),
             transport: Transport::default(),
+            permission_mode: None,
             plan: None,
             subagents: Vec::new(),
             compacting: false,

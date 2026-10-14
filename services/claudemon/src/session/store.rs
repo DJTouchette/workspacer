@@ -310,15 +310,7 @@ pub struct SessionStore {
     /// routes the user's decision here for managed sessions; the adapter's
     /// driver forwards it to the provider (OpenCode permission reply / Codex
     /// JSON-RPC approval response).
-    managed_decisions: Arc<DashMap<String, mpsc::UnboundedSender<bool>>>,
-    /// The user's note with a managed deny, taken by the adapter that answers
-    /// it (Claude stream: the `deny` message the model reads). Beside the bool
-    /// channel so providers without a deny message are unaffected.
-    managed_deny_reasons: Arc<DashMap<String, String>>,
-    /// Sessions whose next managed approve is an "always allow" (`/approve
-    /// {decision:"always"}`). Beside the bool channel, like the deny note, so
-    /// providers with no session-scoped grant just see an approve.
-    managed_always: Arc<DashMap<String, ()>>,
+    managed_decisions: Arc<DashMap<String, mpsc::UnboundedSender<ManagedDecision>>>,
     /// Live in-daemon PTY children, keyed by session_id, so daemon shutdown can
     /// kill them (they have no `kill_on_drop`, unlike the managed providers'
     /// tokio children) and their exit can be reaped. Without this, quitting the
@@ -517,6 +509,34 @@ impl ManagedInput {
     }
 }
 
+/// The user's answer to a managed session's approval card, as it travels
+/// to the driver: everything rides in ONE message so no other client's
+/// decision can pick up a flag meant for this one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ManagedDecision {
+    pub approve: bool,
+    /// The `raw.always_options[].id` the user picked ("Always allow …"):
+    /// the driver grants exactly that option, and drops the decision when the
+    /// card at the head of its queue no longer offers it. `None` is a plain
+    /// yes/no — what the legacy `decision:"always"` also is.
+    pub always_option: Option<String>,
+    /// The note given with a deny (trimmed, at most 4000 chars).
+    pub note: Option<String>,
+    /// The `raw.pending_id` of the card the user decided. A driver drops a
+    /// decision naming a card that is no longer at the head of its queue.
+    /// `None` (older clients) answers the head, as before.
+    pub request_id: Option<String>,
+}
+
+impl From<bool> for ManagedDecision {
+    fn from(approve: bool) -> Self {
+        Self {
+            approve,
+            ..Self::default()
+        }
+    }
+}
+
 /// A structural answer to a managed session's pending `AskUserQuestion` —
 /// the same vocabulary `POST /sessions/:id/answer` accepts for PTY sessions
 /// (option number, free text, or one answer per question), forwarded to the
@@ -537,6 +557,10 @@ pub struct ManagedAnswer {
     /// heuristic (`answered_input`), which is what the TUI and older clients
     /// rely on since they only send bare `answers`.
     pub answer_kinds: Option<Vec<String>>,
+    /// The `raw.pending_id` of the question card being answered. A driver
+    /// drops an answer naming a card that is no longer at the head of its
+    /// queue; `None` (older clients) answers the head, as before.
+    pub request_id: Option<String>,
 }
 
 /// A live permission-mode switch bound for a managed driver that applies
@@ -794,8 +818,6 @@ impl SessionStore {
             paste_modes: Arc::new(DashMap::new()),
             managed_inputs: Arc::new(DashMap::new()),
             managed_decisions: Arc::new(DashMap::new()),
-            managed_deny_reasons: Arc::new(DashMap::new()),
-            managed_always: Arc::new(DashMap::new()),
             ptys: Arc::new(DashMap::new()),
             generations: Arc::new(DashMap::new()),
             context_telemetry_epochs: Arc::new(AtomicU64::new(context_epoch_seed())),
@@ -1821,6 +1843,27 @@ impl SessionStore {
         Some(state)
     }
 
+    /// Record the permission mode the provider reported for this session
+    /// ([`SessionState::permission_mode`]), broadcasting only a change.
+    pub fn set_observed_permission_mode(&self, session_id: &str, mode: &str) {
+        let state = {
+            let Some(mut entry) = self.states.get_mut(session_id) else {
+                return;
+            };
+            if entry.permission_mode.as_deref() == Some(mode) {
+                return;
+            }
+            entry.permission_mode = Some(mode.to_string());
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state,
+        });
+    }
+
     /// Mark which transport drives this session. Set at spawn time (before the
     /// driver task starts) so `ingest`'s hooks guard and every snapshot see it
     /// from the session's first instant. No-op for unknown ids.
@@ -2216,7 +2259,11 @@ impl SessionStore {
 
     /// Register the approval-decision channel for a managed session. `/approve`
     /// routes the user's yes/no here (the adapter forwards it to the provider).
-    pub fn register_managed_decision(&self, session_id: &str, tx: mpsc::UnboundedSender<bool>) {
+    pub fn register_managed_decision(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<ManagedDecision>,
+    ) {
         self.managed_decisions.insert(session_id.to_string(), tx);
     }
 
@@ -2289,49 +2336,27 @@ impl SessionStore {
 
     /// Forward an approval decision to a managed session's adapter. Returns
     /// false (so the caller falls through to the Claude hook path) when this
-    /// isn't a managed session.
-    pub fn submit_managed_decision(&self, session_id: &str, approve: bool) -> bool {
+    /// isn't a managed session. A bare `bool` is a plain yes/no with no note,
+    /// option or card binding.
+    pub fn submit_managed_decision(
+        &self,
+        session_id: &str,
+        decision: impl Into<ManagedDecision>,
+    ) -> bool {
+        let decision = decision.into();
         if let Some(engine) = self.engines.bound(session_id) {
-            return engine.decide(self, session_id, approve);
+            return engine.decide(self, session_id, decision);
         }
-        self.native_submit_managed_decision(session_id, approve)
+        self.native_submit_managed_decision(session_id, decision)
     }
 
-    /// Record the note for the next managed deny on this session.
-    pub fn set_deny_reason(&self, session_id: &str, reason: &str) {
-        let reason = reason.trim();
-        if reason.is_empty() {
-            self.managed_deny_reasons.remove(session_id);
-        } else {
-            self.managed_deny_reasons
-                .insert(session_id.to_string(), reason.chars().take(4000).collect());
-        }
-    }
-
-    /// The note given with the deny being answered now, if any; taken once.
-    pub fn take_deny_reason(&self, session_id: &str) -> Option<String> {
-        self.managed_deny_reasons.remove(session_id).map(|(_, r)| r)
-    }
-
-    /// Record whether the next managed approve on this session is an
-    /// "always allow" (set before the decision is sent, cleared otherwise).
-    pub fn set_approve_always(&self, session_id: &str, always: bool) {
-        if always {
-            self.managed_always.insert(session_id.to_string(), ());
-        } else {
-            self.managed_always.remove(session_id);
-        }
-    }
-
-    /// Whether the approve being answered now asked to "always allow"; taken
-    /// once, so it can never widen a later plain approve.
-    pub fn take_approve_always(&self, session_id: &str) -> bool {
-        self.managed_always.remove(session_id).is_some()
-    }
-
-    pub(crate) fn native_submit_managed_decision(&self, session_id: &str, approve: bool) -> bool {
+    pub(crate) fn native_submit_managed_decision(
+        &self,
+        session_id: &str,
+        decision: ManagedDecision,
+    ) -> bool {
         match self.managed_decisions.get(session_id) {
-            Some(tx) => tx.send(approve).is_ok(),
+            Some(tx) => tx.send(decision).is_ok(),
             None => false,
         }
     }
@@ -2360,8 +2385,6 @@ impl SessionStore {
         // clones), so the driver's `rx.recv()` resolves to None and the loop exits.
         let existed = self.managed_inputs.remove(session_id).is_some();
         self.managed_decisions.remove(session_id);
-        self.managed_deny_reasons.remove(session_id);
-        self.managed_always.remove(session_id);
         self.managed_model.remove(session_id);
         self.managed_confirmed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
@@ -2422,8 +2445,6 @@ impl SessionStore {
     fn deregister_managed_current(&self, session_id: &str) -> bool {
         self.managed_inputs.remove(session_id);
         self.managed_decisions.remove(session_id);
-        self.managed_deny_reasons.remove(session_id);
-        self.managed_always.remove(session_id);
         self.managed_model.remove(session_id);
         self.managed_confirmed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
@@ -3818,6 +3839,7 @@ mod tests {
                 text: None,
                 answers: None,
                 answer_kinds: None,
+                request_id: None,
             },
         ));
         let got = rx2.try_recv().expect("answer reaches the live channel");
@@ -3832,6 +3854,7 @@ mod tests {
                 text: None,
                 answers: None,
                 answer_kinds: None,
+                request_id: None,
             },
         ));
     }
@@ -3871,6 +3894,7 @@ mod tests {
                 text: None,
                 answers: None,
                 answer_kinds: None,
+                request_id: None,
             },
         ));
         assert!(driver_rx.try_recv().is_err());
@@ -3903,6 +3927,7 @@ mod tests {
             text: Some(text.into()),
             answers: None,
             answer_kinds: None,
+            request_id: None,
         };
 
         // The driver's question is up; the shim then asks over it.

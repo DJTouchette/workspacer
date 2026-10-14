@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     daemon::spawn::{SpawnManagedPayload, SpawnPayload},
     session::{
-        store::{Delivery, MessageOutcome, MessageSender},
+        store::{Delivery, ManagedDecision, MessageOutcome, MessageSender},
         windows::PersistedModelSelection,
         ConversationStore, SessionStore,
     },
@@ -79,7 +79,7 @@ pub(crate) trait ExecutionEngineV1: Send + Sync {
         let _ = (delivery, sender);
         self.send(store, id, text)
     }
-    fn decide(&self, store: &SessionStore, id: &str, approve: bool) -> bool;
+    fn decide(&self, store: &SessionStore, id: &str, decision: ManagedDecision) -> bool;
     fn cancel(&self, store: &SessionStore, id: &str) -> bool;
     fn stop(&self, store: &SessionStore, id: &str) -> bool;
     fn start_pty(
@@ -217,8 +217,8 @@ impl ExecutionEngineV1 for ClaudemonEngine {
     ) -> MessageOutcome {
         store.native_submit_message_from(id, text, delivery, sender)
     }
-    fn decide(&self, store: &SessionStore, id: &str, approve: bool) -> bool {
-        store.native_submit_managed_decision(id, approve)
+    fn decide(&self, store: &SessionStore, id: &str, decision: ManagedDecision) -> bool {
+        store.native_submit_managed_decision(id, decision)
     }
     fn cancel(&self, store: &SessionStore, id: &str) -> bool {
         store.native_interrupt_managed(id)
@@ -325,8 +325,8 @@ impl ExecutionEngineV1 for BoundEngine {
             engine.send_with(store, id, text, delivery, sender)
         })
     }
-    fn decide(&self, store: &SessionStore, id: &str, approve: bool) -> bool {
-        self.call(false, |engine| engine.decide(store, id, approve))
+    fn decide(&self, store: &SessionStore, id: &str, decision: ManagedDecision) -> bool {
+        self.call(false, |engine| engine.decide(store, id, decision.clone()))
     }
     fn cancel(&self, store: &SessionStore, id: &str) -> bool {
         self.call(false, |engine| engine.cancel(store, id))
@@ -724,8 +724,8 @@ mod tests {
             );
             MessageOutcome::Sent
         }
-        fn decide(&self, _: &SessionStore, _: &str, approve: bool) -> bool {
-            self.decisions.lock().unwrap().push(approve);
+        fn decide(&self, _: &SessionStore, _: &str, decision: ManagedDecision) -> bool {
+            self.decisions.lock().unwrap().push(decision.approve);
             true
         }
         fn cancel(&self, _: &SessionStore, _: &str) -> bool {
@@ -924,8 +924,8 @@ mod tests {
             MessageOutcome::Sent
         );
         assert_eq!(messages.try_recv().unwrap(), "exact input");
-        assert!(engine.decide(&store, "native", false));
-        assert!(!decisions.try_recv().unwrap());
+        assert!(engine.decide(&store, "native", false.into()));
+        assert!(!decisions.try_recv().unwrap().approve);
         assert!(engine.cancel(&store, "native"));
         assert_eq!(interrupts.try_recv(), Ok(()));
         assert!(engine.stop(&store, "native"));
