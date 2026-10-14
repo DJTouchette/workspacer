@@ -171,6 +171,8 @@ pub async fn transcript_parent_of(
             .get("parentUuid")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        // `attachment` rows chain between turns too (seen live beside
+        // `system/stop_hook_summary`); only real messages are fork points.
         let message = matches!(
             row.get("type").and_then(Value::as_str),
             Some("user" | "assistant")
@@ -3371,8 +3373,9 @@ pub(crate) mod tests {
             json!({"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"first"}}),
             json!({"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"one"}]}}),
             // A turn's system rows chain between the reply and the next prompt.
-            json!({"type":"system","subtype":"turn_duration","uuid":"s1","parentUuid":"a1"}),
-            json!({"type":"user","uuid":"u2","parentUuid":"s1","message":{"role":"user","content":"second"}}),
+            json!({"type":"system","subtype":"stop_hook_summary","uuid":"s1","parentUuid":"a1"}),
+            json!({"type":"attachment","uuid":"t1","parentUuid":"s1"}),
+            json!({"type":"user","uuid":"u2","parentUuid":"t1","message":{"role":"user","content":"second"}}),
         ];
         let (_dir, path) = transcript_fixture(&rows);
         assert_eq!(
