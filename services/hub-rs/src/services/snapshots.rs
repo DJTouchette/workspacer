@@ -67,6 +67,17 @@ pub fn compat(mut snapshot: Value) -> Value {
     if let Some(value) = snapshot.get("tool_calls").cloned() {
         snapshot["totalToolCalls"] = value;
     }
+    // Codex extras (claudemon `session::codex_controls`). `goal` is already
+    // one camelCase word with camelCase fields.
+    for (from, to) in [
+        ("thread_name", "threadName"),
+        ("windows_sandbox", "windowsSandbox"),
+        ("collaboration_mode", "collaborationMode"),
+    ] {
+        if let Some(value) = snapshot.get(from).filter(|v| !v.is_null()).cloned() {
+            snapshot[to] = value;
+        }
+    }
     if let Some(selection) = snapshot["requested_selection"].as_object() {
         let mut mapped = json!({});
         for (from, to) in [("model", "model"), ("context_window", "contextWindow")] {
@@ -192,17 +203,24 @@ pub fn with_cwd_name(mut row: Value, names: &Value) -> Value {
     row
 }
 
-/// Lowest-precedence name: a hub-written automatic title (see
-/// `sessions::titles`). A launch label and a user's cwd rename both win, so a
-/// late title can never replace a name a person gave.
+/// Lowest-precedence names: a Codex thread's own name (`thread/name/*` — the
+/// Codex TUI's `/rename` or its automatic title), then a hub-written automatic
+/// title (see `sessions::titles`). A launch label (or `agents.rename`) and a
+/// user's cwd rename both win, so a late title can never replace a name a
+/// person gave in Workspacer.
 pub fn with_auto_title(mut row: Value) -> Value {
     let unnamed = row["label"]
         .as_str()
         .is_none_or(|label| label.trim().is_empty());
     if unnamed && row["hub"].as_str().unwrap_or("").is_empty() {
-        if let Some(title) = row["autoTitle"]["title"]
-            .as_str()
-            .filter(|title| !title.trim().is_empty())
+        let named = |value: &Value| {
+            value
+                .as_str()
+                .filter(|title| !title.trim().is_empty())
+                .map(str::to_owned)
+        };
+        if let Some(title) =
+            named(&row["thread_name"]).or_else(|| named(&row["autoTitle"]["title"]))
         {
             row["label"] = json!(title);
         }

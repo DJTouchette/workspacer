@@ -115,7 +115,7 @@ pub struct BackgroundTask {
 }
 
 impl BackgroundTask {
-    fn new(id: &str, task_type: &str, now: i64) -> Self {
+    pub fn new(id: &str, task_type: &str, now: i64) -> Self {
         Self {
             id: id.to_string(),
             task_type: task_type.to_string(),

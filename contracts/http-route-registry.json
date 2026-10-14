@@ -1122,6 +1122,81 @@
       "reason": "Every request passes the socket Host/Origin policy and identity resolution. Missing credentials are denied unless explicit guest policy permits a scoped identity; tool-tier checks remain distinct from owner authority.",
       "twin": "*",
       "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/review",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "crate::daemon::codex_extras_api::post_review"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "starts Codex's own reviewer (`review/start`) on that session's live app-server thread. agents.review is owner-tier; the target is rebuilt by both the hub and claudemon from only its typed fields (uncommittedChanges / baseBranch / commit / custom instructions), and no path or argv reaches Codex",
+      "twin": "agents.review",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/goal",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "crate::daemon::codex_extras_api::post_goal"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "sets that Codex thread's persisted goal (`thread/goal/set`: objective text, a status from Codex's own vocabulary, a positive token budget). agents.setGoal is owner-tier; nothing here is a path, argv or policy value",
+      "twin": "agents.setGoal",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/goal/clear",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "crate::daemon::codex_extras_api::post_goal_clear"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "clears that Codex thread's persisted goal (`thread/goal/clear`). agents.clearGoal is owner-tier and takes nothing but the session id",
+      "twin": "agents.clearGoal",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/thread-name",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "crate::daemon::codex_extras_api::post_thread_name"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "names that session's Codex thread (`thread/name/set`) with one bounded line of display text. agents.rename is owner-tier; the name is never a path, argv or policy value",
+      "twin": "agents.rename",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/windows-sandbox/setup",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "crate::daemon::codex_extras_api::post_windows_sandbox_setup"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "starts Codex's own Windows sandbox setup (`windowsSandbox/setupStart`) for that session's working directory, mode elevated|unelevated only. agents.windowsSandboxSetup is owner-tier; on any other host claudemon refuses it without contacting Codex",
+      "twin": "agents.windowsSandboxSetup",
+      "twinKind": "bus-method"
     }
   ],
   "vocabulary": {

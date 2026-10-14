@@ -1,5 +1,6 @@
 {
   "methods": [
+    "agents.clearGoal",
     "agents.close",
     "agents.dispatchPrepare",
     "agents.dispatchReplay",
@@ -7,11 +8,15 @@
     "agents.list",
     "agents.notifyWhen",
     "agents.orphans",
+    "agents.rename",
     "agents.reparent",
     "agents.reportProgress",
+    "agents.review",
     "agents.sendMessage",
+    "agents.setGoal",
     "agents.spawn",
     "agents.summarizeStatus",
+    "agents.windowsSandboxSetup",
     "analytics.recent",
     "analytics.summary",
     "app.getCwd",
@@ -354,6 +359,51 @@
       "Disposition": "loopback-confined",
       "Reason": "builds a cross-provider handoff brief and PERSISTS it under ~/.workspacer/handoffs/. No bus capability writes handoff files; the nearest read (sessions.conversation) is view-tier and read-only, so the write half exists only here",
       "Twin": "sessions.conversation",
+      "TwinKind": "bus-method",
+      "Gate": ""
+    },
+    {
+      "Server": "claudemon-api",
+      "Pattern": "/sessions/:id/review",
+      "Disposition": "loopback-confined",
+      "Reason": "starts Codex's own reviewer (`review/start`) on that session's live app-server thread. agents.review is owner-tier; the target is rebuilt by both the hub and claudemon from only its typed fields (uncommittedChanges / baseBranch / commit / custom instructions), and no path or argv reaches Codex",
+      "Twin": "agents.review",
+      "TwinKind": "bus-method",
+      "Gate": ""
+    },
+    {
+      "Server": "claudemon-api",
+      "Pattern": "/sessions/:id/goal",
+      "Disposition": "loopback-confined",
+      "Reason": "sets that Codex thread's persisted goal (`thread/goal/set`: objective text, a status from Codex's own vocabulary, a positive token budget). agents.setGoal is owner-tier; nothing here is a path, argv or policy value",
+      "Twin": "agents.setGoal",
+      "TwinKind": "bus-method",
+      "Gate": ""
+    },
+    {
+      "Server": "claudemon-api",
+      "Pattern": "/sessions/:id/goal/clear",
+      "Disposition": "loopback-confined",
+      "Reason": "clears that Codex thread's persisted goal (`thread/goal/clear`). agents.clearGoal is owner-tier and takes nothing but the session id",
+      "Twin": "agents.clearGoal",
+      "TwinKind": "bus-method",
+      "Gate": ""
+    },
+    {
+      "Server": "claudemon-api",
+      "Pattern": "/sessions/:id/thread-name",
+      "Disposition": "loopback-confined",
+      "Reason": "names that session's Codex thread (`thread/name/set`) with one bounded line of display text. agents.rename is owner-tier; the name is never a path, argv or policy value",
+      "Twin": "agents.rename",
+      "TwinKind": "bus-method",
+      "Gate": ""
+    },
+    {
+      "Server": "claudemon-api",
+      "Pattern": "/sessions/:id/windows-sandbox/setup",
+      "Disposition": "loopback-confined",
+      "Reason": "starts Codex's own Windows sandbox setup (`windowsSandbox/setupStart`) for that session's working directory, mode elevated|unelevated only. agents.windowsSandboxSetup is owner-tier; on any other host claudemon refuses it without contacting Codex",
+      "Twin": "agents.windowsSandboxSetup",
       "TwinKind": "bus-method",
       "Gate": ""
     },

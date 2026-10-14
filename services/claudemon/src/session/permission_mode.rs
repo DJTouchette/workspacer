@@ -99,6 +99,10 @@ pub enum PermissionSwitchError {
     /// (approvals are skipped at the source, so un-skipping them needs a
     /// restart). Reports the mode the session stays in.
     ManagedUnavailable { current: &'static str },
+    /// Codex plan mode was asked for but this session cannot do it: plan mode
+    /// needs the `codex.experimentalApi` opt-in and a Codex build whose
+    /// `collaborationMode/list` offers a plan preset.
+    PlanUnavailable,
 }
 
 #[cfg(test)]

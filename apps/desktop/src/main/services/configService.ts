@@ -197,6 +197,11 @@ interface Config {
      *  Codex TUI in a terminal plus the structured GUI on one shared thread).
      *  Per-spawn overridable in the spawn dialog. */
     transport: 'pty' | 'stream';
+    /** Opt in to Codex's EXPERIMENTAL app-server API for new Codex sessions
+     *  (`initialize.capabilities.experimentalApi`). Unlocks stopping and
+     *  listing background terminals and plan (collaboration) mode. Off by
+     *  default; absent reads as off. */
+    experimentalApi?: boolean;
   };
   /** Account rate-limit reporting. Its own section rather than a key under
    *  `claude`, because the reading it governs is cross-provider: the Overview

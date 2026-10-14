@@ -340,6 +340,8 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
         }
         _ => {}
     }
+    // Review-mode and proposed-plan items (see `codex_extras`).
+    out.extend(super::codex_extras::translate(method, params));
     out
 }
 
@@ -2212,7 +2214,7 @@ impl Drop for OwnedAppServer {
     }
 }
 
-struct DriverEvidence {
+pub(super) struct DriverEvidence {
     session: String,
     generation: u64,
     pid: Option<u32>,
@@ -2226,7 +2228,7 @@ struct DriverEvidence {
 }
 
 impl DriverEvidence {
-    fn new(session: &str, generation: u64) -> Self {
+    pub(super) fn new(session: &str, generation: u64) -> Self {
         Self {
             session: session.to_owned(),
             generation,
@@ -2743,7 +2745,7 @@ async fn write_prompt(tui: &Arc<pty::PtyHandle>, text: &str) {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_session(
+pub(super) async fn run_session(
     store: &SessionStore,
     conv: &ConversationStore,
     session_id: &str,
@@ -2835,10 +2837,26 @@ async fn run_session(
     writer.spawn(write_rpc(ws_write, out_rx));
 
     // The app server requires an `initialize` handshake before any other request.
-    let _ = out_tx.send(json!({
+    // Codex extras (background terminals, plan mode, review, goals, thread
+    // name, Windows sandbox) — see `codex_extras`. The experimental opt-in is
+    // the only thing that adds `capabilities` to `initialize`.
+    let collaboration =
+        super::codex_extras::collaboration_seed(model.as_deref(), effort.as_deref());
+    let mut aux = super::codex_extras::Extras::new(
+        session_id,
+        cwd,
+        extras.codex_experimental,
+        collaboration.clone(),
+    );
+    let mut initialize = json!({
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": { "clientInfo": { "name": "workspacer", "version": "0.1" } }
-    }));
+    });
+    if let Some(capabilities) = aux.initialize_capabilities() {
+        initialize["params"]["capabilities"] = capabilities;
+    }
+    let _ = out_tx.send(initialize);
+    aux.startup(&out_tx);
     // This session's Workspacer skills, before any thread exists. The setting is
     // server-wide, and this app-server serves only this session — so a hybrid
     // TUI attaching over `--remote` sees the same skills.
@@ -2846,9 +2864,32 @@ async fn run_session(
         let _ = out_tx.send(request);
     }
 
+    // The extras' own channels: the HTTP API's review/goal/name/sandbox
+    // controls, and `sessions.taskStop` for background terminals.
+    let (ctl_tx, mut ctl_rx) =
+        mpsc::unbounded_channel::<crate::session::codex_controls::CodexControl>();
+    let (stop_tx, mut stop_rx) =
+        mpsc::unbounded_channel::<crate::session::store::ManagedTaskStop>();
+    let mut ctl_open = true;
+    let mut stop_open = true;
+
     #[cfg(test)]
     evidence.before_registration();
     let registration = store.with_generation(session_id, evidence.generation, || {
+        store.register_codex_control(
+            session_id,
+            crate::session::codex_controls::CodexControlHandle {
+                tx: ctl_tx,
+                collaboration: collaboration.clone(),
+            },
+        );
+        store.register_managed_task_control(
+            session_id,
+            crate::session::store::ManagedTaskControl {
+                provider_pid: None,
+                stop: stop_tx,
+            },
+        );
         // ONE prompt channel carrying each send's delivery (`steer`/`now`),
         // so messages reach the driver in the order they were sent.
         let (tx, rx) = mpsc::unbounded_channel::<ManagedPrompt>();
@@ -2888,7 +2929,8 @@ async fn run_session(
         // It shares `yolo_live` with the store, so a live `/permission-mode` flip
         // moves the REAL sandbox with the adapter's auto-accept instead of only
         // half of it.
-        let policy = TurnPolicy::new(headless, yolo_live.clone());
+        let policy =
+            TurnPolicy::new(headless, yolo_live.clone()).with_collaboration(collaboration.clone());
 
         // Hybrid: the native TUI OWNS the thread — bare `codex --remote` creates and
         // runs it (a real, "running", resumable rollout) — then we rejoin it over
@@ -2932,6 +2974,7 @@ async fn run_session(
         );
         return Ok(());
     };
+    aux.watch_yolo(policy.yolo.clone());
 
     let mut thread_id: Option<String> = resume_thread;
     // Whether our `thread/resume` has actually taken (we're receiving the thread's
@@ -3044,6 +3087,14 @@ async fn run_session(
                             }
                             continue;
                         }
+                        // Responses to the extras' own requests never reach the chat path.
+                        match store.with_generation(session_id, evidence.generation, || {
+                            aux.intercept(&value, store, conv, &out_tx, thread_id.as_deref())
+                        }) {
+                            None => break 'driver DriverExit::Superseded,
+                            Some(true) => continue,
+                            Some(false) => {}
+                        }
                         if let Some(method) = value.get("method").and_then(Value::as_str) {
                             history.observe(method, value.get("params").unwrap_or(&Value::Null));
                         }
@@ -3054,6 +3105,9 @@ async fn run_session(
                             &mut pending_switch, headless,
                         ));
                         if applied.is_none() { break 'driver DriverExit::Superseded; }
+                        if store.with_generation(session_id, evidence.generation, || {
+                            aux.observe(&value, store, conv, &out_tx, thread_id.as_deref(), subscribed)
+                        }).is_none() { break 'driver DriverExit::Superseded; }
                         if subscribed && !readiness_logged {
                             readiness_logged = true;
                             tracing::info!(session = %session_id, provider = "codex", stage = "thread_subscribed",
@@ -3172,6 +3226,14 @@ async fn run_session(
                 if let Some(control) = control {
                     history.act(control, thread_id.as_deref().filter(|_| subscribed), &out_tx, &mut req_id);
                 }
+            },
+            control = ctl_rx.recv(), if ctl_open => match control {
+                Some(control) => aux.control(control, &out_tx, thread_id.as_deref().filter(|_| subscribed)),
+                None => ctl_open = false,
+            },
+            stop = stop_rx.recv(), if stop_open => match stop {
+                Some(stop) => aux.stop_task(stop, &out_tx, thread_id.as_deref().filter(|_| subscribed)),
+                None => stop_open = false,
             },
             result = writer.join_next() => break result.and_then(Result::ok).unwrap_or(DriverExit::WriterTaskFailed),
             status = child.exited() => {
@@ -3760,6 +3822,9 @@ struct TurnPolicy {
     headless: bool,
     yolo: Arc<AtomicBool>,
     engaged: Arc<AtomicBool>,
+    /// Plan-mode state (`collaborationMode`, experimental opt-in) — see
+    /// `codex_extras::stamp_turn`. Rides on hybrid turns too.
+    collaboration: Option<Arc<crate::session::codex_controls::CollaborationShared>>,
 }
 
 impl TurnPolicy {
@@ -3769,7 +3834,16 @@ impl TurnPolicy {
             headless,
             yolo,
             engaged,
+            collaboration: None,
         }
+    }
+
+    fn with_collaboration(
+        mut self,
+        collaboration: Arc<crate::session::codex_controls::CollaborationShared>,
+    ) -> Self {
+        self.collaboration = Some(collaboration);
+        self
     }
 
     /// Is the adapter currently auto-accepting approval requests?
@@ -3813,6 +3887,7 @@ fn turn_start_request(id: u64, thread_id: &str, text: &str, policy: &TurnPolicy)
         params["sandboxPolicy"] = sandbox;
         params["approvalPolicy"] = json!(approval);
     }
+    super::codex_extras::stamp_turn(&mut params, policy.collaboration.as_deref());
     json!({ "jsonrpc": "2.0", "id": id, "method": "turn/start", "params": params })
 }
 

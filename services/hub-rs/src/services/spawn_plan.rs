@@ -329,6 +329,11 @@ pub fn resolve(
         }
         if provider == "codex" {
             request["transport"] = json!(transport);
+            // Opt-in only (default off): Codex's experimental app-server API
+            // — background-terminal stop/list and plan (collaboration) mode.
+            if config["codex"]["experimentalApi"] == true {
+                request["codex_experimental_api"] = json!(true);
+            }
             if let Some(profile) = profile.filter(|p| !p.preset.is_empty()) {
                 extras.extend(["-p".into(), profile.preset.clone()]);
             }
@@ -506,4 +511,46 @@ pub fn resolve(
         full_access: skip,
         mcp_item_ids,
     })
+}
+
+#[cfg(test)]
+mod codex_experimental_tests {
+    use super::resolve;
+    use serde_json::json;
+
+    #[test]
+    fn codex_experimental_api_is_opt_in_and_codex_only() {
+        let root = tempfile::tempdir().unwrap();
+        let plan = |provider: &str, config: serde_json::Value| {
+            resolve(
+                &json!({"provider":provider,"cwd":root.path()}),
+                &config,
+                None,
+                root.path(),
+                "fixture",
+                false,
+            )
+            .unwrap()
+            .request
+        };
+        assert!(
+            plan("codex", json!({}))
+                .get("codex_experimental_api")
+                .is_none()
+        );
+        assert!(
+            plan("codex", json!({"codex":{"experimentalApi":"yes"}}))
+                .get("codex_experimental_api")
+                .is_none()
+        );
+        assert_eq!(
+            plan("codex", json!({"codex":{"experimentalApi":true}}))["codex_experimental_api"],
+            true
+        );
+        assert!(
+            plan("claude", json!({"codex":{"experimentalApi":true}}))
+                .get("codex_experimental_api")
+                .is_none()
+        );
+    }
 }
