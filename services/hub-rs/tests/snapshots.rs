@@ -492,3 +492,36 @@ fn shipping_mobile_reads_are_backed_by_production_snapshot_and_metadata_projecti
     let remote = json!({"session_id":"s1","cwd":"/remote","hub":"peer"});
     assert_eq!(metadata.enrich(remote.clone()), remote);
 }
+
+#[test]
+fn live_provider_status_projects_to_camel_case_and_stays_absent_when_unreported() {
+    let row = compat(json!({"session_id":"s1",
+        "message_receipts":[{"uuid":"u1","state":"started","at":5}],
+        "mcp_servers":[{"name":"w","status":"failed","error":"boom"}],
+        "active_hooks":[{"id":"h","name":"Stop","event":"Stop","started_at":7}],
+        "fast_mode":"cooldown","fast_mode_disabled_reason":"free"}));
+    assert_eq!(
+        row["messageReceipts"],
+        json!([{"uuid":"u1","state":"started","at":5}])
+    );
+    assert_eq!(
+        row["mcpServers"],
+        json!([{"name":"w","status":"failed","error":"boom"}])
+    );
+    assert_eq!(
+        row["activeHooks"],
+        json!([{"id":"h","name":"Stop","event":"Stop","startedAt":7}])
+    );
+    assert_eq!(row["fastMode"], "cooldown");
+    assert_eq!(row["fastModeDisabledReason"], "free");
+    let bare = compat(json!({"session_id":"s1"}));
+    for key in [
+        "messageReceipts",
+        "mcpServers",
+        "activeHooks",
+        "fastMode",
+        "fastModeDisabledReason",
+    ] {
+        assert!(bare.get(key).is_none(), "{key}");
+    }
+}

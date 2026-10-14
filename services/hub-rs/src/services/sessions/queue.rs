@@ -149,8 +149,14 @@ impl Sessions {
     /// human who queued it (no sending session), with `delivery` honoured.
     async fn deliver(&self, id: &str, entry: Entry, delivery: SendDelivery) -> Delivery {
         classify(
-            self.send_message(id, Some(&entry.text), delivery, None, None)
-                .await,
+            self.send_message(
+                id,
+                Some(&entry.text),
+                delivery,
+                None,
+                entry.message_uuid.as_deref(),
+            )
+            .await,
         )
     }
 
@@ -178,6 +184,11 @@ impl Sessions {
         let Some(row) = self.rows.read().unwrap().get(id).cloned() else {
             return;
         };
+        // A delivery receipt for the uncertain send's own uuid settles it
+        // (never resends it, and never lifts a pause).
+        if self.queue.confirm(id).await {
+            self.queue_changed(id).await;
+        }
         if self
             .queue
             .flush(id, &row, |entry| {

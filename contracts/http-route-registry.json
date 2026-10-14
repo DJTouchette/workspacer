@@ -274,6 +274,21 @@
     },
     {
       "server": "claudemon-api",
+      "pattern": "/sessions/:id/fast-mode",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_fast_mode"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "turns Claude fast mode on or off through the CLI's own apply_flag_settings {fastMode} control request (applied from the next turn). claude.setFastMode is operator-tier like claude.setEffort; the only caller value is the boolean `enabled`",
+      "twin": "claude.setFastMode",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
       "pattern": "/sessions/:id/message",
       "file": "services/claudemon/src/daemon/api.rs",
       "verbs": {
@@ -285,6 +300,36 @@
       "disposition": "loopback-confined",
       "reason": "the settle+verify flush send path — injects a prompt into a running agent. agents.sendMessage is TRIAGE-tier, so a scoped credential can already do this over the bus",
       "twin": "agents.sendMessage",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/mcp-reconnect",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_mcp_reconnect"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "reconnects one MCP server the session already lists (Claude mcp_reconnect; Codex reloads its MCP configuration). claude.mcpReconnect is TRIAGE-tier like sessions.taskStop: it repairs a connection the agent already has and adds no server",
+      "twin": "claude.mcpReconnect",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/mcp-status",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_mcp_status"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "asks the provider for its MCP server status (Claude mcp_status, Codex mcpServerStatus/list) and refreshes the snapshot's mcp_servers. sessions.mcpStatus is VIEW-tier: a read with no caller value beyond the session id",
+      "twin": "sessions.mcpStatus",
       "twinKind": "bus-method"
     },
     {

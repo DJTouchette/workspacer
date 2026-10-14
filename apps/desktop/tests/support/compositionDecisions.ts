@@ -770,6 +770,25 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'claude.mcpReconnect': {
+    reason:
+      "reconnects one MCP server the session already lists, through the provider's own reconnect (Claude `mcp_reconnect`, Codex `config/mcpServer/reload`). It repairs a connection the agent already has: it adds no server, writes no config and takes no path, argv or policy value. `server` must name a server on the session's own row",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['server'],
+      },
+    ],
+  },
+  'claude.setFastMode': {
+    reason:
+      "turns fast mode on or off through the CLI's own `apply_flag_settings {fastMode}`, from the next turn. The only value is the boolean `enabled`; like the model and effort it is a parameter of generation that no guard consults. NOTHING HERE IS MACHINE-CHECKED beyond the boolean",
+    witnesses: [
+      {
+        kind: 'none',
+      },
+    ],
+  },
   'claude.signal': {
     reason:
       'sends an interrupt/stop signal to a running agent. It can only ever STOP work; nothing consults it. NOTHING HERE IS MACHINE-CHECKED: the method carries no classified value and no guard names it, so this sentence is the whole of the evidence',
@@ -1620,6 +1639,13 @@ export const parameterDecisions: Record<
         'delivered structurally only for managed providers. A Claude PTY request that includes effort is refused before queue/persistence mutation because its daemon-built `/model` command cannot apply effort; callers must use claude.setEffort, whose separate `/effort` message path genuinely delivers it',
     },
   },
+  'claude.mcpReconnect': {
+    server: {
+      kind: 'id',
+      reason:
+        "names one MCP server the session's own row already lists; claudemon refuses any other name, and it is never a path, a command or a config value",
+    },
+  },
   'claude.setEffort': {
     effort: {
       kind: 'shell',
@@ -1727,11 +1753,13 @@ export const actors: string[] = [
   'claude.gate',
   'claude.handoffAgentBrief',
   'claude.handoffBrief',
+  'claude.mcpReconnect',
   'claude.profiles.add',
   'claude.profiles.remove',
   'claude.profiles.update',
   'claude.sessionsForDir',
   'claude.setEffort',
+  'claude.setFastMode',
   'claude.setModel',
   'claude.setPermissionMode',
   'claude.signal',

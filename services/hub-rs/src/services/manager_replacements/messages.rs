@@ -291,28 +291,26 @@ pub async fn send_engine_with(
         },
     };
     let mut stamped = None;
-    let outcome = match tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        engine.request(command),
-    )
-    .await
-    {
-        Ok(Ok(reply)) => {
-            stamped = reply["message_uuid"].as_str().map(str::to_owned);
-            SendOutcome::Accepted
-        }
-        Ok(Err(error)) => {
-            if let Some(rejected) = error.downcast_ref::<CommandRejected>() {
-                SendOutcome::Rejected {
-                    status: rejected.status,
-                    reason: rejected.message.clone(),
-                }
-            } else {
-                SendOutcome::Uncertain(error.to_string())
+    let outcome =
+        match tokio::time::timeout(std::time::Duration::from_secs(15), engine.request(command))
+            .await
+        {
+            Ok(Ok(reply)) => {
+                stamped = reply["message_uuid"].as_str().map(str::to_owned);
+                SendOutcome::Accepted
             }
-        }
-        Err(_) => SendOutcome::Uncertain("Daemon message acknowledgement timed out".into()),
-    };
+            Ok(Err(error)) => {
+                if let Some(rejected) = error.downcast_ref::<CommandRejected>() {
+                    SendOutcome::Rejected {
+                        status: rejected.status,
+                        reason: rejected.message.clone(),
+                    }
+                } else {
+                    SendOutcome::Uncertain(error.to_string())
+                }
+            }
+            Err(_) => SendOutcome::Uncertain("Daemon message acknowledgement timed out".into()),
+        };
     if let Some(source) = &source_request {
         inbox.unwrap().finish_delivery(
             source["requestId"].as_str().unwrap_or(""),

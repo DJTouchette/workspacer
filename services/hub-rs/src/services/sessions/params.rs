@@ -8,6 +8,7 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
         "claude.approve" => &["reason"],
         "agents.sendMessage" => &["fromSessionId"],
         "claude.answer" => &["text"],
+        "claude.mcpReconnect" => &["server"],
         _ => &[],
     };
     for key in texts {
@@ -62,6 +63,9 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
             .is_some_and(|value| !value.is_null() && value.as_u64().is_none())
     {
         bail!("limit must be a non-negative integer");
+    }
+    if method == "claude.setFastMode" && !params.get("enabled").is_some_and(Value::is_boolean) {
+        bail!("enabled must be a boolean");
     }
     if method == "claude.gate"
         && params

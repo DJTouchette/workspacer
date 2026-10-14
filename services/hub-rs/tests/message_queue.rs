@@ -354,6 +354,74 @@ async fn run(root: PathBuf) {
         snapshot(&client, &id).await["mode"] == "question"
     })
     .await;
+    // Live provider status rides the row: delivery receipts, and MCP /
+    // fast-mode controls through the bus (the fake answers controls while a
+    // question is open, not while it holds a turn).
+    until("delivery receipt on the row", async || {
+        snapshot(&client, &id).await["messageReceipts"]
+            .as_array()
+            .is_some_and(|receipts| receipts.iter().any(|r| r["state"] == "started"))
+    })
+    .await;
+    let status = client
+        .call("sessions.mcpStatus", json!({"sessionId":id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        status,
+        json!({"ok":true,"mcpServers":[{"name":"fixture-mcp","status":"connected"}]})
+    );
+    until("mcp servers on the row", async || {
+        snapshot(&client, &id).await["mcpServers"][0]["name"] == "fixture-mcp"
+    })
+    .await;
+    assert_eq!(
+        client
+            .call(
+                "claude.mcpReconnect",
+                json!({"sessionId":id,"server":"fixture-mcp"})
+            )
+            .await
+            .unwrap(),
+        json!({"ok":true,"server":"fixture-mcp"})
+    );
+    assert!(
+        client
+            .call(
+                "claude.mcpReconnect",
+                json!({"sessionId":id,"server":"not-listed"})
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        client
+            .call("claude.setFastMode", json!({"sessionId":id,"enabled":true}))
+            .await
+            .unwrap(),
+        json!({"ok":true,"enabled":true})
+    );
+    assert!(
+        client
+            .call(
+                "claude.setFastMode",
+                json!({"sessionId":id,"enabled":"yes"})
+            )
+            .await
+            .is_err()
+    );
+    // The first turn's result reported the CLI's own fast-mode state, and its
+    // receipt completed.
+    let row = snapshot(&client, &id).await;
+    assert_eq!(row["fastMode"], "off", "{row}");
+    assert!(
+        row["messageReceipts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["state"] == "completed"),
+        "{row}"
+    );
     assert_eq!(
         texts(&snapshot(&client, &id).await["queuedMessages"]),
         ["second edited hold:second"]
