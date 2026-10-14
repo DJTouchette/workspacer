@@ -98,12 +98,12 @@ impl Controls {
         Ok(())
     }
     async fn provider(&self, id: &str) -> String {
-        self.route(id).await.0
+        self.provider_transport(id).await.0
     }
     /// `(provider, transport)` for a session: the live row first, then the
     /// daemon's own row. Unknown provider reads as Claude and unknown
     /// transport as PTY, the daemon's legacy defaults.
-    async fn route(&self, id: &str) -> (String, String) {
+    async fn provider_transport(&self, id: &str) -> (String, String) {
         let field = |row: &Value, key: &str| {
             row[key]
                 .as_str()
@@ -220,7 +220,7 @@ impl Controls {
                 if effort.is_empty() {
                     return Ok(failed("requires a session and an effort level"));
                 }
-                let (provider, transport) = self.route(id).await;
+                let (provider, transport) = self.provider_transport(id).await;
                 let response = self
                     .engine
                     .request(effort_command(&provider, &transport, id, effort))
