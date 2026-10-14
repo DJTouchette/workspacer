@@ -232,6 +232,27 @@ impl Lifecycle {
         })?;
         Ok(changed)
     }
+    /// Record a person's name for `session` (`agents.rename`) as its launch
+    /// label — the top of the label precedence, so it also ends any pending
+    /// automatic title. Any phase and generation: a name is not a live control.
+    pub async fn note_label(&self, session: &str, label: &str) -> Result<bool> {
+        let _operation = self.operations.lock().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(false);
+        }
+        let mut changed = false;
+        self.update(|rows| {
+            let Some(row) = rows.get_mut(session) else {
+                return Ok(());
+            };
+            if row.metadata["label"].as_str() != Some(label) {
+                row.metadata["label"] = json!(label);
+                changed = true;
+            }
+            Ok(())
+        })?;
+        Ok(changed)
+    }
     /// The pending automatic-title request for `session`, when one is owed:
     /// `(generation, provider, opening request)`. Only a launch that opted in
     /// with no user label carries one (see `spawn_plan`).

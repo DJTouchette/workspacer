@@ -92,12 +92,20 @@ impl Sessions {
         if !utilities.titles_enabled() {
             return None;
         }
-        let mode = self
-            .rows
-            .read()
-            .unwrap()
-            .get(&id)
-            .and_then(|row| row["mode"].as_str().map(str::to_owned))?;
+        let (mode, thread_named) = self.rows.read().unwrap().get(&id).map(|row| {
+            (
+                row["mode"].as_str().map(str::to_owned),
+                row["thread_name"]
+                    .as_str()
+                    .is_some_and(|name| !name.trim().is_empty()),
+            )
+        })?;
+        let mode = mode?;
+        // A Codex thread that already has its own name (the TUI's /rename or
+        // its automatic title) outranks the hub's title anyway: no model call.
+        if thread_named {
+            return None;
+        }
         let stopped = mode == "stopped";
         if !matches!(mode.as_str(), "input" | "approval" | "question" | "stopped") {
             return None;
@@ -157,13 +165,17 @@ impl Sessions {
             .await
         {
             Ok(true) => {
-                let _mutation = self.mutations.lock().await;
-                let row = self.rows.read().unwrap().get(id).cloned();
-                if let Some(row) = row {
-                    if let Err(error) = self.publish(row).await {
-                        eprintln!("title: snapshot publish failed for {id}: {error}");
+                {
+                    let _mutation = self.mutations.lock().await;
+                    let row = self.rows.read().unwrap().get(id).cloned();
+                    if let Some(row) = row {
+                        if let Err(error) = self.publish(row).await {
+                            eprintln!("title: snapshot publish failed for {id}: {error}");
+                        }
                     }
                 }
+                // A Codex thread with no name of its own takes the title too.
+                self.name_codex_thread(id).await;
             }
             // Superseded: resumed, renamed or already named. Drop silently.
             Ok(false) => {}

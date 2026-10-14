@@ -394,6 +394,116 @@ A requested model on a spawn-tool argument is not proof of a child’s configure
 model. Preserve the distinction tested by the adapter. Child conversation replay
 uses known parent/child membership before reading the rollout by thread ID.
 
+### Codex extras (background terminals, plan mode, review, goals, names, Windows sandbox)
+
+`providers/codex_extras.rs` rides the ws driver loop beside the chat path. Its
+requests use string ids `wks-extras-<n>`; `Extras::intercept` consumes their
+responses before `handle_message`, `Extras::observe` reads every message after
+it. Every method is optional. Real Codex answers a method it does not know
+with `-32600 "Invalid request: unknown variant `X`, expected one of …"` (its
+whole method list); `-32601` / "method not found" is treated the same, and
+"requires experimentalApi capability" names the opt-in. Such an error marks the
+feature unavailable, or is returned to the HTTP caller as text ("this Codex
+build does not support <method>", "<method> needs the codex.experimentalApi
+opt-in"); any other Codex error is relayed clipped to 300 bytes. Codex 0.153.4
+already has every method used here (checked with `generate-json-schema
+--experimental`). Nothing waits on a reply inside the loop, so a missing method
+can never wedge a session. Bootstrap results (id 2 resume, id 101 start) are
+read only when they carry a `thread`, and id 101 only once.
+
+**Experimental opt-in.** Config `codex.experimentalApi: true` → spawn payload
+`codex_experimental_api: true` → `initialize.params.capabilities =
+{experimentalApi: true}`. Only these need it: `thread/backgroundTerminals/*`,
+`collaborationMode/list`, and `turn/start.collaborationMode`. Default off.
+
+**Background terminals.** A `commandExecution` item with `processId` and
+`source: "unifiedExecStartup"` (or no source) is tracked. It becomes a
+`background_task_list` row (`id: "codex-<processId>"`,
+`taskType: "local_bash"`, `description` = command, `toolUseId` = item id) when
+it is still running at `turn/completed`, when `terminalInteraction` (or a
+`unifiedExecInteraction` item) targets it, or when
+`thread/backgroundTerminals/list` (opt-in, sent after each turn) lists it.
+`item/commandExecution/outputDelta` feeds a daemon-owned log under the user's
+local data dir — `<data_local>/workspacer/codex-terminals/<session>/<task>.output`
+(`~/.local/share/…` on Linux, `%LOCALAPPDATA%\…` on Windows), see
+`providers/codex_terminal_logs.rs` — so `sessions.taskOutput` reads it. Unix:
+dirs `0700` and must be the user's own real directory, files `0600`,
+`create_new` + `O_NOFOLLOW`. Bounds: 256 KiB buffered before promotion, 8 MiB per
+log, 32 MiB per session. An evicted row loses its log, the driver's end removes
+the session dir, and daemon start sweeps dirs untouched for 7 days. The
+terminal's `item/completed` closes the row (`completed`/`failed`,
+`summary: "exit code N"`). `sessions.taskStop` sends
+`thread/backgroundTerminals/terminate {threadId, processId}` (opt-in; otherwise
+502 naming the opt-in) and marks the row `stopped`. For managed providers,
+`background_tasks` = running subagents + running task rows. Background terminals
+never move the session mode.
+
+**Plan mode.** When `collaborationMode/list` offers a `mode: "plan"` preset,
+the snapshot carries `collaboration_mode: "default"` and `/permission-mode`
+accepts `plan` for a Codex ws session (409 `PlanUnavailable` without the
+preset; other managed sessions keep the 400 ask/yolo vocabulary). Plan rides
+BESIDE the approval posture: a `plan` switch keeps the ask/yolo flag and
+answers `{ok, mode: "ask"|"yolo", collaborationMode: "plan"}`, so the hub's
+`livePermissionMode` stays the posture and a UI shows both (posture from
+`livePermissionMode`, plan from `collaborationMode`). `ask`/`yolo` leave plan.
+Codex persists the mode with the thread: a resume result's `collaborationMode`
+and every `thread/settings/updated.threadSettings.collaborationMode` (ours or a
+TUI change) re-seed the state, so a thread restored in plan stays in plan and
+leaving it sends `mode: "default"` explicitly. Without the opt-in a thread the
+TUI put in plan still shows `collaboration_mode: "plan"`. Every GUI `turn/start` then carries `collaborationMode: {mode:
+"plan", settings: {model, reasoning_effort: <preset's>, developer_instructions:
+null}}`. After `ask`/`yolo`, turns carry `mode: "default"` with the thread's
+effort. The model comes from the spawn, the thread/start/resume result, or
+`thread/settings/updated`. With no known model, the field is skipped. A
+completed `plan` item becomes assistant text: `"\n\n**Proposed plan**\n\n<text>"`.
+`item/plan/delta` is not rendered.
+
+**Review.** `POST /sessions/:id/review {target, delivery?: "inline"}` →
+`review/start {threadId, target}`. Inline only: detached is deprecated in 0.159
+and its findings land on another thread. `target` is rebuilt from typed
+fields: `uncommittedChanges`, `baseBranch{branch}` (not starting with `-`), `commit{sha(hex), title?}`,
+or `custom{instructions}`. `enteredReviewMode` (started) → notice
+`"Codex review started: <review>"`. `exitedReviewMode` (completed) → notice
+`"Codex review finished"` + assistant text = Codex's rendered review.
+
+**Goals.** After subscribing, the driver sends `thread/goal/get`.
+`thread/goal/updated|cleared` (own thread only) keep snapshot
+`goal: {objective, status, tokenBudget?, tokensUsed?, timeUsedSeconds?}` in step.
+`POST /sessions/:id/goal {objective?, status?, tokenBudget?}`: `tokenBudget`
+null clears it, absent leaves it alone. `POST /sessions/:id/goal/clear`.
+
+**Thread name.** Snapshot `thread_name` comes from the resume/start result's
+`thread.name` and from `thread/name/updated`. `POST /sessions/:id/thread-name
+{name}` → `thread/name/set`. The hub ranks label sources: launch label
+(`agents.rename`) > cwd rename > `thread_name` > hub auto-title. A hub auto-title
+also names a Codex thread that has no name yet, and no title model call is
+made for a Codex thread that already has a name.
+
+**Windows sandbox** (Windows hosts only; `cfg!(windows)`). `windowsSandbox/readiness`
+is sent right after `initialize` → snapshot `windows_sandbox: {ready, status,
+detail?}`. A not-ready status and `windows/worldWritableWarning` (which sets
+`detail`) each post a notice at most once per session, and only when the
+session is not bypassed (yolo runs outside Codex's sandbox). `POST /sessions/:id/windows-sandbox/setup
+{mode?: elevated|unelevated}` (default elevated) →
+`windowsSandbox/setupStart {mode, cwd}` and sets `status: "settingUp"`.
+`windowsSandbox/setupCompleted` re-queries readiness, or sets
+`status: "setupFailed"` with the error. On other hosts the request is refused
+without contacting Codex.
+
+HTTP replies are `{ok: true, result: <Codex result>}`. Other replies: 400 bad
+params, 404 no session, 501 no live Codex ws driver, 502 Codex refused (`error`
+text), 504 no answer within 20 s.
+
+Hub bus (owner tier only — none are in the view/triage scopes): `agents.review
+{sessionId, target, delivery?: "inline"}`, `agents.setGoal {sessionId, objective?,
+status?, tokenBudget?}`, `agents.clearGoal {sessionId}`,
+`agents.windowsSandboxSetup {sessionId, mode?}`. Each answers `{ok:true,
+result}` or fails with the daemon's own error text. `agents.rename {sessionId,
+name}` sets the launch label (any provider with a launch record) and, for a live
+Codex session, the thread name. It answers `{ok, label, codexThreadNamed?,
+codexThreadError?}`. Snapshot camelCase aliases: `threadName`, `windowsSandbox`,
+`collaborationMode`; `goal` is published as-is.
+
 ## OpenCode and Copilot
 
 OpenCode’s `/event` feed is server-wide. Driver filtering must use the correct
