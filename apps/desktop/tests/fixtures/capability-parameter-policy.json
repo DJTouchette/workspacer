@@ -140,7 +140,7 @@
     "sessions.queueMove": "reorders one entry this hub already queued for that session (selected by its opaque hub-minted id) to a bounded index. It changes only WHICH queued prompt the hub delivers it later through this hub's own agents.sendMessage path (the same reach, the same session, and only when that session is ready for input with no approval or question open)",
     "sessions.queueSendNow": "removes one queued entry (selected by its opaque hub-minted id) and sends it immediately through this hub's own agents.sendMessage path — exactly agents.sendMessage's reach for text a caller holding this tier could have sent directly. The optional `delivery` value (\"steer\" or \"now\" only) is forwarded under that name to agents.sendMessage, which alone decides what it means; the queue itself gives it no effect",
     "sessions.queueRemove": "deletes one entry this hub queued for that session (selected by its opaque hub-minted id); it can only withhold a prompt. Removing the id of a may-have-been-sent report acknowledges it; it never resumes a paused queue (that is sessions.queueResume)",
-    "claude.mcpReconnect": "server names one MCP server the session already lists; the only effect is the provider's own reconnect (Claude mcp_reconnect, Codex config/mcpServer/reload). It repairs a connection the agent already has, adds no server, and takes no path, argv or policy value",
+    "claude.mcpReconnect": "server names one MCP server the session already lists. On Claude the only effect is the CLI's own mcp_reconnect of that server. Codex has no per-server reconnect, so there the whole MCP configuration is reloaded (config/mcpServer/reload), which can start servers added to the config since launch; operator-tier for that reason. It takes no path, argv or policy value",
     "claude.setFastMode": "the only caller value is the boolean `enabled`, forwarded as the CLI's own apply_flag_settings {fastMode}. It changes generation speed and cost from the next turn; no guard reads it and it grants no tool, path or permission",
     "sessions.queueClear": "deletes every entry this hub queued for that session; it can only withhold prompts. No path, argv or policy value, and nothing is sent",
     "sessions.queueResume": "lifts the pause on that session's hub-held queue, so entries already queued by sessions.queueAdd are delivered later through this hub's own agents.sendMessage path (the same reach, the same session, and only when that session is ready for input with no approval or question open). It adds no text and takes no path, argv or policy value"
@@ -1005,7 +1005,14 @@
     "regex": "regex",
     "glob": "regex"
   },
-  "pathNamespaces": ["fs.", "search.", "library.", "git.", "providers.", "brief."],
+  "pathNamespaces": [
+    "fs.",
+    "search.",
+    "library.",
+    "git.",
+    "providers.",
+    "brief."
+  ],
   "opaqueDecisions": {
     "agents.spawn": {
       "$": "Authenticated spawn payload is transformed into a provider launch plan by agent_spawn::spawn_owned. Internal project/reservation claims are removed and recomposed by host admission. Dynamic templateParams are validated against the selected template and used as prompt substitutions, never as shell argv; explicit executable, permission and cwd decisions remain separately required."

@@ -486,10 +486,16 @@ impl Queues {
         let confirmable = self
             .uncertain_uuid(id)
             .is_some_and(|u| delivered.contains_key(&u));
-        self.delivered
-            .lock()
-            .unwrap()
-            .insert(id.to_owned(), delivered);
+        // Only sessions with a queue record can have a send to settle; every
+        // other row leaves nothing behind.
+        let queued = self.state.lock().unwrap().contains_key(id);
+        let mut known = self.delivered.lock().unwrap();
+        if queued && !delivered.is_empty() {
+            known.insert(id.to_owned(), delivered);
+        } else {
+            known.remove(id);
+        }
+        drop(known);
         // The worker settles a confirmable report under the session lock.
         if confirmable || self.wants_flush(id, row) {
             self.kick(id);
@@ -580,6 +586,7 @@ impl Queues {
         for id in &removed {
             self.state.lock().unwrap().remove(id);
             self.turns.lock().unwrap().remove(id);
+            self.delivered.lock().unwrap().remove(id);
             self.drop_lock(id);
         }
         self.write(self.document(None)?).await?;
@@ -590,6 +597,7 @@ impl Queues {
         let _writer = self.writer.lock().await;
         let existed = self.state.lock().unwrap().remove(id).is_some();
         self.turns.lock().unwrap().remove(id);
+        self.delivered.lock().unwrap().remove(id);
         self.drop_lock(id);
         if existed {
             self.write(self.document(None)?).await?;
@@ -1690,5 +1698,25 @@ mod tests {
             .unwrap();
         let uuids = uuids.lock().unwrap();
         assert!(uuids[0].is_some() && uuids[1].is_some() && uuids[0] != uuids[1]);
+    }
+
+    #[tokio::test]
+    async fn receipts_are_kept_only_for_queued_sessions_and_dropped_with_them() {
+        let queues = Queues::default();
+        let receipts = json!([{"uuid":"u1","state":"completed","at":1}]);
+        queues.observe(&with_receipts(row_for("never", "input"), receipts.clone()));
+        assert!(
+            queues.delivered.lock().unwrap().is_empty(),
+            "no queue, nothing kept"
+        );
+        queues.add("s1", "one").await.unwrap();
+        queues.observe(&with_receipts(row("input"), receipts.clone()));
+        assert!(queues.delivered.lock().unwrap().contains_key("s1"));
+        queues.forget("s1").await.unwrap();
+        assert!(queues.delivered.lock().unwrap().is_empty());
+        queues.add("s2", "two").await.unwrap();
+        queues.observe(&with_receipts(row_for("s2", "input"), receipts));
+        queues.prune(&BTreeSet::new()).await.unwrap();
+        assert!(queues.delivered.lock().unwrap().is_empty());
     }
 }
