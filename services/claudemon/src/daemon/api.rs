@@ -3976,12 +3976,30 @@ mod tests {
         let _rx = mark_managed(&state.store, "sess-1");
         let req = post_json(
             "/sessions/sess-1/permission-mode",
-            json!({ "mode": "plan" }),
+            json!({ "mode": "acceptEdits" }),
         );
-        let (status, body) = request(state, req).await;
+        let (status, body) = request(state.clone(), req).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
         assert!(v["error"].as_str().unwrap().contains("ask"));
+        // `plan` is Codex plan mode: refused (409) without the experimental
+        // opt-in's collaboration modes, never a silent ask/yolo change.
+        state.store.register_managed_yolo(
+            "sess-1",
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            false,
+        );
+        let req = post_json(
+            "/sessions/sess-1/permission-mode",
+            json!({ "mode": "plan" }),
+        );
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(v["error"]
+            .as_str()
+            .unwrap()
+            .contains("codex.experimentalApi"));
     }
 
     #[tokio::test]
