@@ -321,6 +321,15 @@ Captured during a real Codex round trip through an isolated backend:
   the agent read it immediately: Claude sets background work aside, Codex is
   interrupted and takes it as the next turn. The hint line under the composer
   names the keys. Idle, every key is an ordinary send and Tab keeps its job.
+- **Slash commands.** Typing `/` at the start of the composer opens a menu of
+  the session's commands: Claude's own commands and skills (from its `init`),
+  Codex's skills (`skills/list`; they insert Codex's `$name` mention). Typing
+  filters it (names starting with the text first, then names containing it).
+  `↑`/`↓` move, **Enter** or **Tab** inserts the command and a space, **Esc**
+  closes it until the draft changes, and a click inserts too. While the menu
+  is open it owns those keys (an IME composition keeps them); once it closes
+  (an argument typed, Esc, or no match) Enter sends and Tab queues as usual.
+  Enter on a draft that already is the command (`/compact`) sends it.
 - Scrollback retains its position while new text arrives. Jump to latest resumes
   following the conversation.
 
@@ -602,6 +611,7 @@ editing; this is Vim-style app navigation, not a modal text editor.
 | `Ctrl/Cmd+Enter` | Send, start the agent, or pin the focused project-path field |
 | `Enter` / `Shift+Enter` | With **Send messages with Enter**: send / new line in the composer |
 | `Tab` | While the agent works, with a draft: queue it for the turn's end (not during an IME composition) |
+| `/` then `↑`/`↓`, `Enter`/`Tab`, `Esc` | Composer command menu: move, insert, close |
 | `Ctrl/Cmd+Shift+Enter` (or `Ctrl/Cmd+Enter` when Enter sends) | While the agent works: send now |
 | `Ctrl/Cmd+Shift+E`, `g f` | Files: the editor on the selected session's folder |
 | ``Ctrl/Cmd+` ``, `g t` | Show or hide the selected agent's terminal |
@@ -784,6 +794,20 @@ be expanded, and attachment controls share the composer action row.
   clipboard fallback. Attachments are uploaded to the connected hub, remain bound
   to their original session, and stay in the draft after failed/uncertain sends.
   Remove discards a draft attachment; uploaded files follow the hub’s retention.
+- **Images reach the agent as images** on Claude stream and Codex sessions:
+  the send carries the uploads as `images` and the hub hands them over as
+  image input (Claude image blocks, Codex `localImage`); the message names
+  each one (`[Image attached: name]`) so the transcript shows it went. Up to
+  8 images per message, each at most 3.75 MiB (the 5 MB base64 limit); a
+  larger image, a PDF, and every attachment on other sessions or on a resume
+  is sent as an `[Image: path]` / `[PDF: path]` marker the agent reads the
+  file by. Images can't be queued: **Queue** (or Tab) with images attached
+  says so and keeps the draft; steer or send now instead. When the hub can
+  only pass the images on as file paths (the message is held for a
+  manager handoff, or the session has no image input), a notice says so;
+  Codex adds a conversation note when its thread was not ready. The daemon
+  also refuses an image over 8000 px on a side or a message whose inline
+  images exceed 20 MiB encoded.
 - **Question choices** dock above the composer as one card: each question
   shows its position, header and whether to choose one or any, then numbered
   (single) or checkbox (multiple) option rows with descriptions and a typed

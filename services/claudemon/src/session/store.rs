@@ -499,6 +499,9 @@ pub struct ManagedPrompt {
     /// one otherwise. Claude stream names messages by it in `command_lifecycle`
     /// receipts and interrupt receipts; other drivers ignore it.
     pub uuid: Option<String>,
+    /// Validated uploads to show the agent ahead of `text`
+    /// ([`super::images`]); empty for an ordinary message.
+    pub images: Vec<super::images::ImageInput>,
 }
 
 /// A live model/effort switch whose driver answers only once the provider
@@ -533,15 +536,17 @@ impl ManagedInput {
         delivery: Delivery,
         sender: MessageSender,
         uuid: Option<String>,
+        images: Vec<super::images::ImageInput>,
     ) -> bool {
         match self {
-            Self::Text(tx) => tx.send(text).is_ok(),
+            Self::Text(tx) => tx.send(super::images::with_markers(text, &images)).is_ok(),
             Self::Prompt(tx) => tx
                 .send(ManagedPrompt {
                     text,
                     delivery,
                     sender,
                     uuid,
+                    images,
                 })
                 .is_ok(),
         }
@@ -2140,7 +2145,13 @@ impl SessionStore {
         // this drain runs the instant the driver's channel is live. There is no
         // window in between for the caller to have to guess at.
         for (text, uuid) in self.take_pending_prompts(session_id) {
-            if !tx.send(text, Delivery::Steer, MessageSender::Human, uuid) {
+            if !tx.send(
+                text,
+                Delivery::Steer,
+                MessageSender::Human,
+                uuid,
+                Vec::new(),
+            ) {
                 tracing::warn!(session_id, "managed prompt channel closed before the queued first message could be delivered");
                 break;
             }
@@ -2823,6 +2834,31 @@ impl SessionStore {
         });
     }
 
+    /// Replace the commands the composer offers on `/`. Broadcasts only on
+    /// change. No-op for unknown ids.
+    pub fn set_slash_commands(
+        &self,
+        session_id: &str,
+        commands: Vec<super::slash_commands::SlashCommand>,
+    ) {
+        let state = {
+            let Some(mut entry) = self.states.get_mut(session_id) else {
+                return;
+            };
+            if entry.slash_commands == commands {
+                return;
+            }
+            entry.slash_commands = commands;
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state,
+        });
+    }
+
     /// Upsert one managed-provider subagent row and mirror its live count into
     /// `background_tasks`, the field existing clients already use for ambient
     /// work. Claude hook/artifact enrichment uses a separate path that preserves
@@ -3469,7 +3505,7 @@ impl SessionStore {
         delivery: Delivery,
         sender: MessageSender,
     ) -> MessageOutcome {
-        self.native_submit_message_tracked(session_id, text, delivery, sender, None)
+        self.native_submit_message_full(session_id, text, delivery, sender, None, Vec::new())
     }
 
     /// [`Self::submit_message_from`] with the uuid the driver must stamp on
@@ -3483,29 +3519,91 @@ impl SessionStore {
         sender: MessageSender,
         uuid: Option<String>,
     ) -> MessageOutcome {
-        if let Some(engine) = self.engines.bound(session_id) {
-            return engine.send_tracked(self, session_id, text, delivery, sender, uuid);
-        }
-        self.native_submit_message_tracked(session_id, text, delivery, sender, uuid)
+        self.submit_message_full(session_id, text, delivery, sender, uuid, Vec::new())
     }
 
-    pub(crate) fn native_submit_message_tracked(
+    /// [`Self::submit_message_from`] carrying validated images
+    /// ([`super::images::load_all`]). A driver that takes images structurally
+    /// receives them on its [`ManagedPrompt`]; a text-only driver, a PTY
+    /// session and a non-native engine get `[Image: <path>]` markers ahead of
+    /// the text instead.
+    pub fn submit_message_images(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        images: Vec<super::images::ImageInput>,
+    ) -> MessageOutcome {
+        self.submit_message_full(session_id, text, delivery, sender, None, images)
+    }
+
+    /// Both at once: the caller's uuid and validated images.
+    pub fn submit_message_full(
         &self,
         session_id: &str,
         text: String,
         delivery: Delivery,
         sender: MessageSender,
         uuid: Option<String>,
+        images: Vec<super::images::ImageInput>,
+    ) -> MessageOutcome {
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.send_full(self, session_id, text, delivery, sender, uuid, images);
+        }
+        self.native_submit_message_full(session_id, text, delivery, sender, uuid, images)
+    }
+
+    /// How this session takes a message's images: inline (a Claude stream
+    /// driver), as a daemon-owned copy (a Codex driver), or as markers
+    /// (everything else — PTY, text-only drivers, engines without images).
+    pub fn image_use(&self, session_id: &str) -> super::images::ImageUse {
+        use super::images::ImageUse;
+        if self
+            .engines
+            .bound(session_id)
+            .is_some_and(|engine| !engine.takes_images())
+        {
+            return ImageUse::Markers;
+        }
+        if !matches!(
+            self.managed_input(session_id),
+            Some(ManagedInput::Prompt(_))
+        ) {
+            return ImageUse::Markers;
+        }
+        match self
+            .states
+            .get(session_id)
+            .map(|s| s.provider.clone())
+            .as_deref()
+        {
+            Some("claude") => ImageUse::Inline,
+            Some("codex") => ImageUse::Copy,
+            _ => ImageUse::Markers,
+        }
+    }
+
+    pub(crate) fn native_submit_message_full(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        uuid: Option<String>,
+        images: Vec<super::images::ImageInput>,
     ) -> MessageOutcome {
         // Managed (adapter-driven) sessions forward the prompt to the provider's
         // own API via the driver task — no PTY, no Input-mode gating.
         if let Some(tx) = self.managed_input(session_id) {
-            return if tx.send(text, delivery, sender, uuid) {
+            return if tx.send(text, delivery, sender, uuid, images) {
                 MessageOutcome::Sent
             } else {
                 MessageOutcome::WrapperGone
             };
         }
+        // A terminal can only be told where the file is.
+        let text = super::images::with_markers(text, &images);
         let Some(mode) = self.states.get(session_id).map(|s| s.mode) else {
             return MessageOutcome::NoSession;
         };
@@ -4035,6 +4133,36 @@ mod tests {
         let prompt = rx.try_recv().unwrap();
         assert_eq!(prompt.text, "early");
         assert_eq!(prompt.uuid, Some(uuid));
+    }
+
+    #[test]
+    fn a_managed_prompt_carries_the_callers_uuid_and_its_images_together() {
+        let store = SessionStore::new();
+        store.register_managed("both", "/tmp", "claude");
+        let (tx, mut rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        store.register_managed_prompt("both", tx);
+        let uuid = "6f1c0d52-0000-4000-8000-0000000000bb".to_string();
+        let image = super::super::images::ImageInput {
+            source: "/uploads/m-1-abcdef01.png".into(),
+            path: "/uploads/m-1-abcdef01.png".into(),
+            media_type: "image/png",
+            data: "iVBORw0KGgo=".into(),
+        };
+        assert_eq!(
+            store.submit_message_full(
+                "both",
+                "look".into(),
+                Delivery::Steer,
+                MessageSender::Human,
+                Some(uuid.clone()),
+                vec![image.clone()],
+            ),
+            MessageOutcome::Sent
+        );
+        let prompt = rx.try_recv().unwrap();
+        assert_eq!(prompt.text, "look");
+        assert_eq!(prompt.uuid, Some(uuid));
+        assert_eq!(prompt.images, vec![image]);
     }
 
     #[test]

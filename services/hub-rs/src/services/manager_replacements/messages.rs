@@ -142,6 +142,9 @@ pub struct DeliveryResult {
     /// as the daemon reported it; `None` for every other driver and for a
     /// held message (replayed later under a fresh uuid).
     pub message_uuid: Option<String>,
+    /// The message's images reached the agent only as `[Image: <path>]`
+    /// markers (held for later, or a session without image input).
+    pub images_as_markers: bool,
 }
 impl DeliveryResult {
     pub fn accepted(&self) -> bool {
@@ -153,6 +156,9 @@ impl DeliveryResult {
                 let mut wire = json!({"ok":true,"held":self.held});
                 if let Some(uuid) = &self.message_uuid {
                     wire["messageUuid"] = json!(uuid);
+                }
+                if self.images_as_markers {
+                    wire["imagesAsMarkers"] = json!(true);
                 }
                 wire
             }
@@ -190,6 +196,7 @@ pub async fn send_engine(
         claudemon::session::Delivery::Steer,
         claudemon::session::MessageSender::Agent,
         None,
+        &[],
     )
     .await
 }
@@ -199,6 +206,11 @@ pub async fn send_engine(
 /// plain steer, because by then the turn it was meant to cut into is gone.
 /// (`send_engine` itself names the sender `Agent`: its callers are fleet
 /// wakes, progress and workflow deliveries — never a person typing.)
+///
+/// `images` are `files.upload` paths the caller already confined; the daemon
+/// loads them for the immediate send. A HELD message has no image channel to
+/// replay through, so it is journaled with `[Image: <path>]` markers ahead of
+/// its text and reaches the agent that way.
 #[allow(clippy::too_many_arguments)]
 pub async fn send_engine_with(
     engine: &claudemon::daemon::embedded::EmbeddedClient,
@@ -212,6 +224,7 @@ pub async fn send_engine_with(
     delivery: claudemon::session::Delivery,
     sender: claudemon::session::MessageSender,
     message_uuid: Option<&str>,
+    images: &[String],
 ) -> Result<DeliveryResult> {
     use anyhow::{Context, bail};
     use claudemon::daemon::embedded::{Command, CommandRejected};
@@ -238,6 +251,7 @@ pub async fn send_engine_with(
                 held: false,
                 outcome: SendOutcome::Accepted,
                 message_uuid: None,
+                images_as_markers: false,
             });
         }
         if attempt["status"] != "pending" {
@@ -257,17 +271,33 @@ pub async fn send_engine_with(
             );
         }
     }
-    let tracked =
-        match tracker.begin(target, &content, signatures, source_request.clone(), outbox)? {
-            BeginDelivery::Held => {
-                return Ok(DeliveryResult {
-                    held: true,
-                    outcome: SendOutcome::Accepted,
-                    message_uuid: None,
-                });
-            }
-            BeginDelivery::Send(delivery) => delivery,
-        };
+    let journaled = if images.is_empty() {
+        content.clone()
+    } else {
+        let mut marked: String = images
+            .iter()
+            .map(|path| format!("[Image: {path}]\n"))
+            .collect();
+        marked.push_str(&content);
+        marked
+    };
+    let tracked = match tracker.begin(
+        target,
+        &journaled,
+        signatures,
+        source_request.clone(),
+        outbox,
+    )? {
+        BeginDelivery::Held => {
+            return Ok(DeliveryResult {
+                held: true,
+                outcome: SendOutcome::Accepted,
+                message_uuid: None,
+                images_as_markers: !images.is_empty(),
+            });
+        }
+        BeginDelivery::Send(delivery) => delivery,
+    };
     if let Some(source) = &source_request {
         inbox.unwrap().finish_delivery(
             source["requestId"].as_str().unwrap_or(""),
@@ -282,21 +312,25 @@ pub async fn send_engine_with(
             delivery,
             sender,
             uuid: uuid.into(),
+            images: images.to_vec(),
         },
         None => Command::Message {
             id: target.into(),
             text: content,
             delivery,
             sender,
+            images: images.to_vec(),
         },
     };
     let mut stamped = None;
+    let mut images_as_markers = false;
     let outcome =
         match tokio::time::timeout(std::time::Duration::from_secs(15), engine.request(command))
             .await
         {
             Ok(Ok(reply)) => {
                 stamped = reply["message_uuid"].as_str().map(str::to_owned);
+                images_as_markers = reply["imagesAsMarkers"] == true;
                 SendOutcome::Accepted
             }
             Ok(Err(error)) => {
@@ -327,5 +361,6 @@ pub async fn send_engine_with(
         held: false,
         outcome,
         message_uuid: stamped,
+        images_as_markers,
     })
 }

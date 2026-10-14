@@ -416,6 +416,11 @@ impl Workspace {
             .on_action(cx.listener(Self::send))
             .on_action(cx.listener(Self::send_now))
             .on_action(cx.listener(Self::queue_message))
+            .on_action(cx.listener(Self::slash_up))
+            .on_action(cx.listener(Self::slash_down))
+            .on_action(cx.listener(Self::slash_accept))
+            .on_action(cx.listener(Self::slash_enter))
+            .on_action(cx.listener(Self::slash_close))
             .on_action(cx.listener(Self::composer_enter))
             .on_action(cx.listener(|this, _: &ZoomIn, window, cx| {
                 let next =

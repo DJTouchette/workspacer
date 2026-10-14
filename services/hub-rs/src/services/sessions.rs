@@ -810,12 +810,15 @@ impl Sessions {
                     .as_str()
                     .and_then(claudemon::session::Delivery::from_wire)
                     .unwrap_or_default();
+                // Uploads only: anything else is refused before a send.
+                let images = send::confined_images_off_thread(&params["images"]).await?;
                 self.send_message(
                     id,
                     params["text"].as_str(),
                     delivery,
                     params["fromSessionId"].as_str(),
                     None,
+                    &images,
                 )
                 .await
                 .into_result()

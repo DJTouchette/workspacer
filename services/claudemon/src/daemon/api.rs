@@ -661,6 +661,16 @@ struct MessagePayload {
     /// the only driver that stamps it.
     #[serde(default)]
     uuid: Option<String>,
+    /// Uploads (`files.upload` paths) to show the agent ahead of `text`;
+    /// confined and capped by [`crate::session::images`].
+    #[serde(default)]
+    images: Vec<ImageRef>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImageRef {
+    path: String,
 }
 
 async fn post_message(
@@ -687,21 +697,58 @@ async fn post_message(
     let stamped = store.get(&id).is_some_and(|state| {
         state.provider == "claude" && state.transport == crate::session::Transport::Stream
     });
-    let reply = |mut body: Value| {
-        if stamped {
-            body["message_uuid"] = json!(uuid);
+    use crate::session::images::{self, ImageUse};
+    let paths: Vec<String> = payload.images.into_iter().map(|i| i.path).collect();
+    let usage = store.image_use(&id);
+    // Confining, reading, sniffing and copying are file I/O: off the workers.
+    let images = if paths.is_empty() {
+        Vec::new()
+    } else {
+        let dir = images::upload_dir();
+        match tokio::task::spawn_blocking(move || images::prepare_in(&paths, usage, &dir)).await {
+            Ok(Ok(images)) => images,
+            Ok(Err(error)) => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": error })),
+                )
+                    .into_response()
+            }
+            Err(_) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "image preparation failed",
+                )
+                    .into_response()
+            }
         }
-        Json(body).into_response()
     };
-    match store.submit_message_tracked(
+    // The client asked for images; say when they went as path markers.
+    let markers = !images.is_empty() && usage == ImageUse::Markers;
+    let copies = images.clone();
+    let outcome = store.submit_message_full(
         &id,
         payload.text,
         payload.delivery,
         payload.sender,
         Some(uuid.clone()),
-    ) {
-        MessageOutcome::Sent => reply(json!({ "ok": true })),
-        MessageOutcome::Queued => reply(json!({ "ok": true, "queued": true })),
+        images,
+    );
+    if !matches!(outcome, MessageOutcome::Sent | MessageOutcome::Queued) {
+        images::discard(&copies);
+    }
+    let accepted = |mut body: Value| {
+        if stamped {
+            body["message_uuid"] = json!(uuid);
+        }
+        if markers {
+            body["imagesAsMarkers"] = json!(true);
+        }
+        Json(body).into_response()
+    };
+    match outcome {
+        MessageOutcome::Sent => accepted(json!({ "ok": true })),
+        MessageOutcome::Queued => accepted(json!({ "ok": true, "queued": true })),
         MessageOutcome::Rejected(mode) => (
             StatusCode::CONFLICT,
             Json(json!({
@@ -4155,6 +4202,7 @@ mod tests {
                     delivery,
                     sender: crate::session::MessageSender::Human,
                     uuid: prompt.uuid.clone(),
+                    images: Vec::new(),
                 }
             );
         }
@@ -4169,6 +4217,106 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn post_message_attaches_confined_uploads_and_refuses_any_other_path() {
+        use crate::session::ManagedPrompt;
+        let uploads = crate::session::images::tests::UploadDir::new();
+        let dir = uploads.path.clone();
+        let upload = dir.join("m-1-abcdef01.png");
+        std::fs::write(&upload, crate::session::images::tests::png(2, 2)).unwrap();
+        let path = upload.to_string_lossy().into_owned();
+
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let (tx, mut rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        state.store.register_managed_prompt("sess-1", tx);
+        let (status, _) = request(
+            state.clone(),
+            post_json(
+                "/sessions/sess-1/message",
+                json!({ "text": "look", "images": [{ "path": path }] }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let prompt = rx.try_recv().unwrap();
+        assert_eq!(prompt.text, "look");
+        assert_eq!(prompt.images.len(), 1);
+        assert_eq!(prompt.images[0].media_type, "image/png");
+        assert_eq!(prompt.images[0].path, upload);
+        assert!(
+            !prompt.images[0].data.is_empty(),
+            "Claude reads the bytes inline"
+        );
+
+        // Any path that is not an upload is refused before the driver sees it.
+        for refused in [
+            json!([{ "path": "/etc/passwd" }]),
+            json!([{ "path": dir.join("notes.png") }]),
+            json!([{ "path": path, "extra": true }]),
+            json!(["bare-string"]),
+        ] {
+            let (status, _) = request(
+                state.clone(),
+                post_json(
+                    "/sessions/sess-1/message",
+                    json!({ "text": "x", "images": refused }),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+        }
+        assert!(rx.try_recv().is_err());
+
+        // Codex reads a daemon-owned copy, never the client's file.
+        state.store.register_managed("sess-3", "/tmp/proj", "codex");
+        let (tx, mut codex_rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        state.store.register_managed_prompt("sess-3", tx);
+        let (status, body) = request(
+            state.clone(),
+            post_json(
+                "/sessions/sess-3/message",
+                json!({ "text": "look", "images": [{ "path": path }] }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(serde_json::from_slice::<Value>(&body)
+            .unwrap()
+            .get("imagesAsMarkers")
+            .is_none());
+        let codex = codex_rx.try_recv().unwrap();
+        assert!(codex.images[0].owned_copy());
+        assert!(codex.images[0].data.is_empty());
+        assert_eq!(codex.images[0].source, upload);
+        crate::session::images::discard(&codex.images);
+
+        // A text-only driver is told where the file is instead, and the
+        // reply says the images went as markers.
+        state.store.register_managed("sess-2", "/tmp/proj", "pi");
+        let (tx, mut text_rx) = mpsc::unbounded_channel::<String>();
+        state.store.register_managed_input("sess-2", tx);
+        let (status, body) = request(
+            state,
+            post_json(
+                "/sessions/sess-2/message",
+                json!({ "text": "look", "images": [{ "path": path }] }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["imagesAsMarkers"],
+            true
+        );
+        assert_eq!(
+            text_rx.try_recv().unwrap(),
+            format!("[Image: {}]\nlook", upload.display())
+        );
     }
 
     #[tokio::test]
@@ -4197,6 +4345,7 @@ mod tests {
                 delivery: Delivery::Now,
                 sender: MessageSender::Agent,
                 uuid: prompt.uuid.clone(),
+                images: Vec::new(),
             }
         );
     }

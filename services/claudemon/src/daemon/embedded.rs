@@ -81,6 +81,9 @@ pub enum Command {
         delivery: crate::session::Delivery,
         /// Who wrote it; see [`crate::session::MessageSender`].
         sender: crate::session::MessageSender,
+        /// `files.upload` paths to attach as images; the daemon confines and
+        /// loads them ([`crate::session::images`]). Empty for plain text.
+        images: Vec<String>,
     },
     /// [`Command::Message`] naming the uuid the driver stamps on the
     /// message's provider frame (Claude stream), so a caller that never sees
@@ -92,6 +95,8 @@ pub enum Command {
         delivery: crate::session::Delivery,
         sender: crate::session::MessageSender,
         uuid: String,
+        /// As on [`Command::Message`].
+        images: Vec<String>,
     },
     Approve {
         id: String,
@@ -443,6 +448,24 @@ pub(super) fn serve_commands(
         }
     })
 }
+/// The `POST /sessions/:id/message` body: the caller's uuid when it chose one,
+/// and `images` only when there are any.
+fn message_payload(
+    text: String,
+    delivery: crate::session::Delivery,
+    sender: crate::session::MessageSender,
+    uuid: Option<String>,
+    images: &[String],
+) -> Value {
+    let mut payload = json!({"text": text, "delivery": delivery, "sender": sender});
+    if let Some(uuid) = uuid {
+        payload["uuid"] = json!(uuid);
+    }
+    if !images.is_empty() {
+        payload["images"] = images.iter().map(|path| json!({"path": path})).collect();
+    }
+    payload
+}
 async fn dispatch(router: Router, command: Command) -> Result<Value> {
     if let Command::Request {
         method,
@@ -486,9 +509,10 @@ async fn dispatch(router: Router, command: Command) -> Result<Value> {
             text,
             delivery,
             sender,
+            images,
         } => (
             session_path(&id, "message")?,
-            Some(json!({"text": text, "delivery": delivery, "sender": sender})),
+            Some(message_payload(text, delivery, sender, None, &images)),
         ),
         Command::IdentifiedMessage {
             id,
@@ -496,9 +520,10 @@ async fn dispatch(router: Router, command: Command) -> Result<Value> {
             delivery,
             sender,
             uuid,
+            images,
         } => (
             session_path(&id, "message")?,
-            Some(json!({"text": text, "delivery": delivery, "sender": sender, "uuid": uuid})),
+            Some(message_payload(text, delivery, sender, Some(uuid), &images)),
         ),
         Command::Approve { id, decision } => (
             session_path(&id, "approve")?,

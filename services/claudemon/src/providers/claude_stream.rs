@@ -2371,7 +2371,7 @@ async fn run_session(
                 Err(err) => return Err(err.into()),
             },
             msg = rx.recv() => match msg {
-                Some(ManagedPrompt { text, delivery, sender, uuid }) => {
+                Some(ManagedPrompt { text, delivery, sender, uuid, images }) => {
                     // Echo the user's message, but prepend the role
                     // instructions (once) to what's actually sent to the agent.
                     // A message invoking a known slash command echoes as the
@@ -2416,8 +2416,10 @@ async fn run_session(
                         cur_mode,
                         SessionMode::Responding | SessionMode::Approval | SessionMode::Question
                     );
-                    let (interrupt_first, frame) =
+                    let (interrupt_first, mut frame) =
                         user_frame(&sent, &uuid, delivery, sender, &totals.protocol, busy);
+                    // Attached uploads ride ahead of the text as image blocks.
+                    crate::session::images::prepend_claude_blocks(&mut frame, &images);
                     if interrupt_first {
                         totals.protocol.fallback_interrupt_owed = true;
                         // An older CLI can't be told "now": stop the turn, and
@@ -6818,6 +6820,43 @@ done
             assert!(user["uuid"].is_string());
             assert!(user.get("priority").is_none() && user.get("origin").is_none());
         }
+        store.terminate_managed(sid);
+    }
+
+    /// Attached uploads reach the CLI's stdin as base64 image blocks ahead
+    /// of the text, in the one user frame.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn attached_images_reach_the_cli_as_image_blocks_before_the_text() {
+        use crate::session::images::{self, tests as fixture, ImageUse};
+        let (_dir, store, _conv, log) = spawn_logging("image-blocks");
+        let sid = "image-blocks";
+        assert!(settles(|| store.is_managed(sid)).await);
+        assert_eq!(store.image_use(sid), ImageUse::Inline);
+        let uploads = fixture::dir();
+        let upload = fixture::put(&uploads, "m-1-abcdef01.png", &fixture::png(3, 4));
+        let prepared = images::prepare_in(&[upload], ImageUse::Inline, &uploads).unwrap();
+        assert!(matches!(
+            store.submit_message_images(
+                sid,
+                "what is this?".into(),
+                Delivery::Steer,
+                crate::session::MessageSender::Human,
+                prepared.clone(),
+            ),
+            crate::session::MessageOutcome::Sent
+        ));
+        assert!(settles(|| logged(&log).iter().any(|v| v["type"] == "user")).await);
+        let frames = logged(&log);
+        let user = frames.iter().find(|v| v["type"] == "user").unwrap();
+        assert_eq!(
+            user["message"]["content"],
+            json!([
+                { "type": "image", "source": { "type": "base64",
+                    "media_type": "image/png", "data": prepared[0].data } },
+                { "type": "text", "text": "what is this?" }
+            ])
+        );
         store.terminate_managed(sid);
     }
 

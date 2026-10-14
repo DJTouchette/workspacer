@@ -76,6 +76,7 @@ impl LaunchEngine for EmbeddedClient {
                 text: content.into(),
                 delivery: Default::default(),
                 sender: Default::default(),
+                images: Vec::new(),
             })
             .await?;
             Ok(())

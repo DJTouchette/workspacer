@@ -929,6 +929,10 @@ pub struct SessionState {
     /// is unavailable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collaboration_mode: Option<String>,
+    /// What the composer offers on `/` — Claude's init commands and skills,
+    /// Codex's skills ([`super::slash_commands`]). Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slash_commands: Vec<super::slash_commands::SlashCommand>,
     /// Count of background subagents (async Agent/Task tool) currently running,
     /// tracked from the `SubagentStart`/`SubagentStop` hooks. While this is
     /// non-zero, a parent `Stop` does NOT idle the session — the parent's own
@@ -1046,6 +1050,7 @@ impl SessionState {
             thread_name: None,
             windows_sandbox: None,
             collaboration_mode: None,
+            slash_commands: Vec::new(),
             live_subagents: 0,
             parent_turn_ended: false,
             requested_model: None,
