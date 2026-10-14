@@ -300,6 +300,7 @@ impl Controls {
                         id: id.into(),
                         text: instruction,
                         delivery: Default::default(),
+                        sender: Default::default(),
                     })
                     .await
                     .map(|value| value["ok"] != false)
@@ -383,6 +384,7 @@ fn effort_command(provider: &str, transport: &str, id: &str, effort: &str) -> Co
             id: id.into(),
             text: format!("/effort {effort}"),
             delivery: Default::default(),
+            sender: Default::default(),
         }
     } else {
         Command::Request {

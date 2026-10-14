@@ -75,6 +75,7 @@ impl LaunchEngine for EmbeddedClient {
                 id: session.into(),
                 text: content.into(),
                 delivery: Default::default(),
+                sender: Default::default(),
             })
             .await?;
             Ok(())

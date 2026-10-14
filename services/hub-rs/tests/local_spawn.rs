@@ -202,6 +202,17 @@ async fn run(root: PathBuf) {
         )
         .await
         .unwrap();
+    // The fixture's init names CLI 2.1.299, so every frame carries a uuid and
+    // a default send is an explicit `priority: "next"` steer.
+    until("parent-steer-frame", async || {
+        rows(&root, &parent_id).iter().any(|row| {
+            row["message"] == "ask-numeric-fixture"
+                && row["uuid"].is_string()
+                && row["priority"] == "next"
+                && row["origin"].is_null()
+        })
+    })
+    .await;
     until("parent-numeric-question", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":parent_id}))
@@ -342,6 +353,47 @@ async fn run(root: PathBuf) {
             .is_ok_and(|r| r["ambientState"] == "idle")
     })
     .await;
+    // `delivery` reaches the stream driver through the hub's tracked send:
+    // a person's `now` claims the human origin, an agent's does not.
+    for (text, from) in [
+        ("now-human-fixture", None),
+        ("now-agent-fixture", Some(&parent_id)),
+    ] {
+        let mut params = json!({"sessionId":successor_id,"text":text,"delivery":"now"});
+        if let Some(from) = from {
+            params["fromSessionId"] = json!(from);
+        }
+        client.call("agents.sendMessage", params).await.unwrap();
+    }
+    until("successor-now-frames", async || {
+        let rows = rows(&root, &successor_id);
+        let frame = |needle: &str| {
+            rows.iter()
+                .find(|row| row["message"].as_str().is_some_and(|m| m.contains(needle)))
+                .cloned()
+        };
+        match (frame("now-human-fixture"), frame("now-agent-fixture")) {
+            (Some(human), Some(agent)) => {
+                assert_eq!(human["priority"], "now");
+                assert_eq!(human["origin"], json!({"kind":"human"}));
+                assert_eq!(agent["priority"], "now");
+                assert!(agent["origin"].is_null(), "{agent}");
+                true
+            }
+            _ => false,
+        }
+    })
+    .await;
+    assert!(
+        client
+            .call(
+                "agents.sendMessage",
+                json!({"sessionId":successor_id,"text":"x","delivery":"later"}),
+            )
+            .await
+            .is_err(),
+        "an unknown delivery is refused"
+    );
     let mode = client
         .call(
             "claude.setPermissionMode",

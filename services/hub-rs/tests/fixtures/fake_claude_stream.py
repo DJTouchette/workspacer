@@ -74,7 +74,7 @@ record({"ready": True, "pid": os.getpid(), "session": session, "scopedMcpCall": 
 instructions = args[args.index("--append-system-prompt") + 1]
 plugin_dir = args[args.index("--plugin-dir") + 1] if "--plugin-dir" in args else None
 record({"launchInstructions": instructions, "pluginDir": plugin_dir})
-emit({"type": "system", "subtype": "init", "session_id": session, "model": "claude-sonnet-4-6", "tools": [], "mcp_servers": [{"name": "workspacer", "status": "connected"}]})
+emit({"type": "system", "subtype": "init", "session_id": session, "model": "claude-sonnet-4-6", "claude_code_version": "2.1.299", "tools": [], "mcp_servers": [{"name": "workspacer", "status": "connected"}]})
 
 for line in sys.stdin:
     frame = json.loads(line)
@@ -91,7 +91,7 @@ for line in sys.stdin:
         continue
     content = frame.get("message", {}).get("content", [])
     prompt = "\n".join(block.get("text", "") for block in content if block.get("type") == "text")
-    record({"message": prompt})
+    record({"message": prompt, "uuid": frame.get("uuid"), "priority": frame.get("priority"), "origin": frame.get("origin")})
     if "spawn-ordinary-child-fixture" in prompt:
         spawned = rpc("tools/call", {"name": "spawn_agent", "arguments": {
             "cwd": str(root / "project"), "provider": "claude", "transport": "stream",

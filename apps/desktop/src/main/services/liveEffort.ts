@@ -16,7 +16,9 @@
  *    effort only. Claude stream turns it into the CLI's `apply_flag_settings
  *    {effortLevel}` control request, applied from the next turn (verified on CLI
  *    2.1.299: spawned `--effort high`, switched to `low`, and the next assistant
- *    row recorded `effort: "low"`). A `/effort` chat message also works
+ *    row recorded `effort: "low"`). The daemon answers only after the CLI's
+ *    control_response (10s bound), so a refused level comes back as `!ok` and
+ *    is never noted. A `/effort` chat message also works
  *    headlessly, but it queues behind a running turn and its only confirmation
  *    is a synthetic reply the stream view drops. Codex applies
  *    `thread/settings/update` to the running thread.

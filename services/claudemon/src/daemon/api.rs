@@ -623,6 +623,10 @@ struct MessagePayload {
     /// extractor rather than a silent downgrade.
     #[serde(default)]
     delivery: crate::session::Delivery,
+    /// `"human"` (default) or `"agent"`: only a human's `now` may claim
+    /// `origin: {kind: "human"}` on Claude stream.
+    #[serde(default)]
+    sender: crate::session::MessageSender,
 }
 
 async fn post_message(
@@ -635,7 +639,7 @@ async fn post_message(
     // flushed on the next `Input` transition otherwise (cold start, mid-turn,
     // or an open approval/question dialog). Only a stopped session rejects.
     // See `SessionStore::submit_message`.
-    match store.submit_message_with(&id, payload.text, payload.delivery) {
+    match store.submit_message_from(&id, payload.text, payload.delivery, payload.sender) {
         MessageOutcome::Sent => Json(json!({ "ok": true })).into_response(),
         MessageOutcome::Queued => Json(json!({ "ok": true, "queued": true })).into_response(),
         MessageOutcome::Rejected(mode) => (
@@ -1158,15 +1162,31 @@ async fn post_model(
     let provider_model = persisted_selection
         .as_ref()
         .map(|selection| selection.legacy_model.clone());
-    let accepted = if store.is_managed(&id) {
+    let switch = crate::session::ModelSwitch {
+        model: provider_model.clone(),
+        effort: effort.clone(),
+    };
+    let confirmed = if store.is_managed(&id) {
+        // A confirming driver (Claude stream) answers with the provider's own
+        // verdict, so a refused or unanswered switch is an error here rather
+        // than an "accepted" the caller would record as live.
         store
-            .set_managed_model(
+            .set_managed_model_confirmed(
                 &id,
-                crate::session::ModelSwitch {
-                    model: provider_model.clone(),
-                    effort: effort.clone(),
-                },
+                switch.clone(),
+                crate::session::MODEL_SWITCH_CONFIRM_TIMEOUT,
             )
+            .await
+    } else {
+        None
+    };
+    let accepted = if let Some(verdict) = confirmed {
+        verdict
+            .map(|()| false)
+            .map_err(|err| (StatusCode::CONFLICT, err))
+    } else if store.is_managed(&id) {
+        store
+            .set_managed_model(&id, switch)
             .map(|()| false)
             .map_err(|err| (StatusCode::CONFLICT, err.to_string()))
     } else if state.transport != crate::session::Transport::Pty
@@ -3492,7 +3512,14 @@ mod tests {
             let (status, _) =
                 request(state.clone(), post_json("/sessions/sess-1/message", body)).await;
             assert_eq!(status, StatusCode::OK);
-            assert_eq!(rx.try_recv().unwrap(), ManagedPrompt { text, delivery });
+            assert_eq!(
+                rx.try_recv().unwrap(),
+                ManagedPrompt {
+                    text,
+                    delivery,
+                    sender: crate::session::MessageSender::Human
+                }
+            );
         }
         // An unknown delivery is refused, never downgraded to a plain send.
         let (status, _) = request(
@@ -3505,6 +3532,78 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn post_message_names_an_agent_sender() {
+        use crate::session::{Delivery, ManagedPrompt, MessageSender};
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let (tx, mut rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        state.store.register_managed_prompt("sess-1", tx);
+        let (status, _) = request(
+            state,
+            post_json(
+                "/sessions/sess-1/message",
+                json!({ "text": "x", "delivery": "now", "sender": "agent" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ManagedPrompt {
+                text: "x".into(),
+                delivery: Delivery::Now,
+                sender: MessageSender::Agent
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn post_model_answers_with_a_confirming_drivers_verdict() {
+        use crate::session::ConfirmedModelSwitch;
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        // A live managed driver (the prompt channel is what makes it managed).
+        let (input, _input_rx) = mpsc::unbounded_channel::<crate::session::ManagedPrompt>();
+        state.store.register_managed_prompt("sess-1", input);
+        let (tx, mut rx) = mpsc::unbounded_channel::<ConfirmedModelSwitch>();
+        state
+            .store
+            .register_managed_confirmed_model_switch("sess-1", tx);
+        tokio::spawn(async move {
+            while let Some(ConfirmedModelSwitch { switch, reply }) = rx.recv().await {
+                let _ = reply.send(match switch.effort.as_deref() {
+                    Some("bogus") => Err("effort switch to 'bogus' failed: invalid".into()),
+                    _ => Ok(()),
+                });
+            }
+        });
+        let (status, body) = request(
+            state.clone(),
+            post_json("/sessions/sess-1/model", json!({ "effort": "low" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(
+            (v["ok"].clone(), v["queued"].clone()),
+            (json!(true), json!(false))
+        );
+        let (status, body) = request(
+            state,
+            post_json("/sessions/sess-1/model", json!({ "effort": "bogus" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().unwrap().contains("bogus"));
     }
 
     #[tokio::test]

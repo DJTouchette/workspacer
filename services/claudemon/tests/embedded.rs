@@ -53,6 +53,7 @@ async fn lifecycle_commands_failure_cleanup_and_restart() {
                 id: "unknown".into(),
                 text: "hello".into(),
                 delivery: Default::default(),
+                sender: Default::default(),
             })
             .await
             .unwrap_err()
@@ -66,6 +67,7 @@ async fn lifecycle_commands_failure_cleanup_and_restart() {
                 id: "unknown".into(),
                 text: "hello".into(),
                 delivery: claudemon::session::Delivery::Now,
+                sender: claudemon::session::MessageSender::Agent,
             })
             .await
             .unwrap_err()

@@ -44,8 +44,8 @@ use crate::session::state::{
     PendingWrite, SessionMode, CLAUDE_FIVE_HOUR_WINDOW_MINUTES, CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
 };
 use crate::session::store::{
-    Delivery, ManagedAnswer, ManagedPermissionSwitch, ManagedPrompt, ManagedTaskControl,
-    ManagedTaskStop,
+    ConfirmedModelSwitch, Delivery, ManagedAnswer, ManagedPermissionSwitch, ManagedPrompt,
+    ManagedTaskControl, ManagedTaskStop, MessageSender,
 };
 use crate::session::transcript::{blocks, flatten_tool_result, Block};
 use crate::session::{ConversationStore, SessionStore};
@@ -134,6 +134,15 @@ pub struct CliProtocol {
     /// Most recent user-message uuids we sent, oldest first, bounded by
     /// [`SENT_UUIDS_KEPT`].
     sent: VecDeque<String>,
+    /// Whether a `system/init` has been seen at all. Until then nothing is
+    /// known about the CLI — not even whether a turn is running — so no
+    /// optional field is sent and nothing is interrupted (see [`user_frame`]).
+    observed_init: bool,
+    /// We just interrupted an older CLI on behalf of a `now` message and wrote
+    /// that message right behind it. The aborted turn's `result` is then not
+    /// the end of work — our message's turn follows — so its Idle is
+    /// swallowed instead of flashing the session idle (see `handle_line`).
+    fallback_interrupt_owed: bool,
 }
 
 /// The first CLI whose `priority: "now"` + `origin: {kind: "human"}` moves
@@ -146,6 +155,7 @@ const SENT_UUIDS_KEPT: usize = 64;
 
 impl CliProtocol {
     fn observe_init(&mut self, init: &Value) {
+        self.observed_init = true;
         if let Some(version) = init
             .get("claude_code_version")
             .and_then(Value::as_str)
@@ -167,12 +177,19 @@ impl CliProtocol {
     }
 
     /// Whether `priority` / `origin` on a user message mean what we intend.
-    /// Unknown (no init yet, or an unparseable version on a CLI without the
-    /// send-now capability) is NOT supported: the fields are then omitted and
-    /// `now` degrades to an explicit interrupt followed by the message.
+    ///
+    /// The version is the primary gate: a parseable `claude_code_version`
+    /// decides on its own. Only when the version is missing or unparseable
+    /// does the `interrupt_send_now_v1` capability vouch for it — it is not in
+    /// the published SDK reference, but CLI 2.1.299's init frame advertises it
+    /// (observed live 2026-10-13, beside `interrupt_receipt_v1`,
+    /// `interrupt_cancel_queued_v1` and `msg_lifecycle_v1`), and its bundled
+    /// description is the send-now behaviour itself.
     fn priority_supported(&self) -> bool {
-        self.version.is_some_and(|v| v >= PRIORITY_NOW_MIN_VERSION)
-            || self.has_capability("interrupt_send_now_v1")
+        match self.version {
+            Some(version) => version >= PRIORITY_NOW_MIN_VERSION,
+            None => self.has_capability("interrupt_send_now_v1"),
+        }
     }
 
     fn remember_sent(&mut self, uuid: String) {
@@ -208,14 +225,22 @@ fn parse_cli_version(raw: &str) -> Option<(u32, u32, u32)> {
 ///
 /// Every frame carries a fresh `uuid` (interrupt receipts name messages by
 /// it). On a CLI that understands priorities, `steer` is an explicit
-/// `priority: "next"` and `now` is `priority: "now"` with
-/// `origin: {kind: "human"}`. Otherwise both fields are omitted — absent
-/// priority already means "next" — and `now` on a busy session becomes an
-/// interrupt followed by the message (the CLI reads it next).
+/// `priority: "next"` and `now` is `priority: "now"` — plus
+/// `origin: {kind: "human"}` only when a person sent it; an agent's `now`
+/// must not claim to be the user. On a CLI known NOT to understand them both
+/// fields are omitted (absent priority already means "next") and `now` on a
+/// busy session becomes an interrupt followed by the message.
+///
+/// Before any `system/init` the CLI is unknown, and the first turn may not
+/// even have started: an interrupt then aborts that turn as soon as it starts
+/// and the messages in it get no response (SDK reference,
+/// `SDKControlInterruptResponse`). So a pre-init `now` is sent plain — no
+/// priority, no interrupt — and is read as soon as running tools finish.
 fn user_frame(
     text: &str,
     uuid: &str,
     delivery: Delivery,
+    sender: MessageSender,
     protocol: &CliProtocol,
     busy: bool,
 ) -> (bool, Value) {
@@ -224,17 +249,62 @@ fn user_frame(
         "uuid": uuid,
         "message": { "role": "user", "content": [ { "type": "text", "text": text } ] }
     });
+    if !protocol.observed_init {
+        return (false, frame);
+    }
     if protocol.priority_supported() {
         match delivery {
             Delivery::Steer => frame["priority"] = json!("next"),
             Delivery::Now => {
                 frame["priority"] = json!("now");
-                frame["origin"] = json!({ "kind": "human" });
+                if sender == MessageSender::Human {
+                    frame["origin"] = json!({ "kind": "human" });
+                }
             }
         }
         return (false, frame);
     }
     (delivery == Delivery::Now && busy, frame)
+}
+
+/// One caller waiting on a live switch that may take more than one control
+/// request (model AND effort): resolves once every request answered, with
+/// the first refusal if any.
+#[derive(Debug, Clone)]
+struct SwitchAck(Arc<std::sync::Mutex<SwitchAckState>>);
+
+#[derive(Debug)]
+struct SwitchAckState {
+    remaining: usize,
+    error: Option<String>,
+    reply: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
+}
+
+impl SwitchAck {
+    fn new(requests: usize, reply: tokio::sync::oneshot::Sender<Result<(), String>>) -> Self {
+        let ack = Self(Arc::new(std::sync::Mutex::new(SwitchAckState {
+            remaining: requests,
+            error: None,
+            reply: Some(reply),
+        })));
+        if requests == 0 {
+            ack.settle(None);
+        }
+        ack
+    }
+
+    fn settle(&self, error: Option<String>) {
+        let mut state = self.0.lock().unwrap();
+        state.remaining = state.remaining.saturating_sub(1);
+        if state.error.is_none() {
+            state.error = error;
+        }
+        if state.remaining == 0 {
+            if let Some(reply) = state.reply.take() {
+                let _ = reply.send(state.error.take().map_or(Ok(()), Err));
+            }
+        }
+    }
 }
 
 /// The env var that opts a headless session into Claude Code's task tools
@@ -1174,10 +1244,12 @@ enum PendingControl {
     Interrupt,
     SetModel {
         model: String,
+        ack: Option<SwitchAck>,
     },
     /// `apply_flag_settings {effortLevel}` — the live effort switch.
     SetEffort {
         effort: String,
+        ack: Option<SwitchAck>,
     },
     SetPermissionMode(ManagedPermissionSwitch),
     /// `stop_task` — the CLI's own per-task stop (the control its task UI's
@@ -1375,10 +1447,12 @@ pub fn spawn_session(store: SessionStore, conv: ConversationStore, cfg: SpawnCon
     let generation = store.claim_generation(&cfg.session_id);
     tokio::spawn(async move {
         let session_id = cfg.session_id.clone();
-        if cfg.resume.is_some() {
-            seed_resumed_history(&store, &conv, &session_id).await;
-        }
-        if let Err(err) = run_session(&store, &conv, cfg).await {
+        let tasks = if cfg.resume.is_some() {
+            seed_resumed_history(&store, &conv, &session_id).await
+        } else {
+            TaskFold::default()
+        };
+        if let Err(err) = run_session(&store, &conv, cfg, tasks).await {
             tracing::warn!(?err, session = %session_id, "claude stream session ended with error");
         }
         // Child gone → a Stopped, resumable row (same lifecycle as PTY spawns).
@@ -1398,27 +1472,50 @@ pub fn spawn_session(store: SessionStore, conv: ConversationStore, cfg: SpawnCon
 /// from its rollout). Only into an empty log, so a resume within one daemon
 /// life never duplicates; the tailer skips stream sessions, so nothing else
 /// replays it.
-async fn seed_resumed_history(store: &SessionStore, conv: &ConversationStore, session_id: &str) {
-    if conv.has_conversation(session_id) {
-        return;
-    }
+///
+/// Returns the prior life's task-tool state for the live fold to continue
+/// (see [`crate::session::conversation::replay_transcript_plan`]) and restores
+/// the row's plan from it. That part runs even when the log is already
+/// populated: each driver life starts its fold empty.
+async fn seed_resumed_history(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+) -> TaskFold {
     let Some(state) = store.get(session_id) else {
-        return;
+        return TaskFold::default();
     };
     let path = match state.transcript_path.clone() {
         Some(path) => Some(path),
         None => crate::session::claude_subagents::discover_parent(&state).await,
     };
     let Some(path) = path else {
-        return;
+        return TaskFold::default();
     };
-    match crate::session::conversation::replay_transcript(&path).await {
-        Ok(items) if !items.is_empty() && !conv.has_conversation(session_id) => {
-            conv.push(session_id, items)
+    if !conv.has_conversation(session_id) {
+        match crate::session::conversation::replay_transcript(&path).await {
+            Ok(items) if !items.is_empty() && !conv.has_conversation(session_id) => {
+                conv.push(session_id, items)
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::debug!(?err, session = %session_id, "resume history seed skipped")
+            }
         }
-        Ok(_) => {}
+    }
+    match crate::session::conversation::replay_transcript_plan(&path).await {
+        Ok((tasks, plan)) => {
+            if let Some(plan) = plan {
+                let current = store.get(session_id).and_then(|s| s.plan);
+                if current.as_ref().map(|p| &p.steps) != Some(&plan.steps) {
+                    store.set_plan(conv, session_id, plan);
+                }
+            }
+            tasks
+        }
         Err(err) => {
-            tracing::debug!(?err, session = %session_id, "resume history seed skipped")
+            tracing::debug!(?err, session = %session_id, "resume task seed skipped");
+            TaskFold::default()
         }
     }
 }
@@ -1473,6 +1570,7 @@ async fn run_session(
     store: &SessionStore,
     conv: &ConversationStore,
     cfg: SpawnConfig,
+    seeded_tasks: TaskFold,
 ) -> anyhow::Result<()> {
     let session_id = cfg.session_id.clone();
     let startup_started = std::time::Instant::now();
@@ -1538,6 +1636,9 @@ async fn run_session(
     store.register_managed_answer(&session_id, atx);
     let (mtx, mut mrx) = mpsc::unbounded_channel::<crate::session::ModelSwitch>();
     store.register_managed_model_switch(&session_id, mtx);
+    // `/model` prefers this one: it answers only once the CLI confirmed.
+    let (cmtx, mut cmrx) = mpsc::unbounded_channel::<ConfirmedModelSwitch>();
+    store.register_managed_confirmed_model_switch(&session_id, cmtx);
     let (ptx, mut prx) = mpsc::unbounded_channel::<ManagedPermissionSwitch>();
     store.register_managed_permission_mode(&session_id, ptx);
     let (itx, mut irx) = mpsc::unbounded_channel::<()>();
@@ -1574,7 +1675,10 @@ async fn run_session(
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
     acc.seed_model(cfg.model.as_deref());
-    let mut totals = StreamTotals::default();
+    let mut totals = StreamTotals {
+        tasks: seeded_tasks,
+        ..StreamTotals::default()
+    };
     // Approvals awaiting the user's /approve, FIFO (two requests can arrive
     // before the first is answered). AskUserQuestion parks separately — it's
     // answered with content, not a yes/no.
@@ -1619,7 +1723,7 @@ async fn run_session(
                 Err(err) => return Err(err.into()),
             },
             msg = rx.recv() => match msg {
-                Some(ManagedPrompt { text, delivery }) => {
+                Some(ManagedPrompt { text, delivery, sender }) => {
                     // Echo the user's message, but prepend the role
                     // instructions (once) to what's actually sent to the agent.
                     // A message invoking a known slash command echoes as the
@@ -1635,13 +1739,24 @@ async fn run_session(
                         None => text,
                     };
                     let uuid = uuid::Uuid::new_v4().to_string();
+                    // Busy only decides the older-CLI fallback (interrupt, then
+                    // send). Every send of ours flips the mode to Responding
+                    // (`note_user_send`) until a `result` idles it, and the
+                    // aborted turn of our own fallback interrupt does not idle
+                    // it (`fallback_interrupt_owed`). Known gap: when a turn
+                    // ends while an earlier steer of ours is still queued, the
+                    // gap before that queued turn's first frame reads idle, so
+                    // a `now` there is sent plain — the CLI may already have
+                    // folded the steer into the finished turn, and nothing on
+                    // a pre-2.1.286 wire says which.
                     let busy = matches!(
                         cur_mode,
                         SessionMode::Responding | SessionMode::Approval | SessionMode::Question
                     );
                     let (interrupt_first, frame) =
-                        user_frame(&sent, &uuid, delivery, &totals.protocol, busy);
+                        user_frame(&sent, &uuid, delivery, sender, &totals.protocol, busy);
                     if interrupt_first {
+                        totals.protocol.fallback_interrupt_owed = true;
                         // An older CLI can't be told "now": stop the turn, and
                         // the message (written right after, so the CLI reads it
                         // second) starts the next one.
@@ -1719,24 +1834,16 @@ async fn run_session(
                     // the CLI applies from the next turn (verified on CLI
                     // 2.1.299: spawned `--effort high`, switched to `low`, and
                     // the next assistant row recorded `effort: "low"`).
-                    if let Some(model) = sw.model {
-                        send_control(
-                            &out_tx,
-                            &mut next_ctl,
-                            &mut pending_controls,
-                            json!({ "subtype": "set_model", "model": model }),
-                            PendingControl::SetModel { model },
-                        );
-                    }
-                    if let Some(effort) = sw.effort {
-                        send_control(
-                            &out_tx,
-                            &mut next_ctl,
-                            &mut pending_controls,
-                            effort_request(&effort),
-                            PendingControl::SetEffort { effort },
-                        );
-                    }
+                    send_switch(&out_tx, &mut next_ctl, &mut pending_controls, sw, None);
+                }
+                None => break,
+            },
+            confirmed = cmrx.recv() => match confirmed {
+                Some(ConfirmedModelSwitch { switch, reply }) => {
+                    let requests =
+                        usize::from(switch.model.is_some()) + usize::from(switch.effort.is_some());
+                    let ack = SwitchAck::new(requests, reply);
+                    send_switch(&out_tx, &mut next_ctl, &mut pending_controls, switch, Some(ack));
                 }
                 None => break,
             },
@@ -1860,6 +1967,38 @@ pub(crate) fn prove_task_processes(
     changed
 }
 
+/// Write the control request(s) a live model/effort switch needs, each
+/// parked with the caller's `ack` (if it waits for the CLI's verdict).
+fn send_switch(
+    out_tx: &mpsc::UnboundedSender<Value>,
+    next_ctl: &mut u64,
+    pending_controls: &mut HashMap<String, PendingControl>,
+    switch: crate::session::ModelSwitch,
+    ack: Option<SwitchAck>,
+) {
+    if let Some(model) = switch.model {
+        send_control(
+            out_tx,
+            next_ctl,
+            pending_controls,
+            json!({ "subtype": "set_model", "model": model }),
+            PendingControl::SetModel {
+                model,
+                ack: ack.clone(),
+            },
+        );
+    }
+    if let Some(effort) = switch.effort {
+        send_control(
+            out_tx,
+            next_ctl,
+            pending_controls,
+            effort_request(&effort),
+            PendingControl::SetEffort { effort, ack },
+        );
+    }
+}
+
 /// The live effort switch: `apply_flag_settings` merges `effortLevel` into the
 /// session's flag-settings layer, applied from the next turn. The CLI takes a
 /// level name (and `ultracode`), so the value passes through verbatim and a
@@ -1963,23 +2102,26 @@ fn handle_line(
                         tracing::info!(session = %session_id, ?still_queued, ?cancelled, "claude stream: interrupt receipt");
                     }
                 }
-                (PendingControl::SetEffort { effort }, None) => {
+                (PendingControl::SetEffort { effort, ack }, None) => {
                     tracing::info!(session = %session_id, effort = %effort, "claude stream: effort switched (next turn)");
+                    if let Some(ack) = ack {
+                        ack.settle(None);
+                    }
                 }
-                (PendingControl::SetEffort { effort }, Some(err)) => {
+                // A refused switch is reported to its caller (the `/model`
+                // answer), never as an `AgentUpdate::Error`: that becomes a
+                // "⚠️ Error:" assistant item, which clients read as the
+                // worker having died and which runs into a streaming reply.
+                (PendingControl::SetEffort { effort, ack }, Some(err)) => {
                     tracing::warn!(session = %session_id, effort = %effort, error = %err, "claude stream: effort switch rejected");
-                    apply_updates(
-                        store,
-                        conv,
-                        session_id,
-                        vec![AgentUpdate::Error(format!(
-                            "effort switch to '{effort}' failed: {err}"
-                        ))],
-                        cur_mode,
-                        acc,
-                    );
+                    if let Some(ack) = ack {
+                        ack.settle(Some(format!("effort switch to '{effort}' failed: {err}")));
+                    }
                 }
-                (PendingControl::SetModel { model }, None) => {
+                (PendingControl::SetModel { model, ack }, None) => {
+                    if let Some(ack) = ack {
+                        ack.settle(None);
+                    }
                     tracing::info!(session = %session_id, model = %model, "claude stream: model switched");
                     apply_updates(
                         store,
@@ -1990,18 +2132,12 @@ fn handle_line(
                         acc,
                     );
                 }
-                (PendingControl::SetModel { model }, Some(err)) => {
+                (PendingControl::SetModel { model, ack }, Some(err)) => {
+                    // Same reporting rule as a refused effort switch above.
                     tracing::warn!(session = %session_id, model = %model, error = %err, "claude stream: model switch rejected");
-                    apply_updates(
-                        store,
-                        conv,
-                        session_id,
-                        vec![AgentUpdate::Error(format!(
-                            "model switch to '{model}' failed: {err}"
-                        ))],
-                        cur_mode,
-                        acc,
-                    );
+                    if let Some(ack) = ack {
+                        ack.settle(Some(format!("model switch to '{model}' failed: {err}")));
+                    }
                 }
                 (PendingControl::SetPermissionMode(psw), None) => {
                     // Success may confirm the mode back (verified: `{"mode":
@@ -2143,6 +2279,12 @@ fn handle_line(
 
             let is_result = value.get("type").and_then(Value::as_str) == Some("result");
             let abort_or_error = result_is_abort_or_error(value);
+            // The turn our fallback interrupt aborted: our `now` message is
+            // already queued behind it, so this is not the end of work.
+            let owed_interrupt = is_result
+                && std::mem::take(&mut totals.protocol.fallback_interrupt_owed)
+                && value.get("terminal_reason").and_then(Value::as_str)
+                    == Some("aborted_streaming");
             // Hold the turn-closing `result` busy iff a background SUBAGENT is
             // still running and this isn't an interrupt/error.
             let suppress_idle = is_result && *bg_tasks_active && !abort_or_error;
@@ -2159,7 +2301,9 @@ fn handle_line(
                 *pending_question = None;
             }
             let mut updates = translate(value, totals);
-            if suppress_idle {
+            if owed_interrupt {
+                updates.retain(|u| !matches!(u, AgentUpdate::Idle));
+            } else if suppress_idle {
                 let before = updates.len();
                 updates.retain(|u| !matches!(u, AgentUpdate::Idle));
                 // Remember the swallowed Idle: the drain branch above owes it
@@ -2426,41 +2570,57 @@ mod tests {
 
     #[test]
     fn user_frames_carry_a_uuid_and_priority_only_where_the_cli_supports_it() {
+        let human = MessageSender::Human;
         let modern = init("2.1.296", json!(["interrupt_receipt_v1"]));
-        let (interrupt, steer) = user_frame("hi", "u-1", Delivery::Steer, &modern, true);
+        let (interrupt, steer) = user_frame("hi", "u-1", Delivery::Steer, human, &modern, true);
         assert!(!interrupt);
         assert_eq!(
             steer,
             json!({ "type": "user", "uuid": "u-1", "priority": "next",
                 "message": { "role": "user", "content": [ { "type": "text", "text": "hi" } ] } })
         );
-        let (interrupt, now) = user_frame("stop", "u-2", Delivery::Now, &modern, true);
+        let (interrupt, now) = user_frame("stop", "u-2", Delivery::Now, human, &modern, true);
         assert!(!interrupt, "a send-now CLI needs no separate interrupt");
         assert_eq!(now["priority"], "now");
         assert_eq!(now["origin"], json!({ "kind": "human" }));
         assert_eq!(now["uuid"], "u-2");
+        // An agent's `now` keeps the priority but never claims the user.
+        let (_, agent) = user_frame(
+            "stop",
+            "u-7",
+            Delivery::Now,
+            MessageSender::Agent,
+            &modern,
+            true,
+        );
+        assert_eq!(agent["priority"], "now");
+        assert!(agent.get("origin").is_none());
 
-        // Older than 2.1.286 (and no send-now capability): no priority/origin.
+        // Older than 2.1.286: no priority/origin.
         let older = init("2.1.250", json!(["interrupt_receipt_v1"]));
-        let (interrupt, steer) = user_frame("hi", "u-3", Delivery::Steer, &older, true);
+        let (interrupt, steer) = user_frame("hi", "u-3", Delivery::Steer, human, &older, true);
         assert!(!interrupt);
         assert!(steer.get("priority").is_none() && steer.get("origin").is_none());
         assert_eq!(steer["uuid"], "u-3");
-        let (interrupt, now) = user_frame("stop", "u-4", Delivery::Now, &older, true);
+        let (interrupt, now) = user_frame("stop", "u-4", Delivery::Now, human, &older, true);
         assert!(interrupt, "busy + unsupported `now` interrupts first");
         assert!(now.get("priority").is_none() && now.get("origin").is_none());
-        let (interrupt, _) = user_frame("go", "u-5", Delivery::Now, &older, false);
+        let (interrupt, _) = user_frame("go", "u-5", Delivery::Now, human, &older, false);
         assert!(!interrupt, "an idle session has no turn to interrupt");
 
-        // Before any init (the first message of a session) the CLI is unknown.
+        // Before any init the CLI is unknown and its first turn may not have
+        // started: a `now` goes plain — never an interrupt that would abort
+        // the first turn and leave both messages unanswered.
         let unknown = CliProtocol::default();
-        let (interrupt, frame) = user_frame("hi", "u-6", Delivery::Now, &unknown, true);
-        assert!(interrupt);
-        assert!(frame.get("priority").is_none());
+        let (interrupt, frame) = user_frame("hi", "u-6", Delivery::Now, human, &unknown, true);
+        assert!(!interrupt);
+        assert!(frame.get("priority").is_none() && frame.get("origin").is_none());
 
-        // An unparseable version still qualifies on the capability itself.
-        let flagged = init("dev", json!(["interrupt_send_now_v1"]));
-        assert!(flagged.priority_supported());
+        // The version is the primary gate; the capability only vouches when
+        // there is no parseable version.
+        assert!(init("dev", json!(["interrupt_send_now_v1"])).priority_supported());
+        assert!(!init("2.1.250", json!(["interrupt_send_now_v1"])).priority_supported());
+        assert!(!init("dev", json!([])).priority_supported());
     }
 
     #[test]
@@ -4386,6 +4546,296 @@ kill "$bg" 2>/dev/null
             .unwrap();
         assert!(verdict.await.unwrap().is_err());
 
+        store.terminate_managed(sid);
+    }
+
+    #[tokio::test]
+    async fn resume_continues_the_prior_task_list() {
+        use crate::session::conversation::tests::transcript_fixture;
+        let rows = vec![
+            json!({"type":"assistant","message":{"role":"assistant","content":[
+                {"type":"tool_use","id":"tc1","name":"TaskCreate",
+                 "input":{"subject":"Old task","description":"d","activeForm":"Doing old"}}]}}),
+            json!({"type":"user","message":{"role":"user","content":[
+                {"type":"tool_result","tool_use_id":"tc1","content":"Task #1 created successfully: Old task"}]},
+                "toolUseResult":{"task":{"id":"1","subject":"Old task"}}}),
+            json!({"type":"assistant","message":{"role":"assistant","content":[
+                {"type":"tool_use","id":"tu1","name":"TaskUpdate",
+                 "input":{"taskId":"1","status":"in_progress"}}]}}),
+        ];
+        let (_dir, path) = transcript_fixture(&rows);
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.hydrate(vec![crate::store::RestoredSession {
+            id: "resumed-tasks".into(),
+            cwd: Some("/work".into()),
+            tool_calls: 0,
+            created_at: 1000,
+            last_event_at: 2000,
+            user_prompt_count: 1,
+            model: None,
+            requested_model: None,
+            requested_selection: None,
+            transcript_path: Some(path),
+            config_root: None,
+        }]);
+        let tasks = seed_resumed_history(&store, &conv, "resumed-tasks").await;
+        let plan = store
+            .get("resumed-tasks")
+            .unwrap()
+            .plan
+            .expect("plan restored");
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].status, PlanStatus::InProgress);
+
+        // The live fold continues it: an update to the OLD id lands, and a new
+        // create joins the list instead of replacing it.
+        let mut totals = StreamTotals {
+            tasks,
+            ..StreamTotals::default()
+        };
+        let updates = translate(&task_update("1", "completed"), &mut totals);
+        assert_eq!(plans(&updates)[0].steps[0].status, PlanStatus::Completed);
+        translate(&task_create("tc2", "New task"), &mut totals);
+        let updates = translate(&task_created("tc2", json!("2")), &mut totals);
+        let plan = plans(&updates);
+        assert_eq!(plan[0].steps.len(), 2);
+        assert_eq!(plan[0].steps[0].content, "Old task");
+        assert_eq!(plan[0].steps[1].content, "New task");
+    }
+
+    #[test]
+    fn the_turn_our_fallback_interrupt_aborted_does_not_flash_idle() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "sid-fallback";
+        store.register_managed(sid, "/w", "claude");
+        let (out_tx, _out_rx) = mpsc::unbounded_channel::<Value>();
+        let mut cur_mode = SessionMode::Responding;
+        let mut acc = UsageAcc::default();
+        let mut totals = StreamTotals::default();
+        totals.protocol.fallback_interrupt_owed = true;
+        let yolo = AtomicBool::new(false);
+        let mut pa: VecDeque<ParkedCanUse> = VecDeque::new();
+        let mut pq: Option<ParkedCanUse> = None;
+        let mut pc: HashMap<String, PendingControl> = HashMap::new();
+        let (mut bg, mut sup) = (false, false);
+        let aborted = json!({ "type": "result", "subtype": "error_during_execution",
+            "is_error": true, "terminal_reason": "aborted_streaming" });
+        handle_line(
+            &aborted,
+            &store,
+            &conv,
+            sid,
+            &out_tx,
+            &mut cur_mode,
+            &mut acc,
+            &mut totals,
+            &yolo,
+            &mut pa,
+            &mut pq,
+            &mut pc,
+            &mut bg,
+            &mut sup,
+        );
+        assert_eq!(
+            cur_mode,
+            SessionMode::Responding,
+            "our message's turn follows"
+        );
+        assert!(!totals.protocol.fallback_interrupt_owed);
+        // That turn's own result idles as usual.
+        let done = json!({ "type": "result", "subtype": "success", "is_error": false });
+        handle_line(
+            &done,
+            &store,
+            &conv,
+            sid,
+            &out_tx,
+            &mut cur_mode,
+            &mut acc,
+            &mut totals,
+            &yolo,
+            &mut pa,
+            &mut pq,
+            &mut pc,
+            &mut bg,
+            &mut sup,
+        );
+        assert_eq!(cur_mode, SessionMode::Input);
+    }
+
+    /// A stand-in `claude` that appends every stdin line to `log` and answers
+    /// control requests: an `apply_flag_settings` naming `bogus` is refused,
+    /// one naming `silent` gets no answer at all, everything else succeeds.
+    /// It never emits `system/init`.
+    #[cfg(unix)]
+    fn write_logging_stub(dir: &std::path::Path, log: &std::path::Path) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("stub-claude-log");
+        let script = format!(
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{log}'
+  case "$line" in
+    *'"type":"control_request"'*)
+      id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+      case "$line" in
+        *bogus*) printf '%s\n' "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"error\",\"request_id\":\"$id\",\"error\":\"invalid effort level\"}}}}" ;;
+        *silent*) ;;
+        *) printf '%s\n' "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"$id\",\"response\":{{}}}}}}" ;;
+      esac
+      ;;
+  esac
+done
+"#,
+            log = log.display()
+        );
+        std::fs::write(&path, script).expect("writing the stub CLI");
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    fn spawn_logging(
+        tag: &str,
+    ) -> (
+        ScratchDir,
+        SessionStore,
+        ConversationStore,
+        std::path::PathBuf,
+    ) {
+        let dir = ScratchDir(
+            std::env::temp_dir().join(format!("claudemon-{tag}-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir_all(&dir.0).expect("scratch dir");
+        let log = dir.0.join("stdin.jsonl");
+        let bin = write_logging_stub(&dir.0, &log);
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed(tag, &dir.0.to_string_lossy(), "claude");
+        store.set_transport(tag, crate::session::state::Transport::Stream);
+        spawn_session(
+            store.clone(),
+            conv.clone(),
+            SpawnConfig {
+                session_id: tag.to_string(),
+                cwd: dir.0.to_string_lossy().to_string(),
+                bin: bin.to_string_lossy().to_string(),
+                model: None,
+                effort: None,
+                permission_mode: None,
+                resume: None,
+                extra_args: vec![],
+                env: HashMap::new(),
+                yolo: false,
+                facade: Facade::default(),
+            },
+        );
+        (dir, store, conv, log)
+    }
+
+    #[cfg(unix)]
+    fn logged(log: &std::path::Path) -> Vec<Value> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect()
+    }
+
+    /// Before the CLI's first `system/init`, a `now` must not become an
+    /// interrupt: one landing before the first turn starts aborts that turn
+    /// and neither message is answered.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_now_before_init_is_sent_plain_and_never_interrupts() {
+        let (_dir, store, _conv, log) = spawn_logging("pre-init-now");
+        let sid = "pre-init-now";
+        assert!(settles(|| store.is_managed(sid)).await);
+        assert!(matches!(
+            store.submit_message(sid, "first".into()),
+            crate::session::MessageOutcome::Sent
+        ));
+        // The session reads as busy now (the first message is in flight)…
+        assert!(matches!(
+            store.submit_message_with(sid, "actually, stop".into(), Delivery::Now),
+            crate::session::MessageOutcome::Sent
+        ));
+        assert!(
+            settles(|| logged(&log).iter().filter(|v| v["type"] == "user").count() == 2).await,
+            "both messages reach the CLI"
+        );
+        let frames = logged(&log);
+        assert!(
+            !frames
+                .iter()
+                .any(|v| v["request"]["subtype"] == "interrupt"),
+            "no interrupt may be written before init: {frames:?}"
+        );
+        for user in frames.iter().filter(|v| v["type"] == "user") {
+            assert!(user["uuid"].is_string());
+            assert!(user.get("priority").is_none() && user.get("origin").is_none());
+        }
+        store.terminate_managed(sid);
+    }
+
+    /// `/model`'s confirming path: the answer is the CLI's own verdict, and a
+    /// refusal never becomes a "⚠️ Error:" item in the conversation.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn live_switches_wait_for_the_clis_verdict() {
+        use crate::session::ModelSwitch;
+        let (_dir, store, conv, log) = spawn_logging("confirmed-switch");
+        let sid = "confirmed-switch";
+        assert!(settles(|| store.is_managed(sid)).await);
+        let switch = |model: Option<&str>, effort: Option<&str>| ModelSwitch {
+            model: model.map(str::to_owned),
+            effort: effort.map(str::to_owned),
+        };
+        let wait = std::time::Duration::from_secs(5);
+        assert_eq!(
+            store
+                .set_managed_model_confirmed(sid, switch(None, Some("low")), wait)
+                .await,
+            Some(Ok(()))
+        );
+        assert_eq!(
+            store
+                .set_managed_model_confirmed(sid, switch(Some("opus"), Some("high")), wait)
+                .await,
+            Some(Ok(()))
+        );
+        let refused = store
+            .set_managed_model_confirmed(sid, switch(Some("opus"), Some("bogus")), wait)
+            .await
+            .expect("a confirming driver")
+            .expect_err("the CLI refused the effort");
+        assert!(refused.contains("bogus") && refused.contains("invalid effort level"));
+        let unanswered = store
+            .set_managed_model_confirmed(
+                sid,
+                switch(None, Some("silent")),
+                std::time::Duration::from_millis(300),
+            )
+            .await
+            .unwrap()
+            .expect_err("no answer is not a success");
+        assert!(unanswered.contains("did not confirm"));
+        let sent = logged(&log);
+        assert!(sent.iter().any(|v| v["request"]
+            == json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": "low" } })));
+        let items = serde_json::to_string(&conv.snapshot(sid).map(|s| s.1)).unwrap();
+        assert!(!items.contains("Error"), "{items}");
+        // A session with no confirming driver falls back to the plain path.
+        assert_eq!(
+            store
+                .set_managed_model_confirmed("nobody", switch(None, Some("low")), wait)
+                .await,
+            None
+        );
         store.terminate_managed(sid);
     }
 }

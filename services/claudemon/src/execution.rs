@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     daemon::spawn::{SpawnManagedPayload, SpawnPayload},
     session::{
-        store::{Delivery, MessageOutcome},
+        store::{Delivery, MessageOutcome, MessageSender},
         windows::PersistedModelSelection,
         ConversationStore, SessionStore,
     },
@@ -66,16 +66,17 @@ pub(crate) trait ExecutionEngineV1: Send + Sync {
         selection: Option<PersistedModelSelection>,
     ) -> bool;
     fn send(&self, store: &SessionStore, id: &str, text: String) -> MessageOutcome;
-    /// `send` with an explicit [`Delivery`]. Engines without a delivery
-    /// distinction keep the default, which is a normal send.
+    /// `send` with an explicit [`Delivery`] and [`MessageSender`]. Engines
+    /// without those distinctions keep the default, which is a normal send.
     fn send_with(
         &self,
         store: &SessionStore,
         id: &str,
         text: String,
         delivery: Delivery,
+        sender: MessageSender,
     ) -> MessageOutcome {
-        let _ = delivery;
+        let _ = (delivery, sender);
         self.send(store, id, text)
     }
     fn decide(&self, store: &SessionStore, id: &str, approve: bool) -> bool;
@@ -212,8 +213,9 @@ impl ExecutionEngineV1 for ClaudemonEngine {
         id: &str,
         text: String,
         delivery: Delivery,
+        sender: MessageSender,
     ) -> MessageOutcome {
-        store.native_submit_message_with(id, text, delivery)
+        store.native_submit_message_from(id, text, delivery, sender)
     }
     fn decide(&self, store: &SessionStore, id: &str, approve: bool) -> bool {
         store.native_submit_managed_decision(id, approve)
@@ -317,9 +319,10 @@ impl ExecutionEngineV1 for BoundEngine {
         id: &str,
         text: String,
         delivery: Delivery,
+        sender: MessageSender,
     ) -> MessageOutcome {
         self.call(MessageOutcome::WrapperGone, |engine| {
-            engine.send_with(store, id, text, delivery)
+            engine.send_with(store, id, text, delivery, sender)
         })
     }
     fn decide(&self, store: &SessionStore, id: &str, approve: bool) -> bool {

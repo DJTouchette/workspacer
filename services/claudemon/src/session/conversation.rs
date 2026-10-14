@@ -88,6 +88,48 @@ pub async fn replay_transcript(path: &str) -> std::io::Result<Vec<ConversationIt
     Ok(items)
 }
 
+/// Rebuild a transcript's task-tool state and its current plan, for a resumed
+/// stream session whose live [`TaskFold`] must CONTINUE the prior life's list
+/// (later `TaskUpdate`s name ids created then; a fresh fold would drop them,
+/// and the first new `TaskCreate` would replace the row's plan with one task).
+///
+/// Unlike [`replay_transcript`] this walks the WHOLE file: a task created in
+/// the first minute of a long session is still on the list. Rows are
+/// streamed, and only rows that can touch a plan are parsed. The plan is
+/// last-write-wins across task tools and `TodoWrite`, as the tailer does.
+pub async fn replay_transcript_plan(path: &str) -> std::io::Result<(TaskFold, Option<Plan>)> {
+    use tokio::io::AsyncBufReadExt;
+    if !path_is_allowed(std::path::Path::new(path)) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("transcript path is outside every known transcript root: {path}"),
+        ));
+    }
+    let file = tokio::fs::File::open(path).await?;
+    let mut lines = tokio::io::BufReader::new(file).lines();
+    let mut fold = TaskFold::default();
+    let mut plan = None;
+    while let Some(line) = lines.next_line().await? {
+        if !(line.contains("Task") || line.contains("\"task") || line.contains("TodoWrite")) {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if fold.fold_row(&value) {
+            let ts = value
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            plan = Some(fold.to_plan(ts));
+        }
+        if let Some(todo) = plan_from_row(&value) {
+            plan = Some(todo);
+        }
+    }
+    Ok((fold, plan))
+}
+
 fn stopped_drain_finished(age_secs: i64, backlog: bool) -> bool {
     age_secs > STOPPED_DRAIN_SECS && (!backlog || age_secs > STOPPED_MAX_DRAIN_SECS)
 }
