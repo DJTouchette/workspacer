@@ -98,27 +98,43 @@ impl Controls {
         Ok(())
     }
     async fn provider(&self, id: &str) -> String {
-        if let Some(provider) = self
+        self.route(id).await.0
+    }
+    /// `(provider, transport)` for a session: the live row first, then the
+    /// daemon's own row. Unknown provider reads as Claude and unknown
+    /// transport as PTY, the daemon's legacy defaults.
+    async fn route(&self, id: &str) -> (String, String) {
+        let field = |row: &Value, key: &str| {
+            row[key]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
+        let cached = self
             .rows
             .read()
             .unwrap()
             .get(id)
-            .and_then(|r| r["provider"].as_str())
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-        {
-            return provider;
-        }
-        self.request("GET", format!("/sessions/{id}"), None)
-            .await
-            .ok()
-            .and_then(|r| {
-                r["provider"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned)
-            })
-            .unwrap_or_else(|| "claude".into())
+            .map(|row| (field(row, "provider"), field(row, "transport")));
+        let (provider, transport) = match cached {
+            Some((Some(provider), Some(transport))) => (Some(provider), Some(transport)),
+            cached => {
+                let fetched = self
+                    .request("GET", format!("/sessions/{id}"), None)
+                    .await
+                    .ok();
+                let (cached_provider, cached_transport) = cached.unwrap_or_default();
+                (
+                    cached_provider.or_else(|| fetched.as_ref().and_then(|r| field(r, "provider"))),
+                    cached_transport
+                        .or_else(|| fetched.as_ref().and_then(|r| field(r, "transport"))),
+                )
+            }
+        };
+        (
+            provider.unwrap_or_else(|| "claude".into()),
+            transport.unwrap_or_else(|| "pty".into()),
+        )
     }
     async fn call(&self, method: &str, p: Value) -> Result<Value> {
         if method == "sessions.recent" {
@@ -204,9 +220,10 @@ impl Controls {
                 if effort.is_empty() {
                     return Ok(failed("requires a session and an effort level"));
                 }
+                let (provider, transport) = self.route(id).await;
                 let response = self
                     .engine
-                    .request(effort_command(&self.provider(id).await, id, effort))
+                    .request(effort_command(&provider, &transport, id, effort))
                     .await;
                 match response {
                     Err(error) => Ok(failed(error)),
@@ -282,6 +299,7 @@ impl Controls {
                     .request(Command::Message {
                         id: id.into(),
                         text: instruction,
+                        delivery: Default::default(),
                     })
                     .await
                     .map(|value| value["ok"] != false)
@@ -350,11 +368,21 @@ impl Controls {
         .await
     }
 }
-fn effort_command(provider: &str, id: &str, effort: &str) -> Command {
-    if provider == "claude" {
+/// The live effort switch. Only a Claude PTY session takes the interactive
+/// `/effort <level>` command, typed into its TUI. Every managed session —
+/// Claude stream included — switches through the daemon's settings endpoint:
+/// the Claude stream driver turns it into the CLI's `apply_flag_settings
+/// {effortLevel}` control request (applied from the next turn) instead of a
+/// chat message. A `/effort` chat message on a stream session queues behind a
+/// running turn, echoes a command card, and its only confirmation is a
+/// synthetic local-command reply the stream view drops — so it was neither
+/// prompt nor observable.
+fn effort_command(provider: &str, transport: &str, id: &str, effort: &str) -> Command {
+    if provider == "claude" && transport != "stream" {
         Command::Message {
             id: id.into(),
             text: format!("/effort {effort}"),
+            delivery: Default::default(),
         }
     } else {
         Command::Request {
@@ -573,24 +601,26 @@ mod tests {
     }
     #[test]
     fn effort_uses_provider_route_and_queued_model_ack_cannot_become_live_metadata() {
-        match effort_command("claude", "s1", "high") {
-            Command::Message { id, text } => {
+        match effort_command("claude", "pty", "s1", "high") {
+            Command::Message { id, text, .. } => {
                 assert_eq!(id, "s1");
                 assert_eq!(text, "/effort high");
             }
-            _ => panic!("Claude effort must be a normal queued slash message"),
+            _ => panic!("Claude PTY effort must be a normal queued slash message"),
         }
-        match effort_command("codex", "s2", "xhigh") {
-            Command::Request {
-                method,
-                path,
-                payload,
-            } => {
-                assert_eq!(method, "POST");
-                assert_eq!(path, "/sessions/s2/model");
-                assert_eq!(payload, Some(json!({"effort":"xhigh"})));
+        for (provider, transport) in [("codex", "stream"), ("claude", "stream")] {
+            match effort_command(provider, transport, "s2", "xhigh") {
+                Command::Request {
+                    method,
+                    path,
+                    payload,
+                } => {
+                    assert_eq!(method, "POST");
+                    assert_eq!(path, "/sessions/s2/model");
+                    assert_eq!(payload, Some(json!({"effort":"xhigh"})));
+                }
+                _ => panic!("{provider} {transport} effort must use the settings endpoint"),
             }
-            _ => panic!("managed effort must use the settings endpoint"),
         }
         let payload = json!({"model":"opus","model_identity":"opus","effort":"high"});
         let owner = json!({"model":"accepted","requested_selection":{"model":"accepted","context_window":1000000},"queued":true,"disposition":"queued"});

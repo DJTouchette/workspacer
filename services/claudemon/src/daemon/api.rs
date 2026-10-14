@@ -618,6 +618,11 @@ async fn post_input(
 #[derive(Debug, Deserialize)]
 struct MessagePayload {
     text: String,
+    /// How the message lands on a running managed session (`"steer"` |
+    /// `"now"`); absent is `"steer"`. An unknown value is a 422 from the
+    /// extractor rather than a silent downgrade.
+    #[serde(default)]
+    delivery: crate::session::Delivery,
 }
 
 async fn post_message(
@@ -630,7 +635,7 @@ async fn post_message(
     // flushed on the next `Input` transition otherwise (cold start, mid-turn,
     // or an open approval/question dialog). Only a stopped session rejects.
     // See `SessionStore::submit_message`.
-    match store.submit_message(&id, payload.text) {
+    match store.submit_message_with(&id, payload.text, payload.delivery) {
         MessageOutcome::Sent => Json(json!({ "ok": true })).into_response(),
         MessageOutcome::Queued => Json(json!({ "ok": true, "queued": true })).into_response(),
         MessageOutcome::Rejected(mode) => (
@@ -3467,6 +3472,59 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["ok"], true);
         assert_eq!(rx.try_recv().unwrap(), "do the thing");
+    }
+
+    #[tokio::test]
+    async fn post_message_carries_delivery_to_a_delivery_aware_driver() {
+        use crate::session::{Delivery, ManagedPrompt};
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let (tx, mut rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        state.store.register_managed_prompt("sess-1", tx);
+        for (body, delivery) in [
+            (json!({ "text": "a" }), Delivery::Steer),
+            (json!({ "text": "b", "delivery": "steer" }), Delivery::Steer),
+            (json!({ "text": "c", "delivery": "now" }), Delivery::Now),
+        ] {
+            let text = body["text"].as_str().unwrap().to_string();
+            let (status, _) =
+                request(state.clone(), post_json("/sessions/sess-1/message", body)).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(rx.try_recv().unwrap(), ManagedPrompt { text, delivery });
+        }
+        // An unknown delivery is refused, never downgraded to a plain send.
+        let (status, _) = request(
+            state,
+            post_json(
+                "/sessions/sess-1/message",
+                json!({ "text": "d", "delivery": "later" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_text_only_driver_still_takes_a_now_delivery_as_a_send() {
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "opencode");
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        state.store.register_managed_input("sess-1", tx);
+        let (status, _) = request(
+            state,
+            post_json(
+                "/sessions/sess-1/message",
+                json!({ "text": "hi", "delivery": "now" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(rx.try_recv().unwrap(), "hi");
     }
 
     // --- /approve -----------------------------------------------------------

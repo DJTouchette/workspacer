@@ -23,5 +23,6 @@ pub use state::{
     Transport,
 };
 pub use store::{
-    ManagedAnswer, ManagedPermissionSwitch, MessageOutcome, ModelSwitch, SessionStore,
+    Delivery, ManagedAnswer, ManagedPermissionSwitch, ManagedPrompt, MessageOutcome, ModelSwitch,
+    SessionStore,
 };

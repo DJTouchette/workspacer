@@ -63,6 +63,8 @@ pub enum Command {
     Message {
         id: String,
         text: String,
+        /// `"steer"` (default) or `"now"`; see [`crate::session::Delivery`].
+        delivery: crate::session::Delivery,
     },
     Approve {
         id: String,
@@ -430,9 +432,10 @@ async fn dispatch(router: Router, command: Command) -> Result<Value> {
             }
             (path, None)
         }
-        Command::Message { id, text } => {
-            (session_path(&id, "message")?, Some(json!({"text": text})))
-        }
+        Command::Message { id, text, delivery } => (
+            session_path(&id, "message")?,
+            Some(json!({"text": text, "delivery": delivery})),
+        ),
         Command::Approve { id, decision } => (
             session_path(&id, "approve")?,
             Some(json!({"decision": decision})),

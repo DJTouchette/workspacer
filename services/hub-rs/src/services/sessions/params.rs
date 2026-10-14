@@ -18,6 +18,14 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
             bail!("{key} must be text");
         }
     }
+    if method == "agents.sendMessage"
+        && let Some(delivery) = params.get("delivery").filter(|value| !value.is_null())
+        && !delivery
+            .as_str()
+            .is_some_and(|value| claudemon::session::Delivery::from_wire(value).is_some())
+    {
+        bail!("delivery must be \"steer\" or \"now\"");
+    }
     let integer = match method {
         "sessions.conversation" => Some("sinceSeq"),
         "claude.answer" => Some("option"),
@@ -89,4 +97,36 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate;
+    use serde_json::json;
+
+    #[test]
+    fn send_message_delivery_is_steer_now_or_absent() {
+        for ok in [
+            json!({"sessionId":"s","text":"hi"}),
+            json!({"sessionId":"s","text":"hi","delivery":null}),
+            json!({"sessionId":"s","text":"hi","delivery":"steer"}),
+            json!({"sessionId":"s","text":"hi","delivery":"now"}),
+        ] {
+            let mut params = ok.clone();
+            assert!(validate("agents.sendMessage", &mut params).is_ok(), "{ok}");
+        }
+        for bad in [
+            json!({"delivery":"later"}),
+            json!({"delivery":"Now"}),
+            json!({"delivery":""}),
+            json!({"delivery":true}),
+            json!({"delivery":["now"]}),
+        ] {
+            let mut params = bad.clone();
+            let error = validate("agents.sendMessage", &mut params).unwrap_err();
+            assert!(error.to_string().contains("delivery must be"), "{bad}");
+        }
+        // The field means nothing to other methods and is not policed there.
+        assert!(validate("claude.approve", &mut json!({"delivery":"later"})).is_ok());
+    }
 }

@@ -38,13 +38,14 @@ use tokio::sync::mpsc;
 
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, UsageAcc};
 use crate::session::background_tasks;
-use crate::session::conversation::ConversationItem;
+use crate::session::conversation::{ConversationItem, TaskFold};
 use crate::session::state::{
     Capabilities, ContextInventory, ContextItem, Pending, PendingOwner, PendingQuestion,
     PendingWrite, SessionMode, CLAUDE_FIVE_HOUR_WINDOW_MINUTES, CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
 };
 use crate::session::store::{
-    ManagedAnswer, ManagedPermissionSwitch, ManagedTaskControl, ManagedTaskStop,
+    Delivery, ManagedAnswer, ManagedPermissionSwitch, ManagedPrompt, ManagedTaskControl,
+    ManagedTaskStop,
 };
 use crate::session::transcript::{blocks, flatten_tool_result, Block};
 use crate::session::{ConversationStore, SessionStore};
@@ -59,8 +60,9 @@ pub struct SpawnConfig {
     pub bin: String,
     pub model: Option<String>,
     /// Reasoning-effort level (`--effort <level>`: `low`/`medium`/`high`/
-    /// `xhigh`/`max`). Applied at spawn; there's no live control, so a change
-    /// respawns (the composer pill drives that through the restart flow).
+    /// `xhigh`/`max`). Applied at spawn; a live change rides the CLI's
+    /// `apply_flag_settings {effortLevel}` control request instead (see the
+    /// model-switch arm of the driver loop).
     pub effort: Option<String>,
     /// Claude's own `--permission-mode` vocabulary (`acceptEdits`, `plan`, …).
     pub permission_mode: Option<String>,
@@ -108,6 +110,148 @@ pub struct StreamTotals {
     /// keep the prior result sample until it ages stale, then wait; they must not
     /// treat an in-progress numerator as correlated or as confirmed 0%.
     context_tokens: Option<u64>,
+    /// The CLI's incremental task tools (`TaskCreate` / `TaskUpdate` /
+    /// `TaskList`) folded into the same session plan `TodoWrite` produces —
+    /// the task tools are what Claude Code ships instead of `TodoWrite` now,
+    /// and are only present at all because the driver opts in with
+    /// `CLAUDE_CODE_ENABLE_TODO_TOOLS` (see [`todo_tools_env`]). Subagent
+    /// frames never reach it: `translate` drops them before any arm runs.
+    tasks: TaskFold,
+    /// What this CLI speaks, learned from `system/init` (see [`CliProtocol`]).
+    protocol: CliProtocol,
+}
+
+/// The protocol facts that decide which optional stream-json fields we may
+/// send, learned from the `system/init` frame, plus the uuids we stamped on
+/// our own user messages so an interrupt receipt can be matched against them.
+#[derive(Debug, Default)]
+pub struct CliProtocol {
+    /// `claude_code_version`, as `(major, minor, patch)`.
+    version: Option<(u32, u32, u32)>,
+    /// `system/init.capabilities` (CLI ≥ 2.1.205); empty until init or on an
+    /// older CLI.
+    capabilities: Vec<String>,
+    /// Most recent user-message uuids we sent, oldest first, bounded by
+    /// [`SENT_UUIDS_KEPT`].
+    sent: VecDeque<String>,
+}
+
+/// The first CLI whose `priority: "now"` + `origin: {kind: "human"}` moves
+/// background-capable work aside instead of only interrupting (Agent SDK
+/// reference, `SDKUserMessage.priority`).
+const PRIORITY_NOW_MIN_VERSION: (u32, u32, u32) = (2, 1, 286);
+
+/// How many sent uuids an interrupt receipt can be matched against.
+const SENT_UUIDS_KEPT: usize = 64;
+
+impl CliProtocol {
+    fn observe_init(&mut self, init: &Value) {
+        if let Some(version) = init
+            .get("claude_code_version")
+            .and_then(Value::as_str)
+            .and_then(parse_cli_version)
+        {
+            self.version = Some(version);
+        }
+        if let Some(caps) = init.get("capabilities").and_then(Value::as_array) {
+            self.capabilities = caps
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect();
+        }
+    }
+
+    fn has_capability(&self, name: &str) -> bool {
+        self.capabilities.iter().any(|c| c == name)
+    }
+
+    /// Whether `priority` / `origin` on a user message mean what we intend.
+    /// Unknown (no init yet, or an unparseable version on a CLI without the
+    /// send-now capability) is NOT supported: the fields are then omitted and
+    /// `now` degrades to an explicit interrupt followed by the message.
+    fn priority_supported(&self) -> bool {
+        self.version.is_some_and(|v| v >= PRIORITY_NOW_MIN_VERSION)
+            || self.has_capability("interrupt_send_now_v1")
+    }
+
+    fn remember_sent(&mut self, uuid: String) {
+        if self.sent.len() == SENT_UUIDS_KEPT {
+            self.sent.pop_front();
+        }
+        self.sent.push_back(uuid);
+    }
+
+    /// The uuids in an interrupt receipt list that are messages WE sent; the
+    /// CLI may list uuids it enqueued itself (scheduled triggers), which are
+    /// not ours to reason about.
+    fn ours(&self, list: Option<&Value>) -> Vec<String> {
+        list.and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|u| self.sent.iter().any(|s| s == u))
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+/// `"2.1.296"` (tolerating a `-suffix`) → `(2, 1, 296)`.
+fn parse_cli_version(raw: &str) -> Option<(u32, u32, u32)> {
+    let core = raw.trim().split(['-', '+', ' ']).next()?;
+    let mut parts = core.split('.').map(|p| p.parse::<u32>().ok());
+    Some((parts.next()??, parts.next()??, parts.next()??))
+}
+
+/// One chat message as a stream-json user frame, and whether the CLI must be
+/// interrupted first for it to land the way `delivery` asks.
+///
+/// Every frame carries a fresh `uuid` (interrupt receipts name messages by
+/// it). On a CLI that understands priorities, `steer` is an explicit
+/// `priority: "next"` and `now` is `priority: "now"` with
+/// `origin: {kind: "human"}`. Otherwise both fields are omitted — absent
+/// priority already means "next" — and `now` on a busy session becomes an
+/// interrupt followed by the message (the CLI reads it next).
+fn user_frame(
+    text: &str,
+    uuid: &str,
+    delivery: Delivery,
+    protocol: &CliProtocol,
+    busy: bool,
+) -> (bool, Value) {
+    let mut frame = json!({
+        "type": "user",
+        "uuid": uuid,
+        "message": { "role": "user", "content": [ { "type": "text", "text": text } ] }
+    });
+    if protocol.priority_supported() {
+        match delivery {
+            Delivery::Steer => frame["priority"] = json!("next"),
+            Delivery::Now => {
+                frame["priority"] = json!("now");
+                frame["origin"] = json!({ "kind": "human" });
+            }
+        }
+        return (false, frame);
+    }
+    (delivery == Delivery::Now && busy, frame)
+}
+
+/// The env var that opts a headless session into Claude Code's task tools
+/// (`TaskCreate` / `TaskGet` / `TaskUpdate` / `TaskList`). Without it they are
+/// ABSENT on Opus/Sonnet/Haiku 5.5 and any model id the CLI doesn't recognise,
+/// so the session plan would never fill.
+const TODO_TOOLS_ENV: &str = "CLAUDE_CODE_ENABLE_TODO_TOOLS";
+
+/// The `(key, value)` to add to the child's environment, or `None` when the
+/// caller (spawn `env`, e.g. a profile) or the daemon's own environment
+/// already chose a value — a user's explicit `0` must win.
+fn todo_tools_env(
+    spawn_env: &HashMap<String, String>,
+    inherited: Option<std::ffi::OsString>,
+) -> Option<(&'static str, &'static str)> {
+    (!spawn_env.contains_key(TODO_TOOLS_ENV) && inherited.is_none())
+        .then_some((TODO_TOOLS_ENV, "1"))
 }
 
 /// Translate one stdout event into typed updates. Pure and total: unknown
@@ -133,6 +277,7 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
                     totals.model = Some(model.to_string());
                     out.push(usage_model(model));
                 }
+                totals.protocol.observe_init(value);
                 out.push(AgentUpdate::Capabilities(capabilities_from_init(value)));
             }
             // The CLI is calling the API — the turn is running.
@@ -182,6 +327,11 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
             let Some(msg) = value.get("message") else {
                 return out;
             };
+            // Task tools still show as tool cards (like the PTY transcript);
+            // the plan is their folded state.
+            if totals.tasks.fold_row(value) {
+                out.push(AgentUpdate::Plan(totals.tasks.to_plan(None)));
+            }
             for b in blocks(msg.get("content").unwrap_or(&Value::Null)) {
                 if let Block::ToolUse { name, input, id } = b {
                     if name == "TodoWrite" {
@@ -227,6 +377,12 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
             let Some(msg) = value.get("message") else {
                 return out;
             };
+            // A TaskCreate result assigns the task id (structured as
+            // `tool_use_result.task.id`); a TaskList result is a snapshot.
+            let plan = totals
+                .tasks
+                .fold_row(value)
+                .then(|| AgentUpdate::Plan(totals.tasks.to_plan(None)));
             for b in blocks(msg.get("content").unwrap_or(&Value::Null)) {
                 if let Block::ToolResult {
                     content,
@@ -241,6 +397,7 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
                     });
                 }
             }
+            out.extend(plan);
         }
         // Turn over: ready for input again, plus the turn's telemetry.
         // `total_cost_usd` is cumulative; token counts are per-turn and get
@@ -1018,6 +1175,10 @@ enum PendingControl {
     SetModel {
         model: String,
     },
+    /// `apply_flag_settings {effortLevel}` — the live effort switch.
+    SetEffort {
+        effort: String,
+    },
     SetPermissionMode(ManagedPermissionSwitch),
     /// `stop_task` — the CLI's own per-task stop (the control its task UI's
     /// `x` sends). Verified on CLI 2.1.286: the task's `task_updated
@@ -1317,10 +1478,13 @@ async fn run_session(
     let startup_started = std::time::Instant::now();
     let argv = build_argv(&cfg);
     // `_tie` lives as long as the session: the CLI cannot outlive the app.
+    let mut command = Command::new(&cfg.bin);
+    command.args(&argv).envs(&cfg.env);
+    if let Some((key, value)) = todo_tools_env(&cfg.env, std::env::var_os(TODO_TOOLS_ENV)) {
+        command.env(key, value);
+    }
     let (mut child, _tie) = crate::tied_child::spawn(
-        Command::new(&cfg.bin)
-            .args(&argv)
-            .envs(&cfg.env)
+        command
             .current_dir(&cfg.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1366,8 +1530,8 @@ async fn run_session(
 
     // Store-facing channels: prompts, approvals, answers, model switches,
     // permission modes, interrupts.
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-    store.register_managed_input(&session_id, tx);
+    let (tx, mut rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+    store.register_managed_prompt(&session_id, tx);
     let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
     store.register_managed_decision(&session_id, dtx);
     let (atx, mut arx) = mpsc::unbounded_channel::<ManagedAnswer>();
@@ -1455,7 +1619,7 @@ async fn run_session(
                 Err(err) => return Err(err.into()),
             },
             msg = rx.recv() => match msg {
-                Some(text) => {
+                Some(ManagedPrompt { text, delivery }) => {
                     // Echo the user's message, but prepend the role
                     // instructions (once) to what's actually sent to the agent.
                     // A message invoking a known slash command echoes as the
@@ -1470,10 +1634,27 @@ async fn run_session(
                         Some(instr) => format!("{instr}\n\n{text}"),
                         None => text,
                     };
-                    let _ = out_tx.send(json!({
-                        "type": "user",
-                        "message": { "role": "user", "content": [ { "type": "text", "text": sent } ] }
-                    }));
+                    let uuid = uuid::Uuid::new_v4().to_string();
+                    let busy = matches!(
+                        cur_mode,
+                        SessionMode::Responding | SessionMode::Approval | SessionMode::Question
+                    );
+                    let (interrupt_first, frame) =
+                        user_frame(&sent, &uuid, delivery, &totals.protocol, busy);
+                    if interrupt_first {
+                        // An older CLI can't be told "now": stop the turn, and
+                        // the message (written right after, so the CLI reads it
+                        // second) starts the next one.
+                        send_control(
+                            &out_tx,
+                            &mut next_ctl,
+                            &mut pending_controls,
+                            json!({ "subtype": "interrupt" }),
+                            PendingControl::Interrupt,
+                        );
+                    }
+                    totals.protocol.remember_sent(uuid);
+                    let _ = out_tx.send(frame);
                     note_user_send(store, &session_id, &mut cur_mode);
                 }
                 None => break, // managed input dropped → terminated
@@ -1533,22 +1714,28 @@ async fn run_session(
             switch = mrx.recv() => match switch {
                 Some(sw) => {
                     // `set_model` is real on this transport (verified: the next
-                    // turn runs the new model). `--effort` is spawn-time only —
-                    // there's no live control, so the composer drives an effort
-                    // change through the restart flow, never this endpoint. If
-                    // one still arrives, note and drop it rather than failing.
-                    if sw.effort.is_some() {
-                        tracing::debug!(session = %session_id, "claude stream: `effort` is spawn-time only (respawn to change) — ignored live");
-                    }
-                    match sw.model {
-                        Some(model) => send_control(
+                    // turn runs the new model). Effort rides the general
+                    // `apply_flag_settings` control with `effortLevel`, which
+                    // the CLI applies from the next turn (verified on CLI
+                    // 2.1.299: spawned `--effort high`, switched to `low`, and
+                    // the next assistant row recorded `effort: "low"`).
+                    if let Some(model) = sw.model {
+                        send_control(
                             &out_tx,
                             &mut next_ctl,
                             &mut pending_controls,
                             json!({ "subtype": "set_model", "model": model }),
                             PendingControl::SetModel { model },
-                        ),
-                        None => tracing::debug!(session = %session_id, "claude stream: model switch without a model — nothing to do"),
+                        );
+                    }
+                    if let Some(effort) = sw.effort {
+                        send_control(
+                            &out_tx,
+                            &mut next_ctl,
+                            &mut pending_controls,
+                            effort_request(&effort),
+                            PendingControl::SetEffort { effort },
+                        );
                     }
                 }
                 None => break,
@@ -1673,6 +1860,14 @@ pub(crate) fn prove_task_processes(
     changed
 }
 
+/// The live effort switch: `apply_flag_settings` merges `effortLevel` into the
+/// session's flag-settings layer, applied from the next turn. The CLI takes a
+/// level name (and `ultracode`), so the value passes through verbatim and a
+/// level it refuses comes back as a control error.
+fn effort_request(effort: &str) -> Value {
+    json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": effort } })
+}
+
 /// Queue a control request to the CLI, parking what the eventual
 /// `control_response` should resolve. Request ids are `wks-<n>` so they can't
 /// collide with the CLI's own (UUIDs).
@@ -1750,10 +1945,39 @@ fn handle_line(
                     }
                     let _ = stop.reply.send(err.map_or(Ok(()), Err));
                 }
-                (PendingControl::Interrupt, err) => {
-                    if let Some(err) = err {
-                        tracing::warn!(session = %session_id, error = %err, "claude stream: interrupt failed");
+                (PendingControl::Interrupt, Some(err)) => {
+                    tracing::warn!(session = %session_id, error = %err, "claude stream: interrupt failed");
+                }
+                (PendingControl::Interrupt, None) => {
+                    // The receipt (`interrupt_receipt_v1`) names the queued
+                    // user messages by uuid. Ours still queued will run after
+                    // the interrupt — resending them would deliver twice.
+                    let receipt = response.get("response");
+                    let still_queued = totals
+                        .protocol
+                        .ours(receipt.and_then(|r| r.get("still_queued")));
+                    let cancelled = totals
+                        .protocol
+                        .ours(receipt.and_then(|r| r.get("cancelled")));
+                    if !still_queued.is_empty() || !cancelled.is_empty() {
+                        tracing::info!(session = %session_id, ?still_queued, ?cancelled, "claude stream: interrupt receipt");
                     }
+                }
+                (PendingControl::SetEffort { effort }, None) => {
+                    tracing::info!(session = %session_id, effort = %effort, "claude stream: effort switched (next turn)");
+                }
+                (PendingControl::SetEffort { effort }, Some(err)) => {
+                    tracing::warn!(session = %session_id, effort = %effort, error = %err, "claude stream: effort switch rejected");
+                    apply_updates(
+                        store,
+                        conv,
+                        session_id,
+                        vec![AgentUpdate::Error(format!(
+                            "effort switch to '{effort}' failed: {err}"
+                        ))],
+                        cur_mode,
+                        acc,
+                    );
                 }
                 (PendingControl::SetModel { model }, None) => {
                     tracing::info!(session = %session_id, model = %model, "claude stream: model switched");
@@ -2062,6 +2286,207 @@ mod tests {
             }
             other => panic!("expected Plan, got {other:?}"),
         }
+    }
+
+    fn plans(updates: &[AgentUpdate]) -> Vec<&crate::session::state::Plan> {
+        updates
+            .iter()
+            .filter_map(|u| match u {
+                AgentUpdate::Plan(plan) => Some(plan),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn task_create(tool_id: &str, subject: &str) -> Value {
+        json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "content": [
+            { "type": "tool_use", "id": tool_id, "name": "TaskCreate",
+              "input": { "subject": subject, "description": "d", "activeForm": format!("Doing {subject}") } }
+        ]}})
+    }
+
+    fn task_created(tool_id: &str, task_id: Value) -> Value {
+        json!({ "type": "user", "parent_tool_use_id": null,
+            "message": { "content": [
+                { "type": "tool_result", "tool_use_id": tool_id, "content": "Task created" }
+            ]},
+            "tool_use_result": { "task": { "id": task_id, "subject": "x" } } })
+    }
+
+    fn task_update(task_id: &str, status: &str) -> Value {
+        json!({ "type": "assistant", "message": { "content": [
+            { "type": "tool_use", "id": format!("u-{task_id}-{status}"), "name": "TaskUpdate",
+              "input": { "taskId": task_id, "status": status } }
+        ]}})
+    }
+
+    #[test]
+    fn task_tools_fold_into_the_session_plan() {
+        let mut totals = StreamTotals::default();
+        // The create alone has no id yet: a tool card, no plan.
+        let updates = translate(&task_create("tc1", "Build"), &mut totals);
+        assert!(plans(&updates).is_empty());
+        assert!(updates
+            .iter()
+            .any(|u| matches!(u, AgentUpdate::ToolUse { name, .. } if name == "TaskCreate")));
+        // The result's structured `task.id` confirms it (ids read as text or number).
+        let updates = translate(&task_created("tc1", json!("1")), &mut totals);
+        let plan = plans(&updates);
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].steps[0].content, "Build");
+        assert_eq!(plan[0].steps[0].status, PlanStatus::Pending);
+        assert_eq!(plan[0].steps[0].active_form.as_deref(), Some("Doing Build"));
+        translate(&task_create("tc2", "Test"), &mut totals);
+        translate(&task_created("tc2", json!(2)), &mut totals);
+
+        let updates = translate(&task_update("1", "in_progress"), &mut totals);
+        let plan = plans(&updates);
+        assert_eq!(plan[0].steps.len(), 2);
+        assert_eq!(plan[0].steps[0].status, PlanStatus::InProgress);
+        let updates = translate(&task_update("1", "completed"), &mut totals);
+        assert_eq!(plans(&updates)[0].steps[0].status, PlanStatus::Completed);
+        // `deleted` removes the task, keeping order of the rest.
+        let updates = translate(&task_update("1", "deleted"), &mut totals);
+        let plan = plans(&updates);
+        assert_eq!(plan[0].steps.len(), 1);
+        assert_eq!(plan[0].steps[0].content, "Test");
+        // Deleting the last one publishes the now-empty plan.
+        let updates = translate(&task_update("2", "deleted"), &mut totals);
+        assert!(plans(&updates)[0].steps.is_empty());
+    }
+
+    #[test]
+    fn subagent_task_tools_never_touch_the_parents_plan() {
+        let mut totals = StreamTotals::default();
+        translate(&task_create("tc1", "Parent work"), &mut totals);
+        translate(&task_created("tc1", json!("1")), &mut totals);
+        // A subagent with its own task list, reusing the same task id.
+        for mut frame in [
+            task_create("sub1", "Child work"),
+            task_created("sub1", json!("1")),
+            task_update("1", "deleted"),
+        ] {
+            frame["parent_tool_use_id"] = json!("toolu_agent");
+            assert!(translate(&frame, &mut totals).is_empty());
+        }
+        let updates = translate(&task_update("1", "in_progress"), &mut totals);
+        let plan = plans(&updates);
+        assert_eq!(plan[0].steps.len(), 1);
+        assert_eq!(plan[0].steps[0].content, "Parent work");
+        assert_eq!(plan[0].steps[0].status, PlanStatus::InProgress);
+    }
+
+    #[test]
+    fn todo_write_still_plans_beside_task_tools() {
+        let mut totals = StreamTotals::default();
+        translate(&task_create("tc1", "Task tool"), &mut totals);
+        translate(&task_created("tc1", json!("1")), &mut totals);
+        let updates = translate(
+            &json!({ "type": "assistant", "message": { "content": [
+                { "type": "tool_use", "id": "tw", "name": "TodoWrite", "input": { "todos": [
+                    { "content": "legacy", "status": "pending" }
+                ]}}
+            ]}}),
+            &mut totals,
+        );
+        let plan = plans(&updates);
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].steps[0].content, "legacy");
+    }
+
+    #[test]
+    fn todo_tools_env_opts_in_without_clobbering_a_users_choice() {
+        let none = HashMap::new();
+        assert_eq!(
+            todo_tools_env(&none, None),
+            Some(("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"))
+        );
+        let mut profile = HashMap::new();
+        profile.insert("CLAUDE_CODE_ENABLE_TODO_TOOLS".to_string(), "0".to_string());
+        assert_eq!(todo_tools_env(&profile, None), None);
+        assert_eq!(todo_tools_env(&none, Some("0".into())), None);
+    }
+
+    fn init(version: &str, caps: Value) -> CliProtocol {
+        let mut totals = StreamTotals::default();
+        translate(
+            &json!({ "type": "system", "subtype": "init", "claude_code_version": version, "capabilities": caps }),
+            &mut totals,
+        );
+        totals.protocol
+    }
+
+    #[test]
+    fn cli_version_parses_and_tolerates_suffixes() {
+        assert_eq!(parse_cli_version("2.1.296"), Some((2, 1, 296)));
+        assert_eq!(parse_cli_version("2.1.300-beta.1"), Some((2, 1, 300)));
+        assert_eq!(parse_cli_version("2.1"), None);
+        assert_eq!(parse_cli_version("next"), None);
+    }
+
+    #[test]
+    fn user_frames_carry_a_uuid_and_priority_only_where_the_cli_supports_it() {
+        let modern = init("2.1.296", json!(["interrupt_receipt_v1"]));
+        let (interrupt, steer) = user_frame("hi", "u-1", Delivery::Steer, &modern, true);
+        assert!(!interrupt);
+        assert_eq!(
+            steer,
+            json!({ "type": "user", "uuid": "u-1", "priority": "next",
+                "message": { "role": "user", "content": [ { "type": "text", "text": "hi" } ] } })
+        );
+        let (interrupt, now) = user_frame("stop", "u-2", Delivery::Now, &modern, true);
+        assert!(!interrupt, "a send-now CLI needs no separate interrupt");
+        assert_eq!(now["priority"], "now");
+        assert_eq!(now["origin"], json!({ "kind": "human" }));
+        assert_eq!(now["uuid"], "u-2");
+
+        // Older than 2.1.286 (and no send-now capability): no priority/origin.
+        let older = init("2.1.250", json!(["interrupt_receipt_v1"]));
+        let (interrupt, steer) = user_frame("hi", "u-3", Delivery::Steer, &older, true);
+        assert!(!interrupt);
+        assert!(steer.get("priority").is_none() && steer.get("origin").is_none());
+        assert_eq!(steer["uuid"], "u-3");
+        let (interrupt, now) = user_frame("stop", "u-4", Delivery::Now, &older, true);
+        assert!(interrupt, "busy + unsupported `now` interrupts first");
+        assert!(now.get("priority").is_none() && now.get("origin").is_none());
+        let (interrupt, _) = user_frame("go", "u-5", Delivery::Now, &older, false);
+        assert!(!interrupt, "an idle session has no turn to interrupt");
+
+        // Before any init (the first message of a session) the CLI is unknown.
+        let unknown = CliProtocol::default();
+        let (interrupt, frame) = user_frame("hi", "u-6", Delivery::Now, &unknown, true);
+        assert!(interrupt);
+        assert!(frame.get("priority").is_none());
+
+        // An unparseable version still qualifies on the capability itself.
+        let flagged = init("dev", json!(["interrupt_send_now_v1"]));
+        assert!(flagged.priority_supported());
+    }
+
+    #[test]
+    fn interrupt_receipts_match_only_our_own_uuids() {
+        let mut protocol = CliProtocol::default();
+        protocol.remember_sent("ours".into());
+        assert_eq!(
+            protocol.ours(Some(&json!(["scheduled-trigger", "ours"]))),
+            vec!["ours".to_string()]
+        );
+        assert!(protocol.ours(None).is_empty());
+        for n in 0..SENT_UUIDS_KEPT {
+            protocol.remember_sent(format!("u{n}"));
+        }
+        assert!(
+            protocol.ours(Some(&json!(["ours"]))).is_empty(),
+            "the remembered set is bounded"
+        );
+    }
+
+    #[test]
+    fn live_effort_is_an_apply_flag_settings_request() {
+        assert_eq!(
+            effort_request("low"),
+            json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": "low" } })
+        );
     }
 
     #[test]

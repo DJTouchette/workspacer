@@ -10,6 +10,21 @@ use std::{
     time::Duration,
 };
 use workspacer_hub::{Options, backend::Backend, client::Client, services::config::Config};
+/// Whether the stream fixture received the live effort switch as the CLI's
+/// structural `apply_flag_settings` control — never as a `/effort` chat line.
+fn effort_switched(root: &Path, id: &str, level: &str) -> bool {
+    let rows = rows(root, id);
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row["message"] == format!("/effort {level}")),
+        "a stream effort switch must not be sent as a chat message"
+    );
+    rows.iter().any(|row| {
+        row["control"]["subtype"] == "apply_flag_settings"
+            && row["control"]["settings"]["effortLevel"] == level
+    })
+}
 fn rows(root: &Path, id: &str) -> Vec<Value> {
     std::fs::read_to_string(root.join(format!("received-{id}.jsonl")))
         .unwrap_or_default()
@@ -354,9 +369,7 @@ async fn run(root: PathBuf) {
         .unwrap();
     assert_eq!(effort, json!({"ok":true,"effort":"high"}));
     until("successor-effort-high-receipt", async || {
-        rows(&root, &successor_id)
-            .iter()
-            .any(|row| row["message"] == "/effort high")
+        effort_switched(&root, &successor_id, "high")
     })
     .await;
     let controlled = client
@@ -385,11 +398,7 @@ async fn run(root: PathBuf) {
     assert!(accepted["warning"].as_str().is_some());
     until(
         "successor-effort-low-after-bookkeeping-failure",
-        async || {
-            rows(&root, &successor_id)
-                .iter()
-                .any(|row| row["message"] == "/effort low")
-        },
+        async || effort_switched(&root, &successor_id, "low"),
     )
     .await;
     assert_eq!(

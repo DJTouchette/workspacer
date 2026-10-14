@@ -84,6 +84,7 @@ for line in sys.stdin:
         emit({"type": "result", "subtype": "success", "is_error": False, "total_cost_usd": 0, "usage": {"input_tokens": 1, "output_tokens": 1}})
         continue
     if frame.get("type") == "control_request":
+        record({"control": frame.get("request", {})})
         emit({"type": "control_response", "response": {"subtype": "success", "request_id": frame["request_id"], "response": {}}})
         continue
     if frame.get("type") != "user":
