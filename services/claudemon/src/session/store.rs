@@ -46,13 +46,22 @@ enum PendingMessageKind {
 struct PendingMessage {
     text: String,
     kind: PendingMessageKind,
+    /// The frame uuid the caller was told (`message_uuid`) for a message
+    /// held before its managed driver registered; the drain hands it to the
+    /// driver so the reported uuid is the one actually sent.
+    uuid: Option<String>,
 }
 
 impl PendingMessage {
     fn chat(text: String) -> Self {
+        Self::chat_with(text, None)
+    }
+
+    fn chat_with(text: String, uuid: Option<String>) -> Self {
         Self {
             text,
             kind: PendingMessageKind::Chat,
+            uuid,
         }
     }
 
@@ -60,6 +69,7 @@ impl PendingMessage {
         Self {
             text,
             kind: PendingMessageKind::PtyModelControl,
+            uuid: None,
         }
     }
 
@@ -2025,8 +2035,8 @@ impl SessionStore {
         // enqueues it while still inside the spawn handler, before the 200, and
         // this drain runs the instant the driver's channel is live. There is no
         // window in between for the caller to have to guess at.
-        for text in self.take_pending_messages(session_id) {
-            if !tx.send(text, Delivery::Steer, MessageSender::Human, None) {
+        for (text, uuid) in self.take_pending_prompts(session_id) {
+            if !tx.send(text, Delivery::Steer, MessageSender::Human, uuid) {
                 tracing::warn!(session_id, "managed prompt channel closed before the queued first message could be delivered");
                 break;
             }
@@ -3222,14 +3232,16 @@ impl SessionStore {
                 // queued one. The flush settles FLUSH_DELAY_MS past the Input
                 // transition (a no-op wait when the prompt has been idle) and
                 // then verifies the submit took.
-                if !self.enqueue_message(session_id, text) {
+                if !self.enqueue_pending_message(session_id, PendingMessage::chat_with(text, uuid))
+                {
                     return MessageOutcome::QueueFull;
                 }
                 self.schedule_pending_flush(session_id);
                 MessageOutcome::Sent
             }
             _ => {
-                if !self.enqueue_message(session_id, text) {
+                if !self.enqueue_pending_message(session_id, PendingMessage::chat_with(text, uuid))
+                {
                     return MessageOutcome::QueueFull;
                 }
                 // Guard the read-then-enqueue against a concurrent transition:
@@ -3517,6 +3529,17 @@ impl SessionStore {
     /// delivery to the caller. The PTY flush writes the batch to the child;
     /// `register_managed_input` pushes it down the provider's prompt channel.
     /// Atomicity is what lets the two drains coexist without ever double-sending.
+    /// [`Self::take_pending_messages`] keeping each message's frame uuid.
+    fn take_pending_prompts(&self, session_id: &str) -> Vec<(String, Option<String>)> {
+        self.pending_messages
+            .get_mut(session_id)
+            .map(|mut q| std::mem::take(&mut *q))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|message| (message.text, message.uuid))
+            .collect()
+    }
+
     fn take_pending_messages(&self, session_id: &str) -> Vec<String> {
         self.pending_messages
             .get_mut(session_id)
@@ -3669,6 +3692,32 @@ impl Default for SessionStore {
 mod tests {
     use super::*;
     use crate::session::state::ContextHealth;
+
+    /// A message held before the managed driver registered keeps the uuid
+    /// its sender was told: the drain hands that uuid to the driver.
+    #[test]
+    fn a_held_message_reaches_the_driver_with_its_reported_uuid() {
+        let store = SessionStore::new();
+        store.register_managed("held", "/tmp", "claude");
+        store.set_transport("held", Transport::Stream);
+        store.states.get_mut("held").unwrap().mode = SessionMode::Unknown;
+        let uuid = "6f1c0d52-0000-4000-8000-0000000000aa".to_string();
+        assert_eq!(
+            store.submit_message_tracked(
+                "held",
+                "early".into(),
+                Delivery::Steer,
+                MessageSender::Human,
+                Some(uuid.clone()),
+            ),
+            MessageOutcome::Queued
+        );
+        let (tx, mut rx) = mpsc::unbounded_channel::<ManagedPrompt>();
+        store.register_managed_prompt("held", tx);
+        let prompt = rx.try_recv().unwrap();
+        assert_eq!(prompt.text, "early");
+        assert_eq!(prompt.uuid, Some(uuid));
+    }
 
     #[test]
     fn post_switch_context_confirmation_policy_is_evidence_backed() {
