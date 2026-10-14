@@ -41,7 +41,8 @@ const ID_PREFIX: &str = "wks-status-";
 
 #[derive(Debug)]
 enum Waiting {
-    McpStatus(oneshot::Sender<Result<Vec<McpServer>, String>>),
+    /// Every caller sharing the one list request in flight.
+    McpStatus(Vec<oneshot::Sender<Result<Vec<McpServer>, String>>>),
     McpReload(oneshot::Sender<Result<(), String>>),
 }
 
@@ -108,6 +109,15 @@ impl CodexStatus {
     ) {
         match control {
             StatusControl::McpStatus { reply } => {
+                // One list request in flight per session; later callers share
+                // its answer.
+                if let Some(replies) = self.waiting.values_mut().find_map(|w| match w {
+                    Waiting::McpStatus(replies) => Some(replies),
+                    _ => None,
+                }) {
+                    replies.push(reply);
+                    return;
+                }
                 // With the thread, the reply carries each server's runtime
                 // status; without it, only the configured names.
                 let mut params = json!({ "detail": "toolsAndAuthOnly", "limit": 100 });
@@ -118,7 +128,7 @@ impl CodexStatus {
                     out_tx,
                     "mcpServerStatus/list",
                     Some(params),
-                    Waiting::McpStatus(reply),
+                    Waiting::McpStatus(vec![reply]),
                 );
             }
             StatusControl::McpReconnect { reply, .. } => {
@@ -225,8 +235,10 @@ impl CodexStatus {
                 .map_or_else(|| e.to_string(), str::to_owned)
         });
         match (waiting, error) {
-            (Waiting::McpStatus(reply), Some(error)) => {
-                let _ = reply.send(Err(error));
+            (Waiting::McpStatus(replies), Some(error)) => {
+                for reply in replies {
+                    let _ = reply.send(Err(error.clone()));
+                }
             }
             (Waiting::McpStatus(reply), None) => {
                 let known = store
@@ -235,7 +247,9 @@ impl CodexStatus {
                     .unwrap_or_default();
                 let servers = list_servers(value.pointer("/result/data"), &known);
                 store.update_provider_status(session_id, |s| s.set_mcp_servers(servers.clone()));
-                let _ = reply.send(Ok(servers));
+                for reply in reply {
+                    let _ = reply.send(Ok(servers.clone()));
+                }
             }
             (Waiting::McpReload(reply), error) => {
                 // Fresh startup notifications follow a successful reload.

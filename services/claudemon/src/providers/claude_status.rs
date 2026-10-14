@@ -52,7 +52,9 @@ pub(super) const HOOK_EVENTS_MIN_VERSION: (u32, u32, u32) = (2, 1, 204);
 /// What a status request's eventual `control_response` resolves.
 #[derive(Debug)]
 enum Waiting {
-    McpStatus(Option<oneshot::Sender<Result<Vec<McpServer>, String>>>),
+    /// Every caller waiting on the one `mcp_status` in flight (empty for
+    /// the driver's own refresh after a reconnect).
+    McpStatus(Vec<oneshot::Sender<Result<Vec<McpServer>, String>>>),
     McpReconnect(oneshot::Sender<Result<(), String>>),
     FastMode(oneshot::Sender<Result<(), String>>),
     Interrupt(oneshot::Sender<Result<InterruptReceipt, String>>),
@@ -82,11 +84,22 @@ impl ClaudeStatus {
         control: StatusControl,
     ) {
         match control {
-            StatusControl::McpStatus { reply } => self.send(
-                out_tx,
-                json!({ "subtype": "mcp_status" }),
-                Waiting::McpStatus(Some(reply)),
-            ),
+            // One `mcp_status` in flight per session: a caller arriving while
+            // one is outstanding shares its answer.
+            StatusControl::McpStatus { reply } => {
+                let in_flight = self.waiting.values_mut().find_map(|w| match w {
+                    Waiting::McpStatus(replies) => Some(replies),
+                    _ => None,
+                });
+                match in_flight {
+                    Some(replies) => replies.push(reply),
+                    None => self.send(
+                        out_tx,
+                        json!({ "subtype": "mcp_status" }),
+                        Waiting::McpStatus(vec![reply]),
+                    ),
+                }
+            }
             StatusControl::McpReconnect { server, reply } => self.send(
                 out_tx,
                 json!({ "subtype": "mcp_reconnect", "serverName": server }),
@@ -198,25 +211,32 @@ impl ClaudeStatus {
                     .map(mcp_servers_from)
                     .unwrap_or_default();
                 store.update_provider_status(session_id, |s| s.set_mcp_servers(servers.clone()));
-                if let Some(reply) = reply {
-                    let _ = reply.send(Ok(servers));
+                for reply in reply {
+                    let _ = reply.send(Ok(servers.clone()));
                 }
             }
             (Waiting::McpStatus(reply), Some(error)) => {
-                if let Some(reply) = reply {
-                    let _ = reply.send(Err(error));
+                for reply in reply {
+                    let _ = reply.send(Err(error.clone()));
                 }
             }
             (Waiting::McpReconnect(reply), error) => {
                 let ok = error.is_none();
                 let _ = reply.send(error.map_or(Ok(()), Err));
                 if ok {
-                    // The reconnect changed a server's status: re-read them.
-                    self.send(
-                        out_tx,
-                        json!({ "subtype": "mcp_status" }),
-                        Waiting::McpStatus(None),
-                    );
+                    // The reconnect changed a server's status: re-read them
+                    // (unless a read is already on its way).
+                    if !self
+                        .waiting
+                        .values()
+                        .any(|w| matches!(w, Waiting::McpStatus(_)))
+                    {
+                        self.send(
+                            out_tx,
+                            json!({ "subtype": "mcp_status" }),
+                            Waiting::McpStatus(Vec::new()),
+                        );
+                    }
                 }
             }
             (Waiting::FastMode(reply), error) => {
@@ -966,5 +986,34 @@ done
 
         store.terminate_managed(sid);
         assert!(eventually(|| !store.has_status_control(sid)).await);
+    }
+
+    #[tokio::test]
+    async fn concurrent_mcp_status_requests_share_one_in_flight_read() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed("s1", "/tmp", "claude");
+        let protocol = CliProtocol::default();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        let mut status = ClaudeStatus::default();
+        let (first, first_verdict) = oneshot::channel();
+        let (second, second_verdict) = oneshot::channel();
+        status.request(&out_tx, StatusControl::McpStatus { reply: first });
+        status.request(&out_tx, StatusControl::McpStatus { reply: second });
+        let sent = out_rx.try_recv().unwrap();
+        assert!(
+            out_rx.try_recv().is_err(),
+            "the second caller sends nothing"
+        );
+        let id = sent["request_id"].as_str().unwrap().to_owned();
+        let answer = json!({"type":"control_response","response":{"subtype":"success","request_id":id,
+            "response":{"mcpServers":[{"name":"w","status":"connected"}]}}});
+        assert!(status.observe(&answer, &store, &conv, "s1", &protocol, &out_tx));
+        assert_eq!(first_verdict.await.unwrap().unwrap()[0].name, "w");
+        assert_eq!(second_verdict.await.unwrap().unwrap()[0].name, "w");
+        // Answered: the next caller starts a fresh read.
+        let (third, _verdict) = oneshot::channel();
+        status.request(&out_tx, StatusControl::McpStatus { reply: third });
+        assert!(out_rx.try_recv().is_ok());
     }
 }

@@ -1028,6 +1028,10 @@ async fn interrupt_with_receipt(store: &SessionStore, id: &str) -> Option<Respon
     )
 }
 
+/// How long an MCP status read waits for the provider (Codex's list waits on
+/// servers still starting); the snapshot keeps updating regardless.
+const MCP_STATUS_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Wait for a driver's verdict on a [`StatusControl`] request.
 async fn status_verdict<T>(
     store: &SessionStore,
@@ -1036,6 +1040,7 @@ async fn status_verdict<T>(
         tokio::sync::oneshot::Sender<Result<T, String>>,
     ) -> crate::session::provider_status::StatusControl,
     ok: impl FnOnce(T) -> Value,
+    wait: Duration,
 ) -> Response {
     if !valid_session_id(id) {
         return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
@@ -1051,7 +1056,7 @@ async fn status_verdict<T>(
         )
             .into_response();
     }
-    match tokio::time::timeout(Duration::from_secs(10), verdict).await {
+    match tokio::time::timeout(wait, verdict).await {
         Ok(Ok(Ok(value))) => Json(ok(value)).into_response(),
         Ok(Ok(Err(error))) => (
             StatusCode::BAD_GATEWAY,
@@ -1075,6 +1080,8 @@ async fn post_mcp_status(State(store): State<SessionStore>, Path(id): Path<Strin
         &id,
         |reply| crate::session::provider_status::StatusControl::McpStatus { reply },
         |servers| json!({ "ok": true, "mcp_servers": servers }),
+        // A read: short, so it never holds an engine command slot for long.
+        MCP_STATUS_TIMEOUT,
     )
     .await
 }
@@ -1116,6 +1123,7 @@ async fn post_mcp_reconnect(
             reply,
         },
         |()| json!({ "ok": true, "server": server }),
+        Duration::from_secs(10),
     )
     .await
 }
@@ -1140,6 +1148,7 @@ async fn post_fast_mode(
         &id,
         |reply| crate::session::provider_status::StatusControl::FastMode { enabled, reply },
         |()| json!({ "ok": true, "enabled": enabled }),
+        Duration::from_secs(10),
     )
     .await
 }
