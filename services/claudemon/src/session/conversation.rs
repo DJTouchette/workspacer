@@ -158,6 +158,41 @@ pub enum ConversationItem {
         #[serde(skip_serializing_if = "Option::is_none")]
         timestamp: Option<String>,
     },
+    /// Assistant text that also asks the user questions WITHOUT blocking the
+    /// turn — Codex's `request_user_input_async` (an `agentMessage` item with
+    /// `delivery: "async"` and `questions`). Serialized under the SAME kind as
+    /// [`Self::AssistantText`] so a client that knows nothing of `questions`
+    /// still renders `text` (Codex pre-renders the questions and their
+    /// options into it). The user answers with an ordinary message; `item_id`
+    /// is the Codex item the answer refers to.
+    ///
+    /// Its own variant, not two more fields on `AssistantText`, so streamed
+    /// text can never coalesce into it (or it into streamed text) and drop the
+    /// questions — the conversation store only folds `AssistantText` runs.
+    #[serde(rename = "assistant_text")]
+    AssistantQuestions {
+        text: String,
+        questions: Vec<AsyncQuestion>,
+        /// Always true: marks the questions as non-blocking.
+        #[serde(rename = "async")]
+        is_async: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        item_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+    },
+    /// A notice from the driver itself (not the agent) — e.g. that an MCP
+    /// server asked for input Workspacer cannot show. Same `assistant_text`
+    /// kind so any client renders it, flagged `notice: true` so a client that
+    /// coalesces streamed text keeps it a message of its own.
+    #[serde(rename = "assistant_text")]
+    AssistantNotice {
+        text: String,
+        /// Always true.
+        notice: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+    },
     ToolUse {
         id: String,
         name: String,
@@ -218,6 +253,15 @@ pub enum ConversationItem {
         #[serde(skip_serializing_if = "Option::is_none")]
         timestamp: Option<String>,
     },
+}
+
+/// One non-blocking question inside [`ConversationItem::AssistantQuestions`]
+/// (Codex `AsyncUserInputQuestion`). `options` is empty for a free-text
+/// question; the user may always answer in their own words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AsyncQuestion {
+    pub title: String,
+    pub options: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -177,6 +177,13 @@ export interface ConversationTurn {
    *  item), rendered as a command card instead of a user bubble. `output`
    *  arrives separately (`command_output`) and is folded in by the applier. */
   command?: { name: string; args?: string; output?: string; outputIsError?: boolean };
+  /** A self-contained assistant message that streamed text must never merge
+   *  into (or it into streamed text): a Codex async question set, or a
+   *  driver notice. */
+  sealed?: boolean;
+  /** Non-blocking questions riding on an assistant message (Codex
+   *  `request_user_input_async`); answered with an ordinary message. */
+  questions?: { title: string; options: string[] }[];
 }
 
 export interface FileChange {

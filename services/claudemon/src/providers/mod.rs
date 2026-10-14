@@ -285,6 +285,17 @@ pub enum AgentUpdate {
     },
     /// A chunk of assistant text to append to the conversation.
     AssistantText(String),
+    /// A driver-authored notice for the conversation (never coalesced with
+    /// the agent's text) — [`ConversationItem::AssistantNotice`].
+    Notice(String),
+    /// A complete assistant message that asks the user questions without
+    /// blocking the turn (Codex `request_user_input_async`). Lands as
+    /// [`ConversationItem::AssistantQuestions`]; never parks a pending card.
+    AssistantQuestions {
+        text: String,
+        questions: Vec<crate::session::conversation::AsyncQuestion>,
+        item_id: Option<String>,
+    },
     /// A user message echoed back by the server.
     UserText(String),
     /// A tool invocation.
@@ -556,6 +567,22 @@ pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
     match update {
         AgentUpdate::AssistantText(text) => Some(ConversationItem::AssistantText {
             text: text.clone(),
+            timestamp: now,
+        }),
+        AgentUpdate::AssistantQuestions {
+            text,
+            questions,
+            item_id,
+        } => Some(ConversationItem::AssistantQuestions {
+            text: text.clone(),
+            questions: questions.clone(),
+            is_async: true,
+            item_id: item_id.clone(),
+            timestamp: now,
+        }),
+        AgentUpdate::Notice(text) => Some(ConversationItem::AssistantNotice {
+            text: text.clone(),
+            notice: true,
             timestamp: now,
         }),
         AgentUpdate::UserText(text) => Some(ConversationItem::UserMessage {
@@ -1186,6 +1213,8 @@ fn apply_updates_current(
             AgentUpdate::Plan(p) => plan = Some(p.clone()),
             AgentUpdate::Subagent(update) => subagents.push(update.clone()),
             AgentUpdate::AssistantText(_)
+            | AgentUpdate::AssistantQuestions { .. }
+            | AgentUpdate::Notice(_)
             | AgentUpdate::UserText(_)
             | AgentUpdate::ToolUse { .. }
             | AgentUpdate::ToolResult { .. } => {

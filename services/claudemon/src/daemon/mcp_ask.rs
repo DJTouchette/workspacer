@@ -24,9 +24,15 @@
 //! cleared the slot, leaving the agent blocked on an approval nothing could
 //! answer. The `PendingWrite` intent is the fence; do not reach past it.
 //!
+//! The answer channel is the shim's own (`register_ask_answer`), apart from
+//! the driver's: a codex driver parks questions of its own
+//! (`item/tool/requestUserInput`) and `/answer` routes by whichever feed owns
+//! the displayed card. Sharing one last-writer-wins slot used to let this
+//! shim's unregister strip the driver's channel for the rest of the session.
+//!
 //! Known limit, same feed rather than across feeds: two *concurrent* asks on
 //! one session still collapse onto one answer channel
-//! (`register_managed_answer` is last-writer-wins), so the earlier ask waits
+//! (`register_ask_answer` is last-writer-wins), so the earlier ask waits
 //! out its timeout. Parallel `AskUserQuestion` calls are not something the
 //! supported agents emit today, and fixing it needs a per-ask channel rather
 //! than an ownership rule.
@@ -163,14 +169,12 @@ struct QuestionGuard {
 
 impl QuestionGuard {
     /// Restore `Responding`/no-pending and drop our answer channel (only if
-    /// it's still ours — see `unregister_managed_answer_if`), then defuse.
+    /// it's still ours — see `unregister_ask_answer_if`), then defuse.
     fn finish(&mut self) {
         if self.defused {
             return;
         }
         self.defused = true;
-        self.store
-            .unregister_managed_answer_if(&self.session_id, &self.tx);
         // `Resolve(Ask)`: this guard owns the *question* — it parked it, and it
         // is the one thing that knows the question is over (answered, or timed
         // out with the tool call already returning an error to the agent). It
@@ -184,6 +188,10 @@ impl QuestionGuard {
             SessionMode::Responding,
             PendingWrite::Resolve(PendingOwner::Ask),
         );
+        // Unregister only AFTER the card is released: until then an answer is
+        // routed to this (Ask) feed by the card's owner, and must find it.
+        self.store
+            .unregister_ask_answer_if(&self.session_id, &self.tx);
     }
 }
 
@@ -233,7 +241,7 @@ async fn tools_call(store: &SessionStore, session_id: &str, id: Value, req: &Val
     // instant `/answer` (racing the mode broadcast) can't miss it, then flip
     // the mode — the broadcast is what makes the GUI render the picker.
     let (tx, mut rx) = mpsc::unbounded_channel::<ManagedAnswer>();
-    store.register_managed_answer(session_id, tx.clone());
+    store.register_ask_answer(session_id, tx.clone());
     let mut guard = QuestionGuard {
         store: store.clone(),
         session_id: session_id.to_string(),

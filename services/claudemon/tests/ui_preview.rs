@@ -184,6 +184,7 @@ fn preview_chat_with_pending_question() {
                         question: "Which date library should we use?".into(),
                         header: Some("Library".into()),
                         multi_select: false,
+                        secret: false,
                         options: vec![
                             PendingOption {
                                 label: "date-fns".into(),

@@ -203,7 +203,8 @@ pub fn build_brief(
             ConversationItem::UserMessage { text, .. } => {
                 format!("**User:**\n{}\n", clip(text, RECENT_TEXT_CAP))
             }
-            ConversationItem::AssistantText { text, .. } => {
+            ConversationItem::AssistantText { text, .. }
+            | ConversationItem::AssistantQuestions { text, .. } => {
                 let cap = if last_assistant_seen {
                     RECENT_TEXT_CAP
                 } else {
@@ -222,7 +223,7 @@ pub fn build_brief(
                     continue; // successful results add bulk, not signal
                 }
             }
-            ConversationItem::Usage { .. } => continue,
+            ConversationItem::Usage { .. } | ConversationItem::AssistantNotice { .. } => continue,
             ConversationItem::SlashCommand { name, args, .. } => match args {
                 Some(args) => format!("**User ran:** /{name} {}\n", clip(args, RECENT_TEXT_CAP)),
                 None => format!("**User ran:** /{name}\n"),

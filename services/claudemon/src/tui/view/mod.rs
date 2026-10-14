@@ -726,6 +726,7 @@ mod tests {
                         question: "Pick one?".into(),
                         header: Some("Pick".into()),
                         multi_select: false,
+                        secret: false,
                         options: vec![
                             crate::session::state::PendingOption {
                                 label: "alpha".into(),
