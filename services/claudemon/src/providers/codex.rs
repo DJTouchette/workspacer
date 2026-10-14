@@ -3743,6 +3743,8 @@ struct HistoryControls {
     user_turns: VecDeque<(String, String)>,
     /// Turn ids in start order.
     turns: VecDeque<String>,
+    /// Codex `userMessage` item ids that already claimed a send.
+    claimed: VecDeque<String>,
     /// Our control requests awaiting their JSON-RPC response, by request id.
     waiting: HashMap<u64, ControlWait>,
 }
@@ -3790,6 +3792,17 @@ impl HistoryControls {
                 let Some(turn) = params.get("turnId").and_then(Value::as_str) else {
                     return;
                 };
+                // One codex item claims ONE send, once: `item/started` claims
+                // it, and the same item's `item/completed` only stands in when
+                // the start was missed. Claiming on both let one item take two
+                // identical sends and misplace every later one.
+                let item_id = item.get("id").and_then(Value::as_str).unwrap_or_default();
+                if !item_id.is_empty() {
+                    if self.claimed.iter().any(|seen| seen == item_id) {
+                        return;
+                    }
+                    bounded_push(&mut self.claimed, item_id.to_string());
+                }
                 let text = item
                     .get("content")
                     .and_then(Value::as_array)
@@ -4402,7 +4415,35 @@ mod tests {
     }
 
     fn user_item(turn: &str, text: &str) -> Value {
-        json!({"threadId":"th","turnId":turn,"item":{"type":"userMessage","id":"i","content":[{"type":"text","text":text}]}})
+        user_item_id(&format!("{turn}/{text}"), turn, text)
+    }
+
+    fn user_item_id(id: &str, turn: &str, text: &str) -> Value {
+        json!({"threadId":"th","turnId":turn,"item":{"type":"userMessage","id":id,"content":[{"type":"text","text":text}]}})
+    }
+
+    /// Two identical sends land in their own turns: each codex item claims
+    /// one send once, its completed copy claims nothing, and a completed item
+    /// whose start was missed still places its send.
+    #[test]
+    fn identical_sends_are_placed_in_their_own_turns() {
+        let mut h = HistoryControls::default();
+        h.expect("m1".into(), "again".into());
+        h.expect("m2".into(), "again".into());
+        h.expect("m3".into(), "again".into());
+        h.observe("turn/started", &json!({"turn":{"id":"t1"}}));
+        h.observe("item/started", &user_item_id("i1", "t1", "again"));
+        h.observe("item/completed", &user_item_id("i1", "t1", "again"));
+        h.observe("turn/started", &json!({"turn":{"id":"t2"}}));
+        h.observe("item/started", &user_item_id("i2", "t2", "again"));
+        h.observe("item/completed", &user_item_id("i2", "t2", "again"));
+        h.observe("turn/started", &json!({"turn":{"id":"t3"}}));
+        // Only the completed notification reached us for this one.
+        h.observe("item/completed", &user_item_id("i3", "t3", "again"));
+        assert_eq!(h.turn_of("m1"), Some("t1"));
+        assert_eq!(h.turn_of("m2"), Some("t2"));
+        assert_eq!(h.turn_of("m3"), Some("t3"));
+        assert_eq!(h.fork_point("m3"), Ok(json!({"lastTurnId":"t2"})));
     }
 
     /// Each sent message is placed in the turn codex put it in; the fork

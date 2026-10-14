@@ -1114,7 +1114,13 @@ fn apply_updates_current(
                 new_mode = Some((
                     SessionMode::Input,
                     PendingWrite::Resolve(PendingOwner::Primary),
-                ))
+                ));
+                // A turn end is also the end of any compaction in it: an
+                // interrupted or failed compaction sends no closing status,
+                // and a `compacting` left up holds the message queue forever.
+                if compaction.is_none() {
+                    compaction = Some(Compaction::Flag(false));
+                }
             }
             AgentUpdate::Busy => {
                 // A parked approval/question is a PAUSE: the agent is blocked
@@ -2410,6 +2416,72 @@ mod tests {
         let row = store.get("s-c").unwrap();
         assert!(!row.compacting);
         assert_eq!(row.compaction_count, 2);
+    }
+
+    /// An interrupted compaction never sends its closing status: the turn's
+    /// end clears the flag (the message queue waits on it), and so does the
+    /// session ending.
+    #[test]
+    fn an_interrupted_compaction_does_not_leave_compacting_up() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed("s-i", "/tmp/proj", "claude");
+        let mut mode = SessionMode::Responding;
+        let mut acc = UsageAcc::new();
+        apply_updates(
+            &store,
+            &conv,
+            "s-i",
+            vec![AgentUpdate::Compacting(true)],
+            &mut mode,
+            &mut acc,
+        );
+        assert!(store.get("s-i").unwrap().compacting);
+        // The user's Esc: an aborted turn's `result` is just Idle.
+        apply_updates(
+            &store,
+            &conv,
+            "s-i",
+            vec![AgentUpdate::Idle],
+            &mut mode,
+            &mut acc,
+        );
+        let row = store.get("s-i").unwrap();
+        assert!(!row.compacting, "the turn end closes the bracket");
+        assert_eq!(
+            row.compaction_count, 0,
+            "an aborted compaction is not counted"
+        );
+        // A boundary and the turn's Idle in one batch still count once.
+        apply_updates(
+            &store,
+            &conv,
+            "s-i",
+            vec![
+                AgentUpdate::Compacted {
+                    trigger: Some("manual".into()),
+                    pre_tokens: None,
+                    post_tokens: None,
+                    legacy: false,
+                },
+                AgentUpdate::Idle,
+            ],
+            &mut mode,
+            &mut acc,
+        );
+        assert_eq!(store.get("s-i").unwrap().compaction_count, 1);
+        // A session that ends mid-compaction is not left compacting.
+        apply_updates(
+            &store,
+            &conv,
+            "s-i",
+            vec![AgentUpdate::Compacting(true)],
+            &mut mode,
+            &mut acc,
+        );
+        let generation = store.claim_generation("s-i");
+        assert!(store.deregister_managed("s-i", generation));
+        assert!(!store.get("s-i").unwrap().compacting);
     }
 
     #[test]

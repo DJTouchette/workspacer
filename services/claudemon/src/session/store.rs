@@ -2491,6 +2491,9 @@ impl SessionStore {
             // A stopped session runs nothing — a leftover live-task count would
             // badge a dead row as "working in background".
             entry.background_tasks = 0;
+            // Nor is it compacting: a compaction cut short by the end of the
+            // session must not leave the flag up (a queue waits on it).
+            entry.compacting = false;
             let completed_at = now_millis();
             super::background_tasks::end_all(&mut entry.background_task_list, completed_at);
             for sub in &mut entry.subagents {
@@ -2511,12 +2514,6 @@ impl SessionStore {
         true
     }
 
-    /// Record the live background-task count (any task type) from the stream
-    /// driver's latest `background_tasks_changed` frame. Broadcasts only on
-    /// change so idle churn doesn't spam subscribers. The MODE deliberately
-    /// does not ride on this: only `local_agent` tasks hold a session busy
-    /// (see the stream driver) — this count is how clients surface ambient
-    /// work (a dev server, a poll loop) without the mode lying "responding".
     /// A managed driver's compaction bracket — the stream counterpart of the
     /// `PreCompact`/`PostCompact` hooks, which `ingest` keeps enrichment-only
     /// for managed sessions. Broadcast only on change.
@@ -2559,6 +2556,12 @@ impl SessionStore {
         });
     }
 
+    /// Record the live background-task count (any task type) from the stream
+    /// driver's latest `background_tasks_changed` frame. Broadcasts only on
+    /// change so idle churn doesn't spam subscribers. The MODE deliberately
+    /// does not ride on this: only `local_agent` tasks hold a session busy
+    /// (see the stream driver) — this count is how clients surface ambient
+    /// work (a dev server, a poll loop) without the mode lying "responding".
     pub fn set_background_tasks(&self, session_id: &str, live: u32) {
         let state = {
             let Some(mut entry) = self.states.get_mut(session_id) else {
