@@ -46,19 +46,26 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let pending = next
+        let session = next
             .sessions
             .iter()
-            .find(|s| Some(&s.id) == next.selected.as_ref())
-            .and_then(|s| s.questions.as_ref());
+            .find(|s| Some(&s.id) == next.selected.as_ref());
+        let pending = session.and_then(|s| s.questions.as_ref());
+        // The card id is part of the set: the same words on a new card are a
+        // new question, answered fresh and bound to that card.
+        let card = session.and_then(Session::card);
         let signature = format!(
-            "{:?}:{}",
+            "{:?}:{:?}:{:?}:{}",
             next.selected,
+            card,
+            session.and_then(|s| s.elicitation_server.as_deref()),
             pending.map(Value::to_string).unwrap_or_default()
         );
         if signature != self.extras.question_signature {
             let questions = pending.map(question_list).unwrap_or_default();
             self.extras.question_signature = signature;
+            self.tools.question_card = card;
+            self.tools.open_after = None;
             self.extras.answer_watches.clear();
             self.extras.selected_options = vec![Default::default(); questions.len()];
             self.extras.answers_sent = false;
@@ -136,13 +143,42 @@ impl Workspace {
             .collect()
     }
 
-    /// Every question has a non-empty answer (a choice or typed text).
+    /// The pending set as an MCP elicitation, only when the hub marked it so.
+    pub(super) fn pending_elicitation(&self) -> Option<Elicitation> {
+        let session = self.selected_session()?;
+        let list = session.questions.as_ref().map(question_list)?;
+        wks_native::elicitation::detect(&list, session.elicitation_server.as_deref())
+    }
+
+    /// A question that may be left blank: an MCP form's optional field (the
+    /// daemon marks required ones "(required)"). Consent never is.
+    pub(super) fn optional_question(&self, ix: usize, question: &Value) -> bool {
+        self.pending_elicitation().is_some_and(|e| {
+            e.kind == Kind::Form
+                && ix + 1 < self.extras.answers.len()
+                && !question["question"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim_end()
+                    .ends_with("(required)")
+        })
+    }
+
+    /// Every question has a non-empty answer (a choice or typed text),
+    /// except an MCP form's optional fields.
     pub(super) fn answers_ready(&self, cx: &App) -> bool {
+        let questions = self
+            .selected_session()
+            .and_then(|s| s.questions.as_ref())
+            .map(question_list)
+            .unwrap_or_default();
         !self.extras.answers.is_empty()
-            && self
-                .question_answers(cx)
-                .iter()
-                .all(|s| !s.trim().is_empty())
+            && self.question_answers(cx).iter().enumerate().all(|(ix, s)| {
+                !s.trim().is_empty()
+                    || questions
+                        .get(ix)
+                        .is_some_and(|q| self.optional_question(ix, q))
+            })
     }
 
     /// The only way answers leave the picker: the Send button, Ctrl/Cmd+Enter
@@ -174,10 +210,7 @@ impl Workspace {
         };
         match self.controller.command(Command::Act {
             session,
-            action: Action::Answers(
-                answers.clone(),
-                self.selected_session().and_then(Session::card),
-            ),
+            action: Action::Answers(answers.clone(), self.tools.question_card.clone()),
         }) {
             Ok(()) => {
                 self.extras.answer_submission =
@@ -206,7 +239,10 @@ impl Workspace {
             kind: Kind::Url(url.to_owned()),
         }
         .message(question);
-        let enabled = interactive && !self.view.busy;
+        let enabled = interactive
+            && !self.view.busy
+            && !self.view.loading
+            && self.tools.opened.as_ref() != Some(&self.extras.question_signature);
         let open = url.to_owned();
         div()
             .flex()
@@ -276,11 +312,17 @@ impl Workspace {
                             .debug_selector(|| "elicitation-open".into())
                             .when(enabled, |d| {
                                 d.on_click(cx.listener(move |this, _, window, cx| {
-                                    // Only ever an http(s) link, and only on this click.
-                                    if wks_native::elicitation::web_url(&open) {
-                                        cx.open_url(&open);
+                                    // The link opens once the hub has taken the
+                                    // Open answer (see `open_accepted_link`),
+                                    // never when nothing was sent.
+                                    this.answer_with_option(0, 0, window, cx);
+                                    if let Some((signature, _)) = &this.extras.answer_submission
+                                        && *signature == this.extras.question_signature
+                                        && wks_native::elicitation::web_url(&open)
+                                    {
+                                        this.tools.open_after =
+                                            Some((signature.clone(), open.clone()));
                                     }
-                                    this.answer_with_option(0, 0, window, cx)
                                 }))
                             }),
                     ),
@@ -404,7 +446,8 @@ impl Workspace {
         let failed = self.extras.answer_error.clone();
         let pad = px(if compact { 8. } else { 12. });
         let body_max = window.viewport_size().height * if compact { 0.4 } else { 0.46 };
-        let elicitation = wks_native::elicitation::detect(&list);
+        let elicitation =
+            wks_native::elicitation::detect(&list, session.elicitation_server.as_deref());
         let header = div()
             .flex()
             .items_center()
@@ -480,11 +523,13 @@ impl Workspace {
                     div().flex().justify_end().child(
                         self.primary_button("answer-text", "Answer with composer", enabled)
                             .when(enabled, |d| {
-                                d.on_click(cx.listener(|this, _, _, cx| {
+                                // Bound to the card shown when this was drawn.
+                                let card = session.card();
+                                d.on_click(cx.listener(move |this, _, _, cx| {
                                     this.act(
                                         Action::Answer(
                                             this.composer.read(cx).value().to_string(),
-                                            this.selected_session().and_then(Session::card),
+                                            card.clone(),
                                         ),
                                         cx,
                                     )
@@ -735,6 +780,7 @@ impl Workspace {
                 .is_some_and(|s| !s.is_empty());
         // Free text needs no instruction: its field's placeholder says it.
         let how = match (options.is_empty(), multiple) {
+            (true, _) if self.optional_question(ix, q) => "Optional",
             (true, _) => "",
             (false, true) => "Choose any",
             (false, false) => "Choose one",

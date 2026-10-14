@@ -474,7 +474,64 @@ impl View {
     pub fn may_call(&self, method: &str) -> bool {
         self.methods
             .as_ref()
-            .is_none_or(|methods| methods.iter().any(|m| m == "*" || m == method))
+            .is_none_or(|methods| methods.iter().any(|m| method_matches(m, method)))
+    }
+}
+
+/// One entry of a hello's method list: `*` (everything), an exact method, or
+/// a namespace wildcard such as `git.*` (every `git.` method, not `git` or
+/// `gitx.status`).
+pub fn method_matches(pattern: &str, method: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some("") => true,
+        Some(prefix) if prefix.ends_with('.') => {
+            method.len() > prefix.len() && method.starts_with(prefix)
+        }
+        _ => pattern == method,
+    }
+}
+
+/// The method list a hub's `hello` frame carries, if it carries one.
+pub fn hello_methods(hello: &Value) -> Option<Vec<String>> {
+    hello["methods"].as_array().map(|list| {
+        list.iter()
+            .filter_map(Value::as_str)
+            .take(4096)
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
+#[cfg(test)]
+mod access_tests {
+    use super::*;
+
+    #[test]
+    fn hello_lists_methods_and_wildcards_match_whole_namespaces() {
+        assert_eq!(
+            hello_methods(&json!({"op":"hello","methods":["agents.*","claude.approve",3]})),
+            Some(vec!["agents.*".to_owned(), "claude.approve".to_owned()])
+        );
+        assert_eq!(hello_methods(&json!({"op":"hello"})), None);
+        let view = |methods: Option<Vec<&str>>| View {
+            methods: methods.map(|m| Arc::new(m.into_iter().map(str::to_owned).collect())),
+            ..Default::default()
+        };
+        assert!(
+            view(None).may_call("claude.compact"),
+            "unknown tier: offered"
+        );
+        assert!(view(Some(vec!["*"])).may_call("agents.fork"));
+        let triage = view(Some(vec!["claude.approve", "agents.*"]));
+        assert!(triage.may_call("claude.approve"));
+        assert!(triage.may_call("agents.fork"));
+        assert!(!triage.may_call("agents"));
+        assert!(!triage.may_call("agentsx.fork"));
+        assert!(!triage.may_call("claude.compact"));
+        assert!(!view(Some(vec![])).may_call("claude.approve"));
+        assert!(method_matches("git.*", "git.status"));
+        assert!(!method_matches("git.*", "git."));
+        assert!(!method_matches("claude.approve*", "claude.approveAll"));
     }
 }
 
@@ -935,8 +992,15 @@ impl Worker {
                 | "git-action"
                 | "fork"
                 | "rewind-files"
-        ) && self.view.requests.get(key).is_some_and(|s| s.loading)
-        {
+        ) && self.view.requests.get(key).is_some_and(|s| {
+            // A rewind PREVIEW changes nothing: a newer one (another message,
+            // or a retry) supersedes it. Only a real rewind is never recalled.
+            s.loading
+                && !matches!(
+                    &s.request,
+                    crate::features::Request::RewindFiles { preview: true, .. }
+                )
+        }) {
             return;
         }
         self.action_number += 1;
@@ -1659,12 +1723,16 @@ impl Worker {
                         }),
                         Action::Stop | Action::Terminate => true,
                         Action::Answers(answers, _) => {
+                            // An MCP form's optional fields may be blank; its
+                            // consent (the last answer) never is.
+                            let blank_ok = s.elicitation_server.is_some();
                             s.questions.is_some()
                                 && !answers.is_empty()
                                 && answers.len() <= 20
+                                && answers.last().is_some_and(|a| !a.trim().is_empty())
                                 && answers
                                     .iter()
-                                    .all(|s| !s.trim().is_empty() && s.len() <= 65536)
+                                    .all(|a| (blank_ok || !a.trim().is_empty()) && a.len() <= 65536)
                         }
                         Action::SetModel { model, effort, .. } => {
                             !model.trim().is_empty()

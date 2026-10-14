@@ -525,42 +525,260 @@ fn nothing_reported_means_no_status_chips_and_no_plan_toggle(cx: &mut TestAppCon
     assert!(visual.debug_bounds("live-plan-mode").is_none());
 }
 
-#[gpui::test]
-fn mcp_links_open_only_on_open_and_forms_name_their_consent(cx: &mut TestAppContext) {
-    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
-    visual.simulate_resize(size(px(1200.), px(900.)));
+/// Session "a" waiting on `questions` on card `card`, marked as an MCP
+/// elicitation from `server` when one is given.
+fn asking(card: &str, server: Option<&str>, questions: serde_json::Value) -> View {
     let mut view = state("a");
     let session = &mut Arc::make_mut(&mut view.sessions)[0];
     session.state = "question".into();
-    session.merge(&json!({"pendingRequestId":"e-1","pendingQuestions":[{
-        "header":"auth link","question":"Sign in\n\nThe MCP server `auth` asks you to open:\nhttps://example.com/login",
-        "options":[{"label":"Open","description":"https://example.com/login"},{"label":"Decline"}]}]}));
-    show(&workspace, &mut visual, view);
+    let mut row = json!({"pendingRequestId":card,"pendingQuestions":questions,
+        "pendingQuestionSource":"question"});
+    if let Some(server) = server {
+        row["pendingQuestionSource"] = json!("elicitation");
+        row["elicitationServer"] = json!(server);
+    }
+    session.merge(&row);
+    view
+}
+
+fn link_card() -> serde_json::Value {
+    json!([{"header":"auth link",
+        "question":"Sign in\n\nThe MCP server `auth` asks you to open:\nhttps://example.com/login",
+        "options":[{"label":"Open","description":"https://example.com/login"},{"label":"Decline"}]}])
+}
+
+#[gpui::test]
+fn an_mcp_link_opens_only_once_its_open_answer_is_accepted(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(900.)));
+    let view = asking("e-1", Some("auth"), link_card());
+    show(&workspace, &mut visual, view.clone());
     effects(&mut commands);
     assert!(visual.debug_bounds("elicitation-url").is_some());
-    assert!(cx.opened_url().is_none());
     tap(&mut visual, "elicitation-open");
+    assert!(matches!(acts(&mut commands).as_slice(),
+        [Action::Answers(answers, Some(card))] if answers == &["Open"] && card == "e-1"));
+    assert!(
+        cx.opened_url().is_none(),
+        "nothing opens before the hub takes the answer"
+    );
+    // A refusal opens nothing.
+    let mut refused = view.clone();
+    refused.receipt = Some(Receipt {
+        number: 1,
+        session: "a".into(),
+        action: Action::Answers(vec!["Open".into()], Some("e-1".into())),
+        error: Some("Request refused".into()),
+    });
+    show(&workspace, &mut visual, refused);
+    assert!(cx.opened_url().is_none());
+    // Accepted: it opens, exactly as validated, once.
+    tap(&mut visual, "elicitation-open");
+    effects(&mut commands);
+    let mut accepted = view;
+    accepted.receipt = Some(Receipt {
+        number: 2,
+        session: "a".into(),
+        action: Action::Answers(vec!["Open".into()], Some("e-1".into())),
+        error: None,
+    });
+    show(&workspace, &mut visual, accepted);
     assert_eq!(
         cx.opened_url().as_deref(),
         Some("https://example.com/login")
     );
-    assert!(matches!(acts(&mut commands).as_slice(),
-        [Action::Answers(answers, Some(card))] if answers == &["Open"] && card == "e-1"));
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.extras.answers_sent);
+        assert_eq!(
+            this.tools.opened.as_ref(),
+            Some(&this.extras.question_signature)
+        );
+    });
+}
 
-    let mut form = state("a");
-    let session = &mut Arc::make_mut(&mut form.sessions)[0];
-    session.state = "question".into();
-    session.merge(&json!({"pendingRequestId":"e-2","pendingQuestions":[
-        {"header":"Repository","question":"Which repo? (required)","options":[]},
-        {"header":"github asks","question":"Pick a repo\n\nSend these answers to the MCP server `github`?",
-         "options":[{"label":"Submit","description":"Send the answers to `github`"},
-                    {"label":"Decline","description":"Send nothing"}]}]}));
-    show(&workspace, &mut visual, form);
+#[gpui::test]
+fn a_look_alike_agent_question_is_never_an_mcp_elicitation(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(900.)));
+    // The same words and options an MCP link card uses, from the agent's own
+    // AskUserQuestion: no hub mark, so an ordinary question.
+    show(&workspace, &mut visual, asking("q-1", None, link_card()));
+    effects(&mut commands);
+    assert!(visual.debug_bounds("elicitation-url").is_none());
+    assert!(visual.debug_bounds("elicitation-open").is_none());
+    assert!(visual.debug_bounds("question-0-option-0").is_some());
+    tap(&mut visual, "question-0-option-0");
+    tap(&mut visual, "submit-answers");
+    assert!(matches!(acts(&mut commands).as_slice(),
+        [Action::Answers(answers, Some(card))] if answers == &["Open"] && card == "q-1"));
+    let accepted = {
+        let mut view = asking("q-1", None, link_card());
+        view.receipt = Some(Receipt {
+            number: 1,
+            session: "a".into(),
+            action: Action::Answers(vec!["Open".into()], Some("q-1".into())),
+            error: None,
+        });
+        view
+    };
+    show(&workspace, &mut visual, accepted);
+    assert!(
+        cx.opened_url().is_none(),
+        "an agent's question opens nothing"
+    );
+    // A look-alike consent form is no elicitation either.
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    show(
+        &workspace,
+        &mut visual,
+        asking(
+            "q-2",
+            None,
+            json!([{"header":"github asks","question":"Send?",
+                "options":[{"label":"Submit"},{"label":"Decline"}]}]),
+        ),
+    );
+    assert!(visual.debug_bounds("elicitation-consent").is_none());
+}
+
+#[gpui::test]
+fn mcp_forms_need_only_required_fields_and_an_explicit_submit(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(1000.)));
+    show(
+        &workspace,
+        &mut visual,
+        asking(
+            "e-2",
+            Some("github"),
+            json!([
+                {"header":"Repository","question":"Which repo? (required)","options":[]},
+                {"header":"Note","question":"Anything else?","options":[]},
+                {"header":"github asks","question":"Pick a repo\n\nSend these answers to the MCP server `github`?",
+                 "options":[{"label":"Submit","description":"Send the answers to `github`"},
+                            {"label":"Decline","description":"Send nothing"}]}
+            ]),
+        ),
+    );
+    effects(&mut commands);
     assert!(visual.debug_bounds("elicitation-consent").is_some());
     assert!(
-        visual.debug_bounds("question-1-answer").is_none(),
+        visual.debug_bounds("question-2-answer").is_none(),
         "consent is chosen, never typed"
     );
+    tap(&mut visual, "question-2-option-0");
+    workspace.read_with(&visual, |this, cx| {
+        assert!(!this.answers_ready(cx), "the required field is still blank")
+    });
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.extras.answers[0].update(cx, |input, cx| input.set_value("web", window, cx))
+        })
+    });
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, cx| {
+        assert!(this.answers_ready(cx), "the optional note may stay blank")
+    });
+    tap(&mut visual, "submit-answers");
+    assert!(matches!(acts(&mut commands).as_slice(),
+        [Action::Answers(answers, Some(card))]
+            if answers == &["web", "", "Submit"] && card == "e-2"));
+}
+
+#[gpui::test]
+fn a_card_that_changes_before_the_click_gets_a_fresh_answer(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(900.)));
+    let questions = json!([{"header":"Pick","question":"Which?",
+        "options":[{"label":"A"},{"label":"B"}]}]);
+    show(
+        &workspace,
+        &mut visual,
+        asking("c-1", None, questions.clone()),
+    );
+    tap(&mut visual, "question-0-option-1");
+    // The same words on a new card: the pick is gone and Send binds c-2.
+    show(&workspace, &mut visual, asking("c-2", None, questions));
+    workspace.read_with(&visual, |this, cx| {
+        assert_eq!(this.tools.question_card.as_deref(), Some("c-2"));
+        assert!(!this.answers_ready(cx));
+    });
+    effects(&mut commands);
+    tap(&mut visual, "question-0-option-0");
+    tap(&mut visual, "submit-answers");
+    assert!(matches!(acts(&mut commands).as_slice(),
+        [Action::Answers(answers, Some(card))] if answers == &["A"] && card == "c-2"));
+    // A deny note is bound to the card it was opened on, and closes when
+    // the card changes under it.
+    let approval = |card: &str| {
+        let mut view = state("a");
+        Arc::make_mut(&mut view.sessions)[0].merge(&json!({"provider":"claude",
+            "pendingRequestId":card,"pendingApproval":{"toolName":"Bash","requestId":card}}));
+        view
+    };
+    show(&workspace, &mut visual, approval("r-1"));
+    tap(&mut visual, "deny-with-note");
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.extras.deny_open);
+        assert_eq!(this.tools.deny_card.as_deref(), Some("r-1"));
+    });
+    show(&workspace, &mut visual, approval("r-2"));
+    workspace.read_with(&visual, |this, _| assert!(!this.extras.deny_open));
+}
+
+#[gpui::test]
+fn a_new_rewind_preview_supersedes_and_a_late_one_offers_retry(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(900.)));
+    show(
+        &workspace,
+        &mut visual,
+        chat(
+            "claude",
+            "stream",
+            json!([{"kind":"user_message","text":"first","uuid":"u-1"},
+                   {"kind":"assistant_text","text":"ok"}]),
+            json!({}),
+        ),
+    );
+    effects(&mut commands);
+    tap(&mut visual, "rewind-files");
+    assert!(matches!(requests(&mut commands).as_slice(),
+        [Request::RewindFiles { message, preview: true, .. }] if message == "u-1"));
+    // Still loading: the panel can always be left.
+    request_state(
+        &workspace,
+        &mut visual,
+        Request::RewindFiles {
+            session: "a".into(),
+            message: "u-1".into(),
+            preview: true,
+        },
+        1,
+        serde_json::Value::Null,
+    );
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = (*this.view).clone();
+            view.requests.get_mut("rewind-files").unwrap().loading = true;
+            if let Some(action) = this.tools.message_action.as_mut() {
+                action.asked_at = std::time::Instant::now() - session_tools::REWIND_WAIT;
+            }
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    visual.update(|window, _| window.refresh());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("message-action-cancel").is_some());
+    // Late: Retry asks again (a fresh preview, which supersedes the old).
+    tap(&mut visual, "rewind-retry");
+    assert!(matches!(requests(&mut commands).as_slice(),
+        [Request::RewindFiles { message, preview: true, .. }] if message == "u-1"));
+    tap(&mut visual, "message-action-cancel");
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.tools.message_action.is_none())
+    });
 }
 
 #[gpui::test]

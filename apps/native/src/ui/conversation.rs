@@ -544,7 +544,9 @@ impl Workspace {
                                 self.button("deny-with-note", "Deny with note…", enabled)
                                     .debug_selector(|| "deny-with-note".into())
                                     .when(enabled, |d| {
-                                        d.on_click(cx.listener(|this, _, window, cx| {
+                                        let card = card.clone();
+                                        d.on_click(cx.listener(move |this, _, window, cx| {
+                                            this.tools.deny_card = card.clone();
                                             this.extras.deny_open = true;
                                             this.extras
                                                 .deny_note
@@ -570,6 +572,8 @@ impl Workspace {
     ) -> Div {
         let p = self.appearance.palette();
         let (compact, enabled) = (layout.compact, layout.enabled);
+        let card = self.selected_session().and_then(Session::card);
+        let note_card = card.clone();
         div()
             .debug_selector(|| "plan-card".into())
             .occlude()
@@ -617,14 +621,8 @@ impl Workspace {
                         self.primary_button("approve", "Approve plan", enabled)
                             .debug_selector(|| "plan-approve".into())
                             .when(enabled, |d| {
-                                d.on_click(cx.listener(|this, _, _, cx| {
-                                    this.act(
-                                        Action::Approve(
-                                            true,
-                                            this.selected_session().and_then(Session::card),
-                                        ),
-                                        cx,
-                                    )
+                                d.on_click(cx.listener(move |this, _, _, cx| {
+                                    this.act(Action::Approve(true, card.clone()), cx)
                                 }))
                             }),
                     )
@@ -633,7 +631,8 @@ impl Workspace {
                             self.button("plan-revise", "Keep planning…", enabled)
                                 .debug_selector(|| "plan-revise".into())
                                 .when(enabled, |d| {
-                                    d.on_click(cx.listener(|this, _, window, cx| {
+                                    d.on_click(cx.listener(move |this, _, window, cx| {
+                                        this.tools.deny_card = note_card.clone();
                                         this.extras.deny_open = true;
                                         this.extras
                                             .deny_note
@@ -798,10 +797,7 @@ impl Workspace {
             .deny_note
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.extras.deny_open = false;
-        self.act(
-            Action::DenyWithNote(note, self.selected_session().and_then(Session::card)),
-            cx,
-        );
+        self.act(Action::DenyWithNote(note, self.tools.deny_card.clone()), cx);
         self.composer
             .update(cx, |input, cx| input.focus(window, cx));
     }

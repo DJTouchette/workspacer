@@ -1126,6 +1126,17 @@ impl Workspace {
                     if self.extras.answers_sent {
                         self.forget_secret_answers(window, cx);
                     }
+                    // An MCP link opens only now that its Open answer was
+                    // accepted, once per card, and exactly as validated.
+                    if let Some((card, url)) = self.tools.open_after.take()
+                        && self.extras.answers_sent
+                        && card == self.extras.question_signature
+                        && self.tools.opened.as_ref() != Some(&card)
+                        && wks_native::elicitation::web_url(&url)
+                    {
+                        self.tools.opened = Some(card);
+                        cx.open_url(&url);
+                    }
                     self.extras.answer_error =
                         same_question.then(|| receipt.error.clone()).flatten();
                     self.extras.answer_submission = None;

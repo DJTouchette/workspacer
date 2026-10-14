@@ -45,6 +45,9 @@ fn labels(question: &Value) -> Vec<&str> {
 /// kind the card ever opens.
 pub fn web_url(url: &str) -> bool {
     let url = url.trim();
+    if url.len() > MAX_URL {
+        return false;
+    }
     let lower = url.to_ascii_lowercase();
     let rest = lower
         .strip_prefix("https://")
@@ -57,32 +60,36 @@ pub fn web_url(url: &str) -> bool {
     })
 }
 
-/// The elicitation a question list is, if it is one.
-pub fn detect(questions: &[Value]) -> Option<Elicitation> {
+/// Longest link the card opens; a longer one is refused, never cut.
+pub const MAX_URL: usize = 4_096;
+
+/// The elicitation a question list is, if the hub MARKED it as one
+/// (`marked`: `elicitationServer` with `pendingQuestionSource: "elicitation"`).
+/// The shape alone never makes an elicitation: an agent's own question can
+/// copy any header and options, so an unmarked card is an ordinary question
+/// and a marked one that does not have the daemon's shape is too.
+pub fn detect(questions: &[Value], marked: Option<&str>) -> Option<Elicitation> {
+    let server = marked.map(str::trim).filter(|s| !s.is_empty())?;
     let last = questions.last()?;
-    let header = last["header"].as_str().unwrap_or("").trim();
     let options = labels(last);
-    if let Some(server) = header.strip_suffix(" asks")
-        && options == [SUBMIT, DECLINE]
-        && last["multiSelect"].as_bool() != Some(true)
-    {
+    let multiple = ["multiSelect", "multi_select"]
+        .iter()
+        .any(|k| last[*k].as_bool() == Some(true));
+    if options == [SUBMIT, DECLINE] && !multiple {
         return Some(Elicitation {
-            server: crate::transcript::head(server.trim(), 128),
+            server: crate::transcript::head(server, 128),
             kind: Kind::Form,
         });
     }
-    if questions.len() == 1
-        && let Some(server) = header.strip_suffix(" link")
-        && options == [OPEN, DECLINE]
-    {
+    if questions.len() == 1 && options == [OPEN, DECLINE] {
         let url = last["options"][0]["description"]
             .as_str()
             .unwrap_or("")
             .trim();
         if web_url(url) {
             return Some(Elicitation {
-                server: crate::transcript::head(server.trim(), 128),
-                kind: Kind::Url(crate::transcript::head(url, 4_096)),
+                server: crate::transcript::head(server, 128),
+                kind: Kind::Url(url.to_owned()),
             });
         }
     }
@@ -132,13 +139,16 @@ mod tests {
     #[test]
     fn a_form_ends_with_its_consent_question() {
         let questions = form();
-        let found = detect(&questions).unwrap();
+        // Only the hub's mark makes it one: the same card unmarked (an
+        // agent's look-alike AskUserQuestion) is an ordinary question.
+        assert!(detect(&questions, None).is_none());
+        let found = detect(&questions, Some("github")).unwrap();
         assert_eq!(found.server, "github");
         assert_eq!(found.kind, Kind::Form);
         assert_eq!(found.consent_index(&questions), 1);
         // An agent's own question with similar words is not an elicitation.
         let plain = json!([{"header":"Deploy","question":"Go?","options":[{"label":"Submit"},{"label":"Cancel"}]}]);
-        assert!(detect(plain.as_array().unwrap()).is_none());
+        assert!(detect(plain.as_array().unwrap(), Some("github")).is_none());
     }
 
     #[test]
@@ -148,7 +158,8 @@ mod tests {
                 "options":[{"label":"Open","description":url},{"label":"Decline"}]}])
         };
         let ok = card("https://example.com/login?x=1");
-        let found = detect(ok.as_array().unwrap()).unwrap();
+        assert!(detect(ok.as_array().unwrap(), None).is_none());
+        let found = detect(ok.as_array().unwrap(), Some("auth")).unwrap();
         assert_eq!(
             found.kind,
             Kind::Url("https://example.com/login?x=1".into())
@@ -160,9 +171,16 @@ mod tests {
             "https://",
             "/tmp/x",
         ] {
-            assert!(detect(card(bad).as_array().unwrap()).is_none(), "{bad}");
+            assert!(
+                detect(card(bad).as_array().unwrap(), Some("auth")).is_none(),
+                "{bad}"
+            );
         }
         assert!(web_url("http://localhost:3000/cb"));
         assert!(!web_url("https://a b"));
+        // An over-long link is refused whole, never cut to fit.
+        let long = format!("https://example.com/{}", "a".repeat(MAX_URL));
+        assert!(!web_url(&long));
+        assert!(detect(card(&long).as_array().unwrap(), Some("auth")).is_none());
     }
 }

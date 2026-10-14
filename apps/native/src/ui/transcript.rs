@@ -1021,10 +1021,10 @@ impl Workspace {
         self.schedule_previews(cx);
         if row.role == "You" {
             // A reply to the agent's async questions reads as its answers.
-            if let Some(replies) = wks_native::questions::parse_reply(&row.text) {
-                return body.child(super::async_questions::render_reply(&replies, p));
-            }
-            let body = body.child(literal(key, &text, window, cx));
+            let body = match wks_native::questions::parse_reply(&row.text) {
+                Some(replies) => body.child(super::async_questions::render_reply(&replies, p)),
+                None => body.child(literal(key, &text, window, cx)),
+            };
             return match panel {
                 Some(panel) => div().w_full().flex().flex_col().child(body).child(panel),
                 None => body,

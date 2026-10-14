@@ -61,13 +61,18 @@ pub struct Session {
     /// `requestId`): echoed on a decision or answer so it can never land on
     /// a newer card. `None` for hook approvals and older daemons.
     pub pending_request_id: Option<String>,
+    /// The MCP server asking, when the pending question card is an MCP
+    /// elicitation as the hub marks it (`pendingQuestionSource:
+    /// "elicitation"` + `elicitationServer`). Never inferred from the card's
+    /// shape: an agent can word its own question like anything.
+    pub elicitation_server: Option<String>,
     /// The mode the CLI itself reports (`observedPermissionMode`), e.g. after
     /// an "Allow all edits this session" grant. Empty when not reported.
     pub observed_permission_mode: String,
     /// The provider is summarising the conversation out of its context.
     pub compacting: bool,
     pub compaction_count: u64,
-    /// Epoch milliseconds of the last compaction.
+    /// Epoch milliseconds of the last compaction (claudemon sends seconds).
     pub last_compact_at: Option<i64>,
     /// Codex: the thread's goal, its own name, Windows sandbox readiness and
     /// collaboration mode (`plan` / `default`; absent while plan mode is
@@ -542,9 +547,19 @@ impl Session {
                 })
                 .filter(|id| !id.is_empty() && id.len() <= 256)
                 .map(str::to_owned);
+            self.elicitation_server = (value.get("pendingQuestionSource").and_then(Value::as_str)
+                == Some("elicitation"))
+            .then(|| value.get("elicitationServer").and_then(Value::as_str))
+            .flatten()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| crate::transcript::head(s, 128));
         }
         if self.approval.is_none() && self.questions.is_none() {
             self.pending_request_id = None;
+        }
+        if self.questions.is_none() {
+            self.elicitation_server = None;
         }
     }
 
@@ -562,7 +577,13 @@ impl Session {
             self.compaction_count = count;
         }
         match field(&["last_compact_at", "lastCompactAt"]) {
-            Some(at) => self.last_compact_at = at.as_i64(),
+            // claudemon reports Unix seconds; the row keeps milliseconds.
+            Some(at) => {
+                self.last_compact_at = at
+                    .as_i64()
+                    .filter(|s| *s > 0)
+                    .map(|s| s.saturating_mul(1000))
+            }
             None if full => self.last_compact_at = None,
             None => {}
         }
@@ -2179,7 +2200,7 @@ mod tests {
         let mut s = Session::default();
         s.merge(&json!({
             "sessionId":"a","provider":"claude","compacting":true,"compaction_count":2,
-            "last_compact_at":1_700_000_000_000_i64,"livePermissionMode":"default",
+            "last_compact_at":1_700_000_000_i64,"livePermissionMode":"default",
             "observedPermissionMode":"acceptEdits","pendingRequestId":"req-7",
             "pendingApproval":{"toolName":"Bash","requestId":"req-7",
                 "alwaysOptions":[{"id":"req-7:0","label":"Always allow Bash(ls:*) this session","scope":"session","kind":"addRules"}]}
@@ -2188,6 +2209,11 @@ mod tests {
         assert_eq!(s.access_mode(), "acceptEdits");
         assert!(s.compacting);
         assert_eq!(s.compaction_count, 2);
+        assert_eq!(
+            s.last_compact_at,
+            Some(1_700_000_000_000),
+            "seconds become ms"
+        );
         // A state-only row keeps the card and the observed mode.
         s.merge(&json!({"sessionId":"a","mode":"approval"}));
         assert_eq!(s.card().as_deref(), Some("req-7"));

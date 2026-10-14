@@ -686,6 +686,62 @@ async fn decisions_carry_their_card_and_a_stale_card_is_reread_not_retried() {
 }
 
 #[tokio::test]
+async fn a_newer_rewind_preview_supersedes_one_in_flight_but_a_real_rewind_is_never_recalled() {
+    use wks_native::features::Request;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    fleet.result(json!([session("a")])).await;
+    let conversation = hub.frame("call", Some("sessions.conversation")).await;
+    conversation.result(snapshot(1, "Start")).await;
+    view(&controller, |v| v.transcript.seq == Some(1)).await;
+    let rewind = |message: &str, preview: bool| {
+        Command::Request(Request::RewindFiles {
+            session: "a".into(),
+            message: message.into(),
+            preview,
+        })
+    };
+    controller.command(rewind("u-1", true)).unwrap();
+    let first = hub.frame("call", Some("claude.rewindFiles")).await;
+    assert_eq!(first.value["params"]["userMessageId"], "u-1");
+    // The first preview never answers; another message's preview still goes.
+    controller.command(rewind("u-2", true)).unwrap();
+    let second = hub.frame("call", Some("claude.rewindFiles")).await;
+    assert_eq!(second.value["params"]["userMessageId"], "u-2");
+    assert_eq!(second.value["params"]["preview"], true);
+    second
+        .result(json!({"ok":true,"result":{"canRewind":true,"filesChanged":["/w/a"]}}))
+        .await;
+    view(&controller, |v| {
+        v.requests.get("rewind-files").is_some_and(|s| {
+            !s.loading
+                && matches!(&s.request, Request::RewindFiles { message, .. } if message == "u-2")
+        })
+    })
+    .await;
+    // A real rewind in flight is not recalled by a later preview.
+    controller.command(rewind("u-2", false)).unwrap();
+    let real = hub.frame("call", Some("claude.rewindFiles")).await;
+    assert_eq!(real.value["params"]["preview"], false);
+    controller.command(rewind("u-1", true)).unwrap();
+    let v = view(&controller, |v| {
+        v.requests.get("rewind-files").is_some_and(|s| s.loading)
+    })
+    .await;
+    assert!(matches!(
+        &v.requests["rewind-files"].request,
+        Request::RewindFiles { preview: false, .. }
+    ));
+    real.result(json!({"ok":true,"result":{"canRewind":true}}))
+        .await;
+    view(&controller, |v| {
+        v.requests.get("rewind-files").is_some_and(|s| !s.loading)
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn demo_fixture_completes_a_streaming_send_round_trip() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = Config::new(format!("ws://{}/bus", listener.local_addr().unwrap()), None).unwrap();

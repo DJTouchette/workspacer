@@ -29,7 +29,13 @@ pub(super) struct MessageAction {
     pub kind: MessageActionKind,
     /// Rewind: the real call has been sent (after its preview).
     pub applied: bool,
+    /// When the latest rewind call was asked for, to say when it is late.
+    pub asked_at: std::time::Instant,
 }
+
+/// How long a rewind may go unanswered before the panel offers Retry (the
+/// daemon itself gives up after 30 seconds).
+pub(super) const REWIND_WAIT: std::time::Duration = std::time::Duration::from_secs(35);
 
 /// What Review changes reviews; the text field supplies the branch, commit
 /// or instructions.
@@ -76,6 +82,18 @@ impl ReviewKind {
 /// Inputs and choices the Session page's cards keep between frames.
 pub(super) struct ToolsUi {
     pub message_action: Option<MessageAction>,
+    /// The card id the question picker was built for (captured when the
+    /// question set appeared), sent with its answers.
+    pub question_card: Option<String>,
+    /// The card id a "Deny with note" box was opened on.
+    pub deny_card: Option<String>,
+    /// An MCP link to open once its Open answer is accepted:
+    /// (question signature, URL).
+    pub open_after: Option<(String, String)>,
+    /// The question set whose link was opened (each card opens at most once).
+    pub opened: Option<String>,
+    /// Wakes the rewind panel when its call is late.
+    pub rewind_timer: Option<Task<()>>,
     pub compact_note: Entity<InputState>,
     pub review_kind: ReviewKind,
     pub review_text: Entity<InputState>,
@@ -87,6 +105,11 @@ impl ToolsUi {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
         Self {
             message_action: None,
+            question_card: None,
+            deny_card: None,
+            open_after: None,
+            opened: None,
+            rewind_timer: None,
             compact_note: cx.new(|cx| {
                 InputState::new(window, cx).placeholder("Optional: what the summary should keep")
             }),
@@ -249,7 +272,11 @@ impl Workspace {
                 ),
             }
         }
-        if matches!(session.provider_id(), "claude" | "codex") && self.view.may_call("agents.fork")
+        // Codex finds a message's fork point through its live driver, so a
+        // stopped Codex session forks only as a whole (Session details).
+        if matches!(session.provider_id(), "claude" | "codex")
+            && !(session.provider_id() == "codex" && session.stopped())
+            && self.view.may_call("agents.fork")
         {
             push(
                 MessageActionKind::Fork,
@@ -271,30 +298,48 @@ impl Workspace {
         let Some(session) = self.view.selected.clone() else {
             return;
         };
-        if kind == MessageActionKind::Rewind {
-            // The preview first: nothing changes until the user has seen what
-            // would be restored.
-            self.request(
-                Request::RewindFiles {
-                    session: session.clone(),
-                    message: uuid.clone(),
-                    preview: true,
-                },
-                cx,
-            );
-        }
         self.tools.message_action = Some(MessageAction {
             session,
             row,
             uuid,
             kind,
             applied: false,
+            asked_at: std::time::Instant::now(),
         });
+        if kind == MessageActionKind::Rewind {
+            // The preview first: nothing changes until the user has seen what
+            // would be restored. It supersedes any other preview in flight.
+            self.ask_rewind(false, cx);
+        }
+        self.remeasure_rows(cx);
+    }
+
+    /// Send the open panel's rewind call (the preview, or the real one) and
+    /// wake the panel if it goes unanswered.
+    fn ask_rewind(&mut self, apply: bool, cx: &mut Context<Self>) {
+        let Some(action) = self.tools.message_action.as_mut() else {
+            return;
+        };
+        action.applied = apply;
+        action.asked_at = std::time::Instant::now();
+        let request = Request::RewindFiles {
+            session: action.session.clone(),
+            message: action.uuid.clone(),
+            preview: !apply,
+        };
+        self.request(request, cx);
+        self.tools.rewind_timer = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(REWIND_WAIT + std::time::Duration::from_millis(100))
+                .await;
+            let _ = this.update(cx, |this, cx| this.remeasure_rows(cx));
+        }));
         self.remeasure_rows(cx);
     }
 
     fn close_message_action(&mut self, cx: &mut Context<Self>) {
         self.tools.message_action = None;
+        self.tools.rewind_timer = None;
         self.remeasure_rows(cx);
     }
 
@@ -368,25 +413,68 @@ impl Workspace {
                     chrome::notice_line(text, tone, p, "message-action-status")
                         .debug_selector(|| "message-action-status".into())
                 };
+                // Retry asks for a fresh preview: it changes nothing, so it is
+                // always safe, even after a real rewind's outcome went unknown.
+                let retry = || {
+                    self.button("rewind-retry", "Retry", enabled)
+                        .debug_selector(|| "rewind-retry".into())
+                        .when(enabled, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| this.ask_rewind(false, cx)))
+                        })
+                };
+                let late = action.asked_at.elapsed() >= REWIND_WAIT;
+                let other_real = self.view.requests.get("rewind-files").is_some_and(|s| {
+                    s.loading && matches!(&s.request, Request::RewindFiles { preview: false, .. })
+                });
+                let buttons = |retry_too: bool, close: &'static str| {
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(cancel(close))
+                        .when(retry_too, |d| d.child(retry()))
+                };
                 match state {
-                    None => card.child(line(
-                        "Checking what would change…".into(),
-                        chrome::Tone::Loading,
-                    )),
-                    Some(s) if s.loading => card.child(line(
-                        if action.applied {
-                            "Rewinding files…".into()
-                        } else {
-                            "Checking what would change…".into()
-                        },
-                        chrome::Tone::Loading,
-                    )),
+                    None if other_real => card
+                        .child(line(
+                            "Another rewind is still finishing; try again when it has.".into(),
+                            chrome::Tone::Warning,
+                        ))
+                        .child(buttons(true, "Cancel")),
+                    None | Some(_)
+                        if late && state.is_none_or(|s| s.loading) && !action.applied =>
+                    {
+                        card.child(line(
+                            "No answer from Claude yet. It may still be busy; try again.".into(),
+                            chrome::Tone::Error,
+                        ))
+                        .child(buttons(true, "Cancel"))
+                    }
+                    None => card
+                        .child(line(
+                            "Checking what would change…".into(),
+                            chrome::Tone::Loading,
+                        ))
+                        .child(buttons(false, "Cancel")),
+                    Some(s) if s.loading => card
+                        .child(line(
+                            if action.applied {
+                                "Rewinding files…".into()
+                            } else {
+                                "Checking what would change…".into()
+                            },
+                            chrome::Tone::Loading,
+                        ))
+                        .child(buttons(
+                            false,
+                            if action.applied { "Close" } else { "Cancel" },
+                        )),
                     Some(s) if s.error.is_some() => card
                         .child(line(
                             refusal(s.error.as_deref().unwrap_or_default()),
                             chrome::Tone::Error,
                         ))
-                        .child(div().flex().justify_end().child(cancel("Close"))),
+                        .child(buttons(true, "Close")),
                     Some(s) if action.applied => {
                         let result = Rewind::parse(&s.value);
                         let (text, tone) = match result.error {
@@ -539,17 +627,7 @@ impl Workspace {
     }
 
     fn confirm_rewind(&mut self, cx: &mut Context<Self>) {
-        let Some(action) = self.tools.message_action.as_mut() else {
-            return;
-        };
-        action.applied = true;
-        let request = Request::RewindFiles {
-            session: action.session.clone(),
-            message: action.uuid.clone(),
-            preview: false,
-        };
-        self.request(request, cx);
-        self.remeasure_rows(cx);
+        self.ask_rewind(true, cx);
     }
 
     /// Session page: compaction and forking for a managed session.

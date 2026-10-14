@@ -769,8 +769,10 @@ be expanded, and attachment controls share the composer action row.
   `Denied …: note`, which shows in the chat like any other), so it can change
   course. The composer draft is untouched, and the box closes when that
   approval is resolved.
-- **Decisions are bound to the card you saw.** Allow, Deny, Deny with note,
-  the question card's Send and its composer answer carry the card's id
+- **Decisions are bound to the card you saw.** Allow, Deny, Approve plan,
+  Deny with note (the card it was opened on; the box closes if the card
+  changes), the question card's Send (the card the picker was built for; the
+  same words on a new card start fresh) and its composer answer carry the card's id
   (`pendingRequestId`, sent as `requestId`). If another card replaced it before
   the decision arrived, the hub refuses it (409); nothing is resent, the notice
   says the request changed, and the current card is read again and shown.
@@ -784,13 +786,19 @@ be expanded, and attachment controls share the composer action row.
   An "Allow all edits" grant changes the CLI's own mode, which the title chip
   and the Access row then show (`observedPermissionMode`).
 - **MCP servers asking for information** (MCP elicitations) arrive on the
-  question card, headed **MCP server “name” asks for information**. The
-  typed fields come first; the last step is a separate consent panel: the
-  answers go to that server only on **Submit**, and **Decline** sends nothing.
-  Consent is chosen, never typed, and the send button names what happens
-  (**Submit to name** or **Send decline**). A server asking you to open a link
-  shows the URL on its own line with **Open link** and **Decline**; only Open
-  opens it, in the system browser, and only an `http(s)` link is ever opened.
+  question card, headed **MCP server “name” asks for information**. A card
+  counts as one only when the hub marks it so (`pendingQuestionSource:
+  "elicitation"` and `elicitationServer`, set from a mark claudemon's
+  elicitation mapping alone can write); a question the agent words the same
+  way stays an ordinary question, with any URL as plain text. The typed fields
+  come first (optional ones may stay blank; required ones say so); the last
+  step is a separate consent panel: the answers go to that server only on
+  **Submit**, and **Decline** sends nothing. Consent is chosen, never typed, and
+  the send button names what happens (**Submit to name** or **Send
+  decline**). A server asking you to open a link shows the URL on its own line
+  with **Open link** and **Decline**. The link opens in the system browser
+  only after the hub has accepted the Open answer, once per card, exactly as
+  shown; only an `http(s)` link of at most 4,096 characters is offered.
 - **Settings → Workspace** includes notifications and a persistent keep-running
   preference. Closing can minimize while local agents continue; explicit Quit
   still stops the owned backend. Completion, approval and question transitions
@@ -861,10 +869,14 @@ be expanded, and attachment controls share the composer action row.
   provider can name (it carries a `uuid`; messages steered into a running turn
   never do) shows, beside Copy: **Rewind files to here** on Claude stream
   sessions, which first previews what would change (files, +/−) and restores
-  files only after **Rewind files**, with any refusal shown in the CLI's words;
-  **Undo from here** on Codex, which after a confirmation drops that message
-  and every later turn (`claude.revert`); and **Fork from here**, a new session
-  with the conversation before that message. When the agent reports delivery
+  files only after **Rewind files**, with any refusal shown in the CLI's words
+  (the panel can always be cancelled; a preview for another message replaces
+  one still running; a refusal or an answer slower than 35 seconds offers
+  **Retry**, which only previews again); **Undo from here** on Codex, which
+  after a confirmation drops that message and every later turn
+  (`claude.revert`); and **Fork from here**, a new session with the
+  conversation before that message (not on a stopped Codex session, which
+  needs its live driver to find the fork point; **Fork session** still works). When the agent reports delivery
   receipts, the bubble also says **Queued by the agent**, **Started** or
   **Completed**.
 - **Thinking.** The model's shown reasoning is a quiet, collapsed **Thinking**
@@ -894,7 +906,8 @@ be expanded, and attachment controls share the composer action row.
   shows in the queue panel as **Delivered — confirmed by the agent**, with
   **Dismiss**; a paused queue still waits for its own **Resume**.
 - **Access tier.** The hub's hello lists the methods this connection may
-  call. Controls behind methods it does not list (compact, rewind, revert,
+  call (exact names, `*`, or a namespace such as `agents.*`). Controls behind
+  methods it does not list (compact, rewind, revert,
   fork, goals, review, sandbox setup, MCP reconnect, fast mode, rename) are
   hidden rather than refused after a click. The owner token and the embedded
   backend may call everything.

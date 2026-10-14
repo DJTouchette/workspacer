@@ -509,7 +509,8 @@ impl Workspace {
             view.selected
                 .as_ref()
                 .and_then(|id| view.sessions.iter().find(|s| &s.id == id))
-                .and_then(|s| s.approval.clone())
+                .map(|s| (s.approval.clone(), s.card()))
+                .filter(|(approval, _)| approval.is_some())
         };
         if approval_of(&self.view) != approval_of(next) {
             self.extras.deny_open = false;

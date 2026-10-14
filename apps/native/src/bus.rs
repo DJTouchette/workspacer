@@ -372,9 +372,7 @@ async fn run(
                                 match v["op"].as_str() {
                                     Some("hello") if !ready => {
                                         ready = true;
-                                        *methods.lock().unwrap_or_else(|e| e.into_inner()) = v["methods"].as_array().map(|list| {
-                                            list.iter().filter_map(Value::as_str).take(4096).map(str::to_owned).collect()
-                                        });
+                                        *methods.lock().unwrap_or_else(|e| e.into_inner()) = crate::controller::hello_methods(&v);
                                         backoff = Duration::from_millis(250);
                                         connected.store(true, Ordering::Release);
                                         if !send_json(&mut socket, json!({"op": "subscribe", "topics": topics})).await {
