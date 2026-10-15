@@ -53,6 +53,43 @@ async fn owned_rust_host_survives_viewer_drop_and_joins_every_reported_listener(
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// Agents keep the MCP URL they launched with, and can outlive the app; a
+/// restart on the same data directory must bind the same MCP port.
+#[tokio::test]
+async fn owned_rust_host_keeps_its_mcp_port_across_restarts() {
+    use wks_native::host::{Mode, NativeHost, RustOptions};
+    let root = std::env::temp_dir().join(format!(
+        "wks-native-mcp-port-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let start = || async {
+        let mut options = RustOptions::isolated(root.clone()).unwrap();
+        options.home_dir = root.join("home");
+        std::fs::create_dir_all(&options.home_dir).unwrap();
+        options.usage_poll_on_boot = Some(false);
+        options.claude_hooks = false;
+        let host = NativeHost::start(Mode::Rust(options)).unwrap();
+        let ready = tokio::time::timeout(Duration::from_secs(30), host.ready())
+            .await
+            .unwrap()
+            .unwrap();
+        // engine api, engine hook, bus, then the MCP facade.
+        let mcp = ready.owned_listeners[3].port();
+        host.shutdown().await.unwrap();
+        mcp
+    };
+    let first = start().await;
+    assert_ne!(first, 0);
+    let saved = std::fs::read_to_string(root.join("config/mcp-port")).unwrap();
+    assert_eq!(saved.trim(), first.to_string());
+    assert_eq!(start().await, first, "a restart reuses the saved MCP port");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn native_backend_uses_in_memory_calls_and_events() {
     let options = workspacer_hub::Options::default()

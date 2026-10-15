@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 #[cfg(feature = "rust-hub")]
 mod rust_local;
 #[cfg(feature = "rust-hub")]
-pub use rust_local::RustOptions;
+pub use rust_local::{DEFAULT_MCP_PORT, RustOptions};
 
 pub enum Mode {
     Remote(Config),
@@ -294,6 +294,7 @@ mod tests {
             home_dir: path.with_extension("home"),
             usage_poll_on_boot: Some(false),
             claude_hooks: true,
+            preferred_mcp_port: None,
         }))
         .unwrap();
         let status = host.status();

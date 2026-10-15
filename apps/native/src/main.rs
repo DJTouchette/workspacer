@@ -243,8 +243,10 @@ fn main() -> Result<()> {
             Some(directory) => directory.clone(),
             None => wks_native::host::RustOptions::default_directory()?,
         };
+        let default_install = args.rust_local_dir.is_none();
         let mut options = wks_native::host::RustOptions::isolated(directory)?;
         options.claude_hooks = !args.no_claude_hooks;
+        options.preferred_mcp_port = default_install.then_some(wks_native::host::DEFAULT_MCP_PORT);
         Some(Mode::Rust(options))
     } else {
         None
