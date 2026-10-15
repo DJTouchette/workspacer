@@ -11,6 +11,37 @@ fn notch_height(compact: bool) -> f32 {
     if compact { 18. } else { 22. }
 }
 
+type Point = gpui::Point<gpui::Pixels>;
+
+/// The tab's sides and top as segments from its left foot to its right foot:
+/// each a point, with a control point where it curves.
+fn notch_outline(
+    bounds: gpui::Bounds<gpui::Pixels>,
+    height: f32,
+    z: f32,
+) -> Vec<(Point, Option<Point>)> {
+    // Everything here is in laid-out (already zoomed) pixels: `bounds` comes
+    // from layout, so only the shape's own constants take the interface zoom.
+    // (Zooming `bounds` again drew the right side short of the label.)
+    let at = |x: f32, y: f32| bounds.origin + gpui::point(gpui::px(x), gpui::px(y));
+    let w = f32::from(bounds.size.width);
+    // The middle of the composer's 1px border row, where the feet join it.
+    let base = height * z + 0.5;
+    let s = NOTCH_SLANT * z;
+    let (foot, rise, shoulder) = (5. * z, 3. * z, 3. * z);
+    // Flared foot, sloped side, rounded shoulder; mirrored on the right.
+    vec![
+        (at(0., base), None),
+        (at(foot, base - rise), Some(at(foot * 0.7, base))),
+        (at(s - shoulder, 4. * z), None),
+        (at(s + shoulder, 0.5), Some(at(s - z, 0.5))),
+        (at(w - s - shoulder, 0.5), None),
+        (at(w - s + shoulder, 4. * z), Some(at(w - s + z, 0.5))),
+        (at(w - foot, base - rise), None),
+        (at(w, base), Some(at(w - foot * 0.7, base))),
+    ]
+}
+
 /// The tab's outline: a filled body whose base covers the composer's top
 /// border, and the stroked sides and top (no base line, so the tab opens
 /// into the composer).
@@ -21,30 +52,51 @@ fn notch_paths(
     anyhow::Result<gpui::Path<gpui::Pixels>>,
     anyhow::Result<gpui::Path<gpui::Pixels>>,
 ) {
-    let at = |x: f32, y: f32| bounds.origin + gpui::point(px(x), px(y));
-    let w = f32::from(bounds.size.width);
-    // The middle of the composer's border row, where the feet join it.
-    let base = height + 0.5;
-    let s = NOTCH_SLANT;
-    let outline = |b: &mut gpui::PathBuilder| {
-        b.move_to(at(0., base));
-        // Flared foot, sloped side, rounded shoulder; mirrored on the right.
-        b.curve_to(at(5., base - 3.), at(3.5, base));
-        b.line_to(at(s - 3., 4.));
-        b.curve_to(at(s + 3., 0.5), at(s - 1., 0.5));
-        b.line_to(at(w - s - 3., 0.5));
-        b.curve_to(at(w - s + 3., 4.), at(w - s + 1., 0.5));
-        b.line_to(at(w - 5., base - 3.));
-        b.curve_to(at(w, base), at(w - 3.5, base));
+    let outline = notch_outline(bounds, height, zoom());
+    let trace = |b: &mut gpui::PathBuilder| {
+        for (ix, (to, ctrl)) in outline.iter().enumerate() {
+            match (ix, ctrl) {
+                (0, _) => b.move_to(*to),
+                (_, Some(ctrl)) => b.curve_to(*to, *ctrl),
+                (_, None) => b.line_to(*to),
+            }
+        }
     };
     let mut fill = gpui::PathBuilder::fill();
-    outline(&mut fill);
-    fill.line_to(at(w, height + 1.));
-    fill.line_to(at(0., height + 1.));
+    trace(&mut fill);
+    let floor = bounds.origin.y + gpui::px(height * zoom() + 1.);
+    fill.line_to(gpui::point(bounds.right(), floor));
+    fill.line_to(gpui::point(bounds.left(), floor));
     fill.close();
-    let mut stroke = gpui::PathBuilder::stroke(px(1.));
-    outline(&mut stroke);
+    let mut stroke = gpui::PathBuilder::stroke(gpui::px(1.));
+    trace(&mut stroke);
     (fill.build(), stroke.build())
+}
+
+#[cfg(test)]
+mod notch_tests {
+    use super::*;
+
+    /// At any interface zoom the outline spans the tab's laid-out bounds
+    /// exactly, so the label laid out inside them stays inside the shape.
+    #[test]
+    fn the_outline_spans_its_bounds_at_every_zoom() {
+        for z in [0.9, 1., 1.25] {
+            let bounds = gpui::Bounds::new(
+                gpui::point(gpui::px(300.), gpui::px(40.)),
+                gpui::size(gpui::px(170. * z), gpui::px((22. + 1.) * z)),
+            );
+            let outline = notch_outline(bounds, 22., z);
+            let xs = outline.iter().map(|(p, _)| f32::from(p.x));
+            let (min, max) = xs.fold((f32::MAX, f32::MIN), |(a, b), x| (a.min(x), b.max(x)));
+            assert_eq!((min, max), (300., 300. + 170. * z), "zoom {z}");
+            // The flat top covers all but the two slopes.
+            let top = &outline[3..5];
+            assert!(
+                f32::from(top[1].0.x - top[0].0.x) >= 170. * z - 2. * (NOTCH_SLANT + 3.) * z - 0.01
+            );
+        }
+    }
 }
 
 struct ComposerActivity {
@@ -189,12 +241,18 @@ impl Workspace {
         // width (which decides where the context gauge goes) never moves.
         let nudge = if chrome::custom_caption() {
             // The widest the capsule gets: drawn last frame, or at rest with
-            // its actions revealed.
+            // its actions revealed, but never past its column (where the title
+            // truncates instead). The same at rest and open, so revealing the
+            // actions grows it about a fixed centre.
             let widest = self
                 .title_island_width
-                .max(self.title_base_width + self.title_reveal.width + px(2.));
-            let room = self.header_bounds.size.width - px(40.) - widest;
-            (room / 2.).clamp(px(0.), px(chrome::CAPTION_WIDTH / 2.))
+                .max(self.title_base_width + self.title_reveal.width + px(2.))
+                .min(self.header_bounds.size.width - px(40.));
+            // How far right it can go before its widest outline reaches the
+            // caption buttons.
+            let right = self.header_bounds.center().x + widest / 2.;
+            let room = window.viewport_size().width - px(chrome::CAPTION_WIDTH) - right;
+            room.clamp(px(0.), px(chrome::CAPTION_WIDTH / 2.))
         } else {
             px(0.)
         };
@@ -1245,7 +1303,8 @@ impl Workspace {
                     // Sized by its content: the label never spills past the
                     // sloped sides.
                     .flex_shrink_0()
-                    .h(px(height + 1.))
+                    // The extra (unzoomed) pixel covers the composer's border.
+                    .h(px(height) + gpui::px(1.))
                     .max_w(px(320.))
                     .px(px(NOTCH_SLANT + 6.))
                     .flex()

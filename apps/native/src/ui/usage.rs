@@ -183,10 +183,6 @@ fn unmeasured_line(state: &usage::Unmeasured, p: Palette, size: f32) -> Div {
         .child(state.reason.clone())
 }
 
-fn unmeasured_tone(state: &usage::Unmeasured, p: Palette) -> u32 {
-    if state.error { p.warning } else { p.disabled }
-}
-
 struct UsageHover {
     accounts: Vec<Account>,
     error: Option<String>,
