@@ -674,3 +674,43 @@ fn a_refused_effort_switch_is_a_notice_and_the_chip_keeps_its_value(cx: &mut Tes
         })
     });
 }
+
+/// The working tab holds its whole label inside its sloped sides and, where
+/// the window allows, sits under the title capsule's centre even with the
+/// app-drawn caption buttons.
+#[gpui::test]
+fn the_status_tab_fits_its_label_and_lines_up_with_the_title(cx: &mut TestAppContext) {
+    let _caption = CaptionPreview::new();
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    for (w, h) in [(1280., 800.), (1000., 700.), (1000., 560.), (720., 480.)] {
+        visual.simulate_resize(gpui::size(px(w), px(h)));
+        {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.update_view(Arc::new(working()), window, cx)
+                })
+            });
+            visual.run_until_parked();
+            // A second frame: the title centres on the pane width it measured.
+            visual.update(|_, cx| workspace.update(cx, |_, cx| cx.notify()));
+            visual.run_until_parked();
+            let case = format!("{w}x{h}");
+            let tab = visual.debug_bounds("composer-notch").unwrap();
+            let label = visual.debug_bounds("composer-notch-label").unwrap();
+            assert!(
+                label.left() >= tab.left() + px(12.) && label.right() <= tab.right() - px(12.),
+                "{case}: {label:?} spills out of {tab:?}"
+            );
+            let island = visual.debug_bounds("title-bar").unwrap();
+            assert!(
+                island.right() <= px(w - chrome::CAPTION_WIDTH),
+                "{case}: {island:?} under the caption buttons"
+            );
+            // Narrower, the revealed title actions need the room on the right.
+            if w >= 1280. {
+                let offset = (island.center().x - tab.center().x).abs();
+                assert!(offset <= px(1.), "{case}: title {island:?} vs tab {tab:?}");
+            }
+        }
+    }
+}

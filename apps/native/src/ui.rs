@@ -605,6 +605,9 @@ pub struct Workspace {
     /// The title capsule's measured width inside its border, without what
     /// its actions add: its notice island wraps inside it.
     title_base_width: gpui::Pixels,
+    /// The title island's drawn width last frame (notices included), so its
+    /// centring nudge never carries it under the caption buttons.
+    title_island_width: gpui::Pixels,
     /// Hover, focus and tap state behind the capsule's secondary actions.
     title_reveal: island::TitleReveal,
     /// How the capsule's notice island grows, settles and lets go.
@@ -887,6 +890,7 @@ impl Workspace {
             composer_dock_bounds: Default::default(),
             composer_layer_height: Default::default(),
             title_base_width: Default::default(),
+            title_island_width: Default::default(),
             title_reveal: island::TitleReveal::new(cx),
             island_motion: Default::default(),
             gauge_motion: Default::default(),

@@ -182,6 +182,22 @@ impl Workspace {
             this.header_bounds = bounds;
             true
         });
+        // The caption buttons take the right edge, so the title row's room
+        // stops short of them and its centre sits left of the transcript's.
+        // Nudge the capsule back by that half-gutter, as far as the room on
+        // its right allows. A paint offset, not layout: the capsule's measured
+        // width (which decides where the context gauge goes) never moves.
+        let nudge = if chrome::custom_caption() {
+            // The widest the capsule gets: drawn last frame, or at rest with
+            // its actions revealed.
+            let widest = self
+                .title_island_width
+                .max(self.title_base_width + self.title_reveal.width + px(2.));
+            let room = self.header_bounds.size.width - px(40.) - widest;
+            (room / 2.).clamp(px(0.), px(chrome::CAPTION_WIDTH / 2.))
+        } else {
+            px(0.)
+        };
         div()
             .absolute()
             .top_0()
@@ -219,7 +235,24 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .child(header_size)
-                    .child(title_island)
+                    .child(
+                        div()
+                            .relative()
+                            .left(nudge)
+                            // Passes the column's width limit on to the island.
+                            .max_w_full()
+                            .min_w_0()
+                            .flex()
+                            .child(chrome::measure(
+                                cx.entity().downgrade(),
+                                |this: &mut Self, bounds, _| {
+                                    let changed = this.title_island_width != bounds.size.width;
+                                    this.title_island_width = bounds.size.width;
+                                    changed
+                                },
+                            ))
+                            .child(title_island),
+                    )
                     .children(plan),
             )
     }
@@ -1209,6 +1242,9 @@ impl Workspace {
                 div()
                     .debug_selector(|| "composer-notch".into())
                     .relative()
+                    // Sized by its content: the label never spills past the
+                    // sloped sides.
+                    .flex_shrink_0()
                     .h(px(height + 1.))
                     .max_w(px(320.))
                     .px(px(NOTCH_SLANT + 6.))
@@ -1240,7 +1276,13 @@ impl Workspace {
                     } else {
                         status_dot(p.warning)
                     })
-                    .child(div().truncate().child(label.to_owned())),
+                    .child(
+                        div()
+                            .debug_selector(|| "composer-notch-label".into())
+                            .flex_shrink_0()
+                            .whitespace_nowrap()
+                            .child(label.to_owned()),
+                    ),
             )
     }
 
