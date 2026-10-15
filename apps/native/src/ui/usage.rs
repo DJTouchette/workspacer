@@ -207,18 +207,87 @@ impl Render for UsageHover {
 }
 
 impl Workspace {
-    fn usage_accounts(&self) -> Option<(Vec<Account>, i64)> {
+    pub(super) fn usage_accounts(&self) -> Option<(Vec<Account>, i64)> {
         let now = timing::now_ms() / 1000;
         let accounts = usage::accounts(self.view.usage.as_deref()?, now);
         (!accounts.is_empty()).then_some((accounts, now))
     }
 
-    /// One line per account with its most pressing window, or the reason it
-    /// has none. Hover shows every window; click opens the detail modal. A
-    /// failed report read with nothing to show says so rather than vanishing.
-    pub(super) fn render_usage_strip(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    /// One line per measured account with its most pressing window, then a
+    /// small prompt for each agent that is not installed or needs signing in
+    /// (opening Agent setup). Other unmeasured accounts show only in the
+    /// detail modal. Hover shows every window; click opens the modal. A failed
+    /// report read with nothing to show says so rather than vanishing.
+    pub(super) fn render_usage_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let all = self.usage_accounts().map(|(a, _)| a).unwrap_or_default();
+        let notes = self.usage_notes(&all);
+        let accounts: Vec<Account> = all.into_iter().filter(|a| a.primary().is_some()).collect();
+        let strip = self.render_usage_meters(accounts, cx);
+        if strip.is_none() && notes.is_empty() {
+            return None;
+        }
         let p = self.appearance.palette();
-        let accounts = self.usage_accounts().map(|(a, _)| a).unwrap_or_default();
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .children(strip)
+                .when(!notes.is_empty(), |d| {
+                    d.child(div().mx_2().mb_1().flex().flex_col().children(
+                        notes.into_iter().enumerate().map(|(ix, (icon, text))| {
+                            div()
+                                .id(("sidebar-usage-note", ix))
+                                .debug_selector(move || format!("sidebar-usage-note-{ix}"))
+                                .px_2()
+                                .py(px(3.))
+                                .rounded(px(p.control_radius))
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .text_size(px(11.))
+                                .text_color(rgb(p.muted))
+                                .cursor_pointer()
+                                .hover(move |s| s.bg(rgb(p.surface)))
+                                .child(Icon::new(icon).size(px(11.)).text_color(rgb(p.accent)))
+                                .child(div().flex_1().min_w_0().truncate().child(text))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_feature(Screen::Setup, window, cx)
+                                }))
+                        }),
+                    ))
+                }),
+        )
+    }
+
+    /// Install prompts for agents the hub's host lacks, and sign-in prompts
+    /// for accounts whose token has expired. Unknown install state never nags.
+    pub(super) fn usage_notes(&self, accounts: &[Account]) -> Vec<(IconName, String)> {
+        let installed = |provider: &str| self.view.installed.get(provider).copied();
+        let mut notes: Vec<(IconName, String)> = [("claude", "Claude Code"), ("codex", "Codex")]
+            .into_iter()
+            .filter(|(id, _)| installed(id) == Some(false))
+            .map(|(_, name)| (IconName::ArrowDown, format!("Install {name}")))
+            .collect();
+        notes.extend(
+            accounts
+                .iter()
+                .filter(|a| {
+                    installed(&a.provider) != Some(false)
+                        && a.unmeasured
+                            .as_ref()
+                            .is_some_and(|u| u.state == "Sign in again")
+                })
+                .map(|a| (IconName::CircleUser, format!("Sign in to {}", a.title))),
+        );
+        notes
+    }
+
+    fn render_usage_meters(
+        &self,
+        accounts: Vec<Account>,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
+        let p = self.appearance.palette();
         let error = self.view.usage_error.clone();
         if accounts.is_empty() && error.is_none() {
             return None;
@@ -265,20 +334,24 @@ impl Workspace {
                             ),
                     )
                 })
-                .children(accounts.iter().enumerate().map(|(ix, account)| {
-                    let name = div()
-                        .flex_1()
-                        .min_w_0()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(chrome::brand_badge(
-                            &account.provider,
-                            account.title.clone(),
-                            p,
-                            11.,
-                        ));
-                    match (account.primary(), &account.unmeasured) {
-                        (Some(w), _) => row()
-                            .child(name)
+                .children(accounts.iter().filter_map(|account| {
+                    let w = account.primary()?;
+                    let selector = format!("sidebar-usage-row-{}", account.provider);
+                    Some(
+                        row()
+                            .debug_selector(move || selector.clone())
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(chrome::brand_badge(
+                                        &account.provider,
+                                        account.title.clone(),
+                                        p,
+                                        11.,
+                                    )),
+                            )
                             .child(
                                 div()
                                     .flex_shrink_0()
@@ -297,19 +370,7 @@ impl Workspace {
                                     .text_color(rgb(color(w, p)))
                                     .child(format!("{}%", w.pct.round() as u64)),
                             ),
-                        (None, state) => row()
-                            .debug_selector(move || format!("sidebar-usage-unmeasured-{ix}"))
-                            .child(name)
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_size(px(10.))
-                                    .text_color(rgb(state
-                                        .as_ref()
-                                        .map_or(p.disabled, |s| unmeasured_tone(s, p))))
-                                    .child(state.as_ref().map_or("No reading", |s| s.state)),
-                            ),
-                    }
+                    )
                 }))
                 .tooltip(move |_, cx| {
                     AnyView::from(cx.new(|_| UsageHover {

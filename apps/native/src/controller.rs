@@ -462,6 +462,9 @@ pub struct View {
     pub usage: Option<Arc<Value>>,
     /// Why the latest `usage.report` read failed; cleared by the next success.
     pub usage_error: Option<String>,
+    /// Whether each provider's CLI is installed on the hub's host, from
+    /// `providers.checkAll`. A provider missing here is unknown.
+    pub installed: BTreeMap<String, bool>,
     /// When set, `transcript` is this subagent's conversation, not the
     /// selected session's; the parent stays `selected`.
     pub child: Option<ChildTarget>,
@@ -626,6 +629,7 @@ enum Completion {
     HandoffBrief(u64, crate::handoff::Request, Result<Value>),
     Fleet(u64, Result<Value>),
     Usage(u64, Result<Value>),
+    Installed(u64, Result<Value>),
     Child(u64, u64, Result<Value>),
     Conversation(u64, u64, Result<Value>),
     Action(u64, String, Action, Result<Value>),
@@ -723,6 +727,8 @@ struct Worker {
     last_conversation: Instant,
     usage_pending: bool,
     last_usage: Instant,
+    installed_pending: bool,
+    last_installed: Instant,
     child_pending: bool,
     last_child: Instant,
     held_parent: Option<(String, Held)>,
@@ -774,6 +780,8 @@ impl Worker {
             last_conversation: Instant::now(),
             usage_pending: false,
             last_usage: Instant::now(),
+            installed_pending: false,
+            last_installed: Instant::now(),
             child_pending: false,
             last_child: Instant::now(),
             held_parent: None,
@@ -921,9 +929,14 @@ impl Worker {
         if self.last_fleet.elapsed() >= Duration::from_secs(30) {
             self.fetch_fleet();
         }
-        // The hub's report is valid for 60s; account windows move slowly.
-        if self.last_usage.elapsed() >= Duration::from_secs(60) {
+        // The hub caches its report for 60s; polling at a quarter of that
+        // picks up each new report within 15s instead of up to a minute late.
+        if self.last_usage.elapsed() >= Duration::from_secs(15) {
             self.fetch_usage();
+        }
+        // Installs change rarely; this catches one made while the app runs.
+        if self.last_installed.elapsed() >= Duration::from_secs(10 * 60) {
+            self.fetch_installed();
         }
         self.keep_terminals_alive();
         // Ready suppresses fast polling. A slow reconciliation also repairs
@@ -1186,6 +1199,19 @@ impl Worker {
         let epoch = self.epoch;
         self.jobs.push(Box::pin(async move {
             Completion::Usage(epoch, backend.usage_report().await)
+        }));
+    }
+
+    fn fetch_installed(&mut self) {
+        if !self.view.connected || self.installed_pending {
+            return;
+        }
+        self.installed_pending = true;
+        self.last_installed = Instant::now();
+        let backend = self.backend.clone();
+        let epoch = self.epoch;
+        self.jobs.push(Box::pin(async move {
+            Completion::Installed(epoch, backend.call("providers.checkAll", json!({})).await)
         }));
     }
 
@@ -1475,8 +1501,10 @@ impl Worker {
                 self.fleet_pending = false;
                 self.conversation_pending = false;
                 self.usage_pending = false;
+                self.installed_pending = false;
                 self.fetch_fleet();
                 self.fetch_usage();
+                self.fetch_installed();
                 // Re-read the shared archive on every connect: changes made by
                 // another client while this one was away have no replay.
                 self.request(crate::features::Request::Archive);
@@ -2224,6 +2252,22 @@ impl Worker {
                     }
                 }
                 self.dirty = true;
+            }
+            Completion::Installed(epoch, result) if epoch == self.epoch => {
+                self.installed_pending = false;
+                // A failed check keeps the last answer; unknown never nags.
+                if let Ok(Value::Array(rows)) = result {
+                    self.view.installed = rows
+                        .iter()
+                        .filter_map(|row| {
+                            Some((
+                                row["provider"].as_str()?.to_owned(),
+                                row["found"].as_bool()?,
+                            ))
+                        })
+                        .collect();
+                    self.dirty = true;
+                }
             }
             Completion::Fleet(epoch, result) if epoch == self.epoch => {
                 self.fleet_pending = false;

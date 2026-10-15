@@ -476,7 +476,7 @@ fn reselecting_the_same_session_updates_list_even_when_revisions_collide(cx: &mu
 }
 
 #[gpui::test]
-fn sidebar_usage_lists_unmeasured_logins_and_read_failures(cx: &mut TestAppContext) {
+fn sidebar_usage_leaves_unmeasured_logins_to_the_modal(cx: &mut TestAppContext) {
     let (workspace, mut visual, _, _) = fixture(cx);
     let now = chrono::Utc::now().timestamp();
     visual.update(|window, cx| {
@@ -493,11 +493,47 @@ fn sidebar_usage_lists_unmeasured_logins_and_read_failures(cx: &mut TestAppConte
         })
     });
     visual.run_until_parked();
-    let strip = visual.debug_bounds("sidebar-usage").unwrap();
-    let claude = visual.debug_bounds("sidebar-usage-unmeasured-0").unwrap();
-    assert!(strip.contains(&claude.center()));
-    // The measured Codex row sits below it, so both providers show.
-    assert!(strip.size.height > claude.size.height + px(8.));
+    // Only the measured Codex row shows; the signed-out Claude login waits
+    // in the modal.
+    assert!(visual.debug_bounds("sidebar-usage").is_some());
+    assert!(visual.debug_bounds("sidebar-usage-row-codex").is_some());
+    assert!(visual.debug_bounds("sidebar-usage-row-claude").is_none());
+    let listed = workspace.read_with(&visual, |this, _| this.usage_accounts().unwrap().0.len());
+    assert_eq!(listed, 2, "the modal still lists both");
+    // The expired login gets one small sign-in prompt, and an agent the
+    // hub's host lacks gets an install prompt; both open Agent setup.
+    let notes = workspace.read_with(&visual, |this, _| {
+        this.usage_notes(&this.usage_accounts().unwrap().0)
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(notes, ["Sign in to Claude"]);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut next = (*this.view).clone();
+            next.installed = [("claude".into(), false), ("codex".into(), true)].into();
+            this.update_view(Arc::new(next), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    let notes = workspace.read_with(&visual, |this, _| {
+        this.usage_notes(&this.usage_accounts().unwrap().0)
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        notes,
+        ["Install Claude Code"],
+        "no sign-in nag for an agent that is not installed"
+    );
+    let note = visual
+        .debug_bounds("sidebar-usage-note-0")
+        .unwrap()
+        .center();
+    visual.simulate_click(note, gpui::Modifiers::none());
+    workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Setup));
     // A failed read with nothing cached says so instead of vanishing.
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
