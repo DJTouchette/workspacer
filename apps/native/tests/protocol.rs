@@ -964,6 +964,8 @@ async fn live_harness_targets_and_cleans_up_only_its_disposable_session() {
                             json!({"ok":true})
                         }
                         "usage.report" => json!({"providers":[]}),
+                        // The sidebar's install check, also read on connect.
+                        "providers.checkAll" => json!([]),
                         // Read on every connect; archiving is never a mutation here.
                         "sessionArchive.get" => json!({"version":0,"archived":{}}),
                         other => panic!("unexpected live harness method {other}"),
