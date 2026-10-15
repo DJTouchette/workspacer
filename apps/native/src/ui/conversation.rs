@@ -3,6 +3,57 @@
 //! above the composer.
 use super::*;
 
+/// How far each sloped side of the status tab runs in from its base.
+const NOTCH_SLANT: f32 = 12.;
+
+/// The status tab's height above the composer; shorter where space is tight.
+fn notch_height(compact: bool) -> f32 {
+    if compact { 18. } else { 22. }
+}
+
+/// The tab's outline: a filled body whose base covers the composer's top
+/// border, and the stroked sides and top (no base line, so the tab opens
+/// into the composer).
+fn notch_paths(
+    bounds: gpui::Bounds<gpui::Pixels>,
+    height: f32,
+) -> (
+    anyhow::Result<gpui::Path<gpui::Pixels>>,
+    anyhow::Result<gpui::Path<gpui::Pixels>>,
+) {
+    let at = |x: f32, y: f32| bounds.origin + gpui::point(px(x), px(y));
+    let w = f32::from(bounds.size.width);
+    // The middle of the composer's border row, where the feet join it.
+    let base = height + 0.5;
+    let s = NOTCH_SLANT;
+    let outline = |b: &mut gpui::PathBuilder| {
+        b.move_to(at(0., base));
+        // Flared foot, sloped side, rounded shoulder; mirrored on the right.
+        b.curve_to(at(5., base - 3.), at(3.5, base));
+        b.line_to(at(s - 3., 4.));
+        b.curve_to(at(s + 3., 0.5), at(s - 1., 0.5));
+        b.line_to(at(w - s - 3., 0.5));
+        b.curve_to(at(w - s + 3., 4.), at(w - s + 1., 0.5));
+        b.line_to(at(w - 5., base - 3.));
+        b.curve_to(at(w, base), at(w - 3.5, base));
+    };
+    let mut fill = gpui::PathBuilder::fill();
+    outline(&mut fill);
+    fill.line_to(at(w, height + 1.));
+    fill.line_to(at(0., height + 1.));
+    fill.close();
+    let mut stroke = gpui::PathBuilder::stroke(px(1.));
+    outline(&mut stroke);
+    (fill.build(), stroke.build())
+}
+
+struct ComposerActivity {
+    label: String,
+    /// Something is running or pending: shown in the composer's notch.
+    live: bool,
+    animate: bool,
+}
+
 /// What the conversation decided once per frame, for the pieces it builds.
 #[derive(Clone, Copy)]
 struct ChatLayout {
@@ -267,6 +318,11 @@ impl Workspace {
         let composer_layer = chrome::chat_column()
             .relative()
             .flex_shrink_0()
+            // Room for the status tab on the composer's top edge, while it shows.
+            .when(
+                composer_docked && self.composer_activity(layout).live,
+                |d| d.pt(px(notch_height(compact) - if compact { 4. } else { 8. })),
+            )
             .pb(px(if compact { 8. } else { 16. }))
             .child(chrome::measure(
                 cx.entity().downgrade(),
@@ -843,18 +899,33 @@ impl Workspace {
         let viewport = window.viewport_size().height;
         let attachments_share = if unzoom(viewport) < 300. { 0.05 } else { 0.10 };
         let focused = self.composer.read(cx).focus_handle(cx).is_focused(window);
-        let stop = if narrow {
-            self.icon_button("stop", "Interrupt", IconName::WindowClose, enabled)
-        } else {
-            self.quiet_button("stop", "Interrupt", IconName::WindowClose, enabled)
-        };
+        // A round tonal stop holding the familiar filled square.
+        let stop = chrome::interactive_control(div().id("stop"), p, enabled)
+            .size(px(32.))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .flex_shrink_0()
+            .bg(rgb(p.selected))
+            .tooltip(|window, cx| {
+                gpui_component::tooltip::Tooltip::new("Interrupt").build(window, cx)
+            })
+            .when(enabled, |d| {
+                d.cursor_pointer()
+                    .hover(|s| s.bg(rgb(p.border)))
+                    .active(|s| s.bg(rgb(p.border)))
+            })
+            .child(div().size(px(10.)).rounded(px(2.5)).bg(rgb(if enabled {
+                p.text
+            } else {
+                p.disabled
+            })));
         // Mid-turn the send steers the running turn; Queue holds the draft
         // for the turn's end and Send now has the agent read it at once.
         let steering = self.composer_busy();
         let send_label = if self.view.busy {
             "Sending…"
-        } else if steering {
-            "Send — the agent reads it at its next step"
         } else {
             "Send message"
         };
@@ -863,6 +934,8 @@ impl Workspace {
                 gpui_component::tooltip::Tooltip::new(text).build(window, cx)
             }
         };
+        // Mid-turn the round Send gives way to Queue and a filled Send now
+        // (icon-only where the window is narrow).
         let queue_button = if narrow {
             self.icon_button(
                 "composer-queue",
@@ -870,8 +943,10 @@ impl Workspace {
                 IconName::Inbox,
                 can_send,
             )
+            .size(px(32.))
+            .bg(rgb(p.selected))
         } else {
-            self.quiet_button("composer-queue", "Queue", IconName::Inbox, can_send)
+            self.pill_button("composer-queue", "Queue", IconName::Inbox, can_send, false)
                 .tooltip(tip("Hold it until this turn ends (Tab)"))
         }
         .debug_selector(|| "composer-queue".into())
@@ -879,18 +954,20 @@ impl Workspace {
             d.on_click(cx.listener(|this, _, window, cx| this.submit(Submit::Queue, window, cx)))
         });
         let now_button = if narrow {
-            self.icon_button(
+            self.primary_icon_button(
                 "composer-send-now",
                 "Send now — the agent reads it right away",
-                IconName::ArrowRight,
+                IconName::ArrowUp,
                 can_send,
             )
+            .size(px(32.))
         } else {
-            self.quiet_button(
+            self.pill_button(
                 "composer-send-now",
                 "Send now",
-                IconName::ArrowRight,
+                IconName::ArrowUp,
                 can_send,
+                true,
             )
             .tooltip(tip(
                 "The agent sets its current work aside and reads it right away",
@@ -906,6 +983,15 @@ impl Workspace {
             "Attach a file (or paste an image)"
         };
         let slash_rows = self.slash_menu(cx);
+        let edge: gpui::Hsla = if focused {
+            rgb(p.accent).into()
+        } else {
+            gpui::Hsla::from(rgb(p.border)).opacity(0.55)
+        };
+        let activity = self.composer_activity(layout);
+        let notch = activity
+            .live
+            .then(|| self.render_notch(&activity.label, activity.animate, edge, compact));
         let composer = div()
             .id("floating-composer")
             .debug_selector(|| "chat-composer".into())
@@ -916,16 +1002,15 @@ impl Workspace {
                 (false, false) => "Composer SlashMenu",
             })
             .occlude()
+            .relative()
             .bg(rgb(p.surface))
             .border_1()
-            .border_color(if focused {
-                rgb(p.accent).into()
-            } else {
-                gpui::Hsla::from(rgb(p.border)).opacity(0.55)
-            })
+            .border_color(edge)
             .rounded(px(p.composer_radius))
             .shadow(chrome::floating_shadow(p))
-            .p(px(if compact { 8. } else { 12. }))
+            .px(px(if compact { 10. } else { 14. }))
+            .pt(px(if compact { 8. } else { 14. }))
+            .pb(px(if compact { 8. } else { 10. }))
             .flex()
             .flex_col()
             .gap_2()
@@ -968,6 +1053,7 @@ impl Workspace {
                                     IconName::Plus,
                                     can_send,
                                 )
+                                .size(px(32.))
                                 .when(can_send, |d| {
                                     d.on_click(cx.listener(|this, _, window, cx| {
                                         this.pick_attachment(window, cx)
@@ -990,22 +1076,26 @@ impl Workspace {
                                 }))
                             })
                             .when(steering, |d| d.child(queue_button).child(now_button))
-                            .child(
-                                self.primary_icon_button(
-                                    "send",
-                                    send_label,
-                                    IconName::ArrowUp,
-                                    can_send,
+                            // Queue and Send now replace Send mid-turn; Enter
+                            // still steers from the keyboard.
+                            .when(!steering, |d| {
+                                d.child(
+                                    self.primary_icon_button(
+                                        "send",
+                                        send_label,
+                                        IconName::ArrowUp,
+                                        can_send,
+                                    )
+                                    .debug_selector(|| "composer-send".into())
+                                    .size(px(32.))
+                                    .rounded_full()
+                                    .when(can_send, |d| {
+                                        d.on_click(cx.listener(|this, _, window, cx| {
+                                            this.send(&SendMessage, window, cx)
+                                        }))
+                                    }),
                                 )
-                                .debug_selector(|| "composer-send".into())
-                                .size(px(32.))
-                                .rounded_full()
-                                .when(can_send, |d| {
-                                    d.on_click(cx.listener(|this, _, window, cx| {
-                                        this.send(&SendMessage, window, cx)
-                                    }))
-                                }),
-                            ),
+                            }),
                     ),
             );
         div()
@@ -1016,8 +1106,10 @@ impl Workspace {
             .flex_col()
             .gap_2()
             .children(self.render_cold_note(cx))
-            .child(composer)
-            .child(self.render_activity_line(layout, steering))
+            // The tab paints after the composer: GPUI draws a div's border
+            // over its own children, so only a sibling can open it.
+            .child(div().relative().child(composer).children(notch))
+            .child(self.render_activity_line(layout, steering, activity))
     }
 
     /// Draft attachments with their thumbnails (images only; PDFs keep the
@@ -1042,8 +1134,10 @@ impl Workspace {
     }
 
     /// What the session is doing, beside how to send.
-    fn render_activity_line(&self, layout: ChatLayout, steering: bool) -> Div {
-        let p = self.appearance.palette();
+    /// What the selected conversation is doing. Live states (connecting,
+    /// loading, sending, working, waiting) ride in the composer's notch; the
+    /// rest (a finished turn's summary, Ready) stay on the hint line.
+    fn composer_activity(&self, layout: ChatLayout) -> ComposerActivity {
         let now = timing::now_ms();
         let clock = self
             .view
@@ -1054,7 +1148,7 @@ impl Workspace {
             || self.view.loading
             || self.view.busy
             || layout.working;
-        let activity = if !self.view.connected {
+        let live = if !self.view.connected {
             Some(self.connection_copy().label.to_owned())
         } else if self.view.loading {
             Some("Loading conversation…".to_owned())
@@ -1070,16 +1164,93 @@ impl Workspace {
         } else if clock.and_then(|clock| clock.elapsed_label(now)).is_some() {
             Some("Waiting…".to_owned())
         } else {
-            clock.and_then(|clock| clock.latest_completion_for(&self.view.transcript))
+            None
         };
-        let activity = activity.unwrap_or_else(|| {
-            if layout.enabled {
-                "Ready"
-            } else {
-                "Session unavailable"
-            }
-            .into()
-        });
+        if let Some(label) = live {
+            return ComposerActivity {
+                label,
+                live: true,
+                animate,
+            };
+        }
+        let label = clock
+            .and_then(|clock| clock.latest_completion_for(&self.view.transcript))
+            .unwrap_or_else(|| {
+                if layout.enabled {
+                    "Ready"
+                } else {
+                    "Session unavailable"
+                }
+                .into()
+            });
+        ComposerActivity {
+            label,
+            live: false,
+            animate: false,
+        }
+    }
+
+    /// The live status on a tab joined to the composer's top edge: sloped
+    /// sides with flared feet, its base covering the composer's border so
+    /// the two read as one surface.
+    fn render_notch(&self, label: &str, animate: bool, edge: gpui::Hsla, compact: bool) -> Div {
+        let p = self.appearance.palette();
+        let height = notch_height(compact);
+        let fill = gpui::Hsla::from(rgb(p.surface));
+        div()
+            .absolute()
+            // The tab's base covers the composer's 1px top border.
+            .top(px(-height))
+            .left_0()
+            .right_0()
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .debug_selector(|| "composer-notch".into())
+                    .relative()
+                    .h(px(height + 1.))
+                    .max_w(px(320.))
+                    .px(px(NOTCH_SLANT + 6.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(px(11.))
+                    .text_color(rgb(p.text))
+                    .child(
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, _, window, _| {
+                                let (fill_path, stroke_path) = notch_paths(bounds, height);
+                                if let Ok(path) = fill_path {
+                                    window.paint_path(path, fill);
+                                }
+                                if let Ok(path) = stroke_path {
+                                    window.paint_path(path, edge);
+                                }
+                            },
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                    )
+                    .child(if animate {
+                        brand_spinner(11., p, "composer-activity")
+                    } else {
+                        status_dot(p.warning)
+                    })
+                    .child(div().truncate().child(label.to_owned())),
+            )
+    }
+
+    fn render_activity_line(
+        &self,
+        layout: ChatLayout,
+        steering: bool,
+        activity: ComposerActivity,
+    ) -> Div {
+        let p = self.appearance.palette();
         let enter_sends = self.settings.enter_sends;
         let send_key = if enter_sends {
             "Enter"
@@ -1114,10 +1285,10 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .when(animate, |d| {
-                        d.child(brand_spinner(12., p, "composer-activity"))
-                    })
-                    .child(div().truncate().child(activity)),
+                    // Live states show in the notch instead.
+                    .when(!activity.live, |d| {
+                        d.child(div().truncate().child(activity.label))
+                    }),
             )
             .child(
                 div()

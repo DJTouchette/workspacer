@@ -1211,6 +1211,44 @@ impl Workspace {
             .child(label)
     }
 
+    /// A rounded composer action with icon and label: tonal at rest, or
+    /// filled when it is the composer's primary action.
+    pub(super) fn pill_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: &'static str,
+        icon: IconName,
+        enabled: bool,
+        primary: bool,
+    ) -> Stateful<Div> {
+        let p = self.appearance.palette();
+        let (bg, fg, hover, pressed) = match (enabled, primary) {
+            (false, _) => (p.selected, p.disabled, p.selected, p.selected),
+            (true, true) => (p.primary, p.on_primary, p.primary_hover, p.primary_pressed),
+            (true, false) => (p.selected, p.text, p.border, p.border),
+        };
+        interactive_control(div().id(id.into()), p, enabled)
+            .h(px(32.))
+            .pl(px(10.))
+            .pr(px(12.))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .flex_shrink_0()
+            .bg(rgb(bg))
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(rgb(fg))
+            .when(enabled, |d| {
+                d.cursor_pointer()
+                    .hover_text_style(|s| s.bg(rgb(hover)))
+                    .active_text_style(|s| s.bg(rgb(pressed)))
+            })
+            .child(Icon::new(icon).size(px(13.)))
+            .child(label)
+    }
+
     pub(super) fn icon_button(
         &self,
         id: impl Into<SharedString>,

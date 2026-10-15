@@ -610,7 +610,9 @@ fn short_physical_windows_bound_long_notices_and_many_attachments(cx: &mut TestA
         visual.run_until_parked();
         let header = workspace.read_with(&visual, |this, _| this.header_bounds);
         let dock = visual.debug_bounds("conversation-dock").unwrap();
-        let send = visual.debug_bounds("composer-send").unwrap();
+        // A pending question keeps the agent busy: Send now is the
+        // composer's trailing control.
+        let send = visual.debug_bounds("composer-send-now").unwrap();
         assert!(
             header.bottom() + gpui::px(if scale < 2. { 24. } else { 0. }) <= dock.top(),
             "scale {scale}: header {header:?}, dock {dock:?}"

@@ -53,6 +53,8 @@ fn the_send_keys_steer_queue_or_interrupt_while_the_agent_works(cx: &mut TestApp
     visual.run_until_parked();
     assert!(visual.debug_bounds("composer-queue").is_some());
     assert!(visual.debug_bounds("composer-send-now").is_some());
+    // Queue and Send now stand in for Send mid-turn.
+    assert!(visual.debug_bounds("composer-send").is_none());
     draft(&workspace, &mut visual, "steer this");
     visual.simulate_keystrokes("enter");
     draft(&workspace, &mut visual, "after the turn");
