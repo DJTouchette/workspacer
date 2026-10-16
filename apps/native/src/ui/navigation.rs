@@ -185,6 +185,9 @@ impl Workspace {
     }
 
     fn normal_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_peek(window, cx) {
+            return;
+        }
         if self.viewer_modal(window) {
             self.close_file_viewer(window, cx);
             return;
@@ -531,6 +534,12 @@ impl Workspace {
             }))
             .on_action(
                 cx.listener(|this, _: &OpenProject, window, cx| this.open_project(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SwitchSession, window, cx| this.open_switcher(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SearchEnter, window, cx| this.open_search_match(window, cx)),
             )
             .on_action(cx.listener(|this, _: &FirstItem, _, cx| this.edge(false, cx)))
             .on_action(cx.listener(|this, _: &LastItem, _, cx| this.edge(true, cx)))
@@ -883,8 +892,8 @@ impl Workspace {
             .child(
                 self.icon_button(
                     SharedString::from(format!("edit-project-{ix}")),
-                    "Edit name and icon",
-                    IconName::Palette,
+                    "Project settings: name, icon and pull requests",
+                    IconName::Settings,
                     can_write,
                 )
                 .debug_selector(move || format!("edit-project-{ix}"))

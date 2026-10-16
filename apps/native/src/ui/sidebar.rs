@@ -34,6 +34,138 @@ fn session_clear(session: &Session) -> (String, ClearMark) {
     )
 }
 
+/// Rail rows share one height (it is a uniform_list); sessions take the
+/// larger mark and nested children the smaller.
+const RAIL_ROW: f32 = 44.;
+const RAIL_SESSION: f32 = 30.;
+const RAIL_CHILD: f32 = 22.;
+
+/// What a rail mark shows inside its ring.
+enum AvatarGlyph {
+    /// A session's initials, which tell sessions of one provider apart.
+    Initials(String),
+    Icon(IconName),
+}
+
+/// One rail row: centred, nudged right and threaded to its parent when
+/// nested, with an accent bar at the rail's edge when it is open.
+fn rail_row(depth: usize, active: bool, p: Palette) -> Div {
+    div()
+        .relative()
+        .h(px(RAIL_ROW))
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(depth > 0, |d| {
+            d.pl(px(14.)).child(
+                div()
+                    .absolute()
+                    .left(px(18.))
+                    .top_0()
+                    .bottom_0()
+                    .w(px(1.))
+                    .bg(rgb(p.border)),
+            )
+        })
+        .when(active, |d| {
+            d.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(RAIL_ROW / 2. - 9.))
+                    .w(px(3.))
+                    .h(px(18.))
+                    .rounded_r(px(2.))
+                    .bg(rgb(p.accent)),
+            )
+        })
+}
+
+/// A provider mark in a ring whose color carries the session's state.
+fn rail_avatar(
+    glyph: AvatarGlyph,
+    size: f32,
+    ring: u32,
+    active: bool,
+    dim: bool,
+    p: Palette,
+) -> Div {
+    div()
+        .relative()
+        .size(px(size))
+        .flex_shrink_0()
+        .rounded_full()
+        .border_2()
+        .border_color(rgb(ring))
+        .bg(rgb(if active { p.selected } else { p.base }))
+        .hover(move |s| s.bg(rgb(p.selected)))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .flex()
+                .when(dim, |d| d.opacity(0.5))
+                .child(match glyph {
+                    AvatarGlyph::Initials(initials) => div()
+                        .text_size(px((size * 0.38).round()))
+                        .line_height(px((size * 0.5).round()))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(if active { p.text } else { p.muted }))
+                        .child(initials)
+                        .into_any_element(),
+                    AvatarGlyph::Icon(icon) => Icon::new(icon)
+                        .size(px((size * 0.5).round()))
+                        .text_color(rgb(p.accent))
+                        .into_any_element(),
+                }),
+        )
+}
+
+/// The working loader, tucked under a rail mark's lower edge.
+fn rail_spinner(id: &str, p: Palette) -> Div {
+    div()
+        .absolute()
+        .bottom(px(-6.))
+        .left_0()
+        .right_0()
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .px(px(2.))
+                .rounded(px(3.))
+                .bg(rgb(p.base))
+                .child(brand_spinner(8., p, SharedString::from(id.to_owned()))),
+        )
+}
+
+/// The session's provider, a small mark on the ring's lower right.
+fn rail_provider(provider: &str, p: Palette) -> Div {
+    div()
+        .absolute()
+        .bottom(px(-3.))
+        .right(px(-3.))
+        .size(px(13.))
+        .rounded_full()
+        .bg(rgb(p.base))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(chrome::provider_glyph(provider, 9., p))
+}
+
+/// Up to two initials from a session's title.
+fn initials(title: &str) -> String {
+    title
+        .split_whitespace()
+        .take(2)
+        .filter_map(|word| word.chars().find(|c| c.is_alphanumeric()))
+        .flat_map(char::to_uppercase)
+        .collect()
+}
+
 #[derive(Clone)]
 pub(super) enum SidebarRow {
     Session {
@@ -93,6 +225,7 @@ impl Workspace {
         child: &wks_native::child_agents::ChildAgent,
         depth: usize,
         ix: usize,
+        rail: bool,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.appearance.palette();
@@ -123,9 +256,18 @@ impl Workspace {
         } else {
             super::children::status(child, true)
         };
-        if self.sidebar_collapsed {
-            let details = format!("{title}\nNative agent · {state}");
-            return div().h(px(48.)).px_2().pb_1().child(
+        if rail {
+            let ring = if !self.view.connected {
+                p.border
+            } else if child.failed() {
+                p.error
+            } else if child.running() {
+                p.busy
+            } else {
+                p.border
+            };
+            let running = child.running() && self.view.connected;
+            return rail_row(depth, viewing, p).child(
                 chrome::interactive_control(
                     div().id(SharedString::from(format!(
                         "sidebar-native-{parent}-{agent}"
@@ -134,23 +276,28 @@ impl Workspace {
                     self.view.connected,
                 )
                 .debug_selector(move || format!("sidebar-provider-{ix}"))
-                .h_full()
-                .w_full()
-                .rounded(px(p.control_radius))
-                .flex()
-                .items_center()
-                .justify_center()
+                .relative()
+                .rounded_full()
                 .child(
-                    Icon::new(IconName::SquareTerminal)
-                        .size(px(16.))
-                        .text_color(rgb(p.accent)),
+                    rail_avatar(
+                        AvatarGlyph::Icon(IconName::SquareTerminal),
+                        RAIL_CHILD,
+                        ring,
+                        viewing,
+                        child.settled(),
+                        p,
+                    )
+                    .when(running, |d| {
+                        d.child(rail_spinner(
+                            &format!("rail-native-working-{}", child.id),
+                            p,
+                        ))
+                    }),
                 )
-                .tooltip(move |window, cx| Tooltip::new(details.clone()).build(window, cx))
                 .when(self.view.connected, |d| {
-                    d.cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.open_sidebar_child(&parent, &agent, cx);
-                        }))
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_sidebar_child(&parent, &agent, cx);
+                    }))
                 }),
             );
         }
@@ -523,8 +670,13 @@ impl Workspace {
         let p = self.appearance.palette();
         let rows = self.sidebar_rows(cx);
         div()
+            // The same id as the full sidebar, so a control focused in one
+            // (the collapse toggle) is still focused in the other.
+            .id("sidebar")
             .debug_selector(|| "session-sidebar".into())
-            .w(px(56.))
+            // Resting on the rail opens the full list beside it.
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.rail_hover(*hovered, cx)))
+            .w(px(super::portrait::RAIL_WIDTH))
             .h_full()
             .flex_shrink_0()
             .bg(rgb(p.base))
@@ -561,13 +713,14 @@ impl Workspace {
                     }),
             )
             .child(
-                self.icon_button("search-rail", "Search sessions", IconName::Search, true)
-                    .debug_selector(|| "sidebar-search".into())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.sidebar_collapsed = false;
-                        this.search.update(cx, |input, cx| input.focus(window, cx));
-                        cx.notify();
-                    })),
+                self.icon_button(
+                    "search-rail",
+                    "Search sessions · Ctrl K",
+                    IconName::Search,
+                    true,
+                )
+                .debug_selector(|| "sidebar-search".into())
+                .on_click(cx.listener(|this, _, window, cx| this.open_switcher(window, cx))),
             )
             .child(
                 self.icon_button("projects-rail", "All projects", IconName::Folder, true)
@@ -591,14 +744,13 @@ impl Workspace {
                 d.child(
                     self.icon_button(
                         "notice-rail",
-                        "Workspace notice — expand sidebar",
+                        "Workspace notice — show it",
                         IconName::Info,
                         true,
                     )
                     .text_color(rgb(p.warning))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.sidebar_collapsed = false;
-                        cx.notify();
+                        this.open_peek(super::portrait::Peek::Pinned, cx)
                     })),
                 )
             })
@@ -609,15 +761,15 @@ impl Workspace {
                     cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                         range
                             .map(|ix| {
-                                let index = match &rows[ix] {
-                                    SidebarRow::Session { index, .. } => *index,
+                                let (index, depth) = match &rows[ix] {
+                                    SidebarRow::Session { index, depth } => (*index, *depth),
                                     SidebarRow::Provider {
                                         parent,
                                         child,
                                         depth,
                                     } => {
                                         return this.render_sidebar_provider(
-                                            parent, child, *depth, ix, cx,
+                                            parent, child, *depth, ix, true, cx,
                                         );
                                     }
                                 };
@@ -631,24 +783,22 @@ impl Workspace {
                                     == Some(&id)
                                     && (this.navigation_selected.is_some()
                                         || this.view.child.is_none());
-                                let title = this.session_title(session);
-                                let initial = title
-                                    .split_whitespace()
-                                    .take(2)
-                                    .filter_map(|word| word.chars().next())
-                                    .flat_map(char::to_uppercase)
-                                    .collect::<String>();
-                                let status = if this.view.connected {
-                                    this.status_of(session, p).0
+                                let connected = this.view.connected;
+                                // The ring carries what needs noticing: work
+                                // under way, or a question or approval waiting.
+                                // Ready and ended sessions stay quiet.
+                                let ring = if !connected {
+                                    p.border
                                 } else {
-                                    "Offline"
+                                    match this.status_of(session, p).1 {
+                                        c if c == p.success || c == p.muted => p.border,
+                                        c => c,
+                                    }
                                 };
-                                let details = format!(
-                                    "{title}\n{}\n{} · {status}",
-                                    session.cwd, session.provider
-                                );
-                                let details = format!("{details}{}", child_limit_note(session));
-                                div().h(px(48.)).px_2().pb_1().child(
+                                let needs_you =
+                                    session.approval.is_some() || session.questions.is_some();
+                                let working = session.working() && connected;
+                                rail_row(depth, active, p).child(
                                     chrome::interactive_control(
                                         div().id(SharedString::from(format!(
                                             "session-{}",
@@ -658,38 +808,54 @@ impl Workspace {
                                         true,
                                     )
                                     .debug_selector(move || format!("sidebar-session-{ix}"))
-                                    .h_full()
-                                    .w_full()
-                                    .rounded(px(p.control_radius))
-                                    .cursor_pointer()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .gap_1()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(if active { p.text } else { p.muted }))
-                                    .when(active, |d| d.bg(rgb(p.selected)))
-                                    .hover(move |style| {
-                                        style.bg(rgb(if active { p.selected } else { p.surface }))
-                                    })
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::new(details.clone()).build(window, cx)
-                                    })
-                                    .child(initial)
-                                    .when(session.working() && this.view.connected, |d| {
-                                        d.child(brand_spinner(
-                                            8.,
+                                    .relative()
+                                    .rounded_full()
+                                    .child(
+                                        rail_avatar(
+                                            AvatarGlyph::Initials({
+                                                // A nested child's smaller mark fits one.
+                                                let mut mark =
+                                                    initials(&this.session_title(session));
+                                                if depth > 0 {
+                                                    mark.truncate(
+                                                        mark.chars()
+                                                            .next()
+                                                            .map_or(0, char::len_utf8),
+                                                    );
+                                                }
+                                                mark
+                                            }),
+                                            if depth == 0 { RAIL_SESSION } else { RAIL_CHILD },
+                                            ring,
+                                            active,
+                                            session.stopped() || !connected,
                                             p,
-                                            SharedString::from(format!(
-                                                "rail-working-{}",
-                                                session.id
-                                            )),
-                                        ))
-                                    })
-                                    .when(
-                                        session.approval.is_some() || session.questions.is_some(),
-                                        |d| d.child(status_dot(p.warning)),
+                                        )
+                                        .when(needs_you, |d| {
+                                            d.child(
+                                                div()
+                                                    .absolute()
+                                                    .top(px(-2.))
+                                                    .right(px(-2.))
+                                                    .size(px(9.))
+                                                    .rounded_full()
+                                                    .border_2()
+                                                    .border_color(rgb(p.base))
+                                                    .bg(rgb(p.warning)),
+                                            )
+                                        })
+                                        .map(|d| {
+                                            // Working shows the loader; otherwise
+                                            // the provider rides the corner.
+                                            if working {
+                                                d.child(rail_spinner(
+                                                    &format!("rail-working-{}", session.id),
+                                                    p,
+                                                ))
+                                            } else {
+                                                d.child(rail_provider(&session.provider, p))
+                                            }
+                                        }),
                                     )
                                     .on_click(cx.listener(
                                         move |this, _, _, cx| {
@@ -753,10 +919,19 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let p = self.appearance.palette();
         if self.sidebar_collapsed {
             return self.render_sidebar_rail(window, cx);
         }
+        self.render_sidebar_panel(window, cx)
+    }
+
+    /// The full sidebar: docked, or in the rail's flyout.
+    pub(super) fn render_sidebar_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let p = self.appearance.palette();
         let editing = [
             &self.composer,
             &self.search,
@@ -775,6 +950,7 @@ impl Workspace {
         let filtered = !self.search.read(cx).value().is_empty() || self.project_filter.is_some();
         let no_visible_sessions = visible_sessions.is_empty();
         div()
+            .id("sidebar")
             .relative()
             .w(px(wks_native::navigation::sidebar_width(
                 self.settings.sidebar_width,
@@ -842,6 +1018,7 @@ impl Workspace {
             .child(
                 div().px_3().pb_2().child(
                     div()
+                        .key_context("SessionSearch")
                         .flex()
                         .items_center()
                         .gap_2()
@@ -1000,7 +1177,7 @@ impl Workspace {
                                         depth,
                                     } => {
                                         return this.render_sidebar_provider(
-                                            parent, child, *depth, ix, cx,
+                                            parent, child, *depth, ix, false, cx,
                                         );
                                     }
                                 };

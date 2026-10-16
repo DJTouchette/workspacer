@@ -313,7 +313,8 @@ fn keyboard_controls_skip_disabled_actions_and_keep_their_geometry(cx: &mut Test
             .is_focused(window)
     }));
     workspace.read_with(&visual, |this, cx| {
-        assert!(!this.sidebar_collapsed);
+        assert!(this.sidebar_collapsed);
+        assert_eq!(this.layout.peek, Some(crate::ui::portrait::Peek::Pinned));
         assert!(!this.new_session);
         assert_eq!(this.composer.read(cx).value().as_str(), "Keyboard draft");
     });

@@ -21,6 +21,7 @@ mod markdown;
 mod motion;
 mod navigation;
 mod plan;
+mod portrait;
 mod projects;
 mod pull_request;
 mod questions;
@@ -408,6 +409,8 @@ actions!(
         ViewerSave,
         OpenEditor,
         ToggleTerminal,
+        SwitchSession,
+        SearchEnter,
         Quit
     ]
 );
@@ -430,6 +433,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-,", ShowSettings, Some("Workspace")),
         KeyBinding::new("cmd-,", ShowSettings, Some("Workspace")),
         KeyBinding::new("ctrl-p", ShowProjects, Some("Workspace")),
+        KeyBinding::new("ctrl-k", SwitchSession, Some("Workspace")),
+        KeyBinding::new("cmd-k", SwitchSession, Some("Workspace")),
         KeyBinding::new("ctrl-=", ZoomIn, Some("Workspace")),
         KeyBinding::new("ctrl-+", ZoomIn, Some("Workspace")),
         KeyBinding::new("ctrl--", ZoomOut, Some("Workspace")),
@@ -498,6 +503,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-enter", SendNow, Some("Composer > Input")),
         KeyBinding::new("cmd-shift-enter", SendNow, Some("Composer > Input")),
         KeyBinding::new("tab", QueueMessage, Some("Composer > Input")),
+        // The session search doubles as a switcher (Ctrl+K): Enter opens the
+        // match. An action, so the key never reaches the input as text.
+        KeyBinding::new("enter", SearchEnter, Some("SessionSearch > Input")),
         // The open `/` menu (its context exists only while it shows rows)
         // takes the keys that move through and pick from it, ahead of the
         // composer's own Enter, Tab and arrows.
@@ -592,6 +600,8 @@ pub struct Workspace {
     navigation_selected: Option<String>,
     sidebar_collapsed: bool,
     sidebar_drag: Option<(gpui::Pixels, f32)>,
+    /// Tall-window layout: its shape tracking, rail flyout and bottom dock.
+    layout: portrait::LayoutUi,
     has_connected: bool,
     sidebar_scroll: gpui::UniformListScrollHandle,
     projects_scroll: gpui::UniformListScrollHandle,
@@ -883,6 +893,7 @@ impl Workspace {
             navigation_selected: None,
             sidebar_collapsed: false,
             sidebar_drag: None,
+            layout: Default::default(),
             has_connected: false,
             sidebar_scroll: gpui::UniformListScrollHandle::new(),
             projects_scroll: gpui::UniformListScrollHandle::new(),
@@ -1702,11 +1713,14 @@ impl Workspace {
     /// budget itself, so caret scrolling and painting use the real viewport
     /// instead of overflowing an externally capped outer box.
     fn fit_composer_rows(&self, window: &Window, cx: &mut Context<Self>) {
-        let height = window.viewport_size().height;
+        // A panel docked below takes its height from the conversation; a
+        // tall window's conversation has room for a longer draft.
+        let height = window.viewport_size().height - px(self.dock_below_height(window));
         let share = if unzoom(height) < 300. { 0.10 } else { 0.14 };
+        let most = if self.portrait(window) { 8. } else { 4. };
         let rows = (f32::from(height) * share / (f32::from(window.rem_size()) * 1.25))
             .floor()
-            .clamp(1., 4.) as usize;
+            .clamp(1., most) as usize;
         self.composer
             .update(cx, |input, cx| input.set_auto_grow_rows(1, rows, cx));
     }
@@ -1714,8 +1728,19 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.track_orientation(window);
+        self.settle_peek(window, cx);
         self.fit_composer_rows(window, cx);
-        let narrow = window.viewport_size().width < px(900.);
+        let portrait = self.portrait(window);
+        // A tall window's conversation is about as wide as the window (the
+        // sidebar is a rail), so it is narrow by the room the conversation
+        // gets, matching a wide window's 900px less its default sidebar.
+        let narrow = if portrait {
+            let width = unzoom(window.viewport_size().width);
+            width - self.sidebar_footprint(width) < 900. - 312.
+        } else {
+            window.viewport_size().width < px(900.)
+        };
         let compact = window.viewport_size().height < px(620.);
         // Inset so the panel floats with the same rounding as cards and the composer.
         let sidebar = div()
@@ -1744,11 +1769,29 @@ impl Render for Workspace {
                     .into_any_element(),
             }
         };
-        self.shell(window, cx)
-            .child(sidebar)
-            .child(content)
-            .children(self.render_docked_viewer(window, cx))
-            .children(self.render_docked_tasks(window, cx))
+        let docked = [
+            self.render_docked_viewer(window, cx),
+            self.render_docked_tasks(window, cx),
+        ]
+        .into_iter()
+        .flatten();
+        let flyout = self.render_rail_flyout(window, cx);
+        let shell = self.shell(window, cx).child(sidebar).children(flyout);
+        if portrait {
+            // Panels dock below the conversation, which keeps the width.
+            shell.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(div().flex_1().min_h_0().flex().child(content))
+                    .children(docked),
+            )
+        } else {
+            shell.child(content).children(docked)
+        }
     }
 }
 

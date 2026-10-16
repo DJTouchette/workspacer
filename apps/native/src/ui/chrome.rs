@@ -76,12 +76,6 @@ pub(super) fn model_badge(session: &Session, p: Palette, size: f32) -> Div {
 /// A provider's brand mark on a rounded tile, for choosing or describing an
 /// agent (New Agent, Agent setup). Same marks and colors as [`brand_badge`].
 pub(super) fn provider_mark(provider: &str, size: f32, p: Palette) -> Div {
-    let (mark, color) = match provider {
-        "claude" => (Some("brand/claude.svg"), CLAUDE_CLAY),
-        "codex" => (Some("brand/openai.svg"), p.text),
-        _ => (None, p.accent),
-    };
-    let glyph = size * 0.5;
     div()
         .size(px(size))
         .flex_shrink_0()
@@ -90,17 +84,27 @@ pub(super) fn provider_mark(provider: &str, size: f32, p: Palette) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .child(match mark {
-            Some(path) => gpui::svg()
-                .path(path)
-                .size(px(glyph))
-                .text_color(rgb(color))
-                .into_any_element(),
-            None => Icon::new(IconName::Bot)
-                .size(px(glyph))
-                .text_color(rgb(color))
-                .into_any_element(),
-        })
+        .child(provider_glyph(provider, size * 0.5, p))
+}
+
+/// A provider's bare brand mark, `size` square, in its brand color.
+pub(super) fn provider_glyph(provider: &str, size: f32, p: Palette) -> AnyElement {
+    let (mark, color) = match provider {
+        "claude" => (Some("brand/claude.svg"), CLAUDE_CLAY),
+        "codex" => (Some("brand/openai.svg"), p.text),
+        _ => (None, p.accent),
+    };
+    match mark {
+        Some(path) => gpui::svg()
+            .path(path)
+            .size(px(size))
+            .text_color(rgb(color))
+            .into_any_element(),
+        None => Icon::new(IconName::Bot)
+            .size(px(size))
+            .text_color(rgb(color))
+            .into_any_element(),
+    }
 }
 
 /// The badge for any provider and display name (sessions and child agents).

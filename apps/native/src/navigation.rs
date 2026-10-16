@@ -22,6 +22,47 @@ impl Provider {
     }
 }
 
+/// How the main window lays itself out. Auto follows the window's shape, so
+/// a window on a portrait monitor (or any tall window) gets the tall layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowLayout {
+    #[default]
+    Auto,
+    Landscape,
+    Portrait,
+}
+impl WindowLayout {
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Landscape, Self::Portrait];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Landscape => "Wide",
+            Self::Portrait => "Tall",
+        }
+    }
+    /// The tall layout for a window of this size: Auto picks it once the
+    /// window is clearly taller than it is wide.
+    pub fn portrait(self, width: f32, height: f32) -> bool {
+        match self {
+            Self::Auto => height > width * 1.15,
+            Self::Landscape => false,
+            Self::Portrait => true,
+        }
+    }
+}
+
+/// The tall layout's share of the window given to a panel docked below the
+/// conversation (file viewer, background tasks).
+pub const PORTRAIT_DOCK_SHARE: f32 = 0.45;
+pub fn portrait_dock_share(share: f32) -> f32 {
+    if share.is_finite() {
+        share.clamp(0.2, 0.75)
+    } else {
+        PORTRAIT_DOCK_SHARE
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -35,6 +76,10 @@ pub struct Settings {
     /// Interface size in percent, on top of the OS display scale.
     pub interface_scale: u16,
     pub sidebar_width: f32,
+    /// Wide or tall layout, or follow the window's shape.
+    pub window_layout: WindowLayout,
+    /// Share of a tall window's height for the panel docked below the chat.
+    pub portrait_dock_share: f32,
     pub vim_navigation: bool,
     /// Composer submit key: Enter sends and Shift+Enter adds a line, instead
     /// of the default Ctrl/Cmd+Enter to send and Enter for a new line.
@@ -73,6 +118,8 @@ impl Default for Settings {
             merge_turn_tools: false,
             interface_scale: 100,
             sidebar_width: 304.,
+            window_layout: WindowLayout::Auto,
+            portrait_dock_share: PORTRAIT_DOCK_SHARE,
             vim_navigation: true,
             enter_sends: false,
             keep_running: false,
@@ -110,6 +157,7 @@ impl Settings {
                 let mut settings: Self = serde_json::from_slice(&bytes)?;
                 settings.text_size = settings.text_size.clamp(12, 20);
                 settings.sidebar_width = sidebar_width(settings.sidebar_width, 2000.);
+                settings.portrait_dock_share = portrait_dock_share(settings.portrait_dock_share);
                 Ok(settings)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
@@ -191,6 +239,23 @@ pub fn projects(sessions: &[Session], saved: &[String]) -> Vec<Project> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn window_layout_follows_the_window_shape_only_in_auto() {
+        // A portrait 1080×1920 monitor, maximized, and the same at 125%.
+        assert!(WindowLayout::Auto.portrait(1080., 1880.));
+        assert!(WindowLayout::Auto.portrait(864., 1504.));
+        // Landscape, square-ish and barely-taller windows keep the wide layout.
+        assert!(!WindowLayout::Auto.portrait(1920., 1040.));
+        assert!(!WindowLayout::Auto.portrait(1000., 1100.));
+        assert!(!WindowLayout::Landscape.portrait(1080., 1880.));
+        assert!(WindowLayout::Portrait.portrait(1920., 1040.));
+        assert_eq!(portrait_dock_share(f32::NAN), PORTRAIT_DOCK_SHARE);
+        assert_eq!(portrait_dock_share(0.95), 0.75);
+        let old: Settings = serde_json::from_str(r#"{"sidebar_width": 320}"#).unwrap();
+        assert_eq!(old.window_layout, WindowLayout::Auto);
+        let tall: Settings = serde_json::from_str(r#"{"window_layout": "portrait"}"#).unwrap();
+        assert_eq!(tall.window_layout, WindowLayout::Portrait);
+    }
     #[test]
     fn interface_scale_steps_through_offered_sizes() {
         assert_eq!(step_interface_scale(100, 1), 110);

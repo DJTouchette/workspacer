@@ -342,6 +342,28 @@ impl Workspace {
         ));
         entries.push(Entry::new(
             S::Appearance,
+            "window-layout",
+            "Window layout",
+            "Tall suits a portrait monitor: panels open below the conversation and the sidebar starts as its rail. Auto picks it whenever the window is taller than it is wide.",
+            "layout portrait vertical monitor tall wide landscape orientation rotate rail sidebar dock below",
+            Layout::Row,
+            self.segmented(
+                "window-layout",
+                wks_native::navigation::WindowLayout::ALL
+                    .into_iter()
+                    .map(|layout| (layout, layout.label().to_owned()))
+                    .collect(),
+                self.settings.window_layout,
+                |this, layout, window, cx| {
+                    this.settings.window_layout = layout;
+                    this.save_settings(cx);
+                    window.refresh();
+                },
+                cx,
+            ),
+        ));
+        entries.push(Entry::new(
+            S::Appearance,
             "reduce-motion",
             "Reduce motion",
             "The title capsule reveals its actions and grows around notices at once, without springing into shape. Fades stay.",

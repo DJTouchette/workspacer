@@ -23,6 +23,7 @@ mod job_list;
 mod kept_sessions;
 mod message_queue;
 mod new_agent;
+mod portrait;
 mod preferences;
 mod project_registry;
 mod pull_requests;

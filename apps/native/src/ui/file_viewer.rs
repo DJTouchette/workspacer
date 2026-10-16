@@ -10,6 +10,7 @@
 //! explorer beside the source lists the session's folder. Unsaved edits are
 //! never dropped silently: opening another file, closing, or a new chat link
 //! asks first, and a save refuses to overwrite a file that changed on disk.
+use super::portrait::Dock;
 use super::*;
 use base64::Engine;
 use gpui::{AnyElement, KeyDownEvent, Pixels, Subscription, WeakEntity, WindowHandle, deferred};
@@ -24,7 +25,7 @@ use wks_native::{
 
 const KEY: &str = "file-preview";
 /// The conversation keeps at least this much width beside a docked viewer.
-const MIN_CHAT_BESIDE: f32 = 400.;
+pub(super) const MIN_CHAT_BESIDE: f32 = 400.;
 /// Rendered documents keep a comfortable reading measure.
 const READING_WIDTH: f32 = 760.;
 /// How long the viewer takes to slide in from the right.
@@ -1678,23 +1679,9 @@ struct PaneButtons {
 }
 
 impl Workspace {
-    /// Width of the docked viewer, or `None` when the window is too narrow
-    /// to keep the conversation usable beside it (the viewer is a sheet).
-    pub(super) fn viewer_dock_width(&self, window: &Window) -> Option<Pixels> {
-        let viewport = unzoom(window.viewport_size().width);
-        let sidebar = if self.sidebar_collapsed {
-            56.
-        } else {
-            wks_native::navigation::sidebar_width(self.settings.sidebar_width, viewport)
-        } + 8.;
-        let available = viewport - sidebar;
-        let panel = (available * 0.5).clamp(360., 760.);
-        (available - panel >= MIN_CHAT_BESIDE).then(|| px(panel))
-    }
-
     /// The main window's viewer is open as a modal sheet.
     pub(super) fn viewer_modal(&self, window: &Window) -> bool {
-        self.chat.viewer.pane.is_some() && self.viewer_dock_width(window).is_none()
+        self.chat.viewer.pane.is_some() && self.dock(window).is_none()
     }
 
     /// Keys go to the viewer, not the workspace: it is modal, or focused.
@@ -1872,7 +1859,7 @@ impl Workspace {
             value: Arc::new(serde_json::Value::Null),
             error: None,
         };
-        let presentation = if self.viewer_dock_width(window).is_some() {
+        let presentation = if self.dock(window).is_some() {
             Presentation::Docked
         } else {
             Presentation::Sheet
@@ -2042,7 +2029,7 @@ impl Workspace {
         }
         let Some((pane, popout)) = showing else {
             if let Some(state) = incoming {
-                let presentation = if self.viewer_dock_width(window).is_some() {
+                let presentation = if self.dock(window).is_some() {
                     Presentation::Docked
                 } else {
                     Presentation::Sheet
@@ -2259,7 +2246,7 @@ impl Workspace {
             let pane = popout.pane.read(cx);
             (pane.snapshot(cx), pane.saving.clone())
         };
-        let presentation = if self.viewer_dock_width(window).is_some() {
+        let presentation = if self.dock(window).is_some() {
             Presentation::Docked
         } else {
             Presentation::Sheet
@@ -2293,14 +2280,32 @@ impl Workspace {
         }
     }
 
-    /// The docked viewer, a flex sibling right of the main content.
+    /// The docked viewer: right of the main content, or below the
+    /// conversation in a tall window.
     pub(super) fn render_docked_viewer(
         &self,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let pane = self.chat.viewer.pane.clone()?;
-        let width = self.viewer_dock_width(window)?;
+        let width = match self.dock(window)? {
+            Dock::Side(width) => px(width),
+            Dock::Below { width, height } => {
+                pane.update(cx, |pane, _| {
+                    pane.presentation = Presentation::Docked;
+                    pane.width = px(width - 8.);
+                });
+                return Some(
+                    self.dock_below_slot("file-viewer-panel", height, pane, cx)
+                        .with_animation(
+                            ("file-viewer-slide", self.chat.viewer.opened),
+                            Animation::new(SLIDE).with_easing(ease_out_cubic),
+                            move |slot, progress| slot.h(px(height * progress)),
+                        )
+                        .into_any_element(),
+                );
+            }
+        };
         pane.update(cx, |pane, _| {
             pane.presentation = Presentation::Docked;
             pane.width = width - px(8.);
@@ -2349,7 +2354,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
-        if self.viewer_dock_width(window).is_some() {
+        if self.dock(window).is_some() {
             return None;
         }
         let pane = self.chat.viewer.pane.clone()?;

@@ -237,13 +237,16 @@ fn sidebar_collapse_preserves_draft_filter_and_search_focus(cx: &mut TestAppCont
             .focus_handle(cx)
             .is_focused(window)
     }));
+    // The rail's search opens the full list beside it, over the
+    // conversation, rather than expanding the sidebar into the chat's width.
     workspace.read_with(&visual, |this, cx| {
-        assert!(!this.sidebar_collapsed);
+        assert!(this.sidebar_collapsed);
+        assert_eq!(this.layout.peek, Some(crate::ui::portrait::Peek::Pinned));
         assert_eq!(this.search.read(cx).value().as_str(), "Alpha");
         assert_eq!(this.composer.read(cx).value().as_str(), "Keep this draft");
     });
     assert_eq!(
-        visual.debug_bounds("session-sidebar").unwrap().size.width,
+        visual.debug_bounds("sidebar-flyout").unwrap().size.width,
         expanded.size.width
     );
 }

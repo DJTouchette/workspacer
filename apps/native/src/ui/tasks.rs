@@ -847,11 +847,12 @@ impl Workspace {
     }
 
     /// Whether the panel takes the slot this frame (the file viewer wins it).
-    fn tasks_showing(&self) -> bool {
+    pub(super) fn tasks_showing(&self) -> bool {
         self.tasks.open && !self.viewer_in_slot() && self.task_session().is_some()
     }
 
-    /// Wide windows: the panel docks beside the conversation.
+    /// Wide windows: the panel docks beside the conversation; tall ones,
+    /// below it.
     pub(super) fn render_docked_tasks(
         &self,
         window: &Window,
@@ -860,7 +861,16 @@ impl Workspace {
         if !self.tasks_showing() {
             return None;
         }
-        let width = self.viewer_dock_width(window)?;
+        let width = match self.dock(window)? {
+            portrait::Dock::Side(width) => px(width),
+            portrait::Dock::Below { height, .. } => {
+                let panel = self.render_tasks_panel(cx);
+                let slot = self.dock_below_slot("tasks-panel", height, panel, cx);
+                return Some(self.slide_in(slot, "tasks-slide", move |slot, progress| {
+                    slot.h(px(height * progress))
+                }));
+            }
+        };
         Some(
             div()
                 .id("tasks-panel")
@@ -918,7 +928,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !self.tasks_showing() || self.viewer_dock_width(window).is_some() {
+        if !self.tasks_showing() || self.dock(window).is_some() {
             return None;
         }
         let p = self.appearance.palette();

@@ -12,6 +12,14 @@ native agent opens its conversation preview. Drag the sidebar's right edge to re
 it, or double-click the edge to reset to the 304-pixel default. Width is saved in
 device-local preferences and capped in smaller windows to leave room for chat.
 
+Tall windows (a portrait monitor) get a tall layout: the file viewer and background
+tasks dock below the conversation (drag the top edge to resize), and the sidebar
+starts as its rail. Rail marks show each session's initials in a ring colored by
+state (working, waiting on you), with nested children threaded beneath their parent.
+Resting the pointer on the rail opens the full list beside it; Ctrl/Cmd+K opens it
+with the session search focused (Enter opens the match, Esc closes). Settings →
+Appearance → Window layout chooses Auto (follows the window's shape), Wide or Tall.
+
 ## Windows installer
 
 The release workflow now builds
