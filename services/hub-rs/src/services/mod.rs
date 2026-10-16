@@ -40,6 +40,7 @@ pub mod profile_accounts;
 pub mod profiles;
 pub mod progress;
 pub mod provider_utilities;
+pub mod pull_requests;
 pub(crate) mod push;
 pub mod quiescence;
 pub mod remote_admin;
@@ -154,6 +155,14 @@ pub(crate) fn install_config(
         options = fleet_review::install(options, directory.clone(), home);
     }
     options = worktrees::install(options, config.clone());
+    let pull_requests = Arc::new(pull_requests::Service::new(
+        config.clone(),
+        Arc::new(pull_requests::links::Links::open(
+            directory.join("pr-links.json"),
+        )),
+    ));
+    options.pull_requests = Some(pull_requests.clone());
+    options = pull_requests::install(options, pull_requests);
     let replacements =
         manager_replacements::ReplacementState::open(directory.join("manager-replacements.json"))?;
     replacements.recover_status()?;

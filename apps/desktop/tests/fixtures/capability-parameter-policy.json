@@ -152,7 +152,16 @@
     "agents.setGoal": "sessionId selects a live Codex session; objective is prompt-like text, status one of Codex's own goal states and tokenBudget a positive integer or null, all handed to Codex's thread/goal/set. A goal is an instruction to the agent already running, the reach of agents.sendMessage; no path, argv or policy value",
     "agents.clearGoal": "sessionId selects a live Codex session; the only effect is Codex's own thread/goal/clear. It can only withhold work and takes nothing else",
     "agents.rename": "sessionId selects a session the hub launched; name is one bounded line of display text recorded as its launch label and, for a live Codex session, sent as thread/name/set. A label is read only for display and attribution — never a path, argv, config key or policy input",
-    "agents.windowsSandboxSetup": "sessionId selects a live Codex session on a Windows host; mode is the enum elevated|unelevated passed to Codex's own windowsSandbox/setupStart with the session's own cwd. Codex owns what setup does (its own ACL/user provisioning, with the OS's own elevation prompt for elevated); the caller supplies no path, argv or policy value, and other hosts refuse it"
+    "agents.windowsSandboxSetup": "sessionId selects a live Codex session on a Windows host; mode is the enum elevated|unelevated passed to Codex's own windowsSandbox/setupStart with the session's own cwd. Codex owns what setup does (its own ACL/user provisioning, with the OS's own elevation prompt for elevated); the caller supplies no path, argv or policy value, and other hosts refuse it",
+    "pr.detect": "cwd is an ambient host path: pull_requests::cwd requires it absolute, canonicalizes it once with paths::canonicalize and requires a directory before git runs only fixed read-only commands there (remote, remote get-url, symbolic-ref). The same authenticated ambient path authority as git.status; nothing is written",
+    "pr.forBranch": "cwd is canonicalized exactly as for pr.detect before git runs only fixed read-only commands; the detected remote then selects one read-only GitHub/Azure DevOps query for the branch's open pull request, with the user's own CLI credentials sent only to that remote's host. The same ambient path authority as git.status; nothing is written",
+    "pr.get": "url is parsed by remote::parse_pull_request into host, owner, repository and number (never a local path or argv); the provider API on that host is read as the signed-in user and the user's own gh/az CLI credentials are sent only to the host parsed from that URL. Read-only",
+    "pr.threads": "url is parsed by remote::parse_pull_request into host, owner, repository and number (never a local path or argv); the pull request's comment threads are read as the signed-in user and the user's own gh/az CLI credentials are sent only to the host parsed from that URL. Read-only",
+    "pr.reply": "an external write as the signed-in user (comparable to git.push): url is parsed into host/owner/repository/number, threadId selects a thread on that pull request and body is inert comment text of at most 64 KiB, never a path, argv or policy value; the user's own gh/az CLI credentials are sent only to the host parsed from that URL",
+    "pr.comment": "an external write as the signed-in user (comparable to git.push): url is parsed into host/owner/repository/number and body is inert comment text of at most 64 KiB, never a path, argv or policy value; the user's own gh/az CLI credentials are sent only to the host parsed from that URL",
+    "pr.resolve": "an external state change as the signed-in user (comparable to git.push): url is parsed into host/owner/repository/number, threadId selects a thread on that pull request and resolved is a strict boolean; the user's own gh/az CLI credentials are sent only to the host parsed from that URL",
+    "pr.link": "sessionId is validated as one segment and must name a local session; url must parse as a GitHub or Azure DevOps pull request URL and is stored as text in the hub's own pr-links.json; source is the closed enum user|agent (an agent cannot replace a user's choice) and provider only hints the URL's provider. Republishes that session's agent.snapshot with pullRequest; one read-only provider fetch fills in details. No path or argv",
+    "pr.unlink": "sessionId is validated as one segment; the hub records an explicit unlink in its own pr-links.json and republishes that session's agent.snapshot. No path, argv, URL or provider access"
   },
   "inertMethods": {
     "fleet.dispatchTargets": "Read-only discovery of explicitly enabled paired or linked worker targets. Returns remote protocol, actual provider readiness and remote repository choices, never the pairing credential.",
@@ -206,7 +215,9 @@
     "sessions.kept": "no params; returns the session ids the native client on this host kept open when it closed (read from the user's native-settings.json) and when it first saw each open. Discloses only ids the agent.snapshot feed already carries",
     "terminals.shells": "no params; lists the login shells installed on the hub's host (name, label and the path terminals.create would accept). Every path is drawn from the same allowlist terminals.create enforces ($SHELL, /etc/shells, platform defaults, Git for Windows' install paths), filtered to files that exist, so it names nothing a caller could not already learn by being refused. Operator-only by construction: it appears in neither scoped tier",
     "sessions.mcpStatus": "sessionId only; asks the provider for its MCP server status (names, status, error) and refreshes the snapshot field the agent.snapshot feed already carries",
-    "sessions.taskOutput": "sessionId plus taskId select a background task the daemon already lists on that session; offset/maxBytes are bounded integers. Neither id is joined into a path by the hub: claudemon resolves the CLI-named output file from its own task row and refuses symlinks and non-regular files"
+    "sessions.taskOutput": "sessionId plus taskId select a background task the daemon already lists on that session; offset/maxBytes are bounded integers. Neither id is joined into a path by the hub: claudemon resolves the CLI-named output file from its own task row and refuses symlinks and non-regular files",
+    "pr.providers": "no params; reports whether the gh and az CLIs are on the hub's PATH (with that binary path) and signed in, by running their fixed token commands with hub-chosen argv. The token is held only in the hub's memory and never returned; nothing the caller supplies reaches a process",
+    "pr.session": "sessionId only, validated as one segment; returns that session's stored pull request link from the hub's own pr-links.json, the same pullRequest value the agent.snapshot feed already carries. No path, network or process access"
   },
   "parameterDecisions": {
     "fleet.selectDispatchModel": {
@@ -950,6 +961,54 @@
       "name": {
         "kind": "inert",
         "reason": "one bounded line of display text stored as the launch label and sent as the Codex thread name; never joined into a path, argv or config key"
+      }
+    },
+    "pr.detect": {
+      "cwd": {
+        "kind": "path",
+        "reason": "pull_requests::cwd requires an absolute path, canonicalizes it once with paths::canonicalize and requires a directory before git runs fixed read-only commands in it; authenticated agent/plugin path access is ambient, as for git.status"
+      }
+    },
+    "pr.forBranch": {
+      "cwd": {
+        "kind": "path",
+        "reason": "pull_requests::cwd requires an absolute path, canonicalizes it once with paths::canonicalize and requires a directory before git runs fixed read-only commands in it; authenticated agent/plugin path access is ambient, as for git.status"
+      }
+    },
+    "pr.get": {
+      "url": {
+        "kind": "url",
+        "reason": "parsed by remote::parse_pull_request into a GitHub or Azure DevOps host, owner, repository and pull request number; anything else is refused. The hub requests only that provider's API on that host, sending the user's CLI credential for that host alone; it is never a local path, argv or redirect target"
+      }
+    },
+    "pr.threads": {
+      "url": {
+        "kind": "url",
+        "reason": "parsed by remote::parse_pull_request into a GitHub or Azure DevOps host, owner, repository and pull request number; anything else is refused. The hub requests only that provider's API on that host, sending the user's CLI credential for that host alone; it is never a local path, argv or redirect target"
+      }
+    },
+    "pr.reply": {
+      "url": {
+        "kind": "url",
+        "reason": "parsed by remote::parse_pull_request into a GitHub or Azure DevOps host, owner, repository and pull request number; anything else is refused. The hub requests only that provider's API on that host, sending the user's CLI credential for that host alone; it is never a local path, argv or redirect target"
+      }
+    },
+    "pr.comment": {
+      "url": {
+        "kind": "url",
+        "reason": "parsed by remote::parse_pull_request into a GitHub or Azure DevOps host, owner, repository and pull request number; anything else is refused. The hub requests only that provider's API on that host, sending the user's CLI credential for that host alone; it is never a local path, argv or redirect target"
+      }
+    },
+    "pr.resolve": {
+      "url": {
+        "kind": "url",
+        "reason": "parsed by remote::parse_pull_request into a GitHub or Azure DevOps host, owner, repository and pull request number; anything else is refused. The hub requests only that provider's API on that host, sending the user's CLI credential for that host alone; it is never a local path, argv or redirect target"
+      }
+    },
+    "pr.link": {
+      "url": {
+        "kind": "url",
+        "reason": "parsed by remote::parse_pull_request into a GitHub or Azure DevOps host, owner, repository and pull request number; anything else is refused. The hub requests only that provider's API on that host, sending the user's CLI credential for that host alone; it is never a local path, argv or redirect target"
       }
     }
   },

@@ -87,6 +87,8 @@ pub struct Session {
     /// What the composer offers on `/` (the hub's `slashCommands`): Claude's
     /// commands and skills, Codex's skills. Kept when a row omits it.
     pub slash_commands: Vec<SlashCommand>,
+    /// The pull request this session is linked to (the hub's `pullRequest`).
+    pub pull_request: Option<crate::pull_requests::Link>,
 }
 
 /// One entry of the composer's `/` menu.
@@ -691,6 +693,11 @@ impl Session {
         match field(&["windowsSandbox", "windows_sandbox"]) {
             Some(sandbox) => self.windows_sandbox = crate::codex_extras::Sandbox::parse(sandbox),
             None if full => self.windows_sandbox = None,
+            None => {}
+        }
+        match field(&["pullRequest"]) {
+            Some(link) => self.pull_request = crate::pull_requests::Link::parse(link),
+            None if full => self.pull_request = None,
             None => {}
         }
         match field(&["collaborationMode", "collaboration_mode"]) {

@@ -10,3 +10,6 @@ icon, as `FleetMessageCard.tsx`) come from the official Lucide repository's
 `snowflake.svg` (a session whose prompt cache has expired, in the sidebar, the
 context gauge and the composer's cold-cache note) comes from the same `icons/`
 directory.
+
+`git-pull-request.svg` (the title bar's pull request button and chip, and the
+Pull request page) comes from the same `icons/` directory.

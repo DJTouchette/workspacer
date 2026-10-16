@@ -22,6 +22,7 @@ pub mod navigation;
 pub mod plan;
 pub mod projects;
 pub mod provider_status;
+pub mod pull_requests;
 pub mod questions;
 pub mod queue;
 pub mod reading;

@@ -474,6 +474,7 @@ impl Workspace {
                 }
             }
             Screen::Handoff => self.open_handoff(window, cx),
+            Screen::PullRequest => self.open_pull_request(cx),
             _ => {}
         }
         cx.notify();
@@ -570,6 +571,7 @@ impl Workspace {
                     | Screen::Session
                     | Screen::Model
                     | Screen::Handoff
+                    | Screen::PullRequest
             ) {
                 self.screen = Screen::Conversation;
             }
@@ -658,6 +660,10 @@ impl Workspace {
                 Some("Connect your agents on the machine running this workspace.".into()),
             ),
             Screen::Handoff => (handoff_title.as_str(), Some(HANDOFF_DESCRIPTION.into())),
+            Screen::PullRequest => (
+                "Pull request",
+                Some(super::pull_request::DESCRIPTION.into()),
+            ),
             Screen::Model => ("Model, effort and access", Some(MODEL_DESCRIPTION.into())),
             _ => ("", None),
         };
@@ -696,6 +702,7 @@ impl Workspace {
             Screen::Setup => self.render_setup(cx),
             Screen::Model => self.render_model(cx),
             Screen::Handoff => self.render_handoff(cx),
+            Screen::PullRequest => self.render_pull_request(window, cx),
             _ => div(),
         };
         let back = self
@@ -921,7 +928,53 @@ impl Workspace {
                     .text_size(px(chrome::scale::META))
                     .child(s.cwd.clone())
                     .into_any_element(),
-            ));
+            ))
+            .when(
+                self.view.may_call("pr.threads") || self.view.may_call("pr.forBranch"),
+                |d| {
+                    let text = match &s.pull_request {
+                        Some(link) => format!(
+                            "{} {}{}",
+                            link.provider_label(),
+                            link.short(),
+                            if link.title.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" · {}", link.title)
+                            }
+                        ),
+                        None => "Not linked".to_owned(),
+                    };
+                    d.child(fact(
+                        "Pull request",
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .child(div().flex_1().min_w_0().truncate().child(text))
+                            .child(
+                                self.quiet_button(
+                                    "session-pull-request",
+                                    if s.pull_request.is_some() {
+                                        "Open"
+                                    } else {
+                                        "Link…"
+                                    },
+                                    super::pull_request::icon(),
+                                    true,
+                                )
+                                .debug_selector(|| "session-pull-request".into())
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| {
+                                        this.open_feature(Screen::PullRequest, window, cx)
+                                    },
+                                )),
+                            )
+                            .into_any_element(),
+                    ))
+                },
+            );
         let actions = chrome::card(p)
             .p_4()
             .flex()
@@ -1664,7 +1717,11 @@ pub(super) fn empty_note(text: &'static str, p: Palette) -> Div {
 }
 
 /// Heading and optional description at the top of a page card.
-fn card_heading(title: &'static str, description: Option<&'static str>, p: Palette) -> Div {
+pub(super) fn card_heading(
+    title: &'static str,
+    description: Option<&'static str>,
+    p: Palette,
+) -> Div {
     div()
         .flex()
         .flex_col()

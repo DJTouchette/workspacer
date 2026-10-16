@@ -15,6 +15,8 @@ pub(super) enum Screen {
     Model,
     /// Continue the open session with the other provider.
     Handoff,
+    /// The session's linked pull request and its review threads.
+    PullRequest,
 }
 
 impl Workspace {

@@ -104,6 +104,75 @@ pub struct KnownProject {
     /// Carries configuration beyond pin/recency (label, scripts, workflow…),
     /// so this client never deletes it.
     pub configured: bool,
+    /// Which hosted git service the project's pull requests live on.
+    pub git: GitSettings,
+}
+
+/// A project's `git` settings in the hub's registry: the pull request
+/// provider (`github`, `azure-devops`; empty = decided from the remote) and
+/// the remote to read (empty = `origin`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GitSettings {
+    pub provider: String,
+    pub remote: String,
+}
+
+impl GitSettings {
+    pub const PROVIDERS: [(&'static str, &'static str); 3] = [
+        ("", "Automatic"),
+        ("github", "GitHub"),
+        ("azure-devops", "Azure DevOps"),
+    ];
+
+    fn parse(value: &Value) -> Self {
+        let text = |key: &str| value[key].as_str().map(str::trim).unwrap_or("").to_owned();
+        Self {
+            provider: Some(text("provider"))
+                .filter(|p| Self::PROVIDERS.iter().any(|(id, _)| id == p))
+                .unwrap_or_default(),
+            remote: text("remote"),
+        }
+    }
+
+    pub fn normalized(&self) -> Result<Self> {
+        let out = Self {
+            provider: self.provider.trim().to_owned(),
+            remote: self.remote.trim().to_owned(),
+        };
+        ensure!(
+            Self::PROVIDERS.iter().any(|(id, _)| *id == out.provider),
+            "Choose GitHub, Azure DevOps or Automatic"
+        );
+        ensure!(
+            out.remote.len() <= 100
+                && out
+                    .remote
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c)),
+            "A remote is a name such as origin or upstream"
+        );
+        Ok(out)
+    }
+
+    fn apply(&self, entry: &mut serde_json::Map<String, Value>) {
+        let mut git = entry
+            .get("git")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        for (key, value) in [("provider", &self.provider), ("remote", &self.remote)] {
+            if value.is_empty() {
+                git.remove(key);
+            } else {
+                git.insert(key.into(), json!(value));
+            }
+        }
+        if git.is_empty() {
+            entry.remove("git");
+        } else {
+            entry.insert("git".into(), Value::Object(git));
+        }
+    }
 }
 
 impl KnownProject {
@@ -322,6 +391,7 @@ fn upsert(rows: &mut Vec<KnownProject>, path: &str, source: Source) -> usize {
         source,
         worktree: false,
         configured: false,
+        git: GitSettings::default(),
     });
     rows.len() - 1
 }
@@ -387,6 +457,9 @@ pub fn list(
             row.last_opened = row
                 .last_opened
                 .max(entry["lastOpened"].as_f64().map(|ms| ms as i64));
+            if row.git == GitSettings::default() {
+                row.git = GitSettings::parse(&entry["git"]);
+            }
             row.configured |= entry
                 .as_object()
                 .is_none_or(|m| m.keys().any(|k| !IDENTITY_ONLY.contains(&k.as_str())))
@@ -486,6 +559,23 @@ impl Identity {
         [&self.label, &self.icon, &self.favicon, &self.icon_file]
     }
 
+    fn apply(&self, object: &mut serde_json::Map<String, Value>) {
+        for (field, value) in Self::FIELDS.iter().zip(self.values()) {
+            if value.is_empty() {
+                object.remove(*field);
+            } else {
+                object.insert((*field).into(), json!(value));
+            }
+        }
+    }
+
+    fn held(&self, entry: &Value) -> bool {
+        Self::FIELDS
+            .iter()
+            .zip(self.values())
+            .all(|(field, value)| entry[*field].as_str().unwrap_or("") == value)
+    }
+
     /// Trimmed and checked; the error is the user's to fix.
     pub fn normalized(&self) -> Result<Self> {
         let out = Self {
@@ -533,6 +623,10 @@ pub enum Patch {
     Remove,
     /// Set the project's name and icon on every alias of the directory.
     Identity(Identity),
+    /// Set the project's git settings on every alias of the directory.
+    Git(GitSettings),
+    /// Name, icon and git settings in one save.
+    Settings(Identity, GitSettings),
 }
 
 /// The `config.save` patch for one project change, built against the hub's
@@ -547,7 +641,11 @@ pub fn patch(config: &Value, dir: &str, change: &Patch) -> Result<Value> {
     let key = resolve_key(&projects, dir);
     let mut partial = json!({});
     match change {
-        Patch::Pin(_) | Patch::Touch(_) | Patch::Identity(_) => {
+        Patch::Pin(_)
+        | Patch::Touch(_)
+        | Patch::Identity(_)
+        | Patch::Git(_)
+        | Patch::Settings(..) => {
             // Keep every imported alias and its metadata; update only the
             // identity field on all aliases so list/readback cannot disagree.
             let mut keys: Vec<String> = projects
@@ -579,14 +677,13 @@ pub fn patch(config: &Value, dir: &str, change: &Patch) -> Result<Value> {
                         entry["lastOpened"] = json!(latest.unwrap_or(*now).max(*now))
                     }
                     Patch::Identity(identity) => {
+                        identity.apply(entry.as_object_mut().expect("checked above"))
+                    }
+                    Patch::Git(git) => git.apply(entry.as_object_mut().expect("checked above")),
+                    Patch::Settings(identity, git) => {
                         let object = entry.as_object_mut().expect("checked above");
-                        for (field, value) in Identity::FIELDS.iter().zip(identity.values()) {
-                            if value.is_empty() {
-                                object.remove(*field);
-                            } else {
-                                object.insert((*field).into(), json!(value));
-                            }
-                        }
+                        identity.apply(object);
+                        git.apply(object);
                     }
                     Patch::Remove => unreachable!(),
                 }
@@ -653,13 +750,19 @@ pub fn verify(saved: &Value, dir: &str, change: &Patch) -> Result<()> {
                     .all(|e| e["lastOpened"].as_f64().is_some_and(|at| at >= *now as f64))
         }
         Patch::Identity(identity) => {
+            !entries.is_empty() && entries.iter().all(|e| identity.held(e))
+        }
+        Patch::Git(git) => {
             !entries.is_empty()
-                && entries.iter().all(|e| {
-                    Identity::FIELDS
-                        .iter()
-                        .zip(identity.values())
-                        .all(|(field, value)| e[*field].as_str().unwrap_or("") == value)
-                })
+                && entries
+                    .iter()
+                    .all(|e| GitSettings::parse(&e["git"]) == *git)
+        }
+        Patch::Settings(identity, git) => {
+            !entries.is_empty()
+                && entries
+                    .iter()
+                    .all(|e| identity.held(e) && GitSettings::parse(&e["git"]) == *git)
         }
         // Every normalized map alias and legacy trace must be absent.
         Patch::Remove => {
@@ -1120,6 +1223,61 @@ mod tests {
             },
             Identity {
                 icon_file: "../x.png".into(),
+                ..Default::default()
+            },
+        ] {
+            assert!(bad.normalized().is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn git_settings_write_every_alias_keep_unknown_fields_and_clear_back_to_automatic() {
+        let config = json!({"projects": {
+            "/a":{"label":"App","git":{"provider":"github","futureField":1}},
+            "/a/":{"workflowId":"wf"},
+        }});
+        let rows = list(Some(&registry(&config)), &[], &[]);
+        assert_eq!(rows[0].git.provider, "github");
+        let git = GitSettings {
+            provider: "azure-devops".into(),
+            remote: " upstream ".into(),
+        }
+        .normalized()
+        .unwrap();
+        let change = Patch::Git(git.clone());
+        let saved = patch(&config, "/a", &change).unwrap();
+        assert_eq!(
+            saved["projects"]["/a"]["git"],
+            json!({"provider":"azure-devops","remote":"upstream","futureField":1})
+        );
+        assert_eq!(saved["projects"]["/a/"]["git"]["remote"], "upstream");
+        assert_eq!(saved["projects"]["/a/"]["workflowId"], "wf");
+        assert_eq!(saved["projects"]["/a"]["label"], "App");
+        assert!(verify(&saved, "/a", &change).is_ok());
+        assert!(verify(&config, "/a", &change).is_err());
+        // Automatic with no remote removes what this client owns.
+        let auto = Patch::Git(GitSettings::default());
+        let cleared = patch(&saved, "/a", &auto).unwrap();
+        assert_eq!(cleared["projects"]["/a"]["git"], json!({"futureField":1}));
+        assert!(cleared["projects"]["/a/"].get("git").is_none());
+        // Both at once.
+        let both = Patch::Settings(
+            Identity {
+                label: "Renamed".into(),
+                ..Default::default()
+            },
+            git.clone(),
+        );
+        let saved = patch(&config, "/a", &both).unwrap();
+        assert!(verify(&saved, "/a", &both).is_ok());
+        assert_eq!(saved["projects"]["/a"]["label"], "Renamed");
+        for bad in [
+            GitSettings {
+                provider: "gitlab".into(),
+                ..Default::default()
+            },
+            GitSettings {
+                remote: "origin; rm -rf".into(),
                 ..Default::default()
             },
         ] {

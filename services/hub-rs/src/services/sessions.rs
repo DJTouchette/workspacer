@@ -1,6 +1,8 @@
 //! Session service over claudemon's in-process API and typed update stream.
 mod codex;
 mod params;
+mod pull_request_watch;
+mod pull_requests;
 mod queue;
 mod send;
 mod titles;
@@ -42,6 +44,8 @@ struct Sessions {
     titles: Option<tokio::sync::mpsc::Sender<String>>,
     /// Hub-owned outbound message queues (see `queue`).
     queue: Arc<super::message_queue::Queues>,
+    /// Pull request links (see `pull_requests`).
+    pull_requests: Option<Arc<super::pull_requests::Service>>,
 }
 
 pub(crate) async fn install(
@@ -71,6 +75,7 @@ pub(crate) async fn install(
     let queue_kicks = queues.take_kicks();
     let service = Arc::new(Sessions {
         queue: queues,
+        pull_requests: options.pull_requests.clone(),
         titles: title_offers,
         workflow_artifacts: options.workflow_artifacts.clone(),
         dismissals: Default::default(),
@@ -170,6 +175,13 @@ pub(crate) async fn install(
             async move { service.codex_call(method, params).await }
         });
     }
+    for method in ["pr.link", "pr.unlink", "pr.session"] {
+        let service = service.clone();
+        options = options.handler(method, move |_, params| {
+            let service = service.clone();
+            async move { service.pull_request_call(method, params).await }
+        });
+    }
     for method in [
         "sessions.queueAdd",
         "sessions.queueUpdate",
@@ -190,14 +202,30 @@ pub(crate) async fn install(
     let titles =
         title_worker.map(|(utilities, offers)| service.clone().run_titles(utilities, offers));
     let queue_worker = queue_kicks.map(|kicks| service.clone().run_queue(kicks));
+    // Linked pull requests are watched for as long as the session service runs.
+    let pull_request_watch = service
+        .pull_requests
+        .is_some()
+        .then(|| service.clone().run_pull_request_watch());
     let task = tokio::spawn(async move {
         let observe = async move {
-            let Some(queue_worker) = queue_worker else {
-                return service.observe(updates).await;
+            // Either worker stopping is as fatal as the observer stopping.
+            let queue = async move {
+                match queue_worker {
+                    Some(worker) => worker.await,
+                    None => std::future::pending().await,
+                }
+            };
+            let watch = async move {
+                match pull_request_watch {
+                    Some(watch) => watch.await,
+                    None => std::future::pending().await,
+                }
             };
             tokio::select! {
                 result = service.observe(updates) => result,
-                () = queue_worker => bail!("message queue worker stopped"),
+                () = queue => bail!("message queue worker stopped"),
+                () = watch => bail!("pull request watch stopped"),
             }
         };
         let Some(titles) = titles else {
@@ -379,6 +407,10 @@ impl Sessions {
         };
         let row = snapshots::with_auto_title(row);
         let row = self.queue.enrich(row);
+        let row = match &self.pull_requests {
+            Some(service) => service.links.enrich(row),
+            None => row,
+        };
         match &self.workflow_artifacts {
             Some(service) => service.enrich(row),
             None => row,
@@ -1114,6 +1146,7 @@ mod projection_tests {
             Arc::new(NoPreparation),
         )?;
         let service = Arc::new(Sessions {
+            pull_requests: None,
             dismissals: Default::default(),
             confirmed: Default::default(),
             tokens: None,

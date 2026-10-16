@@ -307,6 +307,21 @@
         }
       }
     },
+    "comment_pull_request": {
+      "type": "commentPullRequestIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "body": {
+            "kind": "string"
+          },
+          "sessionId": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
     "create_terminal": {
       "type": "createTerminalIn",
       "rule": {
@@ -971,6 +986,21 @@
         }
       }
     },
+    "link_pull_request": {
+      "type": "linkPullRequestIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "sessionId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "url": {
+            "kind": "string"
+          }
+        }
+      }
+    },
     "list_agents": {
       "type": "listAgentsIn",
       "rule": {
@@ -1479,6 +1509,22 @@
       "type": "@object",
       "passthrough": "freeform object: original addObjectTool/addConfigSaveTool never projected map entries"
     },
+    "pull_request": {
+      "type": "pullRequestIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "includeResolved": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
     "read_file": {
       "type": "readFileIn",
       "rule": {
@@ -1535,6 +1581,24 @@
         "kind": "object",
         "fields": {
           "id": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "reply_pull_request": {
+      "type": "replyPullRequestIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "body": {
+            "kind": "string"
+          },
+          "sessionId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "threadId": {
             "kind": "string"
           }
         }
@@ -1600,6 +1664,26 @@
           "view": {
             "kind": "string",
             "omit": "zero"
+          }
+        }
+      }
+    },
+    "resolve_pull_request_thread": {
+      "type": "resolvePullRequestThreadIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "resolved": {
+            "kind": "boolean",
+            "pointer": true,
+            "omit": "nil"
+          },
+          "sessionId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "threadId": {
+            "kind": "string"
           }
         }
       }

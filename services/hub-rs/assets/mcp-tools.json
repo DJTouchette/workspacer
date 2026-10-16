@@ -319,6 +319,27 @@
       "name": "close_session"
     },
     {
+      "name": "comment_pull_request",
+      "description": "Add a new top-level comment to your session's linked pull request, posted as the user signed in to gh / az on the host. For answering a specific review comment use reply_pull_request instead.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "description": "the comment, in Markdown",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the session whose pull request this is; omit for your own session",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "description": "Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
       "inputSchema": {
         "additionalProperties": false,
@@ -894,6 +915,27 @@
       "name": "job_history"
     },
     {
+      "name": "link_pull_request",
+      "description": "Link a GitHub or Azure DevOps pull request to your session, so its review comments reach you and the user sees it beside your session. Call this right after you open a pull request (gh pr create / az repos pr create) with the URL it printed. A link the user chose is never replaced: the call then says so.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "description": "the session whose pull request this is; omit for your own session",
+            "type": "string"
+          },
+          "url": {
+            "description": "the pull request's web URL",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "description": "List live agent state and attention needs across local and federated hubs. Preserve remote rows' hub on subsequent calls.",
       "inputSchema": {
         "additionalProperties": false,
@@ -1371,6 +1413,24 @@
       "name": "propose_job"
     },
     {
+      "name": "pull_request",
+      "description": "The pull request linked to your session: its title, state and branches, and its review threads with every comment (path and line for code comments, threadId for replying and resolving). When nothing is linked yet it returns the open pull request for your session's branch as a suggestion; link it with link_pull_request. Works for GitHub and Azure DevOps through the user's own gh / az sign-in on the host. Resolved threads are left out unless includeResolved.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "includeResolved": {
+            "description": "also return resolved threads",
+            "type": "boolean"
+          },
+          "sessionId": {
+            "description": "the session whose pull request this is; omit for your own session",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
       "description": "Read a UTF-8 text file on the workspacer host. Returns its contents.",
       "inputSchema": {
         "additionalProperties": false,
@@ -1460,6 +1520,32 @@
       "name": "remove_profile"
     },
     {
+      "name": "reply_pull_request",
+      "description": "Reply on one review thread of your session's linked pull request, posted as the user signed in to gh / az on the host. threadId comes from pull_request; \"conversation\" replies on the general discussion. Say what you changed, briefly; then resolve the thread with resolve_pull_request_thread if the feedback is fully addressed.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "description": "the reply, in Markdown",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the session whose pull request this is; omit for your own session",
+            "type": "string"
+          },
+          "threadId": {
+            "description": "the thread to reply on, from pull_request",
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId",
+          "body"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "description": "Tell the agent that dispatched you how your task is going, mid-task, in ONE line — a phase landed, the approach you were given is wrong, you are burning context faster than expected. It goes to your manager and nowhere else (you cannot name a recipient, and you have no way to reach any other session with it), it does NOT end your turn or your task, and your final message still reaches your manager in full when you finish. Limited to one per minute and 20 per session; use it when your manager's next decision would change, not to narrate.",
       "inputSchema": {
         "additionalProperties": false,
@@ -1520,6 +1606,31 @@
         "type": "object"
       },
       "name": "resolve_manager_request"
+    },
+    {
+      "name": "resolve_pull_request_thread",
+      "description": "Mark one review thread of your session's linked pull request resolved (or, with resolved false, reopen it). Only resolve feedback you actually addressed. The general conversation cannot be resolved.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "resolved": {
+            "description": "false reopens the thread; default true",
+            "type": "boolean"
+          },
+          "sessionId": {
+            "description": "the session whose pull request this is; omit for your own session",
+            "type": "string"
+          },
+          "threadId": {
+            "description": "the thread, from pull_request",
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId"
+        ],
+        "type": "object"
+      }
     },
     {
       "description": "Redispatch a worker: clone a session's ORIGINAL task and cwd/model/provider/parent/role, append your correction, and start a fresh agent with both. The standing move for a worker that has crept out of scope — stop it (signal SIGTERM, then close_session), then respawn_with the diagnosis baked in, instead of re-authoring the whole first message by hand. Returns the new sessionId.",

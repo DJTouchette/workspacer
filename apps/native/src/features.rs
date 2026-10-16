@@ -73,6 +73,35 @@ impl GitAction {
     }
 }
 
+/// A write to a linked pull request's discussion, made as the user signed in
+/// to the provider's CLI on the hub's machine. Each answers with the
+/// refreshed `pr.threads`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrAction {
+    Reply {
+        url: String,
+        thread: String,
+        body: String,
+    },
+    Comment {
+        url: String,
+        body: String,
+    },
+    Resolve {
+        url: String,
+        thread: String,
+        resolved: bool,
+    },
+}
+
+impl PrAction {
+    pub fn url(&self) -> &str {
+        match self {
+            Self::Reply { url, .. } | Self::Comment { url, .. } | Self::Resolve { url, .. } => url,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Request {
     /// Read-only view of a chat-linked file on the session's machine.
@@ -252,6 +281,29 @@ pub enum Request {
         at: Option<String>,
         label: Option<String>,
     },
+    /// A linked pull request's discussion (`pr.threads`).
+    PrThreads {
+        url: String,
+    },
+    /// The open pull request for the branch checked out in `cwd`
+    /// (`pr.forBranch`): what the Pull request page offers to link.
+    PrForBranch {
+        cwd: String,
+    },
+    /// Link a session to a pull request (`pr.link`), or unlink it
+    /// (`pr.unlink`, `url: None`). The session's snapshot carries the result.
+    PrLink {
+        session: String,
+        url: Option<String>,
+    },
+    /// Reply, comment or resolve; answers with the refreshed threads.
+    PrAction(PrAction),
+    /// The pull request provider a folder resolves to (`pr.detect`).
+    PrDetect {
+        cwd: String,
+    },
+    /// Whether `gh` and `az` are installed and signed in on the hub.
+    PrProviders,
 }
 
 /// One change to `agents.autoTitle`; everything else in it is left alone.
@@ -414,6 +466,12 @@ impl Request {
             Self::SetArchive { .. } => "archive-set",
             Self::RewindFiles { .. } => "rewind-files",
             Self::Fork { .. } => "fork",
+            Self::PrThreads { .. } => "pr-threads",
+            Self::PrForBranch { .. } => "pr-branch",
+            Self::PrLink { .. } => "pr-link",
+            Self::PrAction(_) => "pr-action",
+            Self::PrDetect { .. } => "pr-detect",
+            Self::PrProviders => "pr-providers",
         }
     }
 
@@ -423,6 +481,15 @@ impl Request {
         match self {
             Self::RewindFiles { .. } => Some("claude.rewindFiles"),
             Self::Fork { .. } => Some("agents.fork"),
+            Self::PrThreads { .. } => Some("pr.threads"),
+            Self::PrForBranch { .. } => Some("pr.forBranch"),
+            Self::PrLink { url: Some(_), .. } => Some("pr.link"),
+            Self::PrLink { url: None, .. } => Some("pr.unlink"),
+            Self::PrAction(PrAction::Reply { .. }) => Some("pr.reply"),
+            Self::PrAction(PrAction::Comment { .. }) => Some("pr.comment"),
+            Self::PrAction(PrAction::Resolve { .. }) => Some("pr.resolve"),
+            Self::PrDetect { .. } => Some("pr.detect"),
+            Self::PrProviders => Some("pr.providers"),
             _ => None,
         }
     }
@@ -566,6 +633,52 @@ impl Request {
                     "The fork returned no session id; refresh before trying again"
                 );
                 Ok(value)
+            }
+            Self::PrThreads { url } => backend.call("pr.threads", json!({"url":url})).await,
+            Self::PrDetect { cwd } => backend.call("pr.detect", json!({"cwd":cwd})).await,
+            Self::PrProviders => backend.call("pr.providers", json!({})).await,
+            Self::PrForBranch { cwd } => backend.call("pr.forBranch", json!({"cwd":cwd})).await,
+            Self::PrLink { session, url } => match url {
+                Some(url) => {
+                    let value = backend
+                        .call("pr.link", json!({"sessionId":session,"url":url.trim()}))
+                        .await?;
+                    ensure!(
+                        value["ok"] != false,
+                        "{}",
+                        value["error"]
+                            .as_str()
+                            .unwrap_or("The hub did not link the pull request")
+                    );
+                    Ok(value)
+                }
+                None => {
+                    backend
+                        .call("pr.unlink", json!({"sessionId":session}))
+                        .await
+                }
+            },
+            Self::PrAction(action) => {
+                let (method, params) = match action {
+                    PrAction::Reply { url, thread, body } => {
+                        ("pr.reply", json!({"url":url,"threadId":thread,"body":body}))
+                    }
+                    PrAction::Comment { url, body } => {
+                        ("pr.comment", json!({"url":url,"body":body}))
+                    }
+                    PrAction::Resolve {
+                        url,
+                        thread,
+                        resolved,
+                    } => (
+                        "pr.resolve",
+                        json!({"url":url,"threadId":thread,"resolved":resolved}),
+                    ),
+                };
+                backend.call(method, params).await?;
+                backend
+                    .call("pr.threads", json!({"url":action.url()}))
+                    .await
             }
             Self::Archive => archive_document(backend.call("sessionArchive.get", json!({})).await?),
             Self::SetArchive { session, archived } => {

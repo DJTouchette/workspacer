@@ -2,7 +2,7 @@
 mod codex;
 mod completion;
 mod text;
-mod tools;
+pub(crate) mod tools;
 use crate::{
     Options,
     services::{agent_lifecycle::Operation, config::Config},

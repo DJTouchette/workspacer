@@ -25,6 +25,7 @@ mod message_queue;
 mod new_agent;
 mod preferences;
 mod project_registry;
+mod pull_requests;
 mod question_sets;
 mod scrolling;
 mod session_controls;

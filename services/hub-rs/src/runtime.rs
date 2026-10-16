@@ -104,6 +104,8 @@ pub struct Options {
     pub(crate) replacements: Option<Arc<crate::services::manager_replacements::ReplacementState>>,
     pub(crate) worktrees: Option<Arc<crate::services::worktrees::Worktrees>>,
     pub(crate) review_store: Option<Arc<crate::services::fleet_review::ReviewStore>>,
+    /// Pull request providers and session links (see `services::pull_requests`).
+    pub(crate) pull_requests: Option<Arc<crate::services::pull_requests::Service>>,
     pub(crate) paired_target: Option<crate::services::remote_dispatch::paired::Target>,
     pub(crate) paired_dispatch: Option<Arc<crate::services::remote_dispatch::paired::Paired>>,
     pub(crate) remote_proxy_snapshots: Arc<std::sync::RwLock<BTreeMap<String, Value>>>,
@@ -183,6 +185,7 @@ impl Default for Options {
             replacements: None,
             worktrees: None,
             review_store: None,
+            pull_requests: None,
             paired_target: None,
             paired_dispatch: None,
             remote_proxy_snapshots: Arc::new(std::sync::RwLock::new(BTreeMap::new())),

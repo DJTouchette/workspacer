@@ -1024,6 +1024,8 @@ impl Worker {
                 | "git-action"
                 | "fork"
                 | "rewind-files"
+                | "pr-link"
+                | "pr-action"
         ) && self.view.requests.get(key).is_some_and(|s| {
             // A rewind PREVIEW changes nothing: a newer one (another message,
             // or a retry) supersedes it. Only a real rewind is never recalled.
@@ -1060,6 +1062,15 @@ impl Worker {
                     ..
                 }),
             ) if path == before => value.clone(),
+            // A refresh of the same pull request keeps its threads on screen.
+            (
+                crate::features::Request::PrThreads { url },
+                Some(crate::features::RequestState {
+                    request: crate::features::Request::PrThreads { url: before },
+                    value,
+                    ..
+                }),
+            ) if url == before => value.clone(),
             _ => Arc::new(Value::Null),
         };
         self.view.requests.insert(

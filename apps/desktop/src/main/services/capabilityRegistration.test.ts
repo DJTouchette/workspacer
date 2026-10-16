@@ -44,6 +44,34 @@ extras(
   ['service.call(method,params)'],
 );
 extras(
+  ['pr.providers', 'pr.detect', 'pr.forBranch', 'pr.get', 'pr.threads'],
+  'services/pull_requests.rs',
+  false,
+  'Read-only pull-request service: provider CLI sign-in status, canonical-cwd read-only git detection (git.status authority) and provider API reads for a parsed GitHub/Azure DevOps pull request URL, sending the user CLI credential only to that host.',
+  ['service.call(method,params)'],
+);
+extras(
+  ['pr.reply', 'pr.comment', 'pr.resolve'],
+  'services/pull_requests.rs',
+  true,
+  'External writes to GitHub/Azure DevOps as the signed-in user (git.push authority): a reply, a comment or a thread resolution on the pull request parsed from url; body is bounded inert text and credentials go only to that host.',
+  ['service.call(method,params)'],
+);
+extras(
+  ['pr.link', 'pr.unlink'],
+  'services/sessions.rs',
+  true,
+  'Session pull-request link mutations (agents.rename authority): the session service validates the session id segment, refuses remote sessions, persists the link in its own pr-links.json and republishes the agent.snapshot.',
+  ['service.pull_request_call(method,params)'],
+);
+extras(
+  ['pr.session'],
+  'services/sessions.rs',
+  false,
+  'Reads one local session pull-request link from the hub-owned pr-links.json through the same validated session dispatcher; it is the pullRequest value agent.snapshot already carries.',
+  ['service.pull_request_call(method,params)'],
+);
+extras(
   ['federation.resumePeer'],
   'federation.rs',
   true,

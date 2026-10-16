@@ -22,6 +22,7 @@ mod motion;
 mod navigation;
 mod plan;
 mod projects;
+mod pull_request;
 mod questions;
 mod queue;
 mod recent;
@@ -149,6 +150,7 @@ bundled_icons!(
     "lucide/reply.svg",
     "lucide/megaphone.svg",
     "lucide/snowflake.svg",
+    "lucide/git-pull-request.svg",
 );
 
 impl gpui::AssetSource for Assets {
@@ -562,6 +564,7 @@ pub struct Workspace {
     ui_bus: bus_commands::UiState,
     extras: features::Extras,
     tools: session_tools::ToolsUi,
+    pr: pull_request::PrUi,
     explorer: explorer::Explorer,
     review: review::ReviewUi,
     terminal: terminal::TerminalUi,
@@ -766,6 +769,7 @@ impl Workspace {
         ));
         let extras = features::Extras::new(window, cx);
         let tools = session_tools::ToolsUi::new(window, cx);
+        let pr = pull_request::PrUi::new(window, cx);
         // Enter in Session details' name field saves, like its button.
         focus_watch.push(cx.subscribe_in(
             &extras.name,
@@ -850,6 +854,7 @@ impl Workspace {
         Self {
             extras,
             tools,
+            pr,
             explorer: Default::default(),
             review: Default::default(),
             terminal: Default::default(),
@@ -1730,7 +1735,8 @@ impl Render for Workspace {
                 | Screen::Session
                 | Screen::Setup
                 | Screen::Model
-                | Screen::Handoff => self.render_feature(window, cx).into_any_element(),
+                | Screen::Handoff
+                | Screen::PullRequest => self.render_feature(window, cx).into_any_element(),
                 Screen::Projects => self.render_projects(window, cx).into_any_element(),
                 Screen::Settings => self.render_settings(window, cx).into_any_element(),
                 Screen::Conversation => self

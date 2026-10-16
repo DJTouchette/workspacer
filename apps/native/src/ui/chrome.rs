@@ -1188,7 +1188,7 @@ impl Workspace {
         &self,
         id: impl Into<SharedString>,
         label: &'static str,
-        icon: IconName,
+        icon: impl Into<Icon>,
         enabled: bool,
     ) -> Stateful<Div> {
         let p = self.appearance.palette();
@@ -1253,7 +1253,7 @@ impl Workspace {
         &self,
         id: impl Into<SharedString>,
         label: &'static str,
-        icon: IconName,
+        icon: impl Into<Icon>,
         enabled: bool,
     ) -> Stateful<Div> {
         self.icon_button_style(id, label, icon, enabled, false)
@@ -1263,7 +1263,7 @@ impl Workspace {
         &self,
         id: impl Into<SharedString>,
         label: &'static str,
-        icon: IconName,
+        icon: impl Into<Icon>,
         enabled: bool,
     ) -> Stateful<Div> {
         self.icon_button_style(id, label, icon, enabled, true)
@@ -1273,7 +1273,7 @@ impl Workspace {
         &self,
         id: impl Into<SharedString>,
         label: &'static str,
-        icon: IconName,
+        icon: impl Into<Icon>,
         enabled: bool,
         primary: bool,
     ) -> Stateful<Div> {

@@ -1280,6 +1280,36 @@ impl Workspace {
         }
         // Running hooks stay out of the title: most finish in a moment, so
         // a chip for each one only flickered the bar.
+        if let Some(link) = &session.pull_request {
+            let unresolved = link.unresolved.filter(|n| *n > 0);
+            let tip = SharedString::from(format!(
+                "{} {}{}: {}",
+                link.provider_label(),
+                link.short(),
+                if link.title.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", link.title)
+                },
+                match unresolved {
+                    Some(n) => format!("{n} unresolved comment{}", if n == 1 { "" } else { "s" }),
+                    None => link.state_label().to_lowercase(),
+                }
+            ));
+            let text = match unresolved {
+                Some(n) => format!("{} · {n}", link.short()),
+                None => format!("{} · {}", link.short(), link.state_label()),
+            };
+            chips.push(
+                chip("title-pr", text, super::pull_request::state_color(link, p))
+                    .cursor_pointer()
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_feature(Screen::PullRequest, window, cx)
+                    }))
+                    .into_any_element(),
+            );
+        }
         let failed = session.status.failed_servers();
         if failed > 0 {
             chips.push(

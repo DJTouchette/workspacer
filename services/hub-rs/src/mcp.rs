@@ -13,6 +13,7 @@ mod plugin_catalog;
 #[cfg(test)]
 mod presentation;
 mod project_status;
+mod pull_request;
 mod raw_preferences;
 mod respawn;
 mod spawn;
@@ -241,6 +242,7 @@ fn method(name: &str) -> Option<&'static str> {
         "propose_job" => "jobs.propose",
         "run_job" => "jobs.run",
         "remove_job" => "jobs.remove",
+        name if pull_request::handles(name) => return pull_request::method(name),
         _ => return None,
     })
 }
@@ -607,6 +609,9 @@ impl ServerHandler for Adapter {
                 gate::call(&client, params.clone()).await?
             } else if request.name == "project_status" {
                 project_status::call(&client, params.clone()).await?
+            } else if pull_request::handles(&request.name) {
+                pull_request::call(&client, &request.name, params.clone(), &identity.session_id)
+                    .await?
             } else if respawning {
                 respawn::call(&client, params.clone(), &identity.session_id).await?
             } else if dispatching {

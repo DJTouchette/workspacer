@@ -100,6 +100,13 @@ async fn run(cwd: &Path, args: &[String]) -> Result<Output> {
     })
 }
 
+/// Trimmed stdout of a read-only git command run in `cwd`, or None when git
+/// reports failure (not a repository, no such remote, detached HEAD...).
+pub(crate) async fn read(cwd: &Path, values: &[&str]) -> Result<Option<String>> {
+    let output = run(cwd, &args(values)).await?;
+    Ok(output.ok.then(|| output.stdout.trim().to_owned()))
+}
+
 fn args(values: &[&str]) -> Vec<String> {
     values.iter().map(|s| (*s).into()).collect()
 }

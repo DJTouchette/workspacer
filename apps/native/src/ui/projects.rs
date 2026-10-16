@@ -4,7 +4,7 @@
 use super::*;
 use gpui_component::input::{MoveDown, MoveUp};
 use wks_native::features::Request;
-use wks_native::projects::{self, Identity, Inspection, KnownProject, Patch, Source};
+use wks_native::projects::{self, GitSettings, Identity, Inspection, KnownProject, Patch, Source};
 
 /// Rows the picker offers, in keyboard order.
 #[derive(Clone, Debug, PartialEq)]
@@ -60,6 +60,10 @@ pub(super) struct IdentityEditor {
     pub name: Entity<InputState>,
     pub icon: Entity<InputState>,
     pub favicon: Entity<InputState>,
+    /// The project's git settings as the hub has them, and the choice made.
+    pub git_base: GitSettings,
+    pub git_provider: String,
+    pub remote: Entity<InputState>,
 }
 
 /// Picker rows are this tall; the list shows at most this many before it
@@ -549,6 +553,17 @@ impl Workspace {
                         }
                         .into();
                     }
+                    (None, Patch::Git(_) | Patch::Settings(..)) => {
+                        if self
+                            .projects
+                            .editor
+                            .as_ref()
+                            .is_some_and(|e| projects::same_dir(&e.path, path))
+                        {
+                            self.projects.editor = None;
+                        }
+                        self.projects.notice = "Project settings saved.".into();
+                    }
                     (None, Patch::Touch(_)) => {}
                 }
             }
@@ -683,12 +698,25 @@ impl Workspace {
         name.update(cx, |input, cx| input.focus(window, cx));
         self.projects.notice.clear();
         self.projects.fallback = None;
+        let git_base = self
+            .known_project(&path)
+            .map(|p| p.git.clone())
+            .unwrap_or_default();
+        let remote = input(&git_base.remote, "origin", window, cx);
+        // What the hub sees in the folder, and whether its CLIs are signed in.
+        if self.view.connected && !self.demo {
+            self.request(Request::PrDetect { cwd: path.clone() }, cx);
+            self.request(Request::PrProviders, cx);
+        }
         self.projects.editor = Some(IdentityEditor {
             path,
             base,
             name,
             icon,
             favicon,
+            git_provider: git_base.provider.clone(),
+            git_base,
+            remote,
         });
         cx.notify();
     }
@@ -736,24 +764,43 @@ impl Workspace {
                 return;
             }
         };
-        if identity == editor.base {
-            self.projects.notice = "No changes to save.".into();
-            cx.notify();
-            return;
-        }
+        // Reset clears the name and icon; the git settings stay as they are.
+        let git = if reset {
+            editor.git_base.clone()
+        } else {
+            let git = GitSettings {
+                provider: editor.git_provider.clone(),
+                remote: editor.remote.read(cx).value().to_string(),
+            };
+            match git.normalized() {
+                Ok(git) => git,
+                Err(error) => {
+                    self.projects.notice = error.to_string();
+                    cx.notify();
+                    return;
+                }
+            }
+        };
+        let change = match (identity != editor.base, git != editor.git_base) {
+            (false, false) => {
+                self.projects.notice = "No changes to save.".into();
+                cx.notify();
+                return;
+            }
+            (true, false) => Patch::Identity(identity.clone()),
+            (false, true) => Patch::Git(git),
+            (true, true) => Patch::Settings(identity.clone(), git),
+        };
         let path = editor.path.clone();
-        self.projects.notice = if identity.icon_file.is_empty() && !identity.favicon.is_empty() {
+        self.projects.notice = if identity.icon_file.is_empty()
+            && !identity.favicon.is_empty()
+            && identity != editor.base
+        {
             "Downloading the icon on the hub…".into()
         } else {
             "Saving…".into()
         };
-        self.request(
-            Request::SaveProject {
-                path,
-                change: Patch::Identity(identity),
-            },
-            cx,
-        );
+        self.request(Request::SaveProject { path, change }, cx);
         cx.notify();
     }
 
@@ -781,6 +828,7 @@ impl Workspace {
             source: Source::Hub,
             worktree: false,
             configured: false,
+            git: Default::default(),
         });
         let name = editor.name.read(cx).value().trim().to_owned();
         let icon = editor.icon.read(cx).value().trim().to_owned();
@@ -847,6 +895,7 @@ impl Workspace {
                         .child(field("Icon", &editor.icon, "project-identity-icon")),
                 )
                 .child(field("Icon URL", &editor.favicon, "project-identity-favicon"))
+                .child(self.render_project_git(editor, can_write, cx))
                 .child(
                     div()
                         .text_size(px(chrome::scale::CAPTION))
@@ -1641,4 +1690,131 @@ pub(super) fn section_label(label: &'static str, p: Palette) -> Div {
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(p.muted))
         .child(label)
+}
+
+impl Workspace {
+    /// The project's pull request provider: automatic (from the remote) or
+    /// chosen, which matters when a repository has remotes on both services.
+    fn render_project_git(
+        &self,
+        editor: &IdentityEditor,
+        can_write: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let detected = self
+            .view
+            .requests
+            .get("pr-detect")
+            .filter(|s| matches!(&s.request, Request::PrDetect { cwd } if *cwd == editor.path));
+        let detected_line = detected.map(|state| {
+            if state.loading {
+                "Reading the repository's remotes…".to_owned()
+            } else if let Some(error) = &state.error {
+                error.clone()
+            } else {
+                let value = &state.value;
+                let candidates = value["candidates"].as_array().map_or(0, Vec::len);
+                match (value["provider"].as_str(), value["repo"].as_str()) {
+                    (Some(provider), Some(repo)) if candidates > 1 => format!(
+                        "Uses {} ({repo}). This repository also has a remote on another service; choose one to pin it.",
+                        wks_native::pull_requests::provider_label(provider)
+                    ),
+                    (Some(provider), Some(repo)) => format!(
+                        "Uses {} ({repo}).",
+                        wks_native::pull_requests::provider_label(provider)
+                    ),
+                    _ => value["problem"]
+                        .as_str()
+                        .unwrap_or("No GitHub or Azure DevOps remote found.")
+                        .to_owned(),
+                }
+            }
+        });
+        let signed_in = self
+            .view
+            .requests
+            .get("pr-providers")
+            .filter(|s| !s.loading)
+            .and_then(|s| s.value.as_array().cloned())
+            .map(|providers| {
+                providers
+                    .iter()
+                    .map(|provider| {
+                        let label = provider["label"].as_str().unwrap_or("");
+                        let cli = provider["cli"].as_str().unwrap_or("");
+                        let state = if provider["available"] != true {
+                            "not installed"
+                        } else if provider["signedIn"] == true {
+                            "signed in"
+                        } else {
+                            "not signed in"
+                        };
+                        format!("{label} ({cli}): {state}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            });
+        let choices = GitSettings::PROVIDERS.iter().map(|(id, label)| {
+            let selected = editor.git_provider == *id;
+            let id = (*id).to_owned();
+            let selector = format!("project-git-{}", if id.is_empty() { "auto" } else { &id });
+            let button = if selected {
+                self.primary_button(SharedString::from(selector.clone()), *label, can_write)
+            } else {
+                self.button(SharedString::from(selector.clone()), *label, can_write)
+            };
+            button
+                .debug_selector(move || selector.clone())
+                .when(can_write, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(editor) = this.projects.editor.as_mut() {
+                            editor.git_provider = id.clone();
+                        }
+                        cx.notify();
+                    }))
+                })
+        });
+        div()
+            .debug_selector(|| "project-git".into())
+            .flex()
+            .flex_col()
+            .gap_2()
+            .pt_2()
+            .border_t_1()
+            .border_color(rgb(p.border))
+            .child(section_label("Pull requests", p))
+            .child(div().flex().flex_wrap().gap_2().children(choices))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(chrome::scale::META))
+                            .text_color(rgb(p.muted))
+                            .child("Remote"),
+                    )
+                    .child(
+                        div()
+                            .w(px(180.))
+                            .debug_selector(|| "project-git-remote".into())
+                            .child(Input::new(&editor.remote)),
+                    ),
+            )
+            .children(detected_line.map(|line| {
+                div()
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(p.muted))
+                    .child(line)
+            }))
+            .children(signed_in.map(|line| {
+                div()
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(p.muted))
+                    .child(line)
+            }))
+    }
 }

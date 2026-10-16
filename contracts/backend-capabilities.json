@@ -167,6 +167,17 @@
     "library.remove",
     "library.save",
     "notifications.post",
+    "pr.comment",
+    "pr.detect",
+    "pr.forBranch",
+    "pr.get",
+    "pr.link",
+    "pr.providers",
+    "pr.reply",
+    "pr.resolve",
+    "pr.session",
+    "pr.threads",
+    "pr.unlink",
     "providers.checkAll",
     "providers.listModels",
     "search.project",
@@ -243,6 +254,50 @@
     "claude.handoffSummaryBrief": {
       "authority": "claude.handoffBrief",
       "reason": "Rust live-controls handoff tier between the mechanical and agent briefs: the caller supplies only a validated session id. The hub builds the same deterministic digest plus a bounded, credential-masked conversation tail, asks its configured title harness (Haiku for Claude) for one tool-less completion, and writes a hub-named file under ~/.workspacer/handoffs, falling back to the mechanical brief. No caller path, argv, model, provider or permission reaches the process, and nothing is sent to the source session."
+    },
+    "pr.providers": {
+      "authority": "providers.checkAll",
+      "reason": "Rust pull-request provider status: no params. Reports whether the gh and az CLIs are on the hub's PATH (with that binary path) and signed in, by running their fixed token commands with hub-chosen argv; the token is held only in the hub's memory cache, never persisted or returned. No caller path, argv or provider value reaches a process."
+    },
+    "pr.detect": {
+      "authority": "git.status",
+      "reason": "Rust pull-request detection: the same authenticated ambient host-path authority as git.status. cwd is canonicalized once (paths::canonicalize) and must be an existing directory before git runs only fixed read-only commands (remote, remote get-url, symbolic-ref) there. Reads the project's git settings from config; writes nothing."
+    },
+    "pr.forBranch": {
+      "authority": "git.status",
+      "reason": "Rust pull-request lookup for the checked-out branch: pr.detect's canonical-cwd read-only git authority, plus one read-only query to GitHub or Azure DevOps for the branch's open pull request. Credentials come from the user's own gh/az CLI sign-in at call time, are held only in the hub's memory, never persisted or returned, and are sent only to the host parsed from the pull request URL or git remote."
+    },
+    "pr.get": {
+      "authority": "git.status",
+      "reason": "Rust pull-request read: url is parsed into host, owner, repository and number (never a local path) and the provider's API is read as the signed-in user. Credentials come from the user's own gh/az CLI sign-in at call time, are held only in the hub's memory, never persisted or returned, and are sent only to the host parsed from the pull request URL or git remote. Nothing is written locally or remotely."
+    },
+    "pr.threads": {
+      "authority": "git.status",
+      "reason": "Rust pull-request comment-thread read: the same parsed-URL, read-only provider access as pr.get. Credentials come from the user's own gh/az CLI sign-in at call time, are held only in the hub's memory, never persisted or returned, and are sent only to the host parsed from the pull request URL or git remote. Nothing is written locally or remotely."
+    },
+    "pr.reply": {
+      "authority": "git.push",
+      "reason": "Rust pull-request thread reply: an external write to GitHub or Azure DevOps as the signed-in user, comparable to git.push publishing under the user's identity. url is parsed into host/owner/repository/number, threadId selects a thread on that pull request, body is inert text of at most 64 KiB. Credentials come from the user's own gh/az CLI sign-in at call time, are held only in the hub's memory, never persisted or returned, and are sent only to the host parsed from the pull request URL or git remote."
+    },
+    "pr.comment": {
+      "authority": "git.push",
+      "reason": "Rust pull-request top-level comment: an external write as the signed-in user, comparable to git.push. url is parsed into host/owner/repository/number and body is inert text of at most 64 KiB. Credentials come from the user's own gh/az CLI sign-in at call time, are held only in the hub's memory, never persisted or returned, and are sent only to the host parsed from the pull request URL or git remote."
+    },
+    "pr.resolve": {
+      "authority": "git.push",
+      "reason": "Rust pull-request thread resolve/unresolve: an external state change as the signed-in user, comparable to git.push. url is parsed, threadId selects a thread on that pull request and resolved is a strict boolean. Credentials come from the user's own gh/az CLI sign-in at call time, are held only in the hub's memory, never persisted or returned, and are sent only to the host parsed from the pull request URL or git remote."
+    },
+    "pr.link": {
+      "authority": "agents.rename",
+      "reason": "Rust session pull-request link: like agents.rename, a hub-owned session-state mutation. sessionId is validated as one segment and must name a local session; url must parse as a GitHub or Azure DevOps pull request URL; source is the closed enum user|agent and an agent cannot replace a user's choice. The link is persisted in the hub's own pr-links.json and the session's agent.snapshot is republished with pullRequest; one read-only provider fetch fills in details."
+    },
+    "pr.unlink": {
+      "authority": "agents.rename",
+      "reason": "Rust session pull-request unlink: like agents.rename, a hub-owned session-state mutation. sessionId is validated as one segment; the hub records an explicit unlink in its own pr-links.json and republishes that session's agent.snapshot. No path, argv, URL or provider access."
+    },
+    "pr.session": {
+      "authority": "sessions.snapshot",
+      "reason": "Rust session pull-request read: sessionId is validated as one segment and the hub returns that session's stored link from its own pr-links.json, the same pullRequest value the agent.snapshot feed already carries. No path, network or process access."
     }
   }
 }
