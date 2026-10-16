@@ -32,11 +32,13 @@ test('isolated process environment excludes inherited credentials and bootstrap 
 });
 test('modern catalog uses captured operator floor and refuses incomplete/duplicate metadata', () => {
   const tools = JSON.parse(fs.readFileSync(new URL('../../../services/hub-rs/assets/mcp-effective-tools.json', import.meta.url), 'utf8')).operator;
-  assert.equal(tools.length, 100, 'review the retained operator floor when the core catalog changes');
+  // 100 captured from Go plus the five pull request tools; a live hub may
+  // serve fewer, never below the retained 100-tool floor.
+  assert.equal(tools.length, 105, 'review the retained operator floor when the core catalog changes');
   const valid = { jsonrpc: '2.0', id: 1, result: { resultType: 'complete', ttlMs: 0, cacheScope: 'private', tools } };
-  assert.equal(checkModernCatalog(valid), 100);
+  assert.equal(checkModernCatalog(valid), 105);
   for (const patch of [{ ttlMs: undefined }, { cacheScope: 'public' }, { tools: [] },
-    { tools: tools.slice(1) }, { tools: [...tools, tools[0]] }, { resultType: undefined }])
+    { tools: tools.slice(0, 99) }, { tools: [...tools, tools[0]] }, { resultType: undefined }])
     assert.throws(() => checkModernCatalog({ ...valid, result: { ...valid.result, ...patch } }));
 });
 test('MCP health requires the actual Rust identity and exact owning endpoints', () => {
