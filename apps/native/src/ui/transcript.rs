@@ -509,7 +509,10 @@ impl Workspace {
             .flatten();
         let timestamp = row
             .timestamp_ms
-            .or_else(|| row.timestamp.as_deref().and_then(timing::parse_timestamp));
+            .or_else(|| row.timestamp.as_deref().and_then(timing::parse_timestamp))
+            // Reasoning carries its length in its own label ("Thought for
+            // 12s"); a clock under every block only spaced the turn out.
+            .filter(|_| row.role != "Thinking");
         let has_meta = duration.is_some() || timestamp.is_some();
         let mut footer = self.timestamp_footer(duration.map(Into::into), timestamp);
         // A fleet/supervisor wake arrives as a user turn but is not the user

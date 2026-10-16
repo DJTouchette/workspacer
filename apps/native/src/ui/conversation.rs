@@ -4,11 +4,11 @@
 use super::*;
 
 /// How far each sloped side of the status tab runs in from its base.
-const NOTCH_SLANT: f32 = 12.;
+const NOTCH_SLANT: f32 = 14.;
 
 /// The status tab's height above the composer; shorter where space is tight.
 fn notch_height(compact: bool) -> f32 {
-    if compact { 18. } else { 22. }
+    if compact { 18. } else { 26. }
 }
 
 type Point = gpui::Point<gpui::Pixels>;
@@ -64,7 +64,10 @@ fn notch_paths(
     };
     let mut fill = gpui::PathBuilder::fill();
     trace(&mut fill);
-    let floor = bounds.origin.y + gpui::px(height * zoom() + 1.);
+    // A pixel past the border row: ending flush with it left an antialiased
+    // sliver of the border showing under the label at fractional scales.
+    // The overlap lands on the composer's own surface colour.
+    let floor = bounds.origin.y + gpui::px(height * zoom() + 2.);
     fill.line_to(gpui::point(bounds.right(), floor));
     fill.line_to(gpui::point(bounds.left(), floor));
     fill.close();
@@ -1306,7 +1309,7 @@ impl Workspace {
                     // The extra (unzoomed) pixel covers the composer's border.
                     .h(px(height) + gpui::px(1.))
                     .max_w(px(320.))
-                    .px(px(NOTCH_SLANT + 6.))
+                    .px(px(NOTCH_SLANT + 10.))
                     .flex()
                     .items_center()
                     .gap(px(6.))

@@ -140,8 +140,10 @@ fn panel(p: Palette) -> Div {
 }
 
 impl Workspace {
-    /// The model's reasoning: a quiet, collapsed "Thinking" line that opens
-    /// into its text. It grows in place while it streams.
+    /// The model's reasoning: a quiet, collapsed line that opens into its
+    /// text. While it streams the line pulses beside the spinner and follows
+    /// the newest line of thought; once something follows it, it reads
+    /// "Thought for 12s" with the block's opening line as its title.
     pub(super) fn render_thinking(
         &self,
         row: &Row,
@@ -152,14 +154,35 @@ impl Workspace {
         let p = self.appearance.palette();
         let open_key = format!("{key}-thinking");
         let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
-        let preview = row
+        let rows = &self.view.transcript.rows;
+        let at = rows
+            .binary_search_by_key(&row.key, |r| r.key)
+            .ok()
+            .filter(|ix| rows[*ix].key == row.key);
+        let next = at.and_then(|ix| rows.get(ix + 1));
+        let working = self.view.connected && self.selected_session().is_some_and(|s| s.working());
+        let live = working && next.is_none();
+        let label = if live {
+            "Thinking".to_owned()
+        } else {
+            next.and_then(|n| Some(n.timestamp_ms? - row.timestamp_ms?))
+                .filter(|ms| (1_000..3_600_000).contains(ms))
+                .map(|ms| format!("Thought for {}", timing::duration_label(ms)))
+                .unwrap_or_else(|| "Thought".into())
+        };
+        let mut lines = row
             .text
             .lines()
-            .map(str::trim)
-            .find(|l| !l.is_empty())
-            .unwrap_or("")
-            .to_owned();
+            .map(thinking_line)
+            .filter(|l| !l.is_empty());
+        let preview = if live {
+            lines.next_back()
+        } else {
+            lines.next()
+        }
+        .unwrap_or_default();
         let toggle_key = open_key.clone();
+        let title = div().flex_shrink_0().child(label);
         div()
             .debug_selector(|| "thinking-row".into())
             .w_full()
@@ -175,26 +198,59 @@ impl Workspace {
                     .debug_selector(|| "thinking-toggle".into())
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .gap(px(6.))
                     .min_w_0()
                     .cursor_pointer()
                     .hover(move |s| s.text_color(rgb(p.text)))
                     .child(
-                        Icon::new(if open {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        })
-                        .size(px(11.)),
+                        // Wide enough for the spinner, so the label never
+                        // moves when the block finishes.
+                        div()
+                            .w(px(22.))
+                            .flex()
+                            .justify_center()
+                            .flex_shrink_0()
+                            .child(if live && !open {
+                                brand_spinner(
+                                    10.,
+                                    p,
+                                    SharedString::from(format!("{open_key}-spin")),
+                                )
+                            } else {
+                                div().child(
+                                    Icon::new(if open {
+                                        IconName::ChevronDown
+                                    } else {
+                                        IconName::ChevronRight
+                                    })
+                                    .size(px(11.)),
+                                )
+                            }),
                     )
-                    .child(div().flex_shrink_0().child("Thinking"))
+                    .child(if live {
+                        // A slow breath, so the line reads as alive without
+                        // pulling the eye from the reply.
+                        title
+                            .font_weight(FontWeight::MEDIUM)
+                            .with_animation(
+                                SharedString::from(format!("{open_key}-pulse")),
+                                Animation::new(std::time::Duration::from_millis(1800))
+                                    .repeat()
+                                    .with_easing(gpui::bounce(gpui::ease_in_out)),
+                                |d, t| d.opacity(0.55 + 0.45 * t),
+                            )
+                            .into_any_element()
+                    } else {
+                        title.into_any_element()
+                    })
                     .when(!open && !preview.is_empty(), |d| {
                         d.child(
                             div()
+                                .debug_selector(|| "thinking-preview".into())
                                 .min_w_0()
                                 .truncate()
                                 .text_color(rgb(p.disabled))
-                                .child(format!("· {preview}")),
+                                .child(preview),
                         )
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -206,16 +262,25 @@ impl Workspace {
                     div()
                         .debug_selector(|| "thinking-body".into())
                         .mt_1()
-                        .pl(px(12.))
-                        .border_l_2()
+                        // Under the label, not the chevron: the rule hangs
+                        // from the icon's centre.
+                        .ml(px(10.5))
+                        .pl(px(16.5))
+                        .py_0p5()
+                        .border_l_1()
                         .border_color(rgb(p.border))
-                        .text_color(rgb(p.muted))
-                        .child(super::transcript::literal(
-                            format!("{key}-thinking-text"),
-                            &row.text,
-                            window,
-                            cx,
-                        )),
+                        // Reasoning is Markdown (bold step titles, lists,
+                        // code); render it as the reply would, but muted.
+                        .child(
+                            self.render_markdown(
+                                &format!("{key}-thinking-text"),
+                                &row.text,
+                                window,
+                                cx,
+                            )
+                            .text_color(rgb(p.muted))
+                            .line_height(gpui::relative(1.55)),
+                        ),
                 )
             })
     }
@@ -1213,14 +1278,8 @@ impl Workspace {
                 .into_any_element(),
             );
         }
-        if let Some(hook) = session.status.hooks.last() {
-            let tip = SharedString::from(format!("Running hook {} ({})", hook.name, hook.event));
-            chips.push(
-                chip("title-hook", format!("Hook: {}", hook.name), p.muted)
-                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                    .into_any_element(),
-            );
-        }
+        // Running hooks stay out of the title: most finish in a moment, so
+        // a chip for each one only flickered the bar.
         let failed = session.status.failed_servers();
         if failed > 0 {
             chips.push(
@@ -1264,5 +1323,34 @@ impl Workspace {
             );
         }
         chips
+    }
+}
+
+/// One line of reasoning as a one-line preview: summaries often head each
+/// step with a bold or `#` title, which reads as noise when shown inline.
+fn thinking_line(line: &str) -> String {
+    let line = line.trim().trim_start_matches('#').trim();
+    let line = line
+        .strip_prefix("**")
+        .and_then(|l| l.strip_suffix("**"))
+        .unwrap_or(line);
+    line.trim().to_owned()
+}
+
+#[cfg(test)]
+mod thinking_tests {
+    use super::thinking_line;
+
+    #[test]
+    fn previews_drop_heading_marks() {
+        assert_eq!(
+            thinking_line("  **Planning the fix**  "),
+            "Planning the fix"
+        );
+        assert_eq!(thinking_line("## Reading the lexer"), "Reading the lexer");
+        assert_eq!(
+            thinking_line("Look at **this** first"),
+            "Look at **this** first"
+        );
     }
 }

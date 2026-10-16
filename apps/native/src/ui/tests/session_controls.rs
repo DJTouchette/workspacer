@@ -466,7 +466,7 @@ fn codex_plan_mode_sits_beside_approvals_and_shows_on_the_title(cx: &mut TestApp
 }
 
 #[gpui::test]
-fn the_title_reports_compacting_hooks_mcp_failures_and_fast_mode(cx: &mut TestAppContext) {
+fn the_title_reports_compacting_mcp_failures_and_fast_mode_but_not_hooks(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.simulate_resize(size(px(1400.), px(800.)));
     show(
@@ -484,13 +484,14 @@ fn the_title_reports_compacting_hooks_mcp_failures_and_fast_mode(cx: &mut TestAp
     effects(&mut commands);
     for chip in [
         "title-compacting",
-        "title-hook",
         "title-mcp",
         "title-fast",
         "title-access",
     ] {
         assert!(visual.debug_bounds(chip).is_some(), "{chip}");
     }
+    // A running hook is too brief to earn a chip.
+    assert!(visual.debug_bounds("title-hook").is_none());
     tap(&mut visual, "title-fast");
     assert!(matches!(
         acts(&mut commands).as_slice(),
