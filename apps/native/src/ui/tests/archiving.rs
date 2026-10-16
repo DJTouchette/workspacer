@@ -29,6 +29,8 @@ fn sidebar_archive_hides_session_without_selecting_or_stopping_it(cx: &mut TestA
             assert_eq!(this.visible_sessions(cx), vec![0, 1]);
         })
     });
+    // Later saves (teardown included) would write it back.
+    visual.update(|_, cx| workspace.update(cx, |this, _| this.settings_path = None));
     let _ = std::fs::remove_file(path);
 }
 
@@ -110,6 +112,8 @@ fn sidebar_archive_is_shared_through_the_hub_and_never_stops(cx: &mut TestAppCon
             .iter()
             .all(|c| matches!(c, Command::Request(Request::SetArchive { .. })))
     );
+    // Later saves (teardown included) would write it back.
+    visual.update(|_, cx| workspace.update(cx, |this, _| this.settings_path = None));
     let _ = std::fs::remove_file(path);
 }
 
@@ -153,6 +157,8 @@ fn device_archives_move_to_the_hub_once_and_stay_hidden(cx: &mut TestAppContext)
         })
     });
     assert!(Settings::load(&path).unwrap().archived.is_empty());
+    // Later saves (teardown included) would write it back.
+    visual.update(|_, cx| workspace.update(cx, |this, _| this.settings_path = None));
     let _ = std::fs::remove_file(path);
 }
 
