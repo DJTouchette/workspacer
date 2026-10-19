@@ -83,6 +83,10 @@ fn rail_row(depth: usize, active: bool, p: Palette) -> Div {
 }
 
 /// A provider mark in a ring whose color carries the session's state.
+///
+/// Badges added to the returned div sit beside the ring rather than inside
+/// it: GPUI paints a div's border over its children, which would cut the
+/// ring across the loader and provider marks.
 fn rail_avatar(
     glyph: AvatarGlyph,
     size: f32,
@@ -91,36 +95,36 @@ fn rail_avatar(
     dim: bool,
     p: Palette,
 ) -> Div {
-    div()
-        .relative()
-        .size(px(size))
-        .flex_shrink_0()
-        .rounded_full()
-        .border_2()
-        .border_color(rgb(ring))
-        .bg(rgb(if active { p.selected } else { p.base }))
-        .hover(move |s| s.bg(rgb(p.selected)))
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .flex()
-                .when(dim, |d| d.opacity(0.5))
-                .child(match glyph {
-                    AvatarGlyph::Initials(initials) => div()
-                        .text_size(px((size * 0.38).round()))
-                        .line_height(px((size * 0.5).round()))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(if active { p.text } else { p.muted }))
-                        .child(initials)
-                        .into_any_element(),
-                    AvatarGlyph::Icon(icon) => Icon::new(icon)
-                        .size(px((size * 0.5).round()))
-                        .text_color(rgb(p.accent))
-                        .into_any_element(),
-                }),
-        )
+    div().relative().size(px(size)).flex_shrink_0().child(
+        div()
+            .size_full()
+            .rounded_full()
+            .border_2()
+            .border_color(rgb(ring))
+            .bg(rgb(if active { p.selected } else { p.base }))
+            .hover(move |s| s.bg(rgb(p.selected)))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .flex()
+                    .when(dim, |d| d.opacity(0.5))
+                    .child(match glyph {
+                        AvatarGlyph::Initials(initials) => div()
+                            .text_size(px((size * 0.38).round()))
+                            .line_height(px((size * 0.5).round()))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(if active { p.text } else { p.muted }))
+                            .child(initials)
+                            .into_any_element(),
+                        AvatarGlyph::Icon(icon) => Icon::new(icon)
+                            .size(px((size * 0.5).round()))
+                            .text_color(rgb(p.accent))
+                            .into_any_element(),
+                    }),
+            ),
+    )
 }
 
 /// The working loader, tucked under a rail mark's lower edge.
