@@ -286,6 +286,22 @@ fn check_keys(value: &Value, known: &[&str]) -> Result<()> {
     }
     Ok(())
 }
+/// Some MCP clients send nested objects JSON-encoded when a tool's schema
+/// leaves their type open (`"trigger": "{\"kind\":\"interval\",…}"`). A
+/// string field that decodes to an object is taken as that object; anything
+/// else is left for validation to refuse.
+fn decode_stringified(mut job: Value) -> Value {
+    for key in ["trigger", "action"] {
+        if let Some(decoded) = job[key]
+            .as_str()
+            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+            .filter(Value::is_object)
+        {
+            job[key] = decoded;
+        }
+    }
+    job
+}
 fn check_job_keys(value: &Value) -> Result<()> {
     check_keys(value, JOB_FIELDS)?;
     check_keys(&value["trigger"], TRIGGER_FIELDS)
@@ -601,6 +617,7 @@ impl Service {
                 Ok(json!({"jobs":jobs}))
             }
             "jobs.upsert" | "jobs.propose" => {
+                let params = decode_stringified(params);
                 check_job_keys(&params)?;
                 let mut job: Job = serde_json::from_value(params)?;
                 let proposal = method == "jobs.propose";

@@ -295,6 +295,26 @@ async fn real_scheduler_polls_hand_edits_without_read_rpc_and_preserves_them_on_
     hub.shutdown().unwrap();
 }
 
+#[tokio::test]
+async fn a_proposal_with_json_encoded_trigger_and_action_is_decoded() {
+    let root = tempfile::tempdir().unwrap();
+    let hub = crate::Hub::start(Options::default()).unwrap();
+    hub.ready().await.unwrap();
+    let (service, _queued) = Service::open(root.path().join("jobs.json"), hub.handle());
+    let mut spec = row("", 60);
+    spec["trigger"] = json!(spec["trigger"].to_string());
+    spec["action"] = json!(spec["action"].to_string());
+    let proposal = service.call(&owner(), "jobs.propose", spec).unwrap();
+    assert_eq!(proposal["trigger"]["kind"], "interval");
+    assert_eq!(proposal["trigger"]["everyMinutes"], 60);
+    assert_eq!(proposal["action"]["call"]["method"], "fixture.job");
+    // A string that is not an encoded object still fails validation.
+    let mut bad = row("", 60);
+    bad["trigger"] = json!("every hour");
+    assert!(service.call(&owner(), "jobs.propose", bad).is_err());
+    hub.shutdown().unwrap();
+}
+
 #[test]
 fn malformed_trigger_action_and_context_shapes_never_validate() {
     let base = row("fixture", 1);
