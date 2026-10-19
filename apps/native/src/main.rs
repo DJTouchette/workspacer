@@ -207,7 +207,26 @@ fn log_to_file(data_dir: Option<PathBuf>) {
         .try_init();
 }
 
+/// The update helper starts in its own process group, which makes Windows
+/// ignore Ctrl+C in it and in everything it launches, this app included. A
+/// relaunched app would hand that on to every terminal shell, where Ctrl+C
+/// then does nothing. Restore normal Ctrl+C handling before anything spawns.
+#[cfg(windows)]
+fn restore_ctrl_c() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetConsoleCtrlHandler(handler: *const std::ffi::c_void, add: i32) -> i32;
+    }
+    // SAFETY: a null handler with FALSE only clears this process's
+    // ignore-Ctrl+C attribute; no callback is registered.
+    unsafe {
+        SetConsoleCtrlHandler(std::ptr::null(), 0);
+    }
+}
+
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    restore_ctrl_c();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args = Args::parse();
     #[cfg(feature = "rust-hub")]
