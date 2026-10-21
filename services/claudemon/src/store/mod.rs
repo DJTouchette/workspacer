@@ -152,6 +152,31 @@ impl Db {
         Ok(row_id)
     }
 
+    /// [`record_event_with_spawn_facts`](Self::record_event_with_spawn_facts)
+    /// for a burst of events, committed together. Each event sits in its own
+    /// savepoint, so one that fails is rolled back alone and reported in place.
+    pub fn record_events_with_spawn_facts<'a>(
+        &self,
+        events: impl IntoIterator<Item = (&'a HookEvent, SpawnFacts<'a>)>,
+    ) -> Result<Vec<Result<i64>>> {
+        let mut guard = self.conn.lock().expect("db mutex poisoned");
+        let mut tx = guard.transaction()?;
+        let mut results = Vec::new();
+        for (event, facts) in events {
+            let mut savepoint = tx.savepoint()?;
+            let result = upsert_session_tx(&savepoint, event, facts)
+                .and_then(|()| insert_event_tx(&savepoint, event));
+            if result.is_ok() {
+                savepoint.commit()?;
+            } else {
+                savepoint.rollback()?;
+            }
+            results.push(result);
+        }
+        tx.commit()?;
+        Ok(results)
+    }
+
     /// Record one keep-warm heartbeat (see `daemon::heartbeat`). Returns the
     /// stored row with its assigned id.
     pub fn insert_heartbeat(&self, row: &HeartbeatRow) -> Result<HeartbeatRow> {
@@ -408,11 +433,7 @@ pub struct SpawnFacts<'a> {
     pub config_root: Option<&'a str>,
 }
 
-fn upsert_session_tx(
-    tx: &rusqlite::Transaction<'_>,
-    event: &HookEvent,
-    facts: SpawnFacts<'_>,
-) -> Result<()> {
+fn upsert_session_tx(tx: &Connection, event: &HookEvent, facts: SpawnFacts<'_>) -> Result<()> {
     let now = event_timestamp_unix(event);
     let session_id = &event.session_id;
     let cwd = event.cwd.as_deref().unwrap_or("");
@@ -523,7 +544,7 @@ fn upsert_session_tx(
     Ok(())
 }
 
-fn insert_event_tx(tx: &rusqlite::Transaction<'_>, event: &HookEvent) -> Result<i64> {
+fn insert_event_tx(tx: &Connection, event: &HookEvent) -> Result<i64> {
     let ts = event_timestamp_unix(event);
     let tool_name = event
         .payload
@@ -624,6 +645,46 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn batched_events_commit_together_and_a_failure_rolls_back_alone() {
+        let db = Db::open(tempfile_path()).unwrap();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER refuse BEFORE INSERT ON events WHEN NEW.session_id = 'bad'
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            )
+            .unwrap();
+        let events = [
+            ev("SessionStart", "a"),
+            ev("SessionStart", "bad"),
+            ev("UserPromptSubmit", "a"),
+            ev("SessionStart", "b"),
+        ];
+        let results = db
+            .record_events_with_spawn_facts(events.iter().map(|e| (e, SpawnFacts::default())))
+            .unwrap();
+        assert_eq!(
+            results.iter().map(Result::is_ok).collect::<Vec<_>>(),
+            [true, false, true, true]
+        );
+        let count = |sql: &str| -> i64 {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(sql, [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(count("SELECT COUNT(*) FROM events"), 3);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sessions WHERE id = 'bad'"),
+            0,
+            "a failed event's session upsert must roll back with it"
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM sessions"), 2);
     }
 
     #[test]

@@ -553,6 +553,9 @@ fn spawn_maintenance_task(store: SessionStore, db: Db) {
     });
 }
 
+/// Upper bound on hook events committed in one transaction.
+const PERSIST_BATCH: usize = 256;
+
 fn spawn_persistence_task(
     db: Db,
     store: SessionStore,
@@ -562,7 +565,23 @@ fn spawn_persistence_task(
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    let db_inner = db.clone();
+                    // Hooks arrive in bursts (a tool call is Pre+Post plus
+                    // notifications); commit whatever is already queued as
+                    // one transaction instead of a commit each.
+                    let mut batch = vec![event];
+                    let mut lagged = 0;
+                    while batch.len() < PERSIST_BATCH {
+                        match rx.try_recv() {
+                            Ok(event) => batch.push(event),
+                            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                                lagged += n
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    if lagged > 0 {
+                        tracing::warn!(skipped = lagged, "persistence task lagged");
+                    }
                     // The model this session was ASKED for, carried into the
                     // same statement that CREATES its row. A spawn records it
                     // in memory before any row exists (rows are born from the
@@ -570,28 +589,44 @@ fn spawn_persistence_task(
                     // nothing and the row would then be inserted with a NULL —
                     // and a daemon restart would revert a 1M session to the
                     // table's guess for its marker-stripped transcript id.
-                    let requested_selection = store.requested_model_selection(&event.session_id);
                     // …and WHICH ACCOUNT it bills against, for the same reason
                     // and through the same statement. `None` here is a real
                     // answer — a session the daemon did not spawn genuinely has
                     // no attribution, and NULL says so rather than defaulting
                     // it onto the primary account.
-                    let config_root = store.config_root(&event.session_id);
+                    let batch: Vec<_> = batch
+                        .into_iter()
+                        .map(|event| {
+                            let selection = store.requested_model_selection(&event.session_id);
+                            let config_root = store.config_root(&event.session_id);
+                            (event, selection, config_root)
+                        })
+                        .collect();
+                    let db_inner = db.clone();
                     // Run the synchronous sqlite write on the blocking pool so
                     // we don't tie up an async worker on file I/O.
                     let result = tokio::task::spawn_blocking(move || {
-                        db_inner.record_event_with_spawn_facts(
-                            &event,
-                            crate::store::SpawnFacts {
-                                requested_selection: requested_selection.as_ref(),
-                                config_root: config_root.as_deref(),
+                        db_inner.record_events_with_spawn_facts(batch.iter().map(
+                            |(event, selection, config_root)| {
+                                (
+                                    event,
+                                    crate::store::SpawnFacts {
+                                        requested_selection: selection.as_ref(),
+                                        config_root: config_root.as_deref(),
+                                    },
+                                )
                             },
-                        )
+                        ))
                     })
                     .await
                     .unwrap_or_else(|join_err| Err(anyhow::anyhow!(join_err)));
-                    if let Err(err) = result {
-                        tracing::warn!(?err, "persisting hook event failed");
+                    match result {
+                        Ok(results) => {
+                            for err in results.into_iter().filter_map(Result::err) {
+                                tracing::warn!(?err, "persisting hook event failed");
+                            }
+                        }
+                        Err(err) => tracing::warn!(?err, "persisting hook events failed"),
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
