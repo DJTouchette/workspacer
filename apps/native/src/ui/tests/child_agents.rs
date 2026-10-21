@@ -7,9 +7,9 @@ fn sidebar_nests_sessions_and_opens_native_child_from_another_parent(cx: &mut Te
     visual.update(|window, cx| workspace.update(cx, |this, cx| {
         let mut next = state("b");
         let sessions = Arc::make_mut(&mut next.sessions);
-        sessions[0].subagents = serde_json::json!([{
+        sessions[0].subagents = Arc::new(serde_json::json!([{
             "id": "codex-child", "description": "Native research", "status": "running", "model": "gpt-5"
-        }]);
+        }]));
         sessions.insert(0, Session { id: "grandchild".into(), parent_session_id: "child".into(), ..Default::default() });
         sessions.insert(0, Session { id: "child".into(), parent_session_id: "a".into(), ..Default::default() });
         this.update_view(Arc::new(next), window, cx);
@@ -63,9 +63,9 @@ fn viewed_subagent_reads_as_its_own_chat_without_a_composer(cx: &mut TestAppCont
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
             let mut next = state("a");
-            Arc::make_mut(&mut next.sessions)[0].subagents = serde_json::json!([{
+            Arc::make_mut(&mut next.sessions)[0].subagents = Arc::new(serde_json::json!([{
                 "id": "task-1", "description": "Audit the parser", "status": "running", "model": "claude-sonnet-4-6"
-            }]);
+            }]));
             next.child = Some(wks_native::controller::ChildTarget {
                 parent: "a".into(),
                 agent: "task-1".into(),
@@ -117,10 +117,10 @@ fn subagent_overview_holds_its_place_and_collapses_when_all_finish(cx: &mut Test
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 let mut next = state("a");
-                Arc::make_mut(&mut next.sessions)[0].subagents = serde_json::json!([
+                Arc::make_mut(&mut next.sessions)[0].subagents = Arc::new(serde_json::json!([
                     {"id":"t1","description":"Audit the parser","status":status,"startedAt":"2026-10-02T10:00:15Z"},
                     {"id":"t2","description":"Check the tests","status":status,"startedAt":"2026-10-02T10:00:16Z"}
-                ]);
+                ]));
                 next.transcript.snapshot(ConversationSnapshot {
                     seq: items.len() as u64,
                     first_seq: 1,

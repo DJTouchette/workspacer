@@ -18,9 +18,11 @@ pub struct Session {
     pub transport: String,
     pub provider: String,
     pub parent_session_id: String,
-    pub skills: Value,
-    pub subagents: Value,
-    pub workflows: Value,
+    /// Shared, not copied: the session list is rebuilt whenever any session
+    /// changes, and these inventories are a session's largest fields.
+    pub skills: Arc<Value>,
+    pub subagents: Arc<Value>,
+    pub workflows: Arc<Value>,
     pub model: String,
     /// Resolved model the runtime reports (`claude-opus-5-5`); never cleared
     /// by snapshots that omit it, unlike the selection alias in `model`.
@@ -470,7 +472,10 @@ impl Session {
             self.slash_commands = SlashCommand::parse(commands);
         }
         if let Some(skills) = value.pointer("/statusLine/capabilities/inventory/skills") {
-            self.skills = bounded_inventory(skills, &["name", "description", "origin", "path"]);
+            replace_shared(
+                &mut self.skills,
+                bounded_inventory(skills, &["name", "description", "origin", "path"]),
+            );
         }
         if let Some(items) = value.get("subagents") {
             // Keep unfinished children before filling remaining slots with
@@ -539,7 +544,7 @@ impl Session {
                     }
                 }
             }
-            self.subagents = projected;
+            replace_shared(&mut self.subagents, projected);
         }
         if let Some(count) = ["background_tasks", "backgroundTasks"]
             .iter()
@@ -556,9 +561,12 @@ impl Session {
             self.tasks = crate::background_tasks::parse(list);
         }
         if let Some(items) = value.get("workflows") {
-            self.workflows = bounded_inventory(
-                items,
-                &["runId", "toolUseId", "name", "description", "status"],
+            replace_shared(
+                &mut self.workflows,
+                bounded_inventory(
+                    items,
+                    &["runId", "toolUseId", "name", "description", "status"],
+                ),
             );
         }
         if value.get("status").and_then(Value::as_str) == Some("ended") {
@@ -842,6 +850,14 @@ fn prioritized_children(value: &Value, previous: &Value) -> Value {
         keep.insert(ix);
     }
     Value::Array(keep.into_iter().map(|ix| rows[ix].clone()).collect())
+}
+
+/// Swap in `value` only when it differs, so an unchanged inventory keeps
+/// sharing the allocation every published session list points at.
+fn replace_shared(field: &mut Arc<Value>, value: Value) {
+    if **field != value {
+        *field = Arc::new(value);
+    }
 }
 
 fn bounded_inventory(value: &Value, fields: &[&str]) -> Value {

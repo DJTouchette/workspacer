@@ -1704,7 +1704,7 @@ impl Worker {
                     ("workflows", &session.workflows),
                 ] {
                     if data.get(key).is_some() {
-                        merged[key] = value.clone();
+                        merged[key] = Value::clone(value);
                     }
                 }
             }

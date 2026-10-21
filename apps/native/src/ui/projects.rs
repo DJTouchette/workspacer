@@ -26,6 +26,26 @@ impl PickRow {
     }
 }
 
+/// Holds what it was built from, so an `Arc` it names cannot be freed and
+/// its address reused by a different list.
+struct KnownKey {
+    registry: Option<Arc<serde_json::Value>>,
+    sessions: Arc<Vec<Session>>,
+    bookmarks: Vec<String>,
+}
+
+impl KnownKey {
+    fn matches(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.sessions, &other.sessions)
+            && match (&self.registry, &other.registry) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.bookmarks == other.bookmarks
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ProjectUi {
     /// The working directory the next launch uses. Empty = not chosen yet.
@@ -34,6 +54,9 @@ pub(super) struct ProjectUi {
     pub cursor: usize,
     /// The newest registry the hub returned, from a read or a verified write.
     pub registry: Option<Arc<serde_json::Value>>,
+    /// `known_projects` for the registry, session list and bookmarks it was
+    /// built from (by pointer): views ask for it per publish and per row.
+    known: std::cell::RefCell<Option<(KnownKey, Arc<Vec<KnownProject>>)>>,
     pub registry_revision: u64,
     pub read_receipt: u64,
     pub registry_error: Option<String>,
@@ -134,17 +157,36 @@ impl Workspace {
     }
 
     pub(super) fn known_projects(&self) -> Vec<KnownProject> {
-        projects::list(
+        Vec::clone(&self.known_projects_shared())
+    }
+
+    fn known_projects_shared(&self) -> Arc<Vec<KnownProject>> {
+        let bookmarks = self.settings.bookmarks(&self.project_scope);
+        let key = KnownKey {
+            registry: self.projects.registry.clone(),
+            sessions: self.view.sessions.clone(),
+            bookmarks: bookmarks.to_vec(),
+        };
+        let mut known = self.projects.known.borrow_mut();
+        if let Some((held, rows)) = known.as_ref()
+            && held.matches(&key)
+        {
+            return rows.clone();
+        }
+        let rows = Arc::new(projects::list(
             self.projects.registry.as_deref(),
             &self.view.sessions,
-            self.settings.bookmarks(&self.project_scope),
-        )
+            bookmarks,
+        ));
+        *known = Some((key, rows.clone()));
+        rows
     }
 
     pub(super) fn known_project(&self, path: &str) -> Option<KnownProject> {
-        self.known_projects()
-            .into_iter()
+        self.known_projects_shared()
+            .iter()
             .find(|p| projects::same_dir(&p.path, path))
+            .cloned()
     }
 
     pub(super) fn pick_rows(&self, cx: &App) -> Vec<PickRow> {
@@ -644,9 +686,9 @@ impl Workspace {
             return;
         }
         let files: Vec<String> = self
-            .known_projects()
-            .into_iter()
-            .filter_map(|p| p.icon_file)
+            .known_projects_shared()
+            .iter()
+            .filter_map(|p| p.icon_file.clone())
             .filter(|file| !self.projects.icons.contains_key(file))
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()

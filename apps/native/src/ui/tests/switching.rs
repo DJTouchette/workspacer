@@ -20,10 +20,10 @@ fn replies(texts: &[String]) -> Transcript {
 
 fn family() -> View {
     let mut view = state("a");
-    Arc::make_mut(&mut view.sessions)[0].subagents = serde_json::json!([
+    Arc::make_mut(&mut view.sessions)[0].subagents = Arc::new(serde_json::json!([
         {"id": "t1", "description": "Long audit", "status": "complete", "completedAt": 2000},
         {"id": "t2", "description": "Short check", "status": "complete", "completedAt": 2000}
-    ]);
+    ]));
     view
 }
 

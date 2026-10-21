@@ -246,6 +246,27 @@ fn brand_mark(size: f32, p: Palette) -> Div {
         .child("}")
 }
 
+/// Which rows a view shows, cheaply: what row-derived state is keyed on.
+type RowsSignature = (
+    Option<String>,
+    Option<String>,
+    bool,
+    u64,
+    usize,
+    Option<u64>,
+);
+
+fn rows_signature(view: &View) -> RowsSignature {
+    (
+        view.selected.clone(),
+        view.child.as_ref().map(|child| child.agent.clone()),
+        view.loading,
+        view.transcript.revision,
+        view.transcript.rows.len(),
+        view.transcript.rows.back().map(|row| row.key),
+    )
+}
+
 // Electron BrandSpinner: an 0.8s eased journey in each direction.
 fn brand_spinner(size: f32, p: Palette) -> Div {
     let bar_width = (size * 0.18).max(2.);
@@ -630,6 +651,9 @@ pub struct Workspace {
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
     duration_labels: HashMap<u64, String>,
+    /// What `duration_labels` was built from: the rows and the selected
+    /// session's completed turns.
+    duration_labels_key: Option<(RowsSignature, Option<(usize, Option<i64>)>)>,
     new_session: bool,
     launch_details_open: bool,
     provider: &'static str,
@@ -930,6 +954,7 @@ impl Workspace {
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
             duration_labels: HashMap::new(),
+            duration_labels_key: None,
             new_session: false,
             launch_details_open: false,
             provider: "claude",
@@ -1232,7 +1257,11 @@ impl Workspace {
             self.navigation_selected = None;
         }
         let reconnected = !self.view.connected && view.connected;
-        if !view.loading {
+        // Derived from the rows: rebuilt only when they changed. Revisions
+        // restart on reselection and reconnects, so the count and last row
+        // key take part too.
+        let rows_changed = rows_signature(&self.view) != rows_signature(&view);
+        if !view.loading && rows_changed && !self.tool_expansion.is_empty() {
             let identities = view
                 .transcript
                 .rows
@@ -1290,13 +1319,27 @@ impl Workspace {
                 }
             }
         }
-        self.duration_labels = view
+        let turns = view
             .selected
             .as_ref()
-            .filter(|_| view.child.is_none())
             .and_then(|id| self.turn_clocks.get(id))
-            .map(|clock| clock.message_labels(&view.transcript))
-            .unwrap_or_default();
+            .map(|clock| {
+                (
+                    clock.completed.len(),
+                    clock.completed.back().map(|t| t.ended_ms),
+                )
+            });
+        let labels_key = (rows_signature(&view), turns);
+        if self.duration_labels_key.as_ref() != Some(&labels_key) {
+            self.duration_labels_key = Some(labels_key);
+            self.duration_labels = view
+                .selected
+                .as_ref()
+                .filter(|_| view.child.is_none())
+                .and_then(|id| self.turn_clocks.get(id))
+                .map(|clock| clock.message_labels(&view.transcript))
+                .unwrap_or_default();
+        }
         self.sync_projects(&view);
         self.view = view;
         self.resume_summary_handoff(window, cx);
