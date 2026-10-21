@@ -243,6 +243,65 @@ pub(crate) async fn install(
     Ok((options, Some(task)))
 }
 
+/// Task history rewrites (with fsync) on every metrics tick of a dispatched
+/// worker. Lifecycle transitions are recorded at once; usage and statusLine
+/// churn waits for the periodic full record, and is flushed if the observer
+/// stops first.
+struct DeferredHistory {
+    history: Option<Arc<super::task_store::TaskStore>>,
+    recorded: BTreeMap<String, Value>,
+    pending: BTreeMap<String, Value>,
+}
+impl DeferredHistory {
+    fn new(history: Option<Arc<super::task_store::TaskStore>>) -> Self {
+        Self {
+            history,
+            recorded: BTreeMap::new(),
+            pending: BTreeMap::new(),
+        }
+    }
+    fn lifecycle(row: &Value) -> Value {
+        json!([
+            row.get("status"),
+            row.get("ambientState"),
+            row.get("pendingApproval"),
+            row.get("pendingQuestions"),
+        ])
+    }
+    /// Whether `row` must be recorded now; otherwise it is held for the tick.
+    fn urgent(&mut self, row: &Value) -> bool {
+        if self.history.is_none() {
+            return false;
+        }
+        let Some(id) = row["sessionId"].as_str() else {
+            return true;
+        };
+        let lifecycle = Self::lifecycle(row);
+        if self.recorded.get(id) == Some(&lifecycle) {
+            self.pending.insert(id.to_owned(), row.clone());
+            return false;
+        }
+        self.pending.remove(id);
+        self.recorded.insert(id.to_owned(), lifecycle);
+        true
+    }
+    /// The periodic full record covers everything pending.
+    fn recorded_all(&mut self, rows: &BTreeMap<String, Value>) {
+        self.pending.clear();
+        self.recorded.retain(|id, _| rows.contains_key(id));
+    }
+}
+impl Drop for DeferredHistory {
+    fn drop(&mut self) {
+        let rows: Vec<Value> = std::mem::take(&mut self.pending).into_values().collect();
+        if let (Some(history), false) = (&self.history, rows.is_empty())
+            && let Err(error) = history.observe_batch(&rows)
+        {
+            eprintln!("task history observation was not persisted: {error}");
+        }
+    }
+}
+
 fn segment(raw: &str) -> Result<&str> {
     if raw.is_empty()
         || raw == "."
@@ -499,6 +558,7 @@ impl Sessions {
         let mut status = self.engine.status();
         let mut lifecycle_retry = tokio::time::interval(std::time::Duration::from_secs(5));
         lifecycle_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut deferred = DeferredHistory::new(self.history.clone());
         loop {
             tokio::select! {
                 _ = lifecycle_retry.tick(), if self.lifecycle.is_some() || self.history.is_some() => {
@@ -507,7 +567,8 @@ impl Sessions {
                             eprintln!("session credential reconciliation failed; will retry: {error}");
                         }
                     }
-                    let rows=self.rows.read().unwrap().values().cloned().collect();
+                    // Every current row is recorded here, deferred metrics included.
+                    let rows={let rows=self.rows.read().unwrap();deferred.recorded_all(&rows);rows.values().cloned().collect()};
                     self.record_history(rows).await;
                 }
                 changed=status.changed()=>{
@@ -515,21 +576,29 @@ impl Sessions {
                 }
                 update=updates.recv()=>match update {
                     Ok(update)=>{
-                        if update.event == "SessionStart" { self.confirmed.forget(&update.session_id); }
-                        let path=format!("/sessions/{}",segment(&update.session_id)?);
-                        match self.request("GET",path,None).await {
-                            Ok(row)=>{
-                                if row["mode"] == "stopped" {
-                                    if let Some(lifecycle) = &self.lifecycle {
-                                        if let Err(error) = lifecycle.reconcile().await {
-                                            eprintln!("session credential revocation failed; will retry: {error}");
-                                        }
-                                    }
-                                }
-                                let _mutation = self.mutations.lock().await;
-                                if !self.dismissals.allows(&update.session_id, &self.generation(&update.session_id)) { continue; }
-                                let row=snapshots::compat(row);self.confirmed.observe(&row);let row=self.confirmed.enrich(row);self.rows.write().unwrap().insert(update.session_id,row.clone());self.record_history(vec![row.clone()]).await;self.publish(row).await?;}
-                            Err(error)=>{eprintln!("session projection refresh failed: {error}");self.seed(true).await?;}
+                        // Refresh each session once per burst: the projection is
+                        // re-read from the engine, so intermediate frames add nothing.
+                        let mut batch: Vec<(String, bool)> = Vec::new();
+                        let mut lagged = false;
+                        let mut next = Some(update);
+                        while let Some(update) = next.take() {
+                            let started = update.event == "SessionStart";
+                            match batch.iter_mut().find(|(id, _)| *id == update.session_id) {
+                                Some((_, start)) => *start |= started,
+                                None => batch.push((update.session_id, started)),
+                            }
+                            next = match updates.try_recv() {
+                                Ok(update) => Some(update),
+                                Err(broadcast::error::TryRecvError::Lagged(_)) => { lagged = true; None }
+                                Err(_) => None,
+                            };
+                        }
+                        for (id, started) in &batch {
+                            if *started { self.confirmed.forget(id); }
+                        }
+                        if lagged { self.seed(true).await?; continue; }
+                        for (id, _) in batch {
+                            if !self.refresh(id, &mut deferred).await? { break; }
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_))=>self.seed(true).await?,
@@ -537,6 +606,38 @@ impl Sessions {
                 }
             }
         }
+    }
+    /// Re-read one session's projection. False means the refresh fell back to
+    /// a full reseed, which already covers every other pending session.
+    async fn refresh(&self, id: String, deferred: &mut DeferredHistory) -> Result<bool> {
+        let path = format!("/sessions/{}", segment(&id)?);
+        let row = match self.request("GET", path, None).await {
+            Ok(row) => row,
+            Err(error) => {
+                eprintln!("session projection refresh failed: {error}");
+                self.seed(true).await?;
+                return Ok(false);
+            }
+        };
+        if row["mode"] == "stopped"
+            && let Some(lifecycle) = &self.lifecycle
+            && let Err(error) = lifecycle.reconcile().await
+        {
+            eprintln!("session credential revocation failed; will retry: {error}");
+        }
+        let _mutation = self.mutations.lock().await;
+        if !self.dismissals.allows(&id, &self.generation(&id)) {
+            return Ok(true);
+        }
+        let row = snapshots::compat(row);
+        self.confirmed.observe(&row);
+        let row = self.confirmed.enrich(row);
+        self.rows.write().unwrap().insert(id, row.clone());
+        if deferred.urgent(&row) {
+            self.record_history(vec![row.clone()]).await;
+        }
+        self.publish(row).await?;
+        Ok(true)
     }
     async fn close_agent(&self, params: Value) -> Result<Value> {
         let id = segment(params["sessionId"].as_str().unwrap_or(""))?;
@@ -1061,6 +1162,56 @@ fn signal_result(reply: &Value) -> Value {
 }
 
 #[cfg(test)]
+mod deferred_history_tests {
+    use super::*;
+
+    #[test]
+    fn metrics_churn_waits_but_lifecycle_records_at_once_and_drop_flushes() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let cwd = super::super::paths::canonicalize(&project).unwrap();
+        let cwd = cwd.to_str().unwrap();
+        let path = dir.path().join("history.json");
+        let store = Arc::new(super::super::task_store::TaskStore::open(path.clone()).unwrap());
+        let receipt = store
+            .accept(
+                json!({"owner":{"sessionId":"manager","cwd":cwd,"isWakeTarget":true,"status":"active"},
+                    "sessionId":"worker","projectCwd":cwd,"executionCwd":cwd}),
+                || Ok(()),
+            )
+            .unwrap()
+            .unwrap();
+        let task = receipt["taskId"].as_str().unwrap().to_owned();
+        let tokens = |store: &super::super::task_store::TaskStore| {
+            store.task(&task).unwrap().unwrap()["attempts"][0]["metrics"]["inputTokens"].clone()
+        };
+        let row = |status: &str, input: u64| {
+            json!({"sessionId":"worker","status":status,"ambientState":"busy",
+                "statusLine":{"totalInputTokens":input}})
+        };
+        let mut deferred = DeferredHistory::new(Some(store.clone()));
+        assert!(deferred.urgent(&row("active", 1)));
+        store.observe_batch(&[row("active", 1)]).unwrap();
+        let written = std::fs::read(&path).unwrap();
+        assert!(!deferred.urgent(&row("active", 2)));
+        assert!(!deferred.urgent(&row("active", 3)));
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            written,
+            "metrics wrote early"
+        );
+        drop(deferred);
+        assert_eq!(tokens(&store), 3, "final metrics lost on stop");
+        let mut deferred = DeferredHistory::new(Some(store.clone()));
+        assert!(deferred.urgent(&row("active", 3)));
+        assert!(!deferred.urgent(&row("active", 4)));
+        assert!(deferred.urgent(&row("ended", 4)), "transition deferred");
+        assert!(deferred.pending.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod signal_tests {
     use super::*;
 
@@ -1234,6 +1385,86 @@ mod projection_tests {
             rows.read().unwrap()["owned-fast"]["status"],
             "ended",
             "owned launch cannot disappear when both lifecycle edges were lost"
+        );
+        observer.abort();
+        let _ = observer.await;
+        hub.shutdown()?;
+        engine.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn queued_updates_for_one_session_refresh_it_once() -> Result<()> {
+        use claudemon::daemon::{
+            ServeConfig,
+            embedded::{EmbeddedDaemon, Options as EngineOptions},
+        };
+        let _single_engine = crate::backend::ENGINE_TEST_LOCK.lock().await;
+        let dir = tempfile::tempdir()?;
+        let mut engine = EmbeddedDaemon::start_with_options(
+            ServeConfig {
+                host: "127.0.0.1".into(),
+                hook_port: 0,
+                api_port: 0,
+                db_path: dir.path().join("state.db"),
+            },
+            EngineOptions {
+                usage_poll_on_boot: Some(false),
+            },
+        )?;
+        let ready = engine.ready().await?;
+        let client = engine.client();
+        let mut actual_updates = client.subscribe()?;
+        let hub = crate::Hub::start(Options::default())?;
+        hub.ready().await?;
+        let viewer = crate::client::Client::connect(&hub.handle()).await?;
+        let mut events = viewer.events();
+        viewer.topics(["agent.snapshot".into()].into()).await?;
+        let service = Arc::new(Sessions {
+            pull_requests: None,
+            dismissals: Default::default(),
+            confirmed: Default::default(),
+            tokens: None,
+            config_dir: None,
+            mutations: tokio::sync::Mutex::new(()),
+            engine: client.clone(),
+            rows: Default::default(),
+            remote_proxies: Default::default(),
+            layout: None,
+            upstream_layout: None,
+            hub: hub.handle(),
+            lifecycle: None,
+            review: None,
+            history: None,
+            replacements: None,
+            message_tracker: None,
+            requests: None,
+            wakes: None,
+            workflow_artifacts: None,
+            titles: None,
+            queue: Default::default(),
+        });
+        reqwest::Client::new()
+            .post(format!("http://{}/hook", ready.hook_addr))
+            .json(&json!({"hook_event_name":"SessionStart","session_id":"worker","cwd":dir.path()}))
+            .send()
+            .await?
+            .error_for_status()?;
+        let update = tokio::time::timeout(std::time::Duration::from_secs(2), actual_updates.recv())
+            .await??;
+        let (updates, receiver) = broadcast::channel(16);
+        for _ in 0..8 {
+            updates.send(update.clone())?;
+        }
+        let observer = tokio::spawn(service.clone().observe(receiver));
+        let snapshot =
+            tokio::time::timeout(std::time::Duration::from_secs(3), events.recv()).await??;
+        assert_eq!(snapshot.data.unwrap()["sessionId"], "worker");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(300), events.recv())
+                .await
+                .is_err(),
+            "a burst for one session published more than one snapshot"
         );
         observer.abort();
         let _ = observer.await;
