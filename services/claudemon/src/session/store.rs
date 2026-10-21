@@ -206,9 +206,7 @@ impl OutputBuffer {
             return;
         }
         let overflow = (self.bytes.len() + chunk.len()).saturating_sub(self.cap);
-        for _ in 0..overflow {
-            self.bytes.pop_front();
-        }
+        self.bytes.drain(..overflow);
         self.bytes.extend(chunk.iter().copied());
     }
 
@@ -1242,15 +1240,31 @@ impl SessionStore {
     /// [`evict_stale_stopped`](Self::evict_stale_stopped) with an injected clock,
     /// so tests can force the archive threshold without waiting a real week.
     fn evict_stale_stopped_at(&self, now_unix: i64) -> usize {
-        let mut removed = 0usize;
-        self.states.retain(|_, st| {
+        let mut removed = std::collections::HashSet::new();
+        self.states.retain(|id, st| {
             let archived = st.is_archived(now_unix);
             if archived {
-                removed += 1;
+                removed.insert(id.clone());
             }
             !archived
         });
-        removed
+        if removed.is_empty() {
+            return 0;
+        }
+        // EOF teardown keeps hook-id aliases with the row, and hook-only
+        // sessions never run that teardown at all. Once the row is gone its
+        // per-session bookkeeping has nothing left to serve.
+        self.aliases
+            .retain(|alias, canonical| !removed.contains(canonical) && !removed.contains(alias));
+        for id in &removed {
+            self.pending_messages.remove(id);
+            self.paste_modes.remove(id);
+            self.client_input_at.remove(id);
+            self.input_since.remove(id);
+            self.flush_epochs.remove(id);
+            self.term_sizes.remove(id);
+        }
+        removed.len()
     }
 
     // --- deferred-hook gateway ----------------------------------------------
@@ -4962,6 +4976,18 @@ mod tests {
     }
 
     #[test]
+    fn output_buffer_keeps_the_newest_cap_bytes() {
+        let mut buffer = OutputBuffer::new(4);
+        buffer.push(b"ab");
+        buffer.push(b"cde");
+        assert_eq!(buffer.snapshot(), b"bcde");
+        buffer.push(b"f");
+        assert_eq!(buffer.snapshot(), b"cdef");
+        buffer.push(b"0123456");
+        assert_eq!(buffer.snapshot(), b"3456");
+    }
+
+    #[test]
     fn evict_stale_stopped_drops_archived_but_keeps_live_and_fresh() {
         use super::super::state::ARCHIVE_AFTER_SECONDS;
         let store = SessionStore::new();
@@ -5033,7 +5059,21 @@ mod tests {
         }
 
         assert_eq!(store.states.len(), 5);
+        store.aliases.insert("hook-old1".into(), "old1".into());
+        store.aliases.insert("hook-live".into(), "live".into());
+        store.pending_messages.insert("old2".into(), vec![]);
+        store.pending_messages.insert("live".into(), vec![]);
+        store
+            .client_input_at
+            .insert("old3".into(), tokio::time::Instant::now());
+        store.paste_modes.insert("old3".into(), Default::default());
         let evicted = store.evict_stale_stopped_at(now);
+        assert!(!store.aliases.contains_key("hook-old1"), "alias leaked");
+        assert!(store.aliases.contains_key("hook-live"));
+        assert!(!store.pending_messages.contains_key("old2"));
+        assert!(store.pending_messages.contains_key("live"));
+        assert!(!store.client_input_at.contains_key("old3"));
+        assert!(!store.paste_modes.contains_key("old3"));
         assert_eq!(
             evicted, 3,
             "only the three archived stopped rows are dropped"
