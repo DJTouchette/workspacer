@@ -695,9 +695,9 @@ pub struct Connection {
     id: u64,
     handle: Handle,
     reliable: mpsc::Receiver<Frame>,
-    events: mpsc::Receiver<Frame>,
+    events: mpsc::Receiver<Arc<SharedEvent>>,
     desynced: Arc<Mutex<BTreeSet<String>>>,
-    desync_frames: VecDeque<Frame>,
+    desync_frames: VecDeque<Outgoing>,
     closed: watch::Receiver<bool>,
     release: mpsc::UnboundedSender<u64>,
 }
@@ -718,6 +718,11 @@ impl Connection {
         self.handle.submit(Command::Frame(self.id, Box::new(frame)))
     }
     pub async fn recv(&mut self) -> Option<Frame> {
+        self.recv_outgoing().await.map(Outgoing::into_frame)
+    }
+    /// Like `recv`, but bus events stay shared with every other subscriber so
+    /// network transports can reuse one serialization of large payloads.
+    pub(crate) async fn recv_outgoing(&mut self) -> Option<Outgoing> {
         if *self.closed.borrow() {
             return None;
         }
@@ -727,15 +732,16 @@ impl Connection {
         tokio::select! {
             biased;
             _ = self.closed.changed() => None,
-            frame = self.reliable.recv() => frame,
+            frame = self.reliable.recv() => frame.map(|frame| Outgoing::Frame(Box::new(frame))),
             frame = self.events.recv() => {
+                let frame = frame.map(Outgoing::Event);
                 let desynced = std::mem::take(&mut *self.desynced.lock().unwrap());
                 if frame.is_none() {None} else if desynced.is_empty() {frame} else if !desynced.iter().any(|t|t.starts_with("agent.conversation.")) {
                     // Preserve the established PTY byte-then-desync contract.
                     for topic in desynced {
                         if let Some(id)=topic.strip_prefix("pty.bytes.") {
                             let mut ev=Event::new("pty.desync","hub",json!({"sessionId":id}));ev.time=now();
-                            self.desync_frames.push_back(Frame{event:Some(ev),..Frame::op("event")});
+                            self.desync_frames.push_back(Outgoing::event(ev));
                         }
                     }
                     frame
@@ -746,9 +752,9 @@ impl Connection {
                     let mut retained=VecDeque::new();
                     let mut pending=Vec::new();if let Some(frame)=frame{pending.push(frame);}
                     let backlog=self.events.len();
-                    for _ in 0..backlog {if let Ok(frame)=self.events.try_recv(){pending.push(frame);}else{break;}}
+                    for _ in 0..backlog {if let Ok(shared)=self.events.try_recv(){pending.push(Outgoing::Event(shared));}else{break;}}
                     for frame in pending {
-                        if !frame.event.as_ref().is_some_and(|event|event.topic.starts_with("agent.conversation.")&&desynced.contains(&event.topic)){retained.push_back(frame);}
+                        if !frame.event_ref().is_some_and(|event|event.topic.starts_with("agent.conversation.")&&desynced.contains(&event.topic)){retained.push_back(frame);}
                     }
                     self.desync_frames.extend(retained);
                     for topic in desynced {
@@ -757,11 +763,79 @@ impl Connection {
                         }else if let Some(id)=topic.strip_prefix("pty.bytes."){
                             Event::new("pty.desync","hub",json!({"sessionId":id}))
                         }else{continue;};
-                        ev.time=now();self.desync_frames.push_back(Frame{event:Some(ev),..Frame::op("event")});
+                        ev.time=now();self.desync_frames.push_back(Outgoing::event(ev));
                     }
                     self.desync_frames.pop_front()
                 }
             }
+        }
+    }
+}
+
+/// One published event shared by every subscriber queue. Its JSON is built at
+/// most once, however many network peers forward it.
+#[derive(Debug)]
+pub(crate) struct SharedEvent {
+    event: Event,
+    json: std::sync::OnceLock<Option<String>>,
+}
+impl PartialEq for SharedEvent {
+    fn eq(&self, other: &Self) -> bool {
+        self.event == other.event
+    }
+}
+impl SharedEvent {
+    fn new(event: Event) -> Arc<Self> {
+        Arc::new(Self {
+            event,
+            json: std::sync::OnceLock::new(),
+        })
+    }
+    fn json(&self) -> Option<&str> {
+        self.json
+            .get_or_init(|| serde_json::to_string(&self.event).ok())
+            .as_deref()
+    }
+}
+
+pub(crate) enum Outgoing {
+    Frame(Box<Frame>),
+    Event(Arc<SharedEvent>),
+}
+impl Outgoing {
+    fn event(event: Event) -> Self {
+        Self::Event(SharedEvent::new(event))
+    }
+    fn event_ref(&self) -> Option<&Event> {
+        match self {
+            Self::Frame(frame) => frame.event.as_ref(),
+            Self::Event(shared) => Some(&shared.event),
+        }
+    }
+    fn into_frame(self) -> Frame {
+        match self {
+            Self::Frame(frame) => *frame,
+            Self::Event(shared) => Frame {
+                event: Some(Arc::try_unwrap(shared).map_or_else(|s| s.event.clone(), |s| s.event)),
+                ..Frame::op("event")
+            },
+        }
+    }
+    /// Wire JSON, identical to serializing `into_frame()`; event payloads are
+    /// spliced from the shared cache instead of re-encoded per connection.
+    pub(crate) fn to_json(&self) -> serde_json::Result<String> {
+        match self {
+            Self::Frame(frame) => serde_json::to_string(frame),
+            Self::Event(shared) => match shared.json() {
+                Some(json) => {
+                    let mut out = String::with_capacity(json.len() + 24);
+                    out.push_str(r#"{"op":"event","event":"#);
+                    out.push_str(json);
+                    out.push('}');
+                    Ok(out)
+                }
+                None => Err(serde::ser::Error::custom("event is not serializable")),
+            },
         }
     }
 }
@@ -1211,7 +1285,7 @@ struct Peer {
     identity: Identity,
     credential: Option<String>,
     reliable: mpsc::Sender<Frame>,
-    events: mpsc::Sender<Frame>,
+    events: mpsc::Sender<Arc<SharedEvent>>,
     closed: watch::Sender<bool>,
     topics: Vec<String>,
     demand: Vec<String>,
@@ -1338,6 +1412,8 @@ impl Core {
         if event.time.is_empty() || event.time == "0001-01-01T00:00:00Z" {
             event.time = now();
         }
+        let shared = SharedEvent::new(event);
+        let event = &shared.event;
         for peer in self.peers.values() {
             // Revocation/overflow marks a peer closed before the actor removes
             // it. Do not enqueue protected data or desync metadata in that gap.
@@ -1347,13 +1423,7 @@ impl Core {
             {
                 continue;
             }
-            if peer
-                .events
-                .try_send(Frame {
-                    event: Some(event.clone()),
-                    ..Frame::op("event")
-                })
-                .is_err()
+            if peer.events.try_send(shared.clone()).is_err()
                 && (event.topic.starts_with("pty.bytes.")
                     || (event.hub.is_empty() && event.topic.starts_with("agent.conversation.")))
             {

@@ -6,7 +6,7 @@ fn event(mail: &mut Mailbox) -> Event {
         .try_recv()
         .expect("expected enqueued event")
         .event
-        .unwrap()
+        .clone()
 }
 #[tokio::test]
 async fn matching_fanout_topic_changes_and_disconnect_close_actual_queues() {
@@ -147,6 +147,33 @@ async fn denied_and_closed_consumers_cost_no_event_slot_or_desync_bookkeeping() 
         "admission must not mute allowed events"
     );
     assert!(closed.events.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn fanout_shares_one_event_and_serializes_it_once() {
+    let mut core = core();
+    let mut a = peer(&mut core, 1, Identity::host("a"), 8);
+    let mut b = peer(&mut core, 2, Identity::host("b"), 8);
+    for (id, mail) in [(1, &mut a), (2, &mut b)] {
+        topics(&mut core, id, "subscribe", &["pty.bytes.*"]);
+        take(mail);
+    }
+    core.publish(Event::new(
+        "pty.bytes.one",
+        "fixture",
+        json!({"bytes":"QUJD","seq":1}),
+    ));
+    let first = a.events.try_recv().unwrap();
+    let second = b.events.try_recv().unwrap();
+    assert!(Arc::ptr_eq(&first, &second), "subscribers got deep copies");
+    let wire = Outgoing::Event(first.clone()).to_json().unwrap();
+    assert!(std::ptr::eq(first.json().unwrap(), second.json().unwrap()));
+    let expected = serde_json::to_string(&Outgoing::Event(second).into_frame()).unwrap();
+    assert_eq!(wire, expected);
+    assert_eq!(
+        Frame::decode(wire.as_bytes()).unwrap().event.unwrap(),
+        first.event
+    );
 }
 
 #[tokio::test]

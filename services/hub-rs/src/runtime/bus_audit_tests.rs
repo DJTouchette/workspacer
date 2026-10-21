@@ -5,7 +5,7 @@ use crate::auth::{Record, Scope};
 
 struct Mailbox {
     reliable: mpsc::Receiver<Frame>,
-    events: mpsc::Receiver<Frame>,
+    events: mpsc::Receiver<Arc<SharedEvent>>,
     closed: watch::Receiver<bool>,
 }
 fn core() -> Core {
@@ -848,7 +848,7 @@ async fn disk_revalidation_closes_revoked_downgraded_and_facade_or_provider_narr
                 json!({"before":true}),
             ));
             assert_eq!(
-                mailbox.events.try_recv().unwrap().event.unwrap().data,
+                mailbox.events.try_recv().unwrap().event.data.clone(),
                 Some(json!({"before":true}))
             );
         }

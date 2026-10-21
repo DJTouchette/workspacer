@@ -2,7 +2,7 @@
 //! host explicitly requests a listener.
 pub(crate) mod policy;
 mod web;
-use crate::{Connection, Handle, protocol::Frame};
+use crate::{Connection, Handle, protocol::Frame, runtime::Outgoing};
 use axum::{
     Json, Router,
     extract::{
@@ -139,15 +139,15 @@ async fn connected(socket: WebSocket, mut connection: Connection) {
     let (mut writer, mut reader) = socket.split();
     loop {
         let outgoing = tokio::select! {
-            frame = connection.recv() => match frame { Some(f) => f, None => break },
+            frame = connection.recv_outgoing() => match frame { Some(f) => f, None => break },
             incoming = reader.next() => match incoming {
                 Some(Ok(Message::Text(text))) => match Frame::decode(text.as_bytes()) {
                     Ok(frame) => { if connection.send(frame).is_err() { break; } continue; }
-                    Err(_) => Frame::error("", "bad frame: invalid JSON frame"),
+                    Err(_) => Outgoing::Frame(Box::new(Frame::error("", "bad frame: invalid JSON frame"))),
                 },
                 Some(Ok(Message::Binary(bytes))) => match Frame::decode(&bytes) {
                     Ok(frame) => { if connection.send(frame).is_err() { break; } continue; }
-                    Err(_) => Frame::error("", "bad frame: invalid JSON frame"),
+                    Err(_) => Outgoing::Frame(Box::new(Frame::error("", "bad frame: invalid JSON frame"))),
                 },
                 Some(Ok(Message::Ping(bytes))) => {
                     if !matches!(tokio::time::timeout(Duration::from_secs(5), writer.send(Message::Pong(bytes))).await, Ok(Ok(()))) { break; }
@@ -157,7 +157,7 @@ async fn connected(socket: WebSocket, mut connection: Connection) {
                 _ => break,
             },
         };
-        let Ok(text) = serde_json::to_string(&outgoing) else {
+        let Ok(text) = outgoing.to_json() else {
             break;
         };
         if !matches!(
