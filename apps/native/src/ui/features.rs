@@ -59,6 +59,12 @@ pub(super) struct Extras {
     pub job_expanded: Option<String>,
     /// The job whose Remove was clicked once; the second click removes it.
     pub job_confirm_remove: Option<String>,
+    /// The Jobs page shows every job's runs instead of the jobs.
+    pub job_runs_tab: bool,
+    /// The run history shows failed runs only.
+    pub job_failed_only: bool,
+    /// The run open in the history, by (job id, start time).
+    pub job_run_open: Option<(String, i64)>,
     pub confirm_end: Option<String>,
     pub resume: Option<String>,
     pub local_paths: bool,
@@ -206,6 +212,9 @@ impl Extras {
             show_archived: false,
             job_expanded: None,
             job_confirm_remove: None,
+            job_runs_tab: false,
+            job_failed_only: false,
+            job_run_open: None,
             confirm_end: None,
             resume: None,
             local_paths: false,
@@ -410,6 +419,7 @@ impl Workspace {
             Screen::Jobs => {
                 self.extras.job_confirm_remove = None;
                 self.request(Request::Jobs, cx);
+                self.request(Request::JobRuns, cx);
             }
             Screen::Changes => {
                 if let Some(s) = self.selected_session() {
@@ -688,7 +698,10 @@ impl Workspace {
                     self.view.connected,
                 )
                 .when(self.view.connected, |d| {
-                    d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Jobs, cx)))
+                    d.on_click(cx.listener(|this, _, _, cx| {
+                        this.request(Request::Jobs, cx);
+                        this.request(Request::JobRuns, cx);
+                    }))
                 })
                 .into_any_element(),
             ),

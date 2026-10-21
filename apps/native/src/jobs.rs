@@ -11,6 +11,7 @@
 //! job: clear `proposedBy` and arm it. A proposal that names `replaces` is
 //! applied by the hub to that job in place (keeping its id, history and
 //! on/off state), so the view shows it beside the job it would change.
+use chrono::{DateTime, Local, Utc};
 use serde_json::{Value, json};
 
 /// Fields `jobs.list` adds to the spec; never sent back.
@@ -19,6 +20,8 @@ const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Run {
+    /// The job it belongs to; empty from hubs that predate it.
+    pub job_id: String,
     pub started_at: i64,
     pub finished_at: Option<i64>,
     /// `ok`, `error` or `skipped`.
@@ -29,6 +32,7 @@ pub struct Run {
 impl Run {
     fn parse(value: &Value) -> Option<Self> {
         Some(Self {
+            job_id: value["jobId"].as_str().unwrap_or("").to_owned(),
             started_at: value["startedAt"].as_i64()?,
             finished_at: value["finishedAt"].as_i64().filter(|&at| at > 0),
             status: value["status"].as_str().unwrap_or("").to_owned(),
@@ -42,6 +46,22 @@ impl Run {
             "skipped" => "skipped",
             _ => "failed",
         }
+    }
+
+    /// The detail's first non-blank line, for a one-line row.
+    pub fn summary(&self) -> &str {
+        self.detail
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("")
+    }
+
+    /// The session a spawn action started (`"spawned <id>"`).
+    pub fn spawned(&self) -> Option<&str> {
+        self.detail
+            .strip_prefix("spawned ")
+            .filter(|id| !id.is_empty() && !id.contains(char::is_whitespace))
     }
 
     /// `"4s"`, `"2m 5s"`; empty when unfinished.
@@ -294,6 +314,36 @@ pub fn until(at: i64, now: i64) -> String {
     }
 }
 
+/// The local day a run falls on, as the run history groups it: `"Today"`,
+/// `"Yesterday"`, then `"Mon, Oct 14"` (with the year once it differs).
+pub fn day_label(at: i64, now: i64) -> String {
+    let local = |ms| DateTime::<Utc>::from_timestamp_millis(ms).map(|t| t.with_timezone(&Local));
+    let (Some(at), Some(now)) = (local(at), local(now)) else {
+        return String::new();
+    };
+    let (day, today) = (at.date_naive(), now.date_naive());
+    if day == today {
+        "Today".into()
+    } else if today.pred_opt() == Some(day) {
+        "Yesterday".into()
+    } else if day.format("%Y").to_string() == today.format("%Y").to_string() {
+        day.format("%a, %b %-d").to_string()
+    } else {
+        day.format("%a, %b %-d, %Y").to_string()
+    }
+}
+
+/// A run's local time of day: `"07:00"`, or `"7:00 AM"` on a 12-hour clock.
+pub fn clock(at: i64, twelve_hour: bool) -> String {
+    DateTime::<Utc>::from_timestamp_millis(at)
+        .map(|t| {
+            t.with_timezone(&Local)
+                .format(if twelve_hour { "%-I:%M %p" } else { "%H:%M" })
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
 /// `"just now"`, `"5m ago"`, `"3h ago"` for a time at or before `now` (ms).
 pub fn since(at: i64, now: i64) -> String {
     let minutes = (now - at) / 60_000;
@@ -412,5 +462,30 @@ mod tests {
         assert_eq!(until(3 * 24 * 60 * min, 0), "in 3d");
         assert_eq!(since(0, 30_000), "just now");
         assert_eq!(since(0, 90 * min), "2h ago");
+    }
+
+    #[test]
+    fn runs_across_jobs_summarize_and_group_by_day() {
+        let runs = parse_runs(&json!({"runs":[
+            {"jobId":"tests","startedAt":10,"status":"error","detail":"\n  FAIL cart\nmore"},
+            {"jobId":"wake","startedAt":5,"status":"ok","detail":"spawned s-1"},
+            {"startedAt":1,"status":"ok","detail":"spawned two words"}
+        ]}));
+        assert_eq!(runs[0].job_id, "tests");
+        assert_eq!(runs[0].summary(), "FAIL cart");
+        assert_eq!(runs[0].spawned(), None);
+        assert_eq!(runs[1].spawned(), Some("s-1"));
+        assert_eq!(runs[2].job_id, "");
+        assert_eq!(runs[2].spawned(), None);
+
+        let now = Utc::now().timestamp_millis();
+        let day = 24 * 60 * 60 * 1000;
+        assert_eq!(day_label(now, now), "Today");
+        assert_eq!(day_label(now - day, now), "Yesterday");
+        let older = day_label(now - 3 * day, now);
+        assert!(!older.is_empty() && older != "Yesterday", "{older}");
+        assert!(day_label(now - 400 * day, now).contains(','));
+        assert_eq!(clock(now, false).len(), 5);
+        assert!(clock(now, true).ends_with('M'));
     }
 }

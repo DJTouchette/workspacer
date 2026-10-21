@@ -115,6 +115,9 @@ async fn jobs_view_reads_and_owner_writes_round_trip_through_the_hub() {
     .await
     .unwrap();
     assert_eq!(history[0].label(), "ok");
+    // Every job's runs together, each saying which job it was.
+    let all = jobs::parse_runs(&run(&controller, Request::JobRuns).await.value);
+    assert_eq!(all.first().map(|r| r.job_id.as_str()), Some("job"));
 
     let paused = run(
         &controller,

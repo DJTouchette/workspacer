@@ -704,6 +704,12 @@ impl Service {
             }
             "jobs.remove" | "jobs.run" | "jobs.history" => {
                 let id = string(&params, "id");
+                // Without an id, history is every job's runs, newest first.
+                if method == "jobs.history" && id.is_empty() {
+                    let mut runs: Vec<_> = state.history.values().flatten().cloned().collect();
+                    runs.sort_by_key(|run| std::cmp::Reverse(run.started_at));
+                    return Ok(json!({"runs":runs}));
+                }
                 if id.is_empty() {
                     bail!("{method} requires {{id}}");
                 }
@@ -1149,6 +1155,24 @@ mod tests {
                 .unwrap()["runs"][0]["status"],
             "skipped"
         );
+        // Without an id, history is every job's runs, newest first.
+        service.record(
+            &mut service.state.lock().unwrap(),
+            Run {
+                job_id: "later".into(),
+                started_at: i64::MAX - 1,
+                status: "ok".into(),
+                ..Default::default()
+            },
+        );
+        let all = service.call(&owner(), "jobs.history", json!({})).unwrap();
+        let ids: Vec<_> = all["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|run| run["jobId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["later", interval["id"].as_str().unwrap()]);
         hub.shutdown().unwrap();
     }
 }

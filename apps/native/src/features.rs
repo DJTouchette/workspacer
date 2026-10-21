@@ -254,6 +254,9 @@ pub enum Request {
     JobHistory {
         id: String,
     },
+    /// Every job's recent runs, newest first (`jobs.history` with no id).
+    /// Older hubs refuse it; the view then points at each job's own runs.
+    JobRuns,
     /// One owner write to a job, answered with the refreshed `jobs.list`.
     /// Never superseded: a second click while one is in flight is dropped.
     JobAction(JobAction),
@@ -462,6 +465,7 @@ impl Request {
             Self::TerminalShell { .. } => "terminal-shell",
             Self::Jobs => "jobs",
             Self::JobHistory { .. } => "job-history",
+            Self::JobRuns => "job-runs",
             Self::JobAction(_) => "job-action",
             Self::Archive => "archive",
             Self::SetArchive { .. } => "archive-set",
@@ -582,6 +586,7 @@ impl Request {
             Self::Recent => backend.call("sessions.recent", json!({})).await,
             Self::Jobs => backend.call("jobs.list", json!({})).await,
             Self::JobHistory { id } => backend.call("jobs.history", json!({"id":id})).await,
+            Self::JobRuns => backend.call("jobs.history", json!({})).await,
             Self::JobAction(action) => {
                 match action {
                     JobAction::Save(spec) => {

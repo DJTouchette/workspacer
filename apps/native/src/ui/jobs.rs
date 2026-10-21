@@ -3,9 +3,13 @@
 //! `scheduled-jobs` skill and `propose_job`), and here the user approves a
 //! proposal, pauses, resumes, runs or removes one. The model and the writes
 //! live in `wks_native::jobs`.
+//!
+//! A Runs tab shows every job's runs together, newest first and grouped by
+//! day, each opening to its full output; each job row carries a strip of its
+//! last runs so a failing job stands out without opening it.
 use super::*;
 use wks_native::features::{JobAction, Request};
-use wks_native::jobs::{self, Job};
+use wks_native::jobs::{self, Job, Run};
 
 pub(super) const JOBS_DESCRIPTION: &str =
     "Work the hub runs on a schedule, even while this window is closed.";
@@ -14,6 +18,10 @@ const NO_JOBS: &str = "No jobs yet. Ask any agent for one; it will wait here for
 const PROPOSAL_NOTE: &str =
     "An agent proposed this. It does nothing until you approve it, so read it first.";
 const CHANGE_NOTE: &str = "An agent proposed this change. The job keeps running as it is until you approve; approving keeps its history and whether it is paused.";
+const RUNS_UNSUPPORTED: &str =
+    "This hub can’t list every job’s runs together. Open a job to see its own.";
+/// Runs a job row's strip shows, oldest to newest.
+const STRIP_RUNS: usize = 10;
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -56,34 +64,453 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Every job's runs, newest first, once the hub has answered them.
+    pub(super) fn job_runs(&self) -> Option<Vec<Run>> {
+        self.view
+            .requests
+            .get("job-runs")
+            .filter(|s| !s.loading && s.error.is_none())
+            .map(|s| jobs::parse_runs(&s.value))
+    }
+
     pub(super) fn render_jobs(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         let rows = self.job_rows();
         let loading = self.view.requests.get("jobs").is_some_and(|s| s.loading);
         let list = rows.clone().unwrap_or_default();
-        div()
+        let runs = self.job_runs();
+        let page = div()
             .flex()
             .flex_col()
             .gap_3()
+            .child(self.job_tabs(&list, runs.as_deref(), cx))
             .child(self.feature_message("jobs"))
-            .child(self.feature_message("job-action"))
-            .when(rows.as_ref().is_some_and(Vec::is_empty) && !loading, |d| {
-                d.child(empty_jobs(p))
+            .child(self.feature_message("job-action"));
+        if self.extras.job_runs_tab {
+            return page.child(self.render_run_history(&list, runs, cx));
+        }
+        page.when(rows.as_ref().is_some_and(Vec::is_empty) && !loading, |d| {
+            d.child(empty_jobs(p))
+        })
+        .children(
+            list.iter()
+                .enumerate()
+                .map(|(ix, job)| self.render_job(ix, job, &list, runs.as_deref(), cx)),
+        )
+        .child(
+            div()
+                .text_size(px(chrome::scale::CAPTION))
+                .text_color(rgb(p.muted))
+                .child(JOBS_FOOTER),
+        )
+    }
+
+    /// Jobs / Runs, a segmented control; Runs counts today's failures.
+    fn job_tabs(&self, list: &[Job], runs: Option<&[Run]>, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        let now = now_ms();
+        let failed_today = runs.map_or(0, |runs| {
+            runs.iter()
+                .filter(|r| r.status == "error" && jobs::day_label(r.started_at, now) == "Today")
+                .count()
+        });
+        let segment = |id: &'static str, label: String, runs_tab: bool, alert: bool| {
+            let active = self.extras.job_runs_tab == runs_tab;
+            div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .px_3()
+                .py(px(3.))
+                .rounded(px(p.control_radius))
+                .text_size(px(chrome::scale::CAPTION))
+                .flex()
+                .items_center()
+                .gap_1()
+                .when(active, |d| {
+                    d.bg(rgb(p.surface))
+                        .text_color(rgb(p.text))
+                        .shadow(chrome::floating_shadow(p))
+                })
+                .when(!active, |d| {
+                    d.text_color(rgb(p.muted))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(rgb(p.text)))
+                })
+                .child(label)
+                .when(alert, |d| {
+                    d.child(
+                        div()
+                            .text_color(rgb(p.error))
+                            .child(format!("· {failed_today} failed today")),
+                    )
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.extras.job_runs_tab != runs_tab {
+                        this.extras.job_runs_tab = runs_tab;
+                        if runs_tab {
+                            this.request(Request::JobRuns, cx);
+                        }
+                        cx.notify();
+                    }
+                }))
+        };
+        let jobs_label = if list.is_empty() {
+            "Jobs".to_owned()
+        } else {
+            format!("Jobs ({})", list.iter().filter(|j| !j.proposal()).count())
+        };
+        div().flex().child(
+            div()
+                .p(px(2.))
+                .flex()
+                .gap(px(2.))
+                .rounded(px(p.control_radius + 2.))
+                .bg(rgb(p.selected))
+                .child(segment("jobs-tab-jobs", jobs_label, false, false))
+                .child(segment(
+                    "jobs-tab-runs",
+                    "Runs".to_owned(),
+                    true,
+                    failed_today > 0,
+                )),
+        )
+    }
+
+    /// Every job's runs, grouped by day; a run opens to its full output.
+    fn render_run_history(
+        &self,
+        list: &[Job],
+        runs: Option<Vec<Run>>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let caption = |text: String, color: u32| {
+            div()
+                .py_6()
+                .text_center()
+                .text_size(px(chrome::scale::META))
+                .text_color(rgb(color))
+                .child(text)
+        };
+        let state = self.view.requests.get("job-runs");
+        let Some(runs) = runs else {
+            return match state {
+                Some(s) if s.error.is_some() => caption(RUNS_UNSUPPORTED.into(), p.muted),
+                _ => caption("Loading runs…".into(), p.muted),
+            };
+        };
+        let failed_only = self.extras.job_failed_only;
+        let failed = runs.iter().filter(|r| r.status == "error").count();
+        let filter = |id: &'static str, label: String, value: bool| {
+            let active = failed_only == value;
+            div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .px_2()
+                .py(px(2.))
+                .rounded(px(p.control_radius))
+                .text_size(px(chrome::scale::CAPTION))
+                .when(active, |d| d.bg(rgb(p.selected)).text_color(rgb(p.text)))
+                .when(!active, |d| {
+                    d.text_color(rgb(p.muted))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(rgb(p.text)))
+                })
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.extras.job_failed_only = value;
+                    cx.notify();
+                }))
+        };
+        let shown: Vec<Run> = runs
+            .into_iter()
+            .filter(|r| !failed_only || r.status == "error")
+            .collect();
+        let now = now_ms();
+        let mut page = div().flex().flex_col().gap_3().child(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(filter("job-runs-all", "All".into(), false))
+                .child(filter(
+                    "job-runs-failed",
+                    format!("Failed ({failed})"),
+                    true,
+                )),
+        );
+        if shown.is_empty() {
+            return page.child(caption(
+                if failed_only {
+                    "No failed runs."
+                } else {
+                    "No runs yet. Runs show here as jobs fire."
+                }
+                .into(),
+                p.muted,
+            ));
+        }
+        let mut ix = 0;
+        for (day, group) in shown
+            .chunk_by(|a, b| {
+                jobs::day_label(a.started_at, now) == jobs::day_label(b.started_at, now)
             })
-            .children(
-                list.iter()
-                    .enumerate()
-                    .map(|(ix, job)| self.render_job(ix, job, &list, cx)),
+            .map(|group| (jobs::day_label(group[0].started_at, now), group))
+        {
+            let mut card = chrome::card(p).flex().flex_col().overflow_hidden();
+            for (n, run) in group.iter().enumerate() {
+                card = card.child(self.run_row(ix, n > 0, run, list, cx));
+                ix += 1;
+            }
+            page = page.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .px_1()
+                            .text_size(px(chrome::scale::CAPTION))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(p.muted))
+                            .child(day),
+                    )
+                    .child(card),
+            );
+        }
+        page
+    }
+
+    /// One run in the history: when, which job, how it went, how long, and
+    /// its first line; open, its whole output and where to go next.
+    fn run_row(
+        &self,
+        ix: usize,
+        divided: bool,
+        run: &Run,
+        list: &[Job],
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let key = (run.job_id.clone(), run.started_at);
+        let open = self.extras.job_run_open.as_ref() == Some(&key);
+        let job = list.iter().find(|j| j.id == run.job_id);
+        let color = run_color(run, p);
+        let toggle = key.clone();
+        let header = div()
+            .id(("job-run", ix))
+            .debug_selector(move || format!("job-run-{ix}"))
+            .px_4()
+            .py_2()
+            .flex()
+            .items_center()
+            .gap_3()
+            .min_w_0()
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(p.selected)))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.extras.job_run_open = if this.extras.job_run_open.as_ref() == Some(&toggle) {
+                    None
+                } else {
+                    Some(toggle.clone())
+                };
+                cx.notify();
+            }))
+            .child(
+                Icon::new(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .size(px(12.))
+                .text_color(rgb(p.muted)),
             )
+            .child(
+                div()
+                    .size(px(8.))
+                    .rounded_full()
+                    .flex_shrink_0()
+                    .bg(rgb(color)),
+            )
+            .child(
+                div()
+                    .w(px(64.))
+                    .flex_shrink_0()
+                    .font_family(mono_font())
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(p.muted))
+                    .child(jobs::clock(run.started_at, self.settings.twelve_hour_clock)),
+            )
+            .child(
+                div()
+                    .w(px(180.))
+                    .flex_shrink_0()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(chrome::scale::META))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .when(job.is_none(), |d| d.text_color(rgb(p.muted)))
+                    .child(job.map_or("Removed job".to_owned(), |j| j.name.clone())),
+            )
+            .child(
+                div()
+                    .w(px(56.))
+                    .flex_shrink_0()
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(color))
+                    .child(run.label()),
+            )
+            .child(
+                div()
+                    .w(px(56.))
+                    .flex_shrink_0()
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(p.muted))
+                    .child(run.duration()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .font_family(mono_font())
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(p.muted))
+                    .child(run.summary().to_owned()),
+            );
+        div()
+            .flex()
+            .flex_col()
+            .when(divided, |d| d.border_t_1().border_color(rgb(p.border)))
+            .child(header)
+            .when(open, |d| d.child(self.run_detail(ix, run, job, cx)))
+    }
+
+    fn run_detail(&self, ix: usize, run: &Run, job: Option<&Job>, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        let now = now_ms();
+        let mut when = format!(
+            "Started {} ({})",
+            timing::timestamp_label(Some(run.started_at), now, self.settings.twelve_hour_clock),
+            jobs::since(run.started_at, now)
+        );
+        if !run.duration().is_empty() {
+            when = format!("{when} · took {}", run.duration());
+        }
+        let session = run
+            .spawned()
+            .filter(|id| self.view.sessions.iter().any(|s| s.id == *id))
+            .map(str::to_owned);
+        let job_id = job.map(|j| j.id.clone());
+        div()
+            .debug_selector(move || format!("job-run-detail-{ix}"))
+            .px_4()
+            .pb_3()
+            .pl(px(44.))
+            .flex()
+            .flex_col()
+            .gap_2()
             .child(
                 div()
                     .text_size(px(chrome::scale::CAPTION))
                     .text_color(rgb(p.muted))
-                    .child(JOBS_FOOTER),
+                    .child(when),
             )
+            .child(
+                div()
+                    .p_3()
+                    .rounded(px(p.control_radius))
+                    .bg(rgb(p.code_block))
+                    .font_family(mono_font())
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(if run.status == "error" {
+                        p.error
+                    } else {
+                        p.prose
+                    }))
+                    .child(if run.detail.trim().is_empty() {
+                        "No output.".to_owned()
+                    } else {
+                        run.detail.trim_end().to_owned()
+                    }),
+            )
+            .when(session.is_some() || job_id.is_some(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .gap_1()
+                        .when_some(session, |d, id| {
+                            d.child(
+                                self.button(
+                                    SharedString::from(format!("job-run-session-{ix}")),
+                                    "Open session",
+                                    true,
+                                )
+                                .debug_selector(move || format!("job-run-session-{ix}"))
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        this.open_alerted_session(id.clone(), window, cx)
+                                    },
+                                )),
+                            )
+                        })
+                        .when_some(job_id, |d, id| {
+                            d.child(
+                                self.button(
+                                    SharedString::from(format!("job-run-job-{ix}")),
+                                    "Show job",
+                                    true,
+                                )
+                                .debug_selector(move || format!("job-run-job-{ix}"))
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.extras.job_runs_tab = false;
+                                        this.extras.job_expanded = None;
+                                        this.toggle_job(&id, cx);
+                                    },
+                                )),
+                            )
+                        }),
+                )
+            })
     }
 
-    fn render_job(&self, ix: usize, job: &Job, all: &[Job], cx: &mut Context<Self>) -> Div {
+    /// A job's last runs as small bars, oldest to newest.
+    fn run_strip(&self, id: &str, runs: Option<&[Run]>) -> Option<Div> {
+        let p = self.appearance.palette();
+        let mut last: Vec<&Run> = runs?
+            .iter()
+            .filter(|r| r.job_id == id)
+            .take(STRIP_RUNS)
+            .collect();
+        if last.is_empty() {
+            return None;
+        }
+        last.reverse();
+        Some(
+            div()
+                .flex_shrink_0()
+                .flex()
+                .items_end()
+                .gap(px(2.))
+                .children(last.into_iter().map(|run| {
+                    div()
+                        .w(px(4.))
+                        .h(px(if run.status == "error" { 12. } else { 8. }))
+                        .rounded(px(1.))
+                        .bg(rgb(run_color(run, p)))
+                })),
+        )
+    }
+
+    fn render_job(
+        &self,
+        ix: usize,
+        job: &Job,
+        all: &[Job],
+        runs: Option<&[Run]>,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = self.appearance.palette();
         let expanded = self.extras.job_expanded.as_deref() == Some(job.id.as_str());
         let target = job
@@ -147,7 +574,8 @@ impl Workspace {
                                             })
                                             .child(job.name.clone()),
                                     )
-                                    .child(self.job_status(job, target, now)),
+                                    .child(self.job_status(job, target, now))
+                                    .children(self.run_strip(&job.id, runs)),
                             )
                             .child(
                                 div()
@@ -311,7 +739,7 @@ impl Workspace {
                     .child(self.spec_block(Some("Proposed"), job, Some(current))),
                 None => d.child(self.spec_block(None, job, None)),
             })
-            .when(!job.proposal(), |d| d.child(self.job_runs(&job.id)))
+            .when(!job.proposal(), |d| d.child(self.job_history(&job.id)))
     }
 
     fn spec_block(&self, title: Option<&'static str>, job: &Job, base: Option<&Job>) -> Div {
@@ -355,7 +783,7 @@ impl Workspace {
             }))
     }
 
-    fn job_runs(&self, id: &str) -> Div {
+    fn job_history(&self, id: &str) -> Div {
         let p = self.appearance.palette();
         let state = self
             .view
@@ -394,11 +822,7 @@ impl Workspace {
                     .child("Recent runs"),
             )
             .children(runs.into_iter().take(8).map(|run| {
-                let color = match run.status.as_str() {
-                    "ok" => p.success,
-                    "error" => p.error,
-                    _ => p.muted,
-                };
+                let color = run_color(&run, p);
                 let at = run.finished_at.unwrap_or(run.started_at);
                 div()
                     .flex()
@@ -442,6 +866,14 @@ impl Workspace {
                         )
                     })
             }))
+    }
+}
+
+fn run_color(run: &Run, p: Palette) -> u32 {
+    match run.status.as_str() {
+        "ok" => p.success,
+        "error" => p.error,
+        _ => p.muted,
     }
 }
 
