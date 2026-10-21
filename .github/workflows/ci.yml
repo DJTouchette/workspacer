@@ -67,7 +67,8 @@ jobs:
   # package-lock.json, so both need their own `npm ci` (same as release.yml).
   # ---------------------------------------------------------------------------
   desktop:
-    runs-on: ubuntu-latest
+    # Pinned: Playwright has no Chromium build for ubuntu-latest's 26.04 yet.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: apps/desktop
