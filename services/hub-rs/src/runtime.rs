@@ -1269,6 +1269,7 @@ enum Command {
     Health(oneshot::Sender<Value>),
     Frame(u64, Box<Frame>),
 }
+const REVALIDATE_EVERY: Duration = Duration::from_secs(5);
 struct Peer {
     facade_access: Option<crate::mcp::access::Lease>,
     delegated: bool,
@@ -1525,16 +1526,34 @@ impl Core {
             self.release_demand(&topic);
         }
     }
+    /// When `sweep` next has work: a peer the actor closed, a call deadline,
+    /// or credential revalidation. An idle actor then sleeps instead of polling.
+    fn next_sweep(&self) -> Instant {
+        if self.peers.values().any(|p| *p.closed.borrow()) {
+            return Instant::now();
+        }
+        self.pending
+            .values()
+            .map(|p| p.deadline)
+            .fold(self.last_revalidation + REVALIDATE_EVERY, Instant::min)
+    }
     fn sweep(&mut self) {
-        if self.last_revalidation.elapsed() >= Duration::from_secs(5) {
+        if self.last_revalidation.elapsed() >= REVALIDATE_EVERY {
             self.last_revalidation = Instant::now();
             if let Some(path) = &self.options.scoped_tokens {
-                let store = Store { path: path.clone() };
+                // One read of the token file per pass, not one per scoped peer.
+                let records = self
+                    .peers
+                    .values()
+                    .any(|p| matches!(p.identity.kind, Kind::Scoped(_)))
+                    .then(|| crate::auth::load(path).ok())
+                    .flatten()
+                    .unwrap_or_default();
                 for peer in self.peers.values() {
                     if let (Kind::Scoped(original), Some(token)) =
                         (&peer.identity.kind, &peer.credential)
                     {
-                        let valid = store.lookup(token).is_some_and(|r| {
+                        let valid = crate::auth::find(&records, token).is_some_and(|r| {
                             r.scope == original.scope
                                 && r.facade_authority == original.facade_authority
                                 && r.provides() == original.provides()
@@ -2523,8 +2542,6 @@ async fn run(
         address,
         mcp_address,
     });
-    let mut interval = tokio::time::interval(Duration::from_millis(10));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut result;
     let mut stopping = false;
     let mut plugin_stop: Option<tokio::task::JoinHandle<Result<()>>> = None;
@@ -2614,7 +2631,7 @@ async fn run(
                 session_task = None; break;
             }
             Some(id) = releases.recv() => core.disconnect(id),
-            _ = interval.tick() => core.sweep(),
+            _ = tokio::time::sleep_until(core.next_sweep().into()) => core.sweep(),
             Some(completed) = core.jobs.join_next() => {
                 if let Ok((key, result)) = completed { core.finish(key, result); }
                 // A panicked handler's caller expires at the bounded deadline.

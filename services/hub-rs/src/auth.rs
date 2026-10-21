@@ -253,15 +253,18 @@ pub struct Store {
 }
 impl Store {
     pub fn lookup(&self, token: &str) -> Option<Record> {
-        if token.is_empty() {
-            return None;
-        }
-        load(&self.path)
-            .ok()?
-            .into_iter()
-            .rev()
-            .find(|r| credential_eq(&r.token, token))
+        find(&load(&self.path).ok()?, token).cloned()
     }
+}
+/// The record `Store::lookup` would return, from records already loaded.
+pub(crate) fn find<'a>(records: &'a [Record], token: &str) -> Option<&'a Record> {
+    if token.is_empty() {
+        return None;
+    }
+    records
+        .iter()
+        .rev()
+        .find(|r| credential_eq(&r.token, token))
 }
 
 /// Operator-facing refusal context only; never serialize a credential Record

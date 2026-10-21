@@ -369,7 +369,8 @@ async fn run(
         }
         tokio::select! {
             biased;
-            _=sweep.tick()=>(),
+            // Abandoned calls are the only thing to sweep for.
+            _=sweep.tick(), if !pending.is_empty()=>(),
             frame=connection.recv()=>match frame {
                 Ok(frame) if frame.op=="event"=>{if let Some(event)=frame.event{let _=events.send(event);}},
                 Ok(frame) if frame.op=="result" || frame.op=="error"=>{

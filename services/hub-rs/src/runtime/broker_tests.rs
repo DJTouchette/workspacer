@@ -150,6 +150,39 @@ async fn denied_and_closed_consumers_cost_no_event_slot_or_desync_bookkeeping() 
 }
 
 #[tokio::test]
+async fn idle_actor_sleeps_until_its_next_deadline() {
+    let mut core = core();
+    let mut caller = peer(&mut core, 1, Identity::host("caller"), 8);
+    let mut provider = peer(&mut core, 2, Identity::host("provider"), 8);
+    let revalidation = core.last_revalidation + REVALIDATE_EVERY;
+    assert_eq!(core.next_sweep(), revalidation, "idle actor polled early");
+    register(&mut core, 2, "fixture.slow");
+    take(&mut provider);
+    call(&mut core, 1, "slow", "fixture.slow", Value::Null);
+    take(&mut provider);
+    assert_eq!(core.pending.len(), 1);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    core.pending
+        .values_mut()
+        .for_each(|p| p.deadline = deadline);
+    assert_eq!(core.next_sweep(), deadline);
+    core.pending
+        .values_mut()
+        .for_each(|p| p.deadline = Instant::now());
+    core.sweep();
+    assert!(core.pending.is_empty());
+    assert!(!take(&mut caller).error.is_empty(), "timeout not reported");
+    core.peers[&2].closed.send_replace(true);
+    assert!(
+        core.next_sweep() <= Instant::now(),
+        "closed peer must be reaped"
+    );
+    core.sweep();
+    assert!(!core.peers.contains_key(&2));
+    assert_eq!(core.next_sweep(), revalidation);
+}
+
+#[tokio::test]
 async fn fanout_shares_one_event_and_serializes_it_once() {
     let mut core = core();
     let mut a = peer(&mut core, 1, Identity::host("a"), 8);
