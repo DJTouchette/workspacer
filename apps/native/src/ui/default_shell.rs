@@ -170,12 +170,7 @@ impl Workspace {
             .child(
                 div()
                     .debug_selector(|| "terminal-shell-status".into())
-                    .child(chrome::notice_line(
-                        status.0,
-                        status.1,
-                        p,
-                        "terminal-shell-status",
-                    )),
+                    .child(chrome::notice_line(status.0, status.1, p)),
             )
     }
 }

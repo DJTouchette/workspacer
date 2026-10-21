@@ -211,11 +211,7 @@ impl Workspace {
                             .justify_center()
                             .flex_shrink_0()
                             .child(if live && !open {
-                                brand_spinner(
-                                    10.,
-                                    p,
-                                    SharedString::from(format!("{open_key}-spin")),
-                                )
+                                brand_spinner(10., p)
                             } else {
                                 div().child(
                                     Icon::new(if open {
@@ -230,15 +226,13 @@ impl Workspace {
                     .child(if live {
                         // A slow breath, so the line reads as alive without
                         // pulling the eye from the reply.
+                        let t = gpui::bounce(gpui::ease_in_out)(motion::looping(
+                            std::time::Duration::from_millis(1800),
+                            0.5,
+                        ));
                         title
                             .font_weight(FontWeight::MEDIUM)
-                            .with_animation(
-                                SharedString::from(format!("{open_key}-pulse")),
-                                Animation::new(std::time::Duration::from_millis(1800))
-                                    .repeat()
-                                    .with_easing(gpui::bounce(gpui::ease_in_out)),
-                                |d, t| d.opacity(0.55 + 0.45 * t),
-                            )
+                            .opacity(0.55 + 0.45 * t)
                             .into_any_element()
                     } else {
                         title.into_any_element()
@@ -475,7 +469,7 @@ impl Workspace {
                             && *preview != action.applied)
                 });
                 let line = |text: String, tone: chrome::Tone| {
-                    chrome::notice_line(text, tone, p, "message-action-status")
+                    chrome::notice_line(text, tone, p)
                         .debug_selector(|| "message-action-status".into())
                 };
                 // Retry asks for a fresh preview: it changes nothing, so it is
@@ -1152,7 +1146,6 @@ impl Workspace {
                                         chrome::Tone::Warning
                                     },
                                     p,
-                                    "sandbox-status",
                                 )))
                                 .when(!sandbox.ready, |d| {
                                     d.child(

@@ -74,14 +74,9 @@ pub(super) fn card(
     };
     let status_icon = Icon::new(icon).size(px(12.));
     let status_icon = if !tool.complete && !tool.is_error {
+        let turn = motion::looping(std::time::Duration::from_millis(800), 0.);
         status_icon
-            .with_animation(
-                SharedString::from(format!("{element_key}-spinner")),
-                Animation::new(std::time::Duration::from_millis(800)).repeat(),
-                |icon, progress| {
-                    icon.transform(gpui::Transformation::rotate(gpui::percentage(progress)))
-                },
-            )
+            .transform(gpui::Transformation::rotate(gpui::percentage(turn)))
             .into_any_element()
     } else {
         status_icon.into_any_element()

@@ -498,7 +498,7 @@ impl Workspace {
         );
         let notice = (!self.extras.notice.is_empty()).then(|| {
             let tone = chrome::notice_tone(&self.extras.notice);
-            chrome::notice_line(self.extras.notice.clone(), tone, p, "feature-notice")
+            chrome::notice_line(self.extras.notice.clone(), tone, p)
                 .debug_selector(|| "feature-notice".into())
         });
         let body: AnyElement = match paths {
@@ -717,7 +717,6 @@ impl Workspace {
                     ),
                     chrome::Tone::Info,
                     p,
-                    "diff-cap",
                 )))
             })
     }

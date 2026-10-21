@@ -1334,7 +1334,7 @@ impl Workspace {
                         .size_full(),
                     )
                     .child(if animate {
-                        brand_spinner(11., p, "composer-activity")
+                        brand_spinner(11., p)
                     } else {
                         status_dot(p.warning)
                     })

@@ -343,11 +343,7 @@ impl Workspace {
                                 ),
                         )
                         .child(if self.view.connected && child.running() {
-                            brand_spinner(
-                                12.,
-                                p,
-                                SharedString::from(format!("{child_key}-activity")),
-                            )
+                            brand_spinner(12., p)
                         } else {
                             status_dot(color)
                         })
@@ -890,12 +886,8 @@ impl Workspace {
                     )
                     .child(div().flex_1())
                     .when(working > 0, |d| {
-                        d.child(brand_spinner(
-                            11.,
-                            p,
-                            SharedString::from(format!("{key}-spin")),
-                        ))
-                        .child(chip(format!("{working} working"), p.busy))
+                        d.child(brand_spinner(11., p))
+                            .child(chip(format!("{working} working"), p.busy))
                     })
                     .when(waiting > 0, |d| {
                         d.child(chip(format!("{waiting} waiting"), p.warning))

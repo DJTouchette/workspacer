@@ -128,7 +128,7 @@ fn rail_avatar(
 }
 
 /// The working loader, tucked under a rail mark's lower edge.
-fn rail_spinner(id: &str, p: Palette) -> Div {
+fn rail_spinner(p: Palette) -> Div {
     div()
         .absolute()
         .bottom(px(-6.))
@@ -141,7 +141,7 @@ fn rail_spinner(id: &str, p: Palette) -> Div {
                 .px(px(2.))
                 .rounded(px(3.))
                 .bg(rgb(p.base))
-                .child(brand_spinner(8., p, SharedString::from(id.to_owned()))),
+                .child(brand_spinner(8., p)),
         )
 }
 
@@ -291,12 +291,7 @@ impl Workspace {
                         child.settled(),
                         p,
                     )
-                    .when(running, |d| {
-                        d.child(rail_spinner(
-                            &format!("rail-native-working-{}", child.id),
-                            p,
-                        ))
-                    }),
+                    .when(running, |d| d.child(rail_spinner(p))),
                 )
                 .when(self.view.connected, |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
@@ -353,11 +348,7 @@ impl Workspace {
                                 .child(title),
                         )
                         .when(child.running() && self.view.connected, |d| {
-                            d.child(brand_spinner(
-                                12.,
-                                p,
-                                SharedString::from(format!("sidebar-native-working-{}", child.id)),
-                            ))
+                            d.child(brand_spinner(12., p))
                         })
                         .when(child.settled(), |d| {
                             let (parent, child) = (parent.clone(), child.clone());
@@ -852,10 +843,7 @@ impl Workspace {
                                             // Working shows the loader; otherwise
                                             // the provider rides the corner.
                                             if working {
-                                                d.child(rail_spinner(
-                                                    &format!("rail-working-{}", session.id),
-                                                    p,
-                                                ))
+                                                d.child(rail_spinner(p))
                                             } else {
                                                 d.child(rail_provider(&session.provider, p))
                                             }
@@ -1293,14 +1281,7 @@ impl Workspace {
                                                 .when(
                                                     session.working() && this.view.connected,
                                                     |d| {
-                                                        d.child(brand_spinner(
-                                                            12.,
-                                                            p,
-                                                            SharedString::from(format!(
-                                                                "sidebar-working-{}",
-                                                                session.id
-                                                            )),
-                                                        ))
+                                                        d.child(brand_spinner(12., p))
                                                     },
                                                 )
                                                 .when(

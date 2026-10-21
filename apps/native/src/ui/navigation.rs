@@ -656,7 +656,6 @@ impl Workspace {
                                     projects::registry_error_notice(&error),
                                     chrome::Tone::Warning,
                                     p,
-                                    "projects-registry-error",
                                 ))
                             }),
                     )
@@ -751,7 +750,6 @@ impl Workspace {
                 self.settings_error.clone(),
                 chrome::Tone::Error,
                 p,
-                "projects-settings-error",
             ));
         }
         if !self.projects.notice.is_empty() {
@@ -770,7 +768,6 @@ impl Workspace {
                         self.projects.notice.clone(),
                         tone,
                         p,
-                        "projects-notice",
                     )))
                     .when(self.projects.fallback.is_some(), |d| {
                         d.child(

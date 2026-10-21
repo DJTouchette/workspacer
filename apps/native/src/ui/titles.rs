@@ -347,7 +347,7 @@ impl Workspace {
                     .map(|(text, tone)| {
                         div()
                             .debug_selector(|| "title-status".into())
-                            .child(chrome::notice_line(text, tone, p, "title-status"))
+                            .child(chrome::notice_line(text, tone, p))
                     }),
             )
     }

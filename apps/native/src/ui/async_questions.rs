@@ -433,41 +433,34 @@ impl Workspace {
         let ready = !self.async_draft(&key, &row.questions, cx).is_empty();
         let error = self.async_questions.errors.get(&key).cloned();
         let submit_key = key.clone();
-        card.children(error.map(|error| {
-            chrome::notice_line(error, chrome::Tone::Error, p, "async-question-error")
-        }))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_end()
-                .gap_2()
-                .when(sending, |d| {
-                    d.child(chrome::notice_line(
-                        "Sending…",
-                        chrome::Tone::Loading,
-                        p,
-                        "async-question-sending",
-                    ))
-                })
-                .child(
-                    self.primary_button(
-                        SharedString::from(format!("async-submit-{key}")),
-                        if row.questions.len() > 1 {
-                            "Send answers"
-                        } else {
-                            "Send answer"
-                        },
-                        enabled && ready,
-                    )
-                    .debug_selector(|| "async-submit".into())
-                    .when(enabled && ready, |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
-                            this.submit_async_answers(&submit_key, cx)
-                        }))
-                    }),
-                ),
-        )
+        card.children(error.map(|error| chrome::notice_line(error, chrome::Tone::Error, p)))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap_2()
+                    .when(sending, |d| {
+                        d.child(chrome::notice_line("Sending…", chrome::Tone::Loading, p))
+                    })
+                    .child(
+                        self.primary_button(
+                            SharedString::from(format!("async-submit-{key}")),
+                            if row.questions.len() > 1 {
+                                "Send answers"
+                            } else {
+                                "Send answer"
+                            },
+                            enabled && ready,
+                        )
+                        .debug_selector(|| "async-submit".into())
+                        .when(enabled && ready, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                this.submit_async_answers(&submit_key, cx)
+                            }))
+                        }),
+                    ),
+            )
     }
 }
 

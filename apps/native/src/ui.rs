@@ -247,9 +247,13 @@ fn brand_mark(size: f32, p: Palette) -> Div {
 }
 
 // Electron BrandSpinner: an 0.8s eased journey in each direction.
-fn brand_spinner(size: f32, p: Palette, id: impl Into<gpui::ElementId>) -> Div {
+fn brand_spinner(size: f32, p: Palette) -> Div {
     let bar_width = (size * 0.18).max(2.);
     let track_width = (size * 0.85).round();
+    let progress = gpui::bounce(gpui::ease_in_out)(motion::looping(
+        std::time::Duration::from_millis(1600),
+        0.25,
+    ));
     div()
         .flex()
         .items_center()
@@ -273,13 +277,7 @@ fn brand_spinner(size: f32, p: Palette, id: impl Into<gpui::ElementId>) -> Div {
                         .h_full()
                         .rounded(px((size * 0.05).max(1.)))
                         .bg(rgb(p.accent))
-                        .with_animation(
-                            id,
-                            Animation::new(std::time::Duration::from_millis(1600))
-                                .repeat()
-                                .with_easing(gpui::bounce(gpui::ease_in_out)),
-                            move |bar, progress| bar.left(px((track_width - bar_width) * progress)),
-                        ),
+                        .left(px((track_width - bar_width) * progress)),
                 ),
         )
         .child("}")
@@ -348,11 +346,7 @@ fn session_badge(session: &Session, p: Palette, connected: bool) -> Div {
         .text_size(px(11.))
         .text_color(rgb(color))
         .child(if connected && session.working() {
-            brand_spinner(
-                12.,
-                p,
-                SharedString::from(format!("session-working-{}", session.id)),
-            )
+            brand_spinner(12., p)
         } else {
             status_dot(color)
         })
@@ -625,6 +619,8 @@ pub struct Workspace {
     title_reveal: island::TitleReveal,
     /// How the capsule's notice island grows, settles and lets go.
     island_motion: island::IslandMotion,
+    /// The next redraw for spinners and pulses on screen.
+    loop_ticker: motion::Ticker,
     /// How the capsule's context hairline fills and its glow warms.
     gauge_motion: gauge::GaugeMotion,
     /// Prompt caches going cold: the re-render at the next expiry and the
@@ -909,6 +905,7 @@ impl Workspace {
             title_island_width: Default::default(),
             title_reveal: island::TitleReveal::new(cx),
             island_motion: Default::default(),
+            loop_ticker: Default::default(),
             gauge_motion: Default::default(),
             cache: Default::default(),
             header_bounds: Default::default(),
@@ -1728,6 +1725,8 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        motion::reduce_loops(self.settings.reduce_motion);
+        self.loop_ticker.arm(cx, |this| &mut this.loop_ticker);
         self.track_orientation(window);
         self.settle_peek(window, cx);
         self.fit_composer_rows(window, cx);

@@ -633,19 +633,9 @@ impl Workspace {
     pub(super) fn feature_message(&self, key: &str) -> Div {
         let p = self.appearance.palette();
         match self.view.requests.get(key) {
-            Some(s) if s.loading => chrome::notice_line(
-                "Loading…",
-                chrome::Tone::Loading,
-                p,
-                SharedString::from(format!("{key}-loading")),
-            ),
+            Some(s) if s.loading => chrome::notice_line("Loading…", chrome::Tone::Loading, p),
             Some(s) => match s.error.as_ref().filter(|e| !e.is_empty()) {
-                Some(error) => chrome::notice_line(
-                    error.clone(),
-                    chrome::Tone::Error,
-                    p,
-                    SharedString::from(format!("{key}-error")),
-                ),
+                Some(error) => chrome::notice_line(error.clone(), chrome::Tone::Error, p),
                 None => div(),
             },
             None => div(),
@@ -733,7 +723,7 @@ impl Workspace {
             .on_click(cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)));
         let notice = (!self.extras.notice.is_empty()).then(|| {
             let tone = chrome::notice_tone(&self.extras.notice);
-            chrome::notice_line(self.extras.notice.clone(), tone, p, "feature-notice")
+            chrome::notice_line(self.extras.notice.clone(), tone, p)
                 .debug_selector(|| "feature-notice".into())
         });
         let header = self.page_header(
@@ -1093,7 +1083,6 @@ impl Workspace {
                             END_CONFIRMATION,
                             chrome::Tone::Warning,
                             p,
-                            "confirm-end-copy",
                         ))
                         .child(
                             div()
@@ -1145,7 +1134,6 @@ impl Workspace {
                     notice.clone(),
                     chrome::notice_tone(&notice),
                     p,
-                    "session-notice",
                 ))
             })
     }
@@ -1212,14 +1200,7 @@ impl Workspace {
             )
             .when(
                 state.is_some_and(|s| s.value["first_seq"].as_u64().unwrap_or(0) > 1),
-                |d| {
-                    d.child(chrome::notice_line(
-                        HISTORY_TRIMMED,
-                        chrome::Tone::Info,
-                        p,
-                        "history-trimmed",
-                    ))
-                },
+                |d| d.child(chrome::notice_line(HISTORY_TRIMMED, chrome::Tone::Info, p)),
             )
             .when(
                 count == 0 && state.is_some_and(|s| !s.loading && s.error.is_none()),
@@ -1277,12 +1258,7 @@ impl Workspace {
                     .into_iter()
                     .map(|provider| self.render_setup_card(provider, cx)),
             )
-            .child(chrome::notice_line(
-                SETUP_INFO,
-                chrome::Tone::Info,
-                p,
-                "setup-info",
-            ))
+            .child(chrome::notice_line(SETUP_INFO, chrome::Tone::Info, p))
             .child(
                 div().flex().child(
                     self.quiet_button(
@@ -1408,8 +1384,7 @@ impl Workspace {
                     .text_size(px(chrome::scale::META))
                     .text_color(rgb(color))
                     .child(if checking {
-                        let id = SharedString::from(format!("setup-{provider}-activity"));
-                        brand_spinner(12., p, id)
+                        brand_spinner(12., p)
                     } else {
                         status_dot(color)
                     })
@@ -1457,19 +1432,13 @@ impl Workspace {
             .child(check)
             .when(current && !busy, |d| {
                 d.when_some(state.and_then(|s| s.error.as_ref()), |d, error| {
-                    d.child(chrome::notice_line(
-                        error.clone(),
-                        chrome::Tone::Error,
-                        p,
-                        SharedString::from(format!("setup-{provider}-error")),
-                    ))
+                    d.child(chrome::notice_line(error.clone(), chrome::Tone::Error, p))
                 })
                 .when_some(value["readinessError"].as_str(), |d, error| {
                     d.child(chrome::notice_line(
                         error.to_owned(),
                         chrome::Tone::Warning,
                         p,
-                        SharedString::from(format!("setup-{provider}-readiness")),
                     ))
                 })
             })
@@ -1519,7 +1488,6 @@ impl Workspace {
                     notice.clone(),
                     chrome::notice_tone(&notice),
                     p,
-                    "model-notice",
                 ))
             })
     }

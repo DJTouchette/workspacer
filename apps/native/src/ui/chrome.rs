@@ -191,12 +191,7 @@ pub(super) enum Tone {
 }
 
 /// One wrapped status line with its tone's icon; for notices on pages.
-pub(super) fn notice_line(
-    text: impl Into<SharedString>,
-    tone: Tone,
-    p: Palette,
-    id: impl Into<gpui::ElementId>,
-) -> Div {
+pub(super) fn notice_line(text: impl Into<SharedString>, tone: Tone, p: Palette) -> Div {
     let (color, text_color) = match tone {
         Tone::Info | Tone::Loading => (p.muted, p.muted),
         Tone::Success => (p.success, p.text),
@@ -218,7 +213,7 @@ pub(super) fn notice_line(
                 .flex()
                 .items_center()
                 .child(match tone {
-                    Tone::Loading => brand_spinner(11., p, id).into_any_element(),
+                    Tone::Loading => brand_spinner(11., p).into_any_element(),
                     Tone::Success => Icon::new(IconName::CircleCheck)
                         .size(px(13.))
                         .text_color(rgb(color))
@@ -239,24 +234,19 @@ pub(super) fn notice_line(
 /// A notice row on its way out: the same words, tone icon and dismiss
 /// glyph, no longer interactive, fading in place before the island closes
 /// over it.
-pub(super) fn island_ghost(
-    slot: &'static str,
-    text: &str,
-    tone: Tone,
-    dismissible: bool,
-    p: Palette,
-) -> AnyElement {
+pub(super) fn island_ghost(text: &str, tone: Tone, dismissible: bool, p: Palette) -> AnyElement {
     div()
         .w_full()
         .flex()
         .items_start()
         .gap_1()
-        .child(div().flex_1().min_w_0().py(px(5.)).child(notice_line(
-            text.to_owned(),
-            tone,
-            p,
-            SharedString::from(format!("island-ghost-{slot}-icon")),
-        )))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .py(px(5.))
+                .child(notice_line(text.to_owned(), tone, p)),
+        )
         .when(dismissible, |d| {
             d.child(
                 div()
@@ -721,7 +711,7 @@ impl Workspace {
         let mut above: Option<f32> = None;
         for row in self.island_motion.rows() {
             let content = if row.leaving {
-                island_ghost(row.slot, &row.text, row.tone, row.dismissible, p)
+                island_ghost(&row.text, row.tone, row.dismissible, p)
             } else {
                 match notices.iter().position(|n| n.slot == row.slot) {
                     Some(ix) => std::mem::replace(&mut elements[ix], div().into_any_element()),
@@ -877,12 +867,7 @@ impl Workspace {
                     .flex_1()
                     .min_w_0()
                     .py(px(if compact { 0. } else { 5. }))
-                    .child(notice_line(
-                        text.clone(),
-                        tone,
-                        p,
-                        SharedString::from(format!("island-notice-{slot}-icon")),
-                    )),
+                    .child(notice_line(text.clone(), tone, p)),
             )
             .children(action)
             .when_some(dismiss, |d, dismiss| {

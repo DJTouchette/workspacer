@@ -274,12 +274,7 @@ impl Workspace {
                                 .items_center()
                                 .gap_2()
                                 .child(match preview {
-                                    None => brand_spinner(
-                                        12.,
-                                        p,
-                                        SharedString::from(format!("draft-preview-{ix}")),
-                                    )
-                                    .into_any_element(),
+                                    None => brand_spinner(12., p).into_any_element(),
                                     Some(_) => Icon::new(IconName::File)
                                         .size(px(14.))
                                         .text_color(rgb(p.accent))
@@ -303,7 +298,7 @@ impl Workspace {
                         .gap_2()
                         .text_size(px(12.))
                         .text_color(rgb(p.muted))
-                        .child(brand_spinner(12., p, "draft-uploading-spinner"))
+                        .child(brand_spinner(12., p))
                         .child("Attaching…"),
                 )
             })

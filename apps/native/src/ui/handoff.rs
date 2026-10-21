@@ -255,19 +255,13 @@ impl Workspace {
                 "Choose a session to continue.",
                 chrome::Tone::Info,
                 p,
-                "handoff-none",
             ));
         };
         let target = match handoff::targets(&source) {
             Ok(_) => self.handoff_target(&source).unwrap_or("claude"),
             Err(error) => {
                 return div().debug_selector(|| "handoff-unavailable".into()).child(
-                    chrome::notice_line(
-                        error.to_string(),
-                        chrome::Tone::Warning,
-                        p,
-                        "handoff-unavailable",
-                    ),
+                    chrome::notice_line(error.to_string(), chrome::Tone::Warning, p),
                 );
             }
         };
@@ -376,19 +370,16 @@ impl Workspace {
                 format!("Checking that {name} is installed…"),
                 chrome::Tone::Loading,
                 p,
-                "handoff-detect",
             ),
             (_, Some(true)) => chrome::notice_line(
                 format!("{name} is installed on the hub’s machine."),
                 chrome::Tone::Success,
                 p,
-                "handoff-detect",
             ),
             (_, Some(false)) => chrome::notice_line(
                 format!("{name} was not found on the hub’s machine. Set it up before continuing."),
                 chrome::Tone::Warning,
                 p,
-                "handoff-detect",
             ),
             (_, None) => chrome::notice_line(
                 format!(
@@ -396,7 +387,6 @@ impl Workspace {
                 ),
                 chrome::Tone::Info,
                 p,
-                "handoff-detect",
             ),
         };
         let successor = chrome::card(p)
@@ -536,19 +526,16 @@ impl Workspace {
                 },
                 chrome::Tone::Loading,
                 p,
-                "handoff-progress",
             )),
             (None, Some(receipt)) => Some(chrome::notice_line(
                 receipt.summary(),
                 chrome::Tone::Error,
                 p,
-                "handoff-error",
             )),
             (None, None) if self.view.handoff.is_some() => Some(chrome::notice_line(
                 "Another session’s handoff is in progress.",
                 chrome::Tone::Info,
                 p,
-                "handoff-other",
             )),
             _ => None,
         };

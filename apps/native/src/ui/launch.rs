@@ -634,9 +634,7 @@ impl Workspace {
                     .when_some(icon, |d, icon| {
                         d.child(Icon::new(icon).size(px(13.)).flex_shrink_0())
                     })
-                    .when(busy, |d| {
-                        d.child(work::spinner("launch-spinner".into(), 13.))
-                    })
+                    .when(busy, |d| d.child(work::spinner(13.)))
                     .child(div().min_w_0().truncate().child(status)),
             )
             .child(

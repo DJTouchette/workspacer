@@ -120,12 +120,7 @@ impl Workspace {
     /// A finished request's error line under the control that made it.
     fn request_error(&self, key: &str, p: Palette) -> Option<Div> {
         let error = self.view.requests.get(key)?.error.clone()?;
-        Some(chrome::notice_line(
-            error,
-            chrome::Tone::Error,
-            p,
-            SharedString::from(format!("{key}-error")),
-        ))
+        Some(chrome::notice_line(error, chrome::Tone::Error, p))
     }
 
     fn pr_busy(&self, key: &str) -> bool {
@@ -430,7 +425,7 @@ impl Workspace {
             );
         }
         if let Some((text, tone)) = status {
-            card = card.child(chrome::notice_line(text, tone, p, "pr-branch-status"));
+            card = card.child(chrome::notice_line(text, tone, p));
         }
         card.child(
             div()
@@ -466,12 +461,7 @@ impl Workspace {
         let (threads, loading, error) = self.pr_threads(&link.url);
         let mut column = div().flex().flex_col().gap_3();
         if let Some(error) = error {
-            column = column.child(chrome::notice_line(
-                error,
-                chrome::Tone::Error,
-                p,
-                "pr-threads-error",
-            ));
+            column = column.child(chrome::notice_line(error, chrome::Tone::Error, p));
         }
         let Some(threads) = threads else {
             return column.child(if loading {
@@ -479,7 +469,6 @@ impl Workspace {
                     "Loading review comments…".to_owned(),
                     chrome::Tone::Loading,
                     p,
-                    "pr-threads-loading",
                 )
             } else {
                 div()

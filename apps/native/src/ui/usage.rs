@@ -526,16 +526,11 @@ impl Workspace {
                         .py_3()
                         .border_t_1()
                         .border_color(rgb(p.border))
-                        .child(chrome::notice_line(
-                            if accounts.is_empty() {
+                        .child(chrome::notice_line(if accounts.is_empty() {
                                 format!("Usage unavailable: {error}")
                             } else {
                                 format!("Last refresh failed; showing the previous reading. {error}")
-                            },
-                            chrome::Tone::Warning,
-                            p,
-                            "usage-modal-error-icon",
-                        )),
+                            }, chrome::Tone::Warning, p)),
                 )
             })
             .when(accounts.is_empty() && self.view.usage_error.is_none(), |d| {

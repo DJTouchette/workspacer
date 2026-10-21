@@ -283,15 +283,10 @@ impl Workspace {
                     .answer_error
                     .clone()
                     .filter(|_| !self.extras.answers_sent)
-                    .map(|error| chrome::notice_line(error, chrome::Tone::Error, p, "question-error")),
+                    .map(|error| chrome::notice_line(error, chrome::Tone::Error, p)),
             )
             .when(self.extras.answers_sent, |d| {
-                d.child(chrome::notice_line(
-                    "Answer sent. Waiting for the agent…",
-                    chrome::Tone::Loading,
-                    p,
-                    "question-sent",
-                ))
+                d.child(chrome::notice_line("Answer sent. Waiting for the agent…", chrome::Tone::Loading, p))
             })
             .child(
                 div()
@@ -553,10 +548,7 @@ impl Workspace {
         }
         let failed = failed.filter(|_| !sent);
         let status: Option<AnyElement> = if let Some(error) = failed {
-            Some(
-                chrome::notice_line(error, chrome::Tone::Error, p, "question-error")
-                    .into_any_element(),
-            )
+            Some(chrome::notice_line(error, chrome::Tone::Error, p).into_any_element())
         } else if sent {
             Some(
                 div()
@@ -567,7 +559,6 @@ impl Workspace {
                         "Answers sent. Waiting for the agent…",
                         chrome::Tone::Loading,
                         p,
-                        "question-sent",
                     )))
                     .child(
                         self.button("edit-answers", "Edit answers", enabled)
@@ -582,10 +573,7 @@ impl Workspace {
                     .into_any_element(),
             )
         } else if self.view.busy || self.extras.answer_submission.is_some() {
-            Some(
-                chrome::notice_line("Sending…", chrome::Tone::Loading, p, "question-sending")
-                    .into_any_element(),
-            )
+            Some(chrome::notice_line("Sending…", chrome::Tone::Loading, p).into_any_element())
         } else if compact {
             // Short windows: the header's progress and Send carry this.
             None
@@ -668,14 +656,9 @@ impl Workspace {
                         .border_1()
                         .border_color(gpui::Hsla::from(rgb(p.warning)).opacity(0.45))
                         .bg(gpui::Hsla::from(rgb(p.warning)).opacity(0.08))
-                        .child(chrome::notice_line(
-                            format!(
+                        .child(chrome::notice_line(format!(
                                 "Your answers above are sent to the MCP server “{server}” only if you choose Submit. Decline sends nothing."
-                            ),
-                            chrome::Tone::Warning,
-                            p,
-                            "elicitation-consent-line",
-                        ))
+                            ), chrome::Tone::Warning, p))
                         .into_any_element(),
                 );
             }

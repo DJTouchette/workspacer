@@ -44,6 +44,9 @@ pub(super) struct TerminalView {
     /// Size last sent to the hub.
     sent: (u16, u16),
     error: Option<String>,
+    /// Redraws on focus and blur: the panel embeds this view cached, so it
+    /// only redraws when notified, and the border and cursor follow focus.
+    focus_watch: Option<[gpui::Subscription; 2]>,
 }
 
 impl TerminalView {
@@ -58,6 +61,7 @@ impl TerminalView {
             font_size: 13.,
             sent: (0, 0),
             error: None,
+            focus_watch: None,
         }
     }
 
@@ -143,6 +147,7 @@ impl TerminalView {
         if state.attach != self.attach {
             self.attach = state.attach;
             self.emulator = Emulator::new(rows, cols);
+            cx.notify();
         }
         if let Some(shell) = &state.shell
             && let Some(chunk) = feed.take(shell)
@@ -260,6 +265,12 @@ impl Render for TerminalView {
         let measure = font.clone();
         let size = px(self.font_size);
         let line = px((self.font_size * 1.35).round());
+        if self.focus_watch.is_none() {
+            self.focus_watch = Some([
+                cx.on_focus(&self.focus, window, |_, _, cx| cx.notify()),
+                cx.on_blur(&self.focus, window, |_, _, cx| cx.notify()),
+            ]);
+        }
         let focused = self.focus.is_focused(window);
         let screen_rows = self.emulator.rows();
         let (cursor_row, cursor_col) = self.emulator.screen().cursor_position();
@@ -780,7 +791,12 @@ impl Workspace {
                 .px_2()
                 .py_1()
                 .bg(rgb(p.code_block))
-                .child(view)
+                // Cached: a Workspace redraw reuses the grid unless the
+                // terminal itself changed (output, size, focus, palette).
+                .child(
+                    gpui::AnyView::from(view)
+                        .cached(gpui::StyleRefinement::default().size_full()),
+                )
                 .into_any_element(),
             _ => div()
                 .flex_1()

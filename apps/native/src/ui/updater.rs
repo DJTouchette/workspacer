@@ -307,8 +307,7 @@ impl Workspace {
                 let notice = self.extras.update_notice.clone();
                 let tone = update_tone(&notice);
                 d.child(
-                    chrome::notice_line(notice, tone, p, "update-notice")
-                        .debug_selector(|| "update-notice".into()),
+                    chrome::notice_line(notice, tone, p).debug_selector(|| "update-notice".into()),
                 )
             })
             .when(available && installable, |d| {

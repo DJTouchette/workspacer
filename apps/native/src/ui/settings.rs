@@ -870,7 +870,7 @@ impl Workspace {
                             })),
                     ),
             )
-            .child(chrome::notice_line(status, tone, p, "child-access-status"))
+            .child(chrome::notice_line(status, tone, p))
     }
 
     fn render_entry(&self, entry: Entry, first: bool) -> Div {
@@ -1169,7 +1169,6 @@ impl Workspace {
                         self.settings_error.clone(),
                         chrome::Tone::Error,
                         p,
-                        "settings-error",
                     ))
                 })
                 .child(

@@ -191,12 +191,7 @@ impl Workspace {
                                 .min_w_0()
                                 .pt_2()
                                 .text_color(rgb(p.text))
-                                .child(chrome::notice_line(
-                                    self.ui_bus.notice.clone(),
-                                    tone,
-                                    p,
-                                    "sidebar-ui-notice-icon",
-                                )),
+                                .child(chrome::notice_line(self.ui_bus.notice.clone(), tone, p)),
                         )
                         .child(
                             self.icon_button("dismiss-ui-request", "Dismiss", IconName::Close, true)

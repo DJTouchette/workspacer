@@ -4,7 +4,71 @@
 //! frames once it is within `rest` of its target, where it then sits exactly.
 //! Retargeting mid-flight keeps position and velocity, so a reversal turns
 //! with momentum instead of jumping.
+//!
+//! Looping indicators (spinners, pulses) are not GPUI animations: those ask
+//! for every display frame, and an animation frame notifies the view being
+//! rendered, which here is the whole Workspace, so one visible spinner
+//! re-rendered everything at the display's refresh rate. They read a shared
+//! clock instead ([`looping`]), and each view's [`Ticker`] redraws it at
+//! [`LOOP_FRAME`] only while one was drawn since its last redraw.
+use std::cell::Cell;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+/// How often a view showing a looping indicator redraws: 20 frames a second.
+pub(super) const LOOP_FRAME: Duration = Duration::from_millis(50);
+
+thread_local! {
+    /// Bumped by every looping indicator drawn; a ticker redraws when it moved.
+    static LOOPS: Cell<u64> = const { Cell::new(0) };
+    /// Reduced motion: indicators hold still and ask for no frames.
+    static REDUCED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Hold looping indicators still (the reduced-motion setting).
+pub(super) fn reduce_loops(reduced: bool) {
+    REDUCED.set(reduced);
+}
+
+/// Where a looping indicator with this `period` is now, 0..1, and a request
+/// for its view to keep redrawing. Under reduced motion it rests at `rest`.
+pub(super) fn looping(period: Duration, rest: f32) -> f32 {
+    if REDUCED.get() {
+        return rest;
+    }
+    LOOPS.set(LOOPS.get().wrapping_add(1));
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    let elapsed = EPOCH.get_or_init(Instant::now).elapsed();
+    (elapsed.as_secs_f64() % period.as_secs_f64() / period.as_secs_f64()) as f32
+}
+
+/// A view's next looping-indicator redraw. [`arm`](Self::arm) it on every
+/// render: once [`LOOP_FRAME`] passes, the view redraws if any indicator was
+/// drawn meanwhile (in its render or in list rows laid out after it).
+#[derive(Default)]
+pub(super) struct Ticker(Option<gpui::Task<()>>);
+
+impl Ticker {
+    pub(super) fn arm<T: 'static>(
+        &mut self,
+        cx: &mut gpui::Context<T>,
+        ticker: fn(&mut T) -> &mut Ticker,
+    ) {
+        if self.0.is_some() {
+            return;
+        }
+        let seen = LOOPS.get();
+        self.0 = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(LOOP_FRAME).await;
+            let _ = this.update(cx, |this, cx| {
+                ticker(this).0 = None;
+                if LOOPS.get() != seen {
+                    cx.notify();
+                }
+            });
+        }));
+    }
+}
 
 /// How a spring moves: `response` is the undamped period in seconds (lower
 /// is quicker) and `damping` the damping ratio (below 1 overshoots a little
@@ -174,6 +238,23 @@ pub(super) fn smooth(t: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn looping_indicators_count_their_draws_unless_motion_is_reduced() {
+        let period = Duration::from_millis(800);
+        let before = LOOPS.get();
+        let t = looping(period, 0.5);
+        assert!((0. ..1.).contains(&t));
+        assert_eq!(LOOPS.get(), before + 1);
+        reduce_loops(true);
+        assert_eq!(looping(period, 0.5), 0.5);
+        assert_eq!(
+            LOOPS.get(),
+            before + 1,
+            "a still indicator asks for no frames"
+        );
+        reduce_loops(false);
+    }
+
     use super::*;
 
     const TUNE: Tune = Tune {

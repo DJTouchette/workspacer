@@ -21,16 +21,11 @@ fn category_icon(tool: &Tool) -> IconName {
     }
 }
 
-pub(super) fn spinner(id: String, size: f32) -> AnyElement {
+pub(super) fn spinner(size: f32) -> AnyElement {
+    let turn = motion::looping(std::time::Duration::from_millis(800), 0.);
     Icon::new(IconName::LoaderCircle)
         .size(px(size))
-        .with_animation(
-            SharedString::from(id),
-            Animation::new(std::time::Duration::from_millis(800)).repeat(),
-            |icon, progress| {
-                icon.transform(gpui::Transformation::rotate(gpui::percentage(progress)))
-            },
-        )
+        .transform(gpui::Transformation::rotate(gpui::percentage(turn)))
         .into_any_element()
 }
 
@@ -183,11 +178,7 @@ impl Workspace {
                 )
             })
             .when(!tool.complete && !tool.is_error, |d| {
-                d.child(
-                    div()
-                        .text_color(rgb(p.busy))
-                        .child(spinner(format!("{element_key}-spin"), 12.)),
-                )
+                d.child(div().text_color(rgb(p.busy)).child(spinner(12.)))
             })
             .child(
                 Icon::new(if expanded {
@@ -316,9 +307,7 @@ impl Workspace {
         // A single call needs no header: its step row is the whole overview.
         if steps > 1 {
             let status = if summary.running > 0 {
-                div()
-                    .text_color(rgb(p.busy))
-                    .child(spinner(format!("{card_key}-spin"), 13.))
+                div().text_color(rgb(p.busy)).child(spinner(13.))
             } else if summary.failed > 0 {
                 div()
                     .text_color(rgb(p.error))

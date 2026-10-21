@@ -404,7 +404,6 @@ impl Workspace {
                 format!("Paused: {reason}"),
                 chrome::Tone::Warning,
                 p,
-                "queue-paused-line",
             )))
             // Only an explicit resume (or a send now) lifts a pause.
             .child(
@@ -444,7 +443,6 @@ impl Workspace {
                 "May have been sent — check the conversation before sending it again.",
                 chrome::Tone::Warning,
                 p,
-                "queue-uncertain-line",
             ))
             .child(
                 div()
@@ -529,7 +527,6 @@ impl Workspace {
                 "Delivered — confirmed by the agent",
                 chrome::Tone::Success,
                 p,
-                "queue-confirmed-line",
             ))
             .child(
                 div()
@@ -679,13 +676,8 @@ impl Workspace {
             .flex_col()
             .gap_1()
             .when_some(problem, |d, (line, detail)| {
-                d.child(chrome::notice_line(
-                    line,
-                    chrome::Tone::Warning,
-                    p,
-                    "queue-edit-problem",
-                ))
-                .child(detail)
+                d.child(chrome::notice_line(line, chrome::Tone::Warning, p))
+                    .child(detail)
             })
             .child(
                 div()

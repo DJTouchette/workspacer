@@ -89,7 +89,7 @@ impl Workspace {
             .gap_2()
             .text_size(px(12.))
             .child(if copy.animated {
-                brand_spinner(12., p, "connection-banner-spinner")
+                brand_spinner(12., p)
             } else {
                 status_dot(p.warning)
             })
@@ -245,7 +245,7 @@ impl Workspace {
                             .items_center()
                             .justify_center()
                             .child(if animated {
-                                brand_spinner(24., p, "empty-state-spinner")
+                                brand_spinner(24., p)
                             } else {
                                 brand_mark(24., p)
                             }),

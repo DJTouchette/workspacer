@@ -117,6 +117,8 @@ pub(super) struct PreviewPane {
     note: Option<SharedString>,
     explorer: ExplorerState,
     _editor_watch: Option<Subscription>,
+    /// The next redraw for a loading spinner on screen.
+    loop_ticker: motion::Ticker,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -206,6 +208,7 @@ impl PreviewPane {
             note: None,
             explorer: ExplorerState::default(),
             _editor_watch: None,
+            loop_ticker: Default::default(),
         };
         pane.load(state, window, cx);
         pane
@@ -974,7 +977,7 @@ impl PreviewPane {
                 .gap_2()
                 .text_size(px(12.))
                 .text_color(rgb(p.muted))
-                .child(brand_spinner(14., p, "file-viewer-loading"))
+                .child(brand_spinner(14., p))
                 .child(format!("Loading {name}…"))
                 .into_any_element();
         }
@@ -1133,6 +1136,7 @@ impl PreviewPane {
 
 impl Render for PreviewPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.loop_ticker.arm(cx, |this| &mut this.loop_ticker);
         let Some(workspace) = self.workspace.upgrade() else {
             return div().into_any_element();
         };

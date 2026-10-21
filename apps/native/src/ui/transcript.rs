@@ -481,7 +481,7 @@ impl Workspace {
                     .text_size(px(11.))
                     .text_color(rgb(p.muted))
                     .when(loading, |d| {
-                        d.child(brand_spinner(11., p, "earlier-messages-loading"))
+                        d.child(brand_spinner(11., p))
                             .child("Loading earlier messages…")
                     })
                     .when(!loading, |d| {

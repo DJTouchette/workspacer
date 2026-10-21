@@ -38,13 +38,13 @@ fn signature(steps: &[Step]) -> String {
 
 /// One step: status icon and label, finished steps dimmed. Only the live
 /// list animates its running step; history marks it with a dot.
-pub(super) fn step_row(step: &Step, p: Palette, id: SharedString, live: bool) -> Div {
+pub(super) fn step_row(step: &Step, p: Palette, live: bool) -> Div {
     let icon = match step.status {
         Status::Completed => Icon::new(IconName::CircleCheck)
             .size(px(13.))
             .text_color(rgb(p.success))
             .into_any_element(),
-        Status::InProgress if live => brand_spinner(11., p, id).into_any_element(),
+        Status::InProgress if live => brand_spinner(11., p).into_any_element(),
         Status::InProgress => status_dot(p.accent).into_any_element(),
         Status::Pending => div()
             .size(px(11.))
@@ -170,7 +170,7 @@ impl Workspace {
                 .text_color(rgb(p.muted)),
             )
             .child(match (active, done == total) {
-                (Some(_), _) => brand_spinner(11., p, "pinned-plan-active").into_any_element(),
+                (Some(_), _) => brand_spinner(11., p).into_any_element(),
                 (None, true) => Icon::new(IconName::CircleCheck)
                     .size(px(13.))
                     .text_color(rgb(p.success))
@@ -227,14 +227,7 @@ impl Workspace {
                             .flex()
                             .flex_col()
                             .gap(px(3.))
-                            .children(steps.iter().enumerate().map(|(ix, step)| {
-                                step_row(
-                                    step,
-                                    p,
-                                    SharedString::from(format!("pinned-plan-step-{ix}")),
-                                    true,
-                                )
-                            })),
+                            .children(steps.iter().map(|step| step_row(step, p, true))),
                     )
                 }),
         )
@@ -301,16 +294,14 @@ impl Workspace {
                     })),
                 )
                 .when(open, |d| {
-                    d.child(div().pl(px(18.)).flex().flex_col().gap(px(3.)).children(
-                        steps.iter().enumerate().map(|(ix, step)| {
-                            step_row(
-                                step,
-                                p,
-                                SharedString::from(format!("{open_key}-{ix}")),
-                                false,
-                            )
-                        }),
-                    ))
+                    d.child(
+                        div()
+                            .pl(px(18.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.))
+                            .children(steps.iter().map(|step| step_row(step, p, false))),
+                    )
                 }),
         )
     }

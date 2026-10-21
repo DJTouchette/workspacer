@@ -802,7 +802,6 @@ impl Workspace {
                             error,
                             Tone::Error,
                             p,
-                            "task-log-error",
                         )))
                         .child(
                             self.quiet_button("task-log-retry", "Try again", IconName::Redo, true)
@@ -840,7 +839,7 @@ impl Workspace {
                         .debug_selector(|| "tasks-notice".into())
                         .px_3()
                         .pt_2()
-                        .child(chrome::notice_line(text, tone, p, "tasks-notice")),
+                        .child(chrome::notice_line(text, tone, p)),
                 )
             })
             .child(body)
