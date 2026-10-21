@@ -17,6 +17,7 @@
     "expectedTaskRevision",
     "fleetFullAccess",
     "intents",
+    "jobId",
     "label",
     "launchIntegrationGranted",
     "launchIntegrationId",
@@ -61,7 +62,8 @@
     "projectCwd": "The launch coordinator removes this caller key and derives project identity itself.",
     "targetHub": "The local launch coordinator refuses this selector without its complete remote admission adapter.",
     "workflowReservationToken": "The launch coordinator removes this caller key and mints its own workflow admission token.",
-    "autoTitle": "Native launch opt-in to hub-owned automatic naming of an unlabelled session; boolean only, grants no authority, and a launch label always wins."
+    "autoTitle": "Native launch opt-in to hub-owned automatic naming of an unlabelled session; boolean only, grants no authority, and a launch label always wins.",
+    "jobId": "Hub job runner attribution: the job that launched the session, kept in launch metadata and shown on its row; a string only, grants no authority."
   },
   "vocabulary": {
     "blocks": {
@@ -116,6 +118,12 @@
       "key": "autoTitle",
       "alias": "AUTOTITLE",
       "why": "Native launch opt-in to hub-owned automatic naming of an unlabelled session; boolean only, grants no authority, and a launch label always wins."
+    },
+    {
+      "name": "jobId canonical spelling",
+      "key": "jobId",
+      "alias": "JOBID",
+      "why": "Hub job runner attribution: the job that launched the session, kept in launch metadata and shown on its row; a string only, grants no authority."
     }
   ]
 }

@@ -346,6 +346,28 @@
       }
     },
     {
+      "name": "jobId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Attribution only: the hub job that launched the session, recorded in launch metadata and projected onto its row. Grants nothing.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|for key in [\"label\", \"parentSessionId\", \"jobId\"]",
+          "services::spawn_plan::resolve|metadata[key] = params[key].clone();"
+        ]
+      },
+      "desktop": {
+        "observed": false,
+        "disposition": "ignored",
+        "reason": "Desktop has no job runner; its local spawn handler does not read job attribution.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const provider = resolveSpawnProvider({ provider: reqProvider, manager });"
+        ]
+      }
+    },
+    {
       "name": "label",
       "rust": {
         "observed": true,
@@ -353,7 +375,7 @@
         "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
         "evidenceKind": "implementation",
         "evidence": [
-          "services::spawn_plan::resolve|for key in [\"label\", \"parentSessionId\"]",
+          "services::spawn_plan::resolve|for key in [\"label\", \"parentSessionId\", \"jobId\"]",
           "services::spawn_plan::resolve|metadata[key] = params[key].clone();"
         ]
       },
@@ -548,7 +570,7 @@
         "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
         "evidenceKind": "implementation",
         "evidence": [
-          "services::spawn_plan::resolve|for key in [\"label\", \"parentSessionId\"]",
+          "services::spawn_plan::resolve|for key in [\"label\", \"parentSessionId\", \"jobId\"]",
           "services::spawn_plan::resolve|metadata[key] = params[key].clone();"
         ]
       },
@@ -1181,6 +1203,7 @@
   "differences": {
     "rustOnly": {
       "intents": "Rust workflow admission reuses a normalizer that validates nested intent cwd; agents.spawn executes only one plan. Desktop batch intents belong to fleetWorkflows.request, outside spawn.",
+      "jobId": "Rust hub jobs stamp their launches with the job id for attribution; desktop has no job runner and ignores it.",
       "projectCwd": "Rust coordinator explicitly removes the supplied root before deriving project identity; desktop inner handler never destructures a supplied projectCwd and derives it from requested execution cwd.",
       "remoteOrigin": "Rust ordinary trace sees origin refusal and authenticated federation admission; desktop inner local handler has no remoteOrigin claim. Federation middleware is reviewed separately.",
       "targetHub": "Rust explicitly refuses this incomplete local selector. Desktop selects remote execution only through executionTarget=paired and remoteCwd, leaving targetHub unused.",
@@ -1193,6 +1216,11 @@
       "yoloGranted": "Desktop DTO retains this legacy stamp, but current permission choice uses live skipPermissions/mode and host policy. Rust admission removes the stamp before ordinary plan tracing."
     },
     "semantics": {
+      "jobId": {
+        "rust": "supported",
+        "desktop": "ignored",
+        "reason": "Only the Rust hub runs jobs and records which job launched a session; desktop has no job runner and drops the attribution."
+      },
       "remoteOrigin": {
         "rust": "host-derived",
         "desktop": "ignored",
