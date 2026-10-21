@@ -67,7 +67,7 @@ impl Workspace {
     /// overflow clipping is rectangular, so a square fill would poke out.
     fn render_step(
         &mut self,
-        row: &Row,
+        row: &Arc<Row>,
         (round_top, round_bottom): (bool, bool),
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -82,11 +82,13 @@ impl Workspace {
             .get(&identity)
             .copied()
             .unwrap_or(tool.is_error);
-        let preview = tool_preview::parse(
-            &tool.name,
-            &tool.input,
-            tool.complete.then_some(tool.output.as_str()),
-        );
+        let preview = self.step_previews.get(&element_key, [row], || {
+            tool_preview::parse(
+                &tool.name,
+                &tool.input,
+                tool.complete.then_some(tool.output.as_str()),
+            )
+        });
         let cwd = self
             .selected_session()
             .map(|s| s.cwd.trim_end_matches('/').to_owned())
@@ -273,7 +275,11 @@ impl Workspace {
         let rows = &view.transcript.rows;
         let session = self.chat_owner();
         let card_key = format!("work:{session}:{}", tools::identity(&rows[span.start]));
-        let summary = tool_preview::summarize_work(rows.range(span.clone()).map(AsRef::as_ref));
+        let summary = self
+            .work_summaries
+            .get(&card_key, rows.range(span.clone()), || {
+                tool_preview::summarize_work(rows.range(span.clone()).map(AsRef::as_ref))
+            });
         // Merged turns interleave assistant notes; only calls count as steps.
         let steps = rows
             .range(span.clone())

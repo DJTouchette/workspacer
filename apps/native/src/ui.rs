@@ -18,6 +18,7 @@ mod jobs;
 mod kept;
 mod launch;
 mod markdown;
+mod memo;
 mod motion;
 mod navigation;
 mod plan;
@@ -642,6 +643,11 @@ pub struct Workspace {
     island_motion: island::IslandMotion,
     /// The next redraw for spinners and pulses on screen.
     loop_ticker: motion::Ticker,
+    /// Work-card summaries, step previews and turn file lists, derived from
+    /// rows that rarely change between the frames that draw them.
+    work_summaries: memo::RowMemo<wks_native::tool_preview::WorkSummary>,
+    step_previews: memo::RowMemo<wks_native::tool_preview::ToolPreview>,
+    turn_files: memo::RowMemo<Vec<wks_native::transcript::FileChange>>,
     /// How the capsule's context hairline fills and its glow warms.
     gauge_motion: gauge::GaugeMotion,
     /// Prompt caches going cold: the re-render at the next expiry and the
@@ -948,6 +954,9 @@ impl Workspace {
             title_reveal: island::TitleReveal::new(cx),
             island_motion: Default::default(),
             loop_ticker: Default::default(),
+            work_summaries: Default::default(),
+            step_previews: Default::default(),
+            turn_files: Default::default(),
             gauge_motion: Default::default(),
             cache: Default::default(),
             header_bounds: Default::default(),

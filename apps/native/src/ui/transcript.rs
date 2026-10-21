@@ -338,14 +338,12 @@ impl Workspace {
                 .find(|i| rows[*i].role == "You")
                 .map_or(0, |i| i + 1);
             let key = format!("{session}\0{}", turn_id(rows, start));
-            let estimate = content::turn_changes(
-                rows.iter()
-                    .skip(start)
-                    .take(ix - start + 1)
-                    .map(AsRef::as_ref),
-            );
+            let turn = rows.range(start..=ix);
+            let estimate = self.turn_files.get(&key, turn.clone(), || {
+                content::turn_changes(turn.map(AsRef::as_ref))
+            });
             let frozen = self.chat.frozen.get(&key);
-            let files = frozen.map_or(&estimate, |f| &f.files);
+            let files = frozen.map_or(&*estimate, |f| &f.files);
             if !files.is_empty() {
                 let estimated = frozen.is_none_or(|f| f.estimated);
                 let p = self.appearance.palette();
