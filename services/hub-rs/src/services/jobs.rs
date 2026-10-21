@@ -421,6 +421,9 @@ struct State {
     running: BTreeSet<String>,
     history: BTreeMap<String, Vec<Run>>,
     hash: Option<Vec<u8>>,
+    /// Size and mtime of the spec as last read, so an unchanged file is not
+    /// re-read and re-hashed on every tick.
+    stamp: Option<(u64, std::time::SystemTime)>,
 }
 pub struct Service {
     path: PathBuf,
@@ -448,6 +451,7 @@ impl Service {
                 running: BTreeSet::new(),
                 history,
                 hash: None,
+                stamp: None,
             }),
             queue,
         });
@@ -455,10 +459,20 @@ impl Service {
         (service, receiver)
     }
     fn reload(&self, state: &mut State, now: DateTime<Utc>) {
+        let stamp = std::fs::metadata(&self.path)
+            .ok()
+            .and_then(|m| Some((m.len(), m.modified().ok()?)));
+        // A just-written file may still change within its mtime granularity.
+        let settled =
+            stamp.is_some_and(|(_, at)| at.elapsed().is_ok_and(|age| age > Duration::from_secs(2)));
+        if settled && state.stamp == stamp {
+            return;
+        }
         let raw = match std::fs::read(&self.path) {
             Ok(raw) => raw,
             Err(_) => return,
         };
+        state.stamp = stamp;
         let hash = Sha256::digest(&raw).to_vec();
         if state.hash.as_ref() == Some(&hash) {
             return;
@@ -812,18 +826,20 @@ impl Service {
         if status == "error" {
             let _=self.hub.publish_wait(Event::new("notify.post","jobs",json!({"title":format!("Job failed: {}",job.name),"body":detail,"level":"error","key":format!("job-{}",job.id)}))).await;
         }
-        let mut state = self.state.lock().unwrap();
-        state.running.remove(&job.id);
-        self.record(
-            &mut state,
-            Run {
-                job_id: job.id,
-                started_at: started.timestamp_millis(),
-                finished_at: Utc::now().timestamp_millis(),
-                status: status.into(),
-                detail,
-            },
-        );
+        let run = Run {
+            job_id: job.id,
+            started_at: started.timestamp_millis(),
+            finished_at: Utc::now().timestamp_millis(),
+            status: status.into(),
+            detail,
+        };
+        // Recording rewrites the history file; keep it off the async workers.
+        let _ = tokio::task::spawn_blocking(move || {
+            let mut state = self.state.lock().unwrap();
+            state.running.remove(&run.job_id);
+            self.record(&mut state, run);
+        })
+        .await;
     }
     async fn run(self: Arc<Self>, receiver: mpsc::UnboundedReceiver<Job>) -> Result<()> {
         self.run_with_clock(receiver, Duration::from_secs(30), Utc::now)
@@ -842,7 +858,15 @@ impl Service {
         tick.tick().await;
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            let jobs = tokio::select! {_=tick.tick()=>self.due(now()),Some(job)=receiver.recv()=>vec![job],Some(_)=runs.join_next()=>continue};
+            let jobs = tokio::select! {
+                _ = tick.tick() => {
+                    // Reloading the spec and recording skipped runs touch files.
+                    let (service, at) = (self.clone(), now());
+                    tokio::task::spawn_blocking(move || service.due(at)).await?
+                }
+                Some(job) = receiver.recv() => vec![job],
+                Some(_) = runs.join_next() => continue,
+            };
             for job in jobs {
                 let service = self.clone();
                 let client = client.clone();
@@ -1124,6 +1148,41 @@ mod tests {
             plugin_id: String::new(),
             token_id: String::new(),
         }
+    }
+    #[tokio::test]
+    async fn settled_unchanged_spec_is_not_reread_until_its_stamp_moves() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("jobs.json");
+        let hub = crate::Hub::start(Options::default()).unwrap();
+        hub.ready().await.unwrap();
+        let row = |name: &str| {
+            json!({"jobs":[{"id":"job","name":name,"enabled":false,"createdAt":1,"updatedAt":1,
+                "trigger":{"kind":"interval","everyMinutes":5},
+                "action":{"kind":"call","call":{"method":"fixture"}}}]})
+            .to_string()
+        };
+        let old = std::time::SystemTime::now() - Duration::from_secs(60);
+        let write = |text: String| {
+            std::fs::write(&path, text).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        };
+        write(row("aaaa"));
+        let (service, _) = Service::open(path.clone(), hub.handle());
+        let name = || service.state.lock().unwrap().jobs[0].name.clone();
+        assert_eq!(name(), "aaaa");
+        // Same size and mtime: the tick trusts the stamp and skips the read.
+        write(row("bbbb"));
+        service.due(Utc::now());
+        assert_eq!(name(), "aaaa");
+        write(row("longer"));
+        service.due(Utc::now());
+        assert_eq!(name(), "longer");
+        hub.shutdown().unwrap();
     }
     #[tokio::test]
     async fn once_disarms_before_execution_and_interval_overlap_records_a_skip() {
