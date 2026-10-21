@@ -680,6 +680,9 @@ pub struct Workspace {
     requested_session: Option<String>,
     selection_requested: bool,
     _updates: Task<()>,
+    /// Hands terminal output to its views as it arrives, at most once a
+    /// frame, without a view republish.
+    _terminal_wake: Task<()>,
     #[cfg(feature = "ui-tests")]
     rendered_rows: std::rc::Rc<std::cell::RefCell<std::collections::BTreeSet<usize>>>,
 }
@@ -819,6 +822,21 @@ impl Workspace {
                 }
             }
         });
+        let feed = controller.views.borrow().terminal_feed.clone();
+        let terminal_wake = cx.spawn(async move |this, cx| {
+            loop {
+                feed.ready().await;
+                if this
+                    .update(cx, |this, cx| this.drain_terminals(cx))
+                    .is_err()
+                {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(16))
+                    .await;
+            }
+        });
         let list = ListState::new(0, ListAlignment::Bottom, px(250.));
         list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, _, cx| {
             this.follow = !event.is_scrolled;
@@ -951,6 +969,7 @@ impl Workspace {
             requested_session: None,
             selection_requested: false,
             _updates: updates,
+            _terminal_wake: terminal_wake,
             #[cfg(feature = "ui-tests")]
             rendered_rows: Default::default(),
         }

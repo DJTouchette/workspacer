@@ -525,6 +525,50 @@ pub fn hello_methods(hello: &Value) -> Option<Vec<String>> {
 }
 
 #[cfg(test)]
+mod republish_tests {
+    use super::*;
+
+    fn worker() -> Worker {
+        let config = crate::bus::Config::new("ws://127.0.0.1:9/bus".into(), None).unwrap();
+        Worker::new(Backend::connect(config).0)
+    }
+
+    fn data(topic: &str, data: Value) -> Event {
+        Event::Data {
+            topic: topic.into(),
+            data,
+            hub: None,
+        }
+    }
+
+    /// Only a change republishes: a repeated snapshot and terminal bytes
+    /// (which wake the window through the feed) leave the view alone.
+    #[tokio::test]
+    async fn repeated_snapshots_and_terminal_output_do_not_republish() {
+        let mut worker = worker();
+        let snapshot = json!({"sessionId":"a","label":"One","mode":"working"});
+        worker.event(data("agent.snapshot", snapshot.clone())).await;
+        assert!(worker.fleet_dirty);
+        (worker.dirty, worker.fleet_dirty) = (false, false);
+
+        worker.event(data("agent.snapshot", snapshot)).await;
+        assert!(!worker.dirty && !worker.fleet_dirty, "same snapshot");
+
+        worker
+            .event(data(
+                "agent.snapshot",
+                json!({"sessionId":"a","label":"Two"}),
+            ))
+            .await;
+        assert!(worker.fleet_dirty, "a changed label republishes");
+        (worker.dirty, worker.fleet_dirty) = (false, false);
+
+        worker.event(data("pty.bytes.shell", json!("aGk="))).await;
+        assert!(!worker.dirty && !worker.fleet_dirty, "terminal output");
+    }
+}
+
+#[cfg(test)]
 mod access_tests {
     use super::*;
 
@@ -730,6 +774,9 @@ struct Worker {
     installed_pending: bool,
     last_installed: Instant,
     child_pending: bool,
+    /// The (seq, items) of the subagent transcript last folded: a poll that
+    /// read the same one changes nothing and republishes nothing.
+    child_seen: Option<(u64, usize)>,
     last_child: Instant,
     held_parent: Option<(String, Held)>,
     held_children: VecDeque<(ChildTarget, Held)>,
@@ -783,6 +830,7 @@ impl Worker {
             installed_pending: false,
             last_installed: Instant::now(),
             child_pending: false,
+            child_seen: None,
             last_child: Instant::now(),
             held_parent: None,
             held_children: VecDeque::new(),
@@ -836,7 +884,7 @@ impl Worker {
                     }
                 },
                 Some(result) = self.jobs.next(), if !self.jobs.is_empty() => self.complete(result).await,
-                _ = frame.tick(), if self.dirty => self.publish(&updates),
+                _ = frame.tick(), if self.dirty || self.fleet_dirty => self.publish(&updates),
                 _ = maintenance.tick() => self.maintain(),
             }
         }
@@ -1298,6 +1346,7 @@ impl Worker {
         let held = self.take_held(target.as_ref());
         self.selection += 1;
         self.view.child = target;
+        self.child_seen = None;
         self.view.loading = held.is_none();
         self.view.loading_older = false;
         if !entering {
@@ -1401,6 +1450,7 @@ impl Worker {
         self.view.selected = id;
         self.view.child = None;
         self.child_pending = false;
+        self.child_seen = None;
         for key in [
             "history",
             "subagent-history",
@@ -1459,8 +1509,12 @@ impl Worker {
         if !self.sessions.contains_key(id) && self.sessions.len() >= MAX_SESSIONS {
             return;
         }
-        self.sessions.entry(id.into()).or_default().merge(data);
-        self.fleet_dirty = true;
+        let session = self.sessions.entry(id.into()).or_default();
+        let before = session.clone();
+        session.merge(data);
+        if *session != before {
+            self.fleet_dirty = true;
+        }
     }
 
     fn disconnected(&mut self, reason: String, power_paused: bool) {
@@ -1540,8 +1594,18 @@ impl Worker {
                     return;
                 }
                 if let Some(shell) = topic.strip_prefix("pty.bytes.") {
+                    // Output reaches the window through the feed's own wake.
                     self.terminal_bytes(shell, &data).await;
-                } else if topic == "pty.exit" || topic == "pty.desync" {
+                    return;
+                }
+                if topic == "agent.snapshot" {
+                    // Snapshots repeat what is already held; only a change
+                    // republishes (upsert marks the fleet).
+                    self.upsert(&data);
+                    self.overlay_snapshot(&data);
+                    return;
+                }
+                if topic == "pty.exit" || topic == "pty.desync" {
                     if let Some(shell) = data["sessionId"].as_str() {
                         self.terminal_signal(shell, topic == "pty.exit").await;
                     }
@@ -1549,9 +1613,6 @@ impl Worker {
                     self.queue_ui_request(&topic, &data);
                 } else if topic == "sessionArchive.changed" {
                     self.apply_archive(&data);
-                } else if topic == "agent.snapshot" {
-                    self.upsert(&data);
-                    self.overlay_snapshot(&data);
                 } else if self.view.child.is_none()
                     && self
                         .view
@@ -1654,7 +1715,12 @@ impl Worker {
     /// A conversation delta for the selected session: applied, buffered
     /// behind a read in flight, or answered with a fresh read.
     fn conversation_event(&mut self, data: Value) {
-        let size = data.to_string().len();
+        // Sized only while a read is in flight: that backlog is all it bounds.
+        let size = if self.conversation_pending {
+            data.to_string().len()
+        } else {
+            0
+        };
         if let Ok(delta) = serde_json::from_value::<Delta>(data) {
             if delta.ready {
                 self.push_ready = true;
@@ -2217,7 +2283,7 @@ impl Worker {
                 if epoch == self.epoch && selection == self.selection =>
             {
                 self.child_pending = false;
-                self.view.loading = false;
+                let was_loading = std::mem::replace(&mut self.view.loading, false);
                 let Some(target) = self.view.child.clone() else {
                     return;
                 };
@@ -2236,6 +2302,14 @@ impl Worker {
                 });
                 match snapshot {
                     Ok(snapshot) => {
+                        let seen = Some((snapshot.seq, snapshot.items.len()));
+                        if seen == self.child_seen
+                            && !was_loading
+                            && !self.view.notice.starts_with("Conversation unavailable:")
+                        {
+                            return;
+                        }
+                        self.child_seen = seen;
                         // Same fold and identity-stable keys as a parent reseed,
                         // so polling keeps the reader's place.
                         self.view.transcript.snapshot_for_transport(snapshot, false);
@@ -2252,17 +2326,22 @@ impl Worker {
                 self.log_first_reply("usage", self.last_usage);
                 // Older hubs lack usage.report; a failed refresh keeps the last
                 // reading, whose rolled-over windows drop out on their own.
-                match result {
-                    Ok(report) => {
-                        self.view.usage = Some(Arc::new(report));
-                        self.view.usage_error = None;
-                    }
-                    Err(error) => {
-                        self.view.usage_error =
-                            Some(crate::transcript::head(&error.to_string(), 200))
-                    }
+                // The hub caches its report for a minute, so most polls
+                // repeat the last one; only a change republishes.
+                let (usage, usage_error) = match result {
+                    Ok(report) => (Some(report), None),
+                    Err(error) => (
+                        self.view.usage.as_deref().cloned(),
+                        Some(crate::transcript::head(&error.to_string(), 200)),
+                    ),
+                };
+                if usage.as_ref() != self.view.usage.as_deref()
+                    || usage_error != self.view.usage_error
+                {
+                    self.view.usage = usage.map(Arc::new);
+                    self.view.usage_error = usage_error;
+                    self.dirty = true;
                 }
-                self.dirty = true;
             }
             Completion::Installed(epoch, result) if epoch == self.epoch => {
                 self.installed_pending = false;
@@ -2946,11 +3025,15 @@ impl Worker {
             return;
         };
         if self.view.terminal_feed.push(id, &bytes) {
-            self.set_terminal(&agent, |t| {
-                if t.status == crate::terminal::Status::Attaching {
-                    t.status = crate::terminal::Status::Live;
+            // Only a status change republishes; the bytes wake the window
+            // through the feed.
+            match self.view.terminals.get(&agent).map(|t| t.status) {
+                Some(crate::terminal::Status::Attaching) => {
+                    self.set_terminal(&agent, |t| t.status = crate::terminal::Status::Live)
                 }
-            });
+                None => self.set_terminal(&agent, |_| {}),
+                Some(_) => {}
+            }
         } else {
             // The window fell behind; a fresh attach replays the screen.
             self.attach_shell(&agent).await;

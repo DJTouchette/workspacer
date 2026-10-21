@@ -545,6 +545,16 @@ impl Workspace {
         }
     }
 
+    /// Hand queued output to each terminal. Runs on the feed's wake and on
+    /// every view update (which may change a terminal's attach).
+    pub(super) fn drain_terminals(&mut self, cx: &mut Context<Self>) {
+        let feed = self.view.terminal_feed.clone();
+        for (agent, view) in &self.terminal.views {
+            let state = self.view.terminals.get(agent);
+            view.update(cx, |view, cx| view.sync(state, &feed, cx));
+        }
+    }
+
     /// Hand new output to each terminal, follow the selected agent, and keep
     /// the remembered shells current.
     pub(super) fn sync_terminals(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -562,11 +572,7 @@ impl Workspace {
                 self.command(Command::Terminal(term::Command::Adopt(known)), cx);
             }
         }
-        let feed = self.view.terminal_feed.clone();
-        for (agent, view) in &self.terminal.views {
-            let state = self.view.terminals.get(agent);
-            view.update(cx, |view, cx| view.sync(state, &feed, cx));
-        }
+        self.drain_terminals(cx);
         // The panel follows the selected agent: its own shell, if it has one.
         if self.terminal.open && self.view.selected != self.terminal.agent {
             let focused = self.terminal_has_focus(window, cx);

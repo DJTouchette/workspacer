@@ -366,10 +366,11 @@ async fn run(
                         last_received = Instant::now();
                         match message {
                             Some(Ok(Message::Text(text))) => {
-                                let Ok(v) = serde_json::from_str::<Value>(&text) else {
+                                let Ok(mut v) = serde_json::from_str::<Value>(&text) else {
                                     break;
                                 };
-                                match v["op"].as_str() {
+                                let op = v["op"].as_str().map(str::to_owned);
+                                match op.as_deref() {
                                     Some("hello") if !ready => {
                                         ready = true;
                                         *methods.lock().unwrap_or_else(|e| e.into_inner()) = crate::controller::hello_methods(&v);
@@ -387,11 +388,11 @@ async fn run(
                                         }
                                     }
                                     Some("event") if ready => {
-                                        let event = &v["event"];
-                                        if let Some(topic) = event["type"].as_str() {
+                                        let event = &mut v["event"];
+                                        if let Some(topic) = event["type"].as_str().map(str::to_owned) {
                                             let outgoing = Event::Data {
-                                                topic: topic.into(),
-                                                data: event["data"].clone(),
+                                                topic,
+                                                data: event["data"].take(),
                                                 hub: event["hub"].as_str().filter(|s| !s.is_empty()).map(str::to_owned),
                                             };
                                             // Overflow deliberately reconnects and reseeds. Dropping a

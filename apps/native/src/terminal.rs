@@ -25,10 +25,13 @@ pub const DEFAULT_ROWS: u16 = 24;
 /// Most agents with a remembered shell (persisted per hub).
 pub const MAX_REMEMBERED: usize = 256;
 
-/// Output waiting for the window, per shell id.
+/// Output waiting for the window, per shell id. Output wakes the window
+/// through [`Feed::ready`], not a view republish: a noisy shell then costs a
+/// terminal redraw, not a rebuild of everything else.
 #[derive(Debug, Default)]
 pub struct Feed {
     inner: Mutex<HashMap<String, Pending>>,
+    ready: tokio::sync::Notify,
 }
 
 #[derive(Debug, Default)]
@@ -57,7 +60,14 @@ impl Feed {
             return false;
         }
         pending.bytes.extend_from_slice(bytes);
+        drop(inner);
+        self.ready.notify_one();
         true
+    }
+
+    /// Resolves once output has been queued since the last wait.
+    pub async fn ready(&self) {
+        self.ready.notified().await;
     }
 
     /// The next bytes are a replay: discard anything older.
