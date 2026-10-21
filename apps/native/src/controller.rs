@@ -957,6 +957,31 @@ impl Worker {
         }
     }
 
+    /// Queue a backend call whose completion the loop handles. It is spawned
+    /// so it starts now: the loop polls `jobs` only between events, and the
+    /// connect handler awaits a subscribe and terminal attaches first, which
+    /// held the first fleet and usage reads back. Dropping `jobs` (a
+    /// disconnect, the loop ending) still cancels it.
+    fn push_job(&mut self, job: BoxFuture<'static, Completion>) {
+        struct AbortOnDrop(tokio::task::AbortHandle);
+        impl Drop for AbortOnDrop {
+            fn drop(&mut self) {
+                self.0.abort();
+            }
+        }
+        let handle = tokio::spawn(job);
+        let abort = AbortOnDrop(handle.abort_handle());
+        self.jobs.push(Box::pin(async move {
+            let _abort = abort;
+            match handle.await {
+                Ok(completion) => completion,
+                Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+                // Cancelled only by dropping this future, which is then gone.
+                Err(_) => std::future::pending().await,
+            }
+        }));
+    }
+
     /// Sends the latest view, replacing it even when no window is open.
     fn publish(&mut self, updates: &tokio::sync::watch::Sender<Arc<View>>) {
         if self.fleet_dirty {
@@ -1133,7 +1158,7 @@ impl Worker {
         );
         let backend = self.backend.clone();
         let epoch = self.epoch;
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             let result = Abortable::new(request.run(&backend), registration)
                 .await
                 .unwrap_or_else(|_| Err(anyhow!("Request superseded")));
@@ -1206,7 +1231,7 @@ impl Worker {
         let number = self.catalog_number;
         let (abort, registration) = AbortHandle::new_pair();
         self.catalog_abort = Some(abort);
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             let result = Abortable::new(backend.models(&key), registration)
                 .await
                 .unwrap_or_else(|_| Err(anyhow!("Model query superseded")))
@@ -1227,7 +1252,7 @@ impl Worker {
         let backend = self.backend.clone();
         let epoch = self.epoch;
         let keep = self.keep.clone();
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             let mut result = backend.snapshots().await;
             // The fleet list ages stopped sessions out after a day; a kept one
             // is read by id so it stays listed with the rest, in one answer.
@@ -1236,8 +1261,14 @@ impl Worker {
                     .iter()
                     .filter_map(|row| Session::id_of(row).map(str::to_owned))
                     .collect();
-                for id in keep.iter().filter(|id| !listed.contains(*id)) {
-                    if let Ok(row) = backend.snapshot(id).await
+                // Read together, not one round trip after another.
+                let backend = &backend;
+                let reads = keep
+                    .iter()
+                    .filter(|id| !listed.contains(*id))
+                    .map(|id| async move { (id, backend.snapshot(id).await) });
+                for (id, read) in futures_util::future::join_all(reads).await {
+                    if let Ok(row) = read
                         && Session::id_of(&row) == Some(id.as_str())
                     {
                         rows.push(row);
@@ -1256,7 +1287,7 @@ impl Worker {
         self.last_usage = Instant::now();
         let backend = self.backend.clone();
         let epoch = self.epoch;
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             Completion::Usage(epoch, backend.usage_report().await)
         }));
     }
@@ -1269,7 +1300,7 @@ impl Worker {
         self.last_installed = Instant::now();
         let backend = self.backend.clone();
         let epoch = self.epoch;
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             Completion::Installed(epoch, backend.call("providers.checkAll", json!({})).await)
         }));
     }
@@ -1310,7 +1341,7 @@ impl Worker {
         self.last_child = Instant::now();
         let backend = self.backend.clone();
         let (epoch, selection) = (self.epoch, self.selection);
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             let result = backend
                 .call(
                     "sessions.subagentConversation",
@@ -1436,7 +1467,7 @@ impl Worker {
         // Reconciliation and gap repairs re-read the same window, never the
         // whole retained log.
         let limit = Some(self.conversation_limit);
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             Completion::Conversation(epoch, selection, backend.conversation(&id, limit).await)
         }));
     }
@@ -1925,7 +1956,7 @@ impl Worker {
                 .sessions
                 .get(&session)
                 .is_some_and(|s| s.transport == "stream");
-            self.jobs.push(Box::pin(async move {
+            self.push_job(Box::pin(async move {
                 let result = backend.action(&session, &action, stream).await;
                 Completion::Action(number, session, action, result)
             }));
@@ -1962,7 +1993,7 @@ impl Worker {
             Ok(params) => {
                 self.view.creating = true;
                 let backend = self.backend.clone();
-                self.jobs.push(Box::pin(async move {
+                self.push_job(Box::pin(async move {
                     let result = backend.spawn(params).await;
                     Completion::Spawn(number, request, None, result)
                 }));
@@ -2011,7 +2042,7 @@ impl Worker {
             stage: crate::handoff::Stage::Brief(request.brief),
         });
         let backend = self.backend.clone();
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             let result = backend.handoff_brief(&request.source, request.brief).await;
             Completion::HandoffBrief(number, request, result)
         }));
@@ -2202,7 +2233,7 @@ impl Worker {
                             source: request.source.clone(),
                             brief,
                         };
-                        self.jobs.push(Box::pin(async move {
+                        self.push_job(Box::pin(async move {
                             let result = backend.spawn(params).await;
                             Completion::Spawn(number, request.successor, Some(spawn), result)
                         }));
@@ -2876,7 +2907,7 @@ impl Worker {
         self.set_terminal(agent, |t| t.cwd = shown);
         let backend = self.backend.clone();
         let (epoch, agent) = (self.epoch, agent.to_owned());
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             // The shared default shell, read fresh: a change in Settings (here
             // or on desktop) applies to the next shell; running ones keep theirs.
             // An unreadable setting fails the start rather than guessing a shell.
@@ -2915,7 +2946,7 @@ impl Worker {
         self.subscribe().await;
         let backend = self.backend.clone();
         let (epoch, agent) = (self.epoch, agent.to_owned());
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             let result = backend
                 .call("sessions.attachTerminal", json!({"sessionId":id}))
                 .await;
@@ -2938,7 +2969,7 @@ impl Worker {
         let generation = shell.generation;
         let backend = self.backend.clone();
         let (epoch, agent) = (self.epoch, agent.to_owned());
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             use base64::Engine;
             let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
             let result = backend
@@ -2967,7 +2998,7 @@ impl Worker {
         let generation = shell.generation;
         let backend = self.backend.clone();
         let (epoch, agent) = (self.epoch, agent.to_owned());
-        self.jobs.push(Box::pin(async move {
+        self.push_job(Box::pin(async move {
             let result = backend
                 .call(
                     "sessions.terminalResize",
@@ -2994,7 +3025,7 @@ impl Worker {
         for (agent, id, generation) in due {
             let backend = self.backend.clone();
             let epoch = self.epoch;
-            self.jobs.push(Box::pin(async move {
+            self.push_job(Box::pin(async move {
                 let result = backend
                     .call("sessions.terminalKeepalive", json!({"sessionId":id}))
                     .await;

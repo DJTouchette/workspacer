@@ -297,7 +297,7 @@ impl Workspace {
                                     .p_2()
                                     .rounded(px(p.control_radius))
                                     .bg(rgb(p.base))
-                                    .font_family(self.fonts.resolved(&self.settings.code_font, "JetBrains Mono"))
+                                    .font_family(self.fonts.resolved(&self.settings.code_font, "JetBrains Mono", cx))
                                     .text_size(px(11.))
                                     .text_color(rgb(p.muted))
                                     .overflow_hidden()

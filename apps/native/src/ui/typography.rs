@@ -77,18 +77,19 @@ impl SelectItem for FontChoice {
 pub(super) struct FontControls {
     pub interface: Entity<SelectState<SearchableVec<FontChoice>>>,
     pub code: Entity<SelectState<SearchableVec<FontChoice>>>,
-    available: Vec<String>,
+    /// Installed families, listed on first need: the pickers in Settings,
+    /// or a chosen font that is not bundled. Listing every system font is
+    /// slow (DirectWrite on Windows) and most launches never need it.
+    available: std::cell::OnceCell<Vec<String>>,
+    /// The pickers hold the whole list (Settings has been opened).
+    filled: std::cell::Cell<bool>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
 impl FontControls {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
         register_fonts(cx);
-        let mut available = cx.text_system().all_font_names();
-        available.extend(["Inter".into(), "JetBrains Mono".into()]);
-        available.retain(|name| pickable(name));
-        available.sort();
-        available.dedup();
+        let available: Vec<String> = Vec::new();
         let interface = cx.new(|cx| {
             SelectState::new(
                 SearchableVec::new(items(&available, "Inter")),
@@ -130,37 +131,60 @@ impl FontControls {
         let controls = Self {
             interface,
             code,
-            available,
+            available: std::cell::OnceCell::new(),
+            filled: std::cell::Cell::new(false),
             _subscriptions: subscriptions,
         };
         controls.sync(&Settings::default(), window, cx);
         controls
     }
 
+    fn available(&self, cx: &App) -> &[String] {
+        self.available.get_or_init(|| {
+            let mut available = cx.text_system().all_font_names();
+            available.extend(["Inter".into(), "JetBrains Mono".into()]);
+            available.retain(|name| pickable(name));
+            available.sort();
+            available.dedup();
+            available
+        })
+    }
+
+    /// Give the pickers every installed family; Settings calls this when it
+    /// opens, the first time anything shows them.
+    pub fn fill(&self, settings: &Settings, window: &mut Window, cx: &mut Context<Workspace>) {
+        if !self.filled.replace(true) {
+            self.sync(settings, window, cx);
+        }
+    }
+
     pub fn sync(&self, settings: &Settings, window: &mut Window, cx: &mut Context<Workspace>) {
+        let available = if self.filled.get() {
+            self.available(cx).to_vec()
+        } else {
+            Vec::new()
+        };
         for (picker, family) in [
             (&self.interface, &settings.interface_font),
             (&self.code, &settings.code_font),
         ] {
             picker.update(cx, |picker, cx| {
-                picker.set_items(
-                    SearchableVec::new(items(&self.available, family)),
-                    window,
-                    cx,
-                );
+                picker.set_items(SearchableVec::new(items(&available, family)), window, cx);
                 picker.set_selected_value(family, window, cx);
             });
         }
     }
 
-    pub(super) fn resolved(&self, family: &str, fallback: &str) -> SharedString {
+    pub(super) fn resolved(&self, family: &str, fallback: &str, cx: &App) -> SharedString {
         if family.is_empty() {
             if fallback == "JetBrains Mono" {
                 mono_font().into()
             } else {
                 ".SystemUIFont".into()
             }
-        } else if self.available.iter().any(|name| name == family) {
+        } else if matches!(family, "Inter" | "JetBrains Mono")
+            || self.available(cx).iter().any(|name| name == family)
+        {
             family.to_owned().into()
         } else {
             fallback.to_owned().into()
@@ -208,11 +232,15 @@ impl Workspace {
         } else {
             self.scroll_anchor()
         };
-        let theme = Theme::global_mut(cx);
-        theme.font_family = self.fonts.resolved(&self.settings.interface_font, "Inter");
-        theme.mono_font_family = self
+        let interface = self
             .fonts
-            .resolved(&self.settings.code_font, "JetBrains Mono");
+            .resolved(&self.settings.interface_font, "Inter", cx);
+        let mono = self
+            .fonts
+            .resolved(&self.settings.code_font, "JetBrains Mono", cx);
+        let theme = Theme::global_mut(cx);
+        theme.font_family = interface;
+        theme.mono_font_family = mono;
         theme.font_size = px(self.settings.text_size.clamp(12, 20) as f32);
         theme.mono_font_size = px((self.settings.text_size.clamp(12, 20) as f32 - 2.).max(12.));
         self.list.splice(0..count, count);

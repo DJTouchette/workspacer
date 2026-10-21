@@ -595,6 +595,18 @@ impl Workspace {
                 }
             }
         }
+        // Only the panel's terminal and a popped-out one stream. Any other
+        // re-attaches (and resets its emulator) before it shows again, so
+        // its view and scrollback would only hold memory until then.
+        let popped = self
+            .terminal
+            .popout
+            .as_ref()
+            .map(|(_, agent)| agent.clone());
+        let shown = self.terminal.agent.clone();
+        self.terminal
+            .views
+            .retain(|agent, _| Some(agent) == shown.as_ref() || Some(agent) == popped.as_ref());
         // Persist agent → shell for this hub.
         let mut remembered = self.terminal.remembered.clone();
         for (agent, state) in &self.view.terminals {

@@ -33,6 +33,19 @@ impl Workspace {
         self.settings = settings;
         self.settings_path = path;
         self.project_scope = scope;
+        // Sessions kept from the last run reach the controller before it
+        // connects, so its first fleet read includes them instead of a
+        // second read once the first one lands without them.
+        let kept: Vec<String> = self
+            .settings
+            .kept_open
+            .get(&self.project_scope)
+            .map(|kept| kept.keys().cloned().collect())
+            .unwrap_or_default();
+        if !kept.is_empty() && kept != self.kept_sent {
+            self.kept_sent = kept.clone();
+            let _ = self.controller.command(Command::KeepSessions(kept));
+        }
         set_zoom(self.settings.interface_scale as f32 / 100.);
         self.fonts.sync(&self.settings, window, cx);
         self.apply_typography(cx);
@@ -167,6 +180,7 @@ impl Workspace {
         }
         if screen == Screen::Settings {
             self.load_terminal_shell(cx);
+            self.fonts.fill(&self.settings, window, cx);
         }
         if screen == Screen::Settings {
             if !self.extras.title_harness_seeded {

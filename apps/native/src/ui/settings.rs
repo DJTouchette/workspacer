@@ -435,16 +435,21 @@ impl Workspace {
                 .gap_2()
                 .child(
                     div()
-                        .font_family(self.fonts.resolved(&self.settings.interface_font, "Inter"))
+                        .font_family(self.fonts.resolved(
+                            &self.settings.interface_font,
+                            "Inter",
+                            cx,
+                        ))
                         .text_size(px(self.settings.text_size as f32))
                         .child("The quick brown fox jumps over the lazy dog."),
                 )
                 .child(
                     div()
-                        .font_family(
-                            self.fonts
-                                .resolved(&self.settings.code_font, "JetBrains Mono"),
-                        )
+                        .font_family(self.fonts.resolved(
+                            &self.settings.code_font,
+                            "JetBrains Mono",
+                            cx,
+                        ))
                         .text_size(px((self.settings.text_size as f32 - 2.).max(12.)))
                         .text_color(rgb(p.accent))
                         .child("const workspace = await connect();"),

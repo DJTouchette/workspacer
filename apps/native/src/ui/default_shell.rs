@@ -107,7 +107,7 @@ impl Workspace {
             .to_owned();
         let code = self
             .fonts
-            .resolved(&self.settings.code_font, "JetBrains Mono");
+            .resolved(&self.settings.code_font, "JetBrains Mono", cx);
         let status = self.terminal_shell_status(&choices);
         div()
             .flex()
