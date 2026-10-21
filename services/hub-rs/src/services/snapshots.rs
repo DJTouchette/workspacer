@@ -375,14 +375,18 @@ pub fn live(snapshot: &Value) -> bool {
     !matches!(mode, "unknown" | "stopped") && !(mode.is_empty() && snapshot["status"] == "ended")
 }
 
+/// Whether `visible` can depend on the layout: only ended rows consult it.
+pub fn consults_layout(snapshot: &Value) -> bool {
+    let mode = snapshot["mode"].as_str().unwrap_or("");
+    mode == "stopped" || (mode.is_empty() && snapshot["status"] == "ended")
+}
 pub fn visible(snapshot: &Value, layout: &Value, now: time::OffsetDateTime) -> bool {
     if !state_fields_valid(snapshot, &["session_id", "mode", "status", "updated_at"])
         || snapshot["mode"] == "unknown"
     {
         return false;
     }
-    let mode = snapshot["mode"].as_str().unwrap_or("");
-    if mode != "stopped" && !(mode.is_empty() && snapshot["status"] == "ended") {
+    if !consults_layout(snapshot) {
         return true;
     }
     let (ids, has_layout) = layout_ids(layout);

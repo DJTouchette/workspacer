@@ -160,19 +160,33 @@ impl LiveStreams {
         self.changed.notify_one();
     }
     fn visible(&self, id: &str) -> bool {
-        let Some(row) = self.rows.read().unwrap().get(id).cloned() else {
-            return false;
+        self.visible_with(id, &mut None)
+    }
+    /// Live rows are judged in place; only ended rows need the layout, which
+    /// is read at most once per `layout` cache however many rows are checked.
+    fn visible_with(&self, id: &str, layout: &mut Option<Value>) -> bool {
+        let now = time::OffsetDateTime::now_utc();
+        let row = {
+            let rows = self.rows.read().unwrap();
+            let Some(row) = rows.get(id) else {
+                return false;
+            };
+            if row["hub"].as_str().is_some_and(|s| !s.is_empty()) {
+                return false;
+            }
+            if !super::snapshots::consults_layout(row) {
+                return super::snapshots::visible(row, &Value::Null, now);
+            }
+            row.clone()
         };
-        if row["hub"].as_str().is_some_and(|s| !s.is_empty()) {
-            return false;
-        }
-        let layout = self
-            .upstream_layout
-            .as_ref()
-            .map(|l| l.read().unwrap().clone())
-            .or_else(|| self.layout.as_ref().map(|l| l.get()))
-            .unwrap_or(Value::Null);
-        super::snapshots::visible(&row, &layout, time::OffsetDateTime::now_utc())
+        let layout = layout.get_or_insert_with(|| {
+            self.upstream_layout
+                .as_ref()
+                .map(|l| l.read().unwrap().clone())
+                .or_else(|| self.layout.as_ref().map(|l| l.get()))
+                .unwrap_or(Value::Null)
+        });
+        super::snapshots::visible(&row, layout, now)
     }
     /// Must execute in Core immediately before Core.publish. This final check
     /// fences already-queued work after off/on, dismissal, hide, lag, or shutdown.
@@ -341,7 +355,7 @@ impl LiveStreams {
              _=visibility.tick()=>{if !self.source.available(){bail!("embedded live stream producer stopped");}
               // A hidden interval ends the ready contract. Reappearance needs a new
               // handshake even without an unsubscribe from the consumer.
-              let mut state=self.state.lock().unwrap();for(id,demand)in &mut state.wanted{if !self.visible(id){demand.active=false;demand.ready_queued=false;}}
+              let mut layout=None;let mut state=self.state.lock().unwrap();for(id,demand)in &mut state.wanted{if !self.visible_with(id,&mut layout){demand.active=false;demand.ready_queued=false;}}
              },
              delta=async{match &mut conversation{Some((_,rx))=>rx.recv().await,None=>std::future::pending().await}},if conversation.is_some()=>match delta {
               Ok(delta)=>{
@@ -469,6 +483,30 @@ mod tests {
             ("s1".into(), json!({"session_id":"s1","mode":"input"})),
             ("s2".into(), json!({"session_id":"s2","mode":"input"})),
         ])
+    }
+    #[test]
+    fn live_rows_are_judged_without_reading_the_layout() {
+        let layout = Arc::new(RwLock::new(json!({"data":null})));
+        let poisoned = layout.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.write().unwrap();
+            panic!("poison the layout so any read of it fails the test");
+        })
+        .join();
+        let mut rows = shown();
+        rows.insert(
+            "ended".into(),
+            json!({"session_id":"ended","mode":"stopped","updated_at":"2026-09-28T00:00:00Z"}),
+        );
+        let service = LiveStreams::from_source(
+            FixtureSource::new(8, vec![]),
+            Arc::new(RwLock::new(rows)),
+            None,
+            Some(layout),
+        );
+        assert!(service.visible("s1"));
+        let mut cached = Some(json!({"data":{"panes":[]}}));
+        assert!(!service.visible_with("ended", &mut cached));
     }
     #[test]
     fn status_delivery_requires_a_known_object_and_never_overwrites_remote_rows() {
