@@ -162,4 +162,10 @@ Native interaction polish also patches:
   tree-sitter-graphql ships none. Regression test: native
   `ui::syntax::tests::grammars_without_upstream_queries_still_highlight`.
 
+- Unchanged Markdown sends nothing (`text/text_view.rs`): `TextView::markdown`
+  sent the whole text to its parse task on every render, where it was
+  compared against the last parse. `TextViewState` now remembers the text it
+  last sent and skips the send when it is the same, so a transcript frame
+  costs a comparison per visible message instead of a channel send.
+
 Reapply these interaction changes explicitly when upgrading the component.

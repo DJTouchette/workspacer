@@ -190,11 +190,11 @@ impl Workspace {
         for (index, depth) in wks_native::navigation::session_tree(&self.view.sessions, &visible) {
             rows.push(SidebarRow::Session { index, depth });
             let parent = &self.view.sessions[index];
-            let native = wks_native::child_agents::project(parent, &[], std::iter::empty());
+            let native = self.native_children(parent);
             // Provider-native subagents stay under their parent through every
             // turn and focus change, finished or not, until the user clears
             // them. The one being viewed stays put so its highlight has a home.
-            for child in native.unanchored.into_iter().filter(|child| {
+            for child in native.iter().filter(|child| {
                 !self.provider_cleared(&parent.id, child)
                     || self
                         .view
@@ -204,12 +204,34 @@ impl Workspace {
             }) {
                 rows.push(SidebarRow::Provider {
                     parent: parent.id.clone(),
-                    child: Box::new(child),
+                    child: Box::new(child.clone()),
                     depth: depth + 1,
                 });
             }
         }
         rows
+    }
+
+    /// A session's provider-native children, read from its subagents
+    /// inventory once per change rather than on every frame.
+    fn native_children(&self, parent: &Session) -> std::rc::Rc<Vec<ChildAgent>> {
+        let mut held = self.sidebar_children.borrow_mut();
+        if let Some((inventory, children)) = held.get(&parent.id)
+            && Arc::ptr_eq(inventory, &parent.subagents)
+        {
+            return children.clone();
+        }
+        if held.len() >= 1024 {
+            held.clear();
+        }
+        let children = std::rc::Rc::new(
+            wks_native::child_agents::project(parent, &[], std::iter::empty()).unanchored,
+        );
+        held.insert(
+            parent.id.clone(),
+            (parent.subagents.clone(), children.clone()),
+        );
+        children
     }
 
     pub(super) fn sidebar_session_position(&self, index: usize, cx: &App) -> usize {

@@ -52,6 +52,8 @@ pub(super) struct ReviewUi {
     status: Option<Status>,
     /// The answer number and appearance it was parsed and colored for.
     parsed: Option<(u64, Appearance, ParsedDiff)>,
+    /// Syntax-coloring the parsed diff off the UI thread.
+    coloring: Option<gpui::Task<()>>,
     pub scroll: gpui::UniformListScrollHandle,
     list_scroll: gpui::UniformListScrollHandle,
 }
@@ -578,9 +580,14 @@ impl Workspace {
             .child(text)
     }
 
-    /// The parsed rows of a loaded diff, parsed and syntax-colored once per
-    /// answer and again when the appearance changes.
-    fn parsed_diff(&mut self, state: Option<&RequestState>) -> Option<ParsedDiff> {
+    /// The parsed rows of a loaded diff, parsed once per answer and again
+    /// when the appearance changes. Rows show at once; their syntax colors
+    /// follow from a background task (tree-sitter over up to 20,000 rows).
+    fn parsed_diff(
+        &mut self,
+        state: Option<&RequestState>,
+        cx: &mut Context<Self>,
+    ) -> Option<ParsedDiff> {
         let s = state.filter(|s| !s.loading && s.error.is_none())?;
         Some(match &self.review.parsed {
             Some((number, appearance, parsed))
@@ -596,16 +603,28 @@ impl Workspace {
                     .enumerate()
                     .max_by_key(|(_, r)| r.text.len())
                     .map_or(0, |(ix, _)| ix);
-                let highlights = Arc::new(syntax::highlight_diff(
-                    &diff,
-                    &syntax::highlight_theme(self.appearance),
-                ));
                 let parsed = ParsedDiff {
-                    diff,
+                    diff: diff.clone(),
                     widest,
-                    highlights,
+                    highlights: Arc::default(),
                 };
-                self.review.parsed = Some((s.number, self.appearance, parsed.clone()));
+                let (number, appearance) = (s.number, self.appearance);
+                self.review.parsed = Some((number, appearance, parsed.clone()));
+                let theme = syntax::highlight_theme(appearance);
+                let colored = cx
+                    .background_executor()
+                    .spawn(async move { syntax::highlight_diff(&diff, &theme) });
+                self.review.coloring = Some(cx.spawn(async move |this, cx| {
+                    let highlights = Arc::new(colored.await);
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some((n, a, parsed)) = &mut this.review.parsed
+                            && (*n, *a) == (number, appearance)
+                        {
+                            parsed.highlights = highlights;
+                            cx.notify();
+                        }
+                    });
+                }));
                 parsed
             }
         })
@@ -695,7 +714,10 @@ impl Workspace {
                     count,
                     cx.processor(move |_this, range: std::ops::Range<usize>, _, _| {
                         range
-                            .map(|ix| diff_row(&rows.rows[ix], &highlights[ix], ix, p))
+                            .map(|ix| {
+                                let colors = highlights.get(ix).map_or(&[][..], Vec::as_slice);
+                                diff_row(&rows.rows[ix], colors, ix, p)
+                            })
                             .collect::<Vec<_>>()
                     }),
                 )
@@ -743,7 +765,7 @@ impl Workspace {
             state.as_ref().map(|s| &s.request),
             Some(Request::Diff { staged: true, .. })
         );
-        let parsed = self.parsed_diff(state.as_ref());
+        let parsed = self.parsed_diff(state.as_ref(), cx);
         let (name, dir) = match selected.rsplit_once(['/', '\\']) {
             Some((dir, name)) => (name.to_owned(), format!("{dir}/")),
             None => (selected.clone(), String::new()),
@@ -953,7 +975,7 @@ impl Workspace {
             .get("diff")
             .filter(|s| matches!(&s.request, Request::CommitDiff { hash: h, .. } if h == &hash))
             .cloned();
-        let parsed = self.parsed_diff(state.as_ref());
+        let parsed = self.parsed_diff(state.as_ref(), cx);
         let header = self
             .diff_header()
             .child(

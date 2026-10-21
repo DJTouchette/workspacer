@@ -648,6 +648,20 @@ pub struct Workspace {
     work_summaries: memo::RowMemo<wks_native::tool_preview::WorkSummary>,
     step_previews: memo::RowMemo<wks_native::tool_preview::ToolPreview>,
     turn_files: memo::RowMemo<Vec<wks_native::transcript::FileChange>>,
+    /// Each session's provider-native children for the sidebar, by the
+    /// subagents inventory they were read from (replaced only on change).
+    /// The text each Markdown view last drew, shared rather than copied
+    /// on every frame.
+    markdown_sources: std::cell::RefCell<HashMap<String, SharedString>>,
+    sidebar_children: std::cell::RefCell<
+        HashMap<
+            String,
+            (
+                Arc<serde_json::Value>,
+                std::rc::Rc<Vec<wks_native::child_agents::ChildAgent>>,
+            ),
+        >,
+    >,
     /// How the capsule's context hairline fills and its glow warms.
     gauge_motion: gauge::GaugeMotion,
     /// Prompt caches going cold: the re-render at the next expiry and the
@@ -957,6 +971,8 @@ impl Workspace {
             work_summaries: Default::default(),
             step_previews: Default::default(),
             turn_files: Default::default(),
+            sidebar_children: Default::default(),
+            markdown_sources: Default::default(),
             gauge_motion: Default::default(),
             cache: Default::default(),
             header_bounds: Default::default(),

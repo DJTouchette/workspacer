@@ -250,16 +250,19 @@ impl Workspace {
                 p.muted,
             ));
         }
+        // Runs are newest first, so a day's runs are adjacent: label each
+        // run once and start a group where the label changes.
+        let days: Vec<String> = shown
+            .iter()
+            .map(|run| jobs::day_label(run.started_at, now))
+            .collect();
         let mut ix = 0;
-        for (day, group) in shown
-            .chunk_by(|a, b| {
-                jobs::day_label(a.started_at, now) == jobs::day_label(b.started_at, now)
-            })
-            .map(|group| (jobs::day_label(group[0].started_at, now), group))
-        {
+        while ix < shown.len() {
+            let day = days[ix].clone();
             let mut card = chrome::card(p).flex().flex_col().overflow_hidden();
-            for (n, run) in group.iter().enumerate() {
-                card = card.child(self.run_row(ix, n > 0, run, list, cx));
+            let start = ix;
+            while ix < shown.len() && days[ix] == day {
+                card = card.child(self.run_row(ix, ix > start, &shown[ix], list, cx));
                 ix += 1;
             }
             page = page.child(

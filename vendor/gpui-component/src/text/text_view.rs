@@ -305,6 +305,8 @@ enum InitState {
 pub(crate) struct TextViewState {
     parent_entity: Option<EntityId>,
     tx: Option<smol::channel::Sender<Update>>,
+    /// The text last sent through `tx`: an unchanged render sends nothing.
+    sent: Option<SharedString>,
     parsed_result: Option<Result<ParsedContent, SharedString>>,
     focus_handle: Option<FocusHandle>,
     /// The bounds of the text view
@@ -323,6 +325,7 @@ impl TextViewState {
         Self {
             parent_entity: None,
             tx: None,
+            sent: None,
             parsed_result: None,
             focus_handle: Some(focus_handle),
             bounds: Bounds::default(),
@@ -508,8 +511,16 @@ impl TextView {
             &state,
             cx,
         );
-        if let Some(tx) = &state.read(cx).tx {
-            let _ = tx.try_send(Update::Text(markdown.clone()));
+        let read = state.read(cx);
+        let tx = read
+            .tx
+            .clone()
+            .filter(|_| read.sent.as_ref() != Some(&markdown));
+        if let Some(tx) = tx {
+            if tx.try_send(Update::Text(markdown.clone())).is_ok() {
+                let sent = markdown.clone();
+                state.update(cx, |state, _| state.sent = Some(sent));
+            }
         }
         Self {
             id,

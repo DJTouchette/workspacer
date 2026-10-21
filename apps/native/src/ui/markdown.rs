@@ -27,7 +27,7 @@ impl Workspace {
             .child(
                 TextView::markdown(
                     SharedString::from(format!("markdown-{key}")),
-                    source.to_owned(),
+                    self.markdown_source(&key, source),
                     window,
                     cx,
                 )
@@ -38,6 +38,23 @@ impl Workspace {
 }
 
 impl Workspace {
+    /// `source` as shared text, reusing the copy this key last drew when it
+    /// is unchanged: a frame then compares each message instead of copying it.
+    fn markdown_source(&self, key: &str, source: &str) -> SharedString {
+        let mut held = self.markdown_sources.borrow_mut();
+        if let Some(text) = held.get(key)
+            && text.as_ref() == source
+        {
+            return text.clone();
+        }
+        if held.len() >= 2048 {
+            held.clear();
+        }
+        let text = SharedString::from(source.to_owned());
+        held.insert(key.to_owned(), text.clone());
+        text
+    }
+
     /// The chat's Markdown look, shared by the file viewer's document
     /// preview. `document` scales headings up for long-form reading.
     pub(super) fn markdown_style(
