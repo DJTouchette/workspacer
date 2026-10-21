@@ -151,19 +151,27 @@ impl Backend {
         let engine = self.engine.as_mut().expect("engine owner present");
         let endpoints = engine.ready().await?;
         stage("engine");
-        if let Some(path) = options.claude_hook_settings.clone() {
+        // The hook merge (Claude's settings file) and hub startup do not
+        // depend on each other, so neither waits for the other.
+        let hooks = options.claude_hook_settings.clone().map(|path| async move {
             if let Err(error) =
                 claudemon::daemon::init::run_at_with_port_quiet(path, endpoints.hook_addr.port())
                     .await
             {
                 eprintln!("hook initialization failed: {error:#}; continuing");
             }
-        }
-        stage("hooks");
+            stage("hooks");
+        });
         options.engine = Some(engine.client());
         let wait_for_facade = options.mcp_listen.is_some();
         self.hub = Some(Hub::start(options)?);
-        self.hub.as_ref().unwrap().ready().await?;
+        let hub = self.hub.as_ref().unwrap();
+        let (ready, _) = tokio::join!(hub.ready(), async {
+            if let Some(hooks) = hooks {
+                hooks.await;
+            }
+        });
+        ready?;
         stage("hub");
         if wait_for_facade {
             let handle = self.hub.as_ref().unwrap().handle();
