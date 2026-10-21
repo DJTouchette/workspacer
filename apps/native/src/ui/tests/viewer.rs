@@ -1567,10 +1567,30 @@ fn review_shows_git_diffs_beside_a_right_hand_file_explorer(cx: &mut TestAppCont
         },
         3,
         serde_json::json!({"entries": [
-            {"name": "src", "path": "/repo/src", "isDir": true},
-            {"name": "README.md", "path": "/repo/README.md", "isDir": false},
+            {"name": "src", "path": "/repo/src", "isDir": true, "tracked": true},
+            {"name": "scratch", "path": "/repo/scratch", "isDir": true, "tracked": false},
+            {"name": "README.md", "path": "/repo/README.md", "isDir": false, "tracked": true},
+            {"name": "new.txt", "path": "/repo/new.txt", "isDir": false, "tracked": false},
         ]}),
     );
+    // Hiding untracked files filters the listing in place, asking for
+    // nothing, and showing them again brings them back.
+    for (hide, rows) in [
+        (true, vec!["src", "README.md"]),
+        (false, vec!["src", "scratch", "README.md", "new.txt"]),
+    ] {
+        click(&mut visual, "review-files-untracked");
+        assert!(effects(&mut commands).is_empty());
+        visual.update(|_, cx| {
+            let this = workspace.read(cx);
+            assert_eq!(this.review.hide_untracked, hide);
+            let tree =
+                this.explorer
+                    .tree("/repo", &this.review.expanded, this.review.hide_untracked);
+            let names: Vec<_> = tree.rows.iter().map(|r| r.entry.name.as_str()).collect();
+            assert_eq!(names, rows);
+        });
+    }
     click(&mut visual, "review-tree-row-README.md");
     match effects(&mut commands).as_slice() {
         [Command::Request(Request::FilePreview { target, .. })] => {

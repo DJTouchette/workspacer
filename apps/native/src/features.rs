@@ -122,7 +122,8 @@ pub enum Request {
     /// One directory of a file explorer, read on the session's machine by
     /// `fs.listEntries`. `.git` is always omitted; git-ignored entries are
     /// omitted unless `include_ignored` (older hubs always omit them, and say
-    /// so by not echoing `includeIgnored: true`).
+    /// so by not echoing `includeIgnored: true`). Entries say whether git
+    /// tracks them (`tracked`) where the hub can tell.
     ListDir {
         path: String,
         include_ignored: bool,
@@ -536,7 +537,7 @@ impl Request {
                 let value = backend
                     .call(
                         "fs.listEntries",
-                        json!({"path":path,"includeIgnored":include_ignored}),
+                        json!({"path":path,"includeIgnored":include_ignored,"markTracked":true}),
                     )
                     .await?;
                 ensure!(

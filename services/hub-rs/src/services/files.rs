@@ -39,6 +39,7 @@ fn install_with_git(mut options: Options, home: PathBuf, git: GitCommand) -> Opt
             async move {
                 if method == "fs.listEntries" {
                     let include_ignored = include_ignored(&params)?;
+                    let mark_tracked = mark_tracked(&params)?;
                     let listing = tokio::task::spawn_blocking(move || {
                         let path = paths::canonicalize(Path::new(path_parameter(&params)?))?;
                         DirectoryListing::read(path)
@@ -49,10 +50,15 @@ fn install_with_git(mut options: Options, home: PathBuf, git: GitCommand) -> Opt
                     let ignored = if include_ignored {
                         BTreeSet::new()
                     } else {
-                        git_ignored_async(&listing.path, &listing.names, git).await
+                        git_ignored_async(&listing.path, &listing.names, git.clone()).await
+                    };
+                    let tracked = if mark_tracked {
+                        git_tracked_async(&listing.path, git).await
+                    } else {
+                        None
                     };
                     return tokio::task::spawn_blocking(move || {
-                        listing.finish(&ignored, include_ignored)
+                        listing.finish(&ignored, include_ignored, tracked.as_ref())
                     })
                     .await?;
                 }
@@ -114,13 +120,19 @@ pub fn call(method: &str, params: Value, home: &Path) -> Result<Value> {
         }
         "fs.listEntries" => {
             let include_ignored = include_ignored(&params)?;
+            let mark_tracked = mark_tracked(&params)?;
             let listing = DirectoryListing::read(path)?;
             let ignored = if include_ignored {
                 BTreeSet::new()
             } else {
                 git_ignored(&listing.path, &listing.names)
             };
-            listing.finish(&ignored, include_ignored)
+            let tracked = if mark_tracked {
+                git_tracked(&listing.path)
+            } else {
+                None
+            };
+            listing.finish(&ignored, include_ignored, tracked.as_ref())
         }
         _ => bail!("unknown filesystem method"),
     }
@@ -225,10 +237,18 @@ fn write(path: &Path, params: &Value, guarded: bool) -> Result<Value> {
 /// `fs.listEntries` hides git-ignored entries unless asked; `.git` is
 /// always omitted.
 fn include_ignored(params: &Value) -> Result<bool> {
-    match params.get("includeIgnored") {
+    flag(params, "includeIgnored")
+}
+/// `fs.listEntries` says which entries git tracks (a tracked file, or a
+/// folder holding one) only when asked: it costs a `git ls-files`.
+fn mark_tracked(params: &Value) -> Result<bool> {
+    flag(params, "markTracked")
+}
+fn flag(params: &Value, name: &str) -> Result<bool> {
+    match params.get(name) {
         None | Some(Value::Null) => Ok(false),
-        Some(Value::Bool(include)) => Ok(*include),
-        _ => bail!("includeIgnored must be a boolean"),
+        Some(Value::Bool(value)) => Ok(*value),
+        _ => bail!("{name} must be a boolean"),
     }
 }
 fn path_parameter(params: &Value) -> Result<&str> {
@@ -271,7 +291,13 @@ impl DirectoryListing {
             names,
         })
     }
-    fn finish(self, ignored: &BTreeSet<String>, include_ignored: bool) -> Result<Value> {
+    /// With `tracked` (names git tracks), each entry says whether it is one.
+    fn finish(
+        self,
+        ignored: &BTreeSet<String>,
+        include_ignored: bool,
+        tracked: Option<&BTreeSet<String>>,
+    ) -> Result<Value> {
         let mut result = Vec::new();
         for entry in self.entries {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -280,7 +306,11 @@ impl DirectoryListing {
             }
             let is_dir = entry.file_type()?.is_dir()
                 || std::fs::metadata(entry.path()).is_ok_and(|m| m.is_dir());
-            result.push(json!({"name":name,"path":entry.path(),"isDir":is_dir}));
+            let mut row = json!({"name":name,"path":entry.path(),"isDir":is_dir});
+            if let Some(tracked) = tracked {
+                row["tracked"] = json!(tracked.contains(&name));
+            }
+            result.push(row);
         }
         result.sort_by(|a, b| {
             b["isDir"]
@@ -362,22 +392,67 @@ fn git_ignored(path: &Path, names: &[String]) -> BTreeSet<String> {
     }
     let path = path.to_owned();
     let names = names.to_vec();
-    // Preserve the public synchronous API, including calls from inside Tokio.
+    block_on_git(async move {
+        git_ignored_async(
+            &path,
+            &names,
+            Arc::new(|| tokio::process::Command::new("git")),
+        )
+        .await
+    })
+    .unwrap_or_default()
+}
+/// The names in `path` that git tracks: tracked files, and folders holding
+/// one. None outside a repository or when git cannot answer.
+async fn git_tracked_async(path: &Path, git: GitCommand) -> Option<BTreeSet<String>> {
+    let mut command = git();
+    command.current_dir(path);
+    for pair in GIT_NO_EXEC {
+        command.args(["-c", pair]);
+    }
+    command.args(["-c", "core.quotePath=false", "ls-files", "-z"]);
+    let output = super::owned_process::capture_limits(
+        &mut command,
+        64 * 1024 * 1024,
+        1024 * 1024,
+        std::time::Duration::from_secs(5),
+    )
+    .await
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    // Paths are relative to `path` and always `/`-separated.
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .split('\0')
+            .filter_map(|p| p.split('/').next())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+fn git_tracked(path: &Path) -> Option<BTreeSet<String>> {
+    let path = path.to_owned();
+    block_on_git(async move {
+        git_tracked_async(&path, Arc::new(|| tokio::process::Command::new("git"))).await
+    })
+    .flatten()
+}
+/// Preserve the public synchronous API, including calls from inside Tokio.
+fn block_on_git<T: Send + 'static>(
+    future: impl std::future::Future<Output = T> + Send + 'static,
+) -> Option<T> {
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .ok()?;
-        Some(runtime.block_on(git_ignored_async(
-            &path,
-            &names,
-            Arc::new(|| tokio::process::Command::new("git")),
-        )))
+        Some(runtime.block_on(future))
     })
     .join()
     .ok()
     .flatten()
-    .unwrap_or_default()
 }
 
 /// Bound the bytes actually read, and prove the opened regular file is still

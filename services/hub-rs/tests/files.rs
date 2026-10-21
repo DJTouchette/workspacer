@@ -294,6 +294,81 @@ fn file_tree_uses_git_ignore_rules_and_bytewise_directory_first_order() {
 }
 
 #[test]
+fn file_tree_marks_tracked_entries_only_when_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        assert!(
+            std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .current_dir(dir.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    git(&["init", "--quiet"]);
+    for dir_name in ["src/deep", "new", "mixed"] {
+        std::fs::create_dir_all(dir.path().join(dir_name)).unwrap();
+    }
+    for name in [
+        "tracked.txt",
+        "untracked.txt",
+        "src/deep/lib.rs",
+        "new/file.txt",
+        "mixed/kept.txt",
+        "mixed/fresh.txt",
+    ] {
+        std::fs::write(dir.path().join(name), "test").unwrap();
+    }
+    git(&["add", "tracked.txt", "src/deep/lib.rs", "mixed/kept.txt"]);
+    let list = |path: std::path::PathBuf, mark: bool| {
+        let result = files::call(
+            "fs.listEntries",
+            json!({"path":path,"markTracked":mark}),
+            dir.path(),
+        )
+        .unwrap();
+        result["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| (v["name"].as_str().unwrap().to_owned(), v["tracked"].clone()))
+            .collect::<Vec<_>>()
+    };
+    let tracked = |name: &str, value: bool| (name.to_owned(), json!(value));
+    assert_eq!(
+        list(dir.path().into(), true),
+        vec![
+            tracked("mixed", true),
+            tracked("new", false),
+            tracked("src", true),
+            tracked("tracked.txt", true),
+            tracked("untracked.txt", false),
+        ]
+    );
+    assert_eq!(
+        list(dir.path().join("mixed"), true),
+        vec![tracked("fresh.txt", false), tracked("kept.txt", true)]
+    );
+    // Unasked, entries carry no mark; outside a repository they cannot.
+    assert!(
+        list(dir.path().into(), false)
+            .iter()
+            .all(|(_, t)| t.is_null())
+    );
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("file.txt"), "test").unwrap();
+    let result = files::call(
+        "fs.listEntries",
+        json!({"path":outside.path(),"markTracked":true}),
+        outside.path(),
+    )
+    .unwrap();
+    assert!(result["entries"][0]["tracked"].is_null());
+}
+
+#[test]
 #[cfg(unix)]
 fn selected_store_entry_cannot_redirect_through_a_symlink() {
     let dir = tempfile::tempdir().unwrap();

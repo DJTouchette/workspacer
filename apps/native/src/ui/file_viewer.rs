@@ -1177,7 +1177,7 @@ impl Render for PreviewPane {
             };
             let tree = self.explorer.open.then(|| {
                 ws.explorer
-                    .tree(&self.explorer.root, &self.explorer.expanded)
+                    .tree(&self.explorer.root, &self.explorer.expanded, false)
             });
             let shortcut = if cfg!(target_os = "macos") {
                 "⌘S"

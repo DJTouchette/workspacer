@@ -34,6 +34,8 @@ pub(super) enum Mode {
 pub(super) struct ReviewUi {
     pub mode: Mode,
     pub expanded: BTreeSet<String>,
+    /// The Files tree leaves out what git does not track.
+    pub hide_untracked: bool,
     /// Repository-relative path whose diff is shown.
     pub selected: Option<String>,
     /// Hash of the commit whose patch is shown under Commits.
@@ -1076,7 +1078,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = self.appearance.palette();
-        let tree = self.explorer.tree(root, &self.review.expanded);
+        let hide_untracked = self.review.hide_untracked;
+        let tree = self
+            .explorer
+            .tree(root, &self.review.expanded, hide_untracked);
         let mut marks: explorer::Marks = HashMap::new();
         for change in changes {
             let Some(absolute) = &change.absolute else {
@@ -1133,6 +1138,26 @@ impl Workspace {
                             .min_w_0()
                             .truncate()
                             .child("Choose a file to edit it."),
+                    )
+                    .child(
+                        self.button_style(
+                            "review-files-untracked",
+                            if hide_untracked {
+                                "Show untracked"
+                            } else {
+                                "Hide untracked"
+                            },
+                            true,
+                            false,
+                        )
+                        .flex_shrink_0()
+                        .px_2()
+                        .py_1()
+                        .debug_selector(|| "review-files-untracked".into())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.review.hide_untracked = !hide_untracked;
+                            cx.notify();
+                        })),
                     )
                     .child(
                         self.button_style(

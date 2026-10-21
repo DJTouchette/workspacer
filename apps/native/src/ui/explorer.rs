@@ -4,6 +4,8 @@
 //! popped-out editor read one copy. Every file is listed, tracked or not,
 //! except `.git`; git-ignored entries (build output, dependencies) are hidden
 //! until "Show ignored" is on, and a hub too old to include them says so.
+//! The hub also marks what git tracks, so the review tree can hide untracked
+//! files without listing anything again.
 use super::*;
 use gpui::AnyElement;
 use std::collections::{BTreeSet, VecDeque};
@@ -26,6 +28,9 @@ pub(super) struct Entry {
     pub name: String,
     pub path: String,
     pub dir: bool,
+    /// Git tracks it (a folder: holds a tracked file). None when the hub
+    /// could not tell: outside a repository, or a hub that predates it.
+    pub tracked: Option<bool>,
 }
 
 #[derive(Default)]
@@ -53,20 +58,30 @@ pub(super) struct Tree {
     /// The root's own state, for its loading/error line.
     pub root: Dir,
     pub truncated: bool,
+    /// Untracked entries were left out.
+    pub hides_untracked: bool,
+    /// Untracked entries were asked to be hidden, but the root listing does
+    /// not say what git tracks.
+    pub untracked_unknown: bool,
 }
 
 impl Explorer {
-    /// `root`'s tree with the `expanded` directories open.
-    pub fn tree(&self, root: &str, expanded: &BTreeSet<String>) -> Tree {
+    /// `root`'s tree with the `expanded` directories open, leaving out what
+    /// git does not track when `tracked_only`.
+    pub fn tree(&self, root: &str, expanded: &BTreeSet<String>, tracked_only: bool) -> Tree {
         let mut rows = Vec::new();
         let mut truncated = false;
-        self.walk(root, 0, expanded, &mut rows, &mut truncated);
+        self.walk(root, 0, expanded, tracked_only, &mut rows, &mut truncated);
+        let root = self.dirs.get(root).cloned().unwrap_or(Dir {
+            loading: true,
+            ..Default::default()
+        });
+        let marked = root.entries.iter().any(|e| e.tracked.is_some());
         Tree {
             rows,
-            root: self.dirs.get(root).cloned().unwrap_or(Dir {
-                loading: true,
-                ..Default::default()
-            }),
+            hides_untracked: tracked_only && marked,
+            untracked_unknown: tracked_only && !marked && !root.entries.is_empty(),
+            root,
             truncated,
         }
     }
@@ -76,6 +91,7 @@ impl Explorer {
         path: &str,
         depth: usize,
         expanded: &BTreeSet<String>,
+        tracked_only: bool,
         rows: &mut Vec<TreeRow>,
         truncated: &mut bool,
     ) {
@@ -84,6 +100,9 @@ impl Explorer {
             return;
         };
         for entry in &dir.entries {
+            if tracked_only && entry.tracked == Some(false) {
+                continue;
+            }
             if rows.len() >= MAX_ROWS {
                 *truncated = true;
                 return;
@@ -98,7 +117,14 @@ impl Explorer {
                 error: child.filter(|_| open).and_then(|d| d.error.clone()),
             });
             if open {
-                self.walk(&entry.path, depth + 1, expanded, rows, truncated);
+                self.walk(
+                    &entry.path,
+                    depth + 1,
+                    expanded,
+                    tracked_only,
+                    rows,
+                    truncated,
+                );
             }
         }
     }
@@ -195,6 +221,7 @@ impl Workspace {
                                     name: e["name"].as_str()?.to_owned(),
                                     path: e["path"].as_str()?.to_owned(),
                                     dir: e["isDir"].as_bool().unwrap_or(false),
+                                    tracked: e["tracked"].as_bool(),
                                 })
                             })
                             .collect(),
@@ -264,6 +291,14 @@ pub(super) fn render_tree(
     if tree.root.hides_ignored && !tree.root.loading && tree.root.error.is_none() {
         body = body.child(status("Git-ignored files are hidden.".into(), p.disabled));
     }
+    if tree.hides_untracked && !tree.root.loading && tree.root.error.is_none() {
+        body = body.child(status("Untracked files are hidden.".into(), p.disabled));
+    } else if tree.untracked_unknown && tree.root.error.is_none() {
+        body = body.child(status(
+            "Git can’t say which files are tracked here, so all are shown.".into(),
+            p.disabled,
+        ));
+    }
     if let Some(error) = &tree.root.error {
         body = body.child(status(
             format!("Couldn’t list this folder: {error}"),
@@ -272,7 +307,14 @@ pub(super) fn render_tree(
     } else if tree.root.loading {
         body = body.child(status("Loading files…".into(), p.muted));
     } else if tree.rows.is_empty() {
-        body = body.child(status("This folder is empty.".into(), p.muted));
+        body = body.child(status(
+            if tree.hides_untracked && !tree.root.entries.is_empty() {
+                "Git tracks nothing in this folder.".into()
+            } else {
+                "This folder is empty.".into()
+            },
+            p.muted,
+        ));
     }
     for (ix, row) in tree.rows.iter().enumerate() {
         let active = selected == Some(row.entry.path.as_str());
@@ -389,6 +431,7 @@ mod tests {
             name: name.into(),
             path: path.into(),
             dir,
+            tracked: None,
         }
     }
 
@@ -412,9 +455,9 @@ mod tests {
                 ..Default::default()
             },
         );
-        let closed = explorer.tree("/r", &BTreeSet::new());
+        let closed = explorer.tree("/r", &BTreeSet::new(), false);
         assert_eq!(closed.rows.len(), 2);
-        let open = explorer.tree("/r", &BTreeSet::from(["/r/src".to_owned()]));
+        let open = explorer.tree("/r", &BTreeSet::from(["/r/src".to_owned()]), false);
         let names: Vec<_> = open
             .rows
             .iter()
@@ -422,9 +465,71 @@ mod tests {
             .collect();
         assert_eq!(names, [(0, "src"), (1, "lib.rs"), (0, "a.txt")]);
         // An expanded folder not yet listed shows as loading.
-        let pending = explorer.tree("/r", &BTreeSet::from(["/r/other".to_owned()]));
+        let pending = explorer.tree("/r", &BTreeSet::from(["/r/other".to_owned()]), false);
         assert!(!pending.rows[0].loading);
-        let unlisted = Explorer::default().tree("/x", &BTreeSet::new());
+        let unlisted = Explorer::default().tree("/x", &BTreeSet::new(), false);
         assert!(unlisted.root.loading);
+    }
+
+    #[test]
+    fn tracked_only_trees_leave_out_what_git_does_not_track() {
+        let marked = |name: &str, path: &str, dir: bool, tracked: bool| Entry {
+            tracked: Some(tracked),
+            ..entry(name, path, dir)
+        };
+        let mut explorer = Explorer::default();
+        explorer.dirs.insert(
+            "/r".into(),
+            Dir {
+                entries: vec![
+                    marked("new", "/r/new", true, false),
+                    marked("src", "/r/src", true, true),
+                    marked("notes.txt", "/r/notes.txt", false, false),
+                    marked("README.md", "/r/README.md", false, true),
+                ],
+                ..Default::default()
+            },
+        );
+        explorer.dirs.insert(
+            "/r/src".into(),
+            Dir {
+                entries: vec![
+                    marked("lib.rs", "/r/src/lib.rs", false, true),
+                    marked("scratch.rs", "/r/src/scratch.rs", false, false),
+                ],
+                ..Default::default()
+            },
+        );
+        let names = |tree: &Tree| -> Vec<String> {
+            tree.rows.iter().map(|r| r.entry.name.clone()).collect()
+        };
+        let open = BTreeSet::from(["/r/src".to_owned()]);
+        let all = explorer.tree("/r", &open, false);
+        assert_eq!(
+            names(&all),
+            [
+                "new",
+                "src",
+                "lib.rs",
+                "scratch.rs",
+                "notes.txt",
+                "README.md"
+            ]
+        );
+        assert!(!all.hides_untracked);
+        let tracked = explorer.tree("/r", &open, true);
+        assert_eq!(names(&tracked), ["src", "lib.rs", "README.md"]);
+        assert!(tracked.hides_untracked && !tracked.untracked_unknown);
+        // A listing without marks (no repository, an older hub) shows all.
+        explorer.dirs.insert(
+            "/x".into(),
+            Dir {
+                entries: vec![entry("a.txt", "/x/a.txt", false)],
+                ..Default::default()
+            },
+        );
+        let unmarked = explorer.tree("/x", &BTreeSet::new(), true);
+        assert_eq!(names(&unmarked), ["a.txt"]);
+        assert!(!unmarked.hides_untracked && unmarked.untracked_unknown);
     }
 }
