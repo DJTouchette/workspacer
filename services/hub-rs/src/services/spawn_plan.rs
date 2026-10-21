@@ -116,6 +116,7 @@ pub fn resolve(
         "resumeSessionId",
         "label",
         "parentSessionId",
+        "jobId",
         "role",
         "capability",
         "decisionId",
@@ -431,7 +432,9 @@ pub fn resolve(
     if !mcp_item_ids.is_empty() {
         metadata["settings"]["mcpItemIds"] = json!(mcp_item_ids);
     }
-    for key in ["label", "parentSessionId"] {
+    // `jobId`: the hub job that launched this session, so clients can show
+    // where it came from. Attribution only; it grants nothing.
+    for key in ["label", "parentSessionId", "jobId"] {
         if !text(params, key).is_empty() {
             metadata[key] = params[key].clone();
         }

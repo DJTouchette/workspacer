@@ -1239,6 +1239,12 @@ impl Workspace {
                                     session.cwd
                                 );
                                 let details = format!("{details}{}", child_limit_note(session));
+                                let details = if session.job_id.is_empty() {
+                                    details
+                                } else {
+                                    format!("{details}\nStarted by a job · its runs are under Jobs → Runs")
+                                };
+                                let job = !session.job_id.is_empty();
                                 let now = cache::now();
                                 let cold = cache::cold(session, now)
                                     .map(|cold| cache::marker_tooltip(cold, now));
@@ -1379,6 +1385,19 @@ impl Workspace {
                                                         .max_w(gpui::relative(0.55))
                                                         .child(badge),
                                                 )
+                                                .when(job, |d| {
+                                                    d.child(
+                                                        div()
+                                                            .debug_selector(move || format!("sidebar-job-{ix}"))
+                                                            .flex_shrink_0()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap(px(3.))
+                                                            .text_color(rgb(p.accent))
+                                                            .child(Icon::new(IconName::Calendar).size(px(11.)))
+                                                            .child("Job"),
+                                                    )
+                                                })
                                                 .child(div().text_color(rgb(p.disabled)).child("·"))
                                                 .child(
                                                     Icon::new(IconName::Folder)

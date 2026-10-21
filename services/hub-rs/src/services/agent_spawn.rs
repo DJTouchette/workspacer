@@ -663,6 +663,7 @@ impl SpawnCoordinator {
                 ("cwd", json!(previous.cwd)),
                 ("transport", previous.metadata["transport"].clone()),
                 ("label", previous.metadata["label"].clone()),
+                ("jobId", previous.metadata["jobId"].clone()),
                 (
                     "parentSessionId",
                     previous.metadata["parentSessionId"].clone(),

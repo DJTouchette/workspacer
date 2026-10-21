@@ -314,6 +314,7 @@ impl Lifecycle {
             for key in [
                 "label",
                 "parentSessionId",
+                "jobId",
                 "isWakeTarget",
                 "routing",
                 "settings",

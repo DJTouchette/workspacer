@@ -168,3 +168,54 @@ fn runs_tab_lists_every_jobs_runs_and_opens_one_to_its_output(cx: &mut TestAppCo
     click(&mut visual, "jobs-tab-runs");
     workspace.read_with(&visual, |this, _| assert_eq!(this.job_runs(), None));
 }
+
+/// A session a job started says so in the sidebar, and its run in the Runs
+/// tab names it and opens it directly.
+#[gpui::test]
+fn job_sessions_are_marked_and_open_from_their_run(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    let mut view = state("b");
+    let mut sessions = (*view.sessions).clone();
+    sessions[0].job_id = "job".into();
+    view.sessions = Arc::new(sessions);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            this.update_view(Arc::new(view), window, cx);
+            this.open_feature(Screen::Jobs, window, cx);
+        })
+    });
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("sidebar-job-0").is_some(), "job chip");
+    assert!(visual.debug_bounds("sidebar-job-1").is_none());
+    request_state(&workspace, &mut visual, Request::Jobs, 1, listed());
+    let now = wks_native::timing::now_ms();
+    request_state(
+        &workspace,
+        &mut visual,
+        Request::JobRuns,
+        2,
+        serde_json::json!({"runs":[
+            {"jobId":"job","startedAt":now - 60_000,"finishedAt":now - 55_000,
+             "status":"ok","detail":"spawned a"},
+            {"jobId":"job","startedAt":now - 120_000,"finishedAt":now - 119_000,
+             "status":"ok","detail":"spawned gone"}
+        ]}),
+    );
+    click(&mut visual, "jobs-tab-runs");
+    // A session no longer listed has nothing to open.
+    assert!(visual.debug_bounds("job-run-row-session-1").is_none());
+    effects(&mut commands);
+    click(&mut visual, "job-run-row-session-0");
+    assert!(
+        effects(&mut commands)
+            .iter()
+            .any(|c| matches!(c, Command::Select(id) if id == "a")),
+        "Open selects the job's session"
+    );
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.screen, Screen::Conversation);
+        // The row's own toggle did not also fire.
+        assert_eq!(this.extras.job_run_open, None);
+    });
+}

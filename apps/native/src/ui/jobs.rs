@@ -300,6 +300,16 @@ impl Workspace {
         let job = list.iter().find(|j| j.id == run.job_id);
         let color = run_color(run, p);
         let toggle = key.clone();
+        // A spawn run names the session it started, by its title, with a way
+        // straight to it; the bare id stays in the opened detail.
+        let session = run
+            .spawned()
+            .and_then(|id| self.view.sessions.iter().find(|s| s.id == id));
+        let summary = match session {
+            Some(session) => format!("→ {}", self.session_title(session)),
+            None => run.summary().to_owned(),
+        };
+        let session = session.map(|s| s.id.clone());
         let header = div()
             .id(("job-run", ix))
             .debug_selector(move || format!("job-run-{ix}"))
@@ -379,8 +389,23 @@ impl Workspace {
                     .font_family(mono_font())
                     .text_size(px(chrome::scale::CAPTION))
                     .text_color(rgb(p.muted))
-                    .child(run.summary().to_owned()),
-            );
+                    .child(summary),
+            )
+            .when_some(session, |d, id| {
+                d.child(
+                    self.button(
+                        SharedString::from(format!("job-run-row-session-{ix}")),
+                        "Open",
+                        true,
+                    )
+                    .debug_selector(move || format!("job-run-row-session-{ix}"))
+                    .flex_shrink_0()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.open_alerted_session(id.clone(), window, cx)
+                    })),
+                )
+            });
         div()
             .flex()
             .flex_col()

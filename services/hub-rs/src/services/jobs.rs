@@ -956,7 +956,7 @@ async fn perform(job: &Job, client: &impl Runner) -> Result<String> {
                 }
             }
             let prompt = fill_prompt(string(spawn, "prompt"), &outputs);
-            let mut params = json!({"cwd":spawn["cwd"],"label":job.name});
+            let mut params = json!({"cwd":spawn["cwd"],"label":job.name,"jobId":job.id});
             // The user's "jobs start with full access" choice (the hub's
             // `agents.jobFullAccess`): the provider's own approval policy,
             // read at fire time so a toggle applies to the next run.
@@ -1101,7 +1101,7 @@ mod tests {
         );
         assert_eq!(
             calls[3].1,
-            json!({"cwd":"/project","label":"review","provider":"codex","model":"chosen-model"})
+            json!({"cwd":"/project","label":"review","jobId":"","provider":"codex","model":"chosen-model"})
         );
         assert_eq!(
             calls[4].1,
@@ -1114,11 +1114,11 @@ mod tests {
         for (enabled, expected) in [
             (
                 false,
-                json!({"cwd":"/project","label":"nightly","permissionMode":"plan"}),
+                json!({"cwd":"/project","label":"nightly","jobId":"","permissionMode":"plan"}),
             ),
             (
                 true,
-                json!({"cwd":"/project","label":"nightly","skipPermissions":true}),
+                json!({"cwd":"/project","label":"nightly","jobId":"","skipPermissions":true}),
             ),
         ] {
             let runner = Recording {

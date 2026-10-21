@@ -384,8 +384,14 @@ async fn acknowledged_tracking_can_recover_without_launching_another_process() {
 #[tokio::test]
 async fn resume_keeps_provider_parent_label_and_result_contract_when_fields_are_omitted() {
     let fixture = Fixture::new(None);
-    let first=fixture.coordinator.spawn_sanitized(json!({"cwd":fixture.project,"provider":"codex","label":"Keep me","parentSessionId":"manager","resultSchema":{"type":"object"}})).await.unwrap();
+    let first=fixture.coordinator.spawn_sanitized(json!({"cwd":fixture.project,"provider":"codex","label":"Keep me","parentSessionId":"manager","jobId":"job-7","resultSchema":{"type":"object"}})).await.unwrap();
     let id = first["sessionId"].as_str().unwrap();
+    // Clients see which job launched a session on its row.
+    let row = fixture
+        .coordinator
+        .lifecycle
+        .enrich(json!({"sessionId": id}));
+    assert_eq!(row["jobId"], "job-7");
     let generation = fixture.coordinator.lifecycle.records()[id]
         .generation
         .clone();
@@ -406,6 +412,7 @@ async fn resume_keeps_provider_parent_label_and_result_contract_when_fields_are_
     assert_eq!(plan.provider, "codex");
     assert_eq!(plan.metadata["label"], "Keep me");
     assert_eq!(plan.metadata["parentSessionId"], "manager");
+    assert_eq!(plan.metadata["jobId"], "job-7");
     assert!(
         plan.request["instructions"]
             .as_str()

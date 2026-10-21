@@ -18,6 +18,8 @@ pub struct Session {
     pub transport: String,
     pub provider: String,
     pub parent_session_id: String,
+    /// The hub job that launched this session (`jobId`); empty otherwise.
+    pub job_id: String,
     /// Shared, not copied: the session list is rebuilt whenever any session
     /// changes, and these inventories are a session's largest fields.
     pub skills: Arc<Value>,
@@ -416,6 +418,7 @@ impl Session {
                 &mut self.parent_session_id,
                 &["parentSessionId", "parent_session_id"][..],
             ),
+            (&mut self.job_id, &["jobId"][..]),
             (&mut self.model, &["model"][..]),
             (&mut self.cwd, &["cwd"][..]),
             (&mut self.state, &["mode", "ambientState"][..]),
