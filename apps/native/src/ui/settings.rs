@@ -658,6 +658,15 @@ impl Workspace {
             self.render_child_access(cx),
         ));
         entries.push(Entry::new(
+            S::Agents,
+            "job-access",
+            "Jobs start agents with full access",
+            "Agents a job launches when it fires skip the provider's own approval prompts: Claude runs in bypass-permissions mode, Codex with full access. A job's own permission mode is ignored while this is on. Saved in the hub's shared settings, so every client of this hub sees it; it applies from the next run.",
+            "jobs scheduled cron trigger spawn full access bypass permissions yolo approvals prompts",
+            Layout::Block,
+            self.render_job_access(cx),
+        ));
+        entries.push(Entry::new(
             S::Chat,
             "merge-turn",
             "One card per turn",
@@ -868,6 +877,64 @@ impl Workspace {
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.request(
                                     Request::ChildAccess {
+                                        set: Some(*checked),
+                                    },
+                                    cx,
+                                );
+                            })),
+                    ),
+            )
+            .child(chrome::notice_line(status, tone, p))
+    }
+
+    fn render_job_access(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        let state = self.view.requests.get("job-access");
+        let pending = state.is_some_and(|s| s.loading);
+        let can_write = self.view.connected && !self.demo && !pending;
+        let current = self.extras.job_access;
+        let error = state.filter(|s| !s.loading).and_then(|s| s.error.clone());
+        let (status, tone) = match (current, &error) {
+            (_, Some(error)) => (
+                format!("Couldn't reach the hub's setting: {error}"),
+                chrome::Tone::Error,
+            ),
+            (None, None) if pending || self.view.connected => (
+                "Reading the hub's setting…".to_owned(),
+                chrome::Tone::Loading,
+            ),
+            (None, None) => (
+                "Connect to a hub to change this.".to_owned(),
+                chrome::Tone::Info,
+            ),
+            (Some(true), None) => (
+                "On: agents started by jobs skip provider approval prompts.".to_owned(),
+                chrome::Tone::Warning,
+            ),
+            (Some(false), None) => (
+                "Off: job agents use the job's permission mode, or the provider default."
+                    .to_owned(),
+                chrome::Tone::Info,
+            ),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .debug_selector(|| "job-access-switch".into())
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        Switch::new("settings-job-access")
+                            .checked(current == Some(true))
+                            .disabled(!can_write || current.is_none())
+                            .tooltip("Jobs start agents with full access")
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.request(
+                                    Request::JobAccess {
                                         set: Some(*checked),
                                     },
                                     cx,

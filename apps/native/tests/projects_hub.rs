@@ -587,6 +587,13 @@ async fn child_access_setting_round_trips_through_the_hub() {
     let reread = run(&controller, Request::ChildAccess { set: None }).await;
     assert_eq!(reread.value["childFullAccess"], true);
     assert_eq!(reread.value["fleetFullAccess"], false);
+    let jobs = run(&controller, Request::JobAccess { set: Some(true) }).await;
+    assert_eq!(jobs.value["jobFullAccess"], true);
+    let jobs = run(&controller, Request::JobAccess { set: None }).await;
+    assert_eq!(
+        jobs.value["jobFullAccess"], true,
+        "persisted beside childFullAccess"
+    );
     let off = run(&controller, Request::ChildAccess { set: Some(false) }).await;
     assert!(off.error.is_none(), "{:?}", off.error);
     assert_eq!(off.value["childFullAccess"], false);

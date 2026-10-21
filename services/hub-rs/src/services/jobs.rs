@@ -957,8 +957,16 @@ async fn perform(job: &Job, client: &impl Runner) -> Result<String> {
             }
             let prompt = fill_prompt(string(spawn, "prompt"), &outputs);
             let mut params = json!({"cwd":spawn["cwd"],"label":job.name});
+            // The user's "jobs start with full access" choice (the hub's
+            // `agents.jobFullAccess`): the provider's own approval policy,
+            // read at fire time so a toggle applies to the next run.
+            let config = client.invoke("config.get", json!({})).await?;
+            let full_access = config["agents"]["jobFullAccess"] == true;
+            if full_access {
+                params["skipPermissions"] = json!(true);
+            }
             for key in ["provider", "model", "effort", "permissionMode"] {
-                if !string(spawn, key).is_empty() {
+                if (key != "permissionMode" || !full_access) && !string(spawn, key).is_empty() {
                     params[key] = spawn[key].clone();
                 }
             }
@@ -1043,6 +1051,7 @@ mod tests {
     struct Recording {
         calls: Mutex<Vec<(String, Value)>>,
         output: String,
+        config: Value,
     }
     impl Runner for Recording {
         fn invoke<'a>(&'a self, method: &'a str, params: Value) -> BoxFuture<'a, Result<Value>> {
@@ -1051,6 +1060,7 @@ mod tests {
                 Ok(match method {
                     "context.read" => json!({"count":1}),
                     "agents.spawn" => json!({"sessionId":"child"}),
+                    "config.get" => self.config.clone(),
                     _ => json!({"ok":true}),
                 })
             })
@@ -1070,6 +1080,7 @@ mod tests {
         let runner = Recording {
             calls: Mutex::new(vec![]),
             output: " diff \n".into(),
+            config: json!({}),
         };
         let job:Job=serde_json::from_value(json!({"name":"review","trigger":{"kind":"manual"},"action":{"kind":"spawn","spawn":{"cwd":"/project","provider":"codex","model":"chosen-model","prompt":"Build {{output.1}} / {{output}}","context":[{"kind":"shell","shell":{"command":"git diff"},"skipUnlessMatch":"diff"},{"kind":"call","call":{"method":"context.read"}}]}}})).unwrap();
         validate(&job).unwrap();
@@ -1083,24 +1094,53 @@ mod tests {
             [
                 "shell",
                 "context.read",
+                "config.get",
                 "agents.spawn",
                 "agents.sendMessage"
             ]
         );
         assert_eq!(
-            calls[2].1,
+            calls[3].1,
             json!({"cwd":"/project","label":"review","provider":"codex","model":"chosen-model"})
         );
         assert_eq!(
-            calls[3].1,
+            calls[4].1,
             json!({"sessionId":"child","text":"Build diff / {\"count\":1}"})
         );
+    }
+    #[tokio::test]
+    async fn job_full_access_setting_launches_without_provider_prompts() {
+        let job: Job = serde_json::from_value(json!({"name":"nightly","trigger":{"kind":"manual"},"action":{"kind":"spawn","spawn":{"cwd":"/project","permissionMode":"plan","prompt":"go"}}})).unwrap();
+        for (enabled, expected) in [
+            (
+                false,
+                json!({"cwd":"/project","label":"nightly","permissionMode":"plan"}),
+            ),
+            (
+                true,
+                json!({"cwd":"/project","label":"nightly","skipPermissions":true}),
+            ),
+        ] {
+            let runner = Recording {
+                calls: Mutex::new(vec![]),
+                output: String::new(),
+                config: json!({"agents":{"jobFullAccess":enabled}}),
+            };
+            perform(&job, &runner).await.unwrap();
+            let calls = runner.calls.lock().unwrap();
+            let spawn = calls
+                .iter()
+                .find(|(name, _)| name == "agents.spawn")
+                .unwrap();
+            assert_eq!(spawn.1, expected, "jobFullAccess={enabled}");
+        }
     }
     #[tokio::test]
     async fn context_veto_never_invokes_spawn() {
         let runner = Recording {
             calls: Mutex::new(vec![]),
             output: "no changes".into(),
+            config: json!({}),
         };
         let job:Job=serde_json::from_value(json!({"name":"review","trigger":{"kind":"manual"},"action":{"kind":"spawn","spawn":{"cwd":"/project","prompt":"task","context":[{"kind":"shell","shell":{"command":"inspect"},"skipUnlessMatch":"changed files"}]}}})).unwrap();
         assert!(
@@ -1118,6 +1158,7 @@ mod tests {
             let runner = Recording {
                 calls: Mutex::new(vec![]),
                 output: "é".into(),
+                config: json!({}),
             };
             let job:Job=serde_json::from_value(json!({"name":"guard","trigger":{"kind":"manual"},"action":{"kind":"spawn","spawn":{"cwd":"/project","prompt":"{{output}}","context":[{"kind":"shell","shell":{"command":"fixture"},"skipUnlessMatch":pattern}]}}})).unwrap();
             validate(&job).unwrap();
@@ -1131,8 +1172,8 @@ mod tests {
                 );
             } else {
                 assert_eq!(result.unwrap(), "spawned child");
-                assert_eq!(runner.calls.lock().unwrap().len(), 3);
-                assert_eq!(runner.calls.lock().unwrap()[2].1["text"], "é");
+                assert_eq!(runner.calls.lock().unwrap().len(), 4);
+                assert_eq!(runner.calls.lock().unwrap()[3].1["text"], "é");
             }
         }
     }

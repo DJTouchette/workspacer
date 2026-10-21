@@ -229,6 +229,11 @@ pub enum Request {
     ChildAccess {
         set: Option<bool>,
     },
+    /// The hub's shared `agents.jobFullAccess`: read (`None`) or set and
+    /// verified on readback. The hub's job runner launches those agents.
+    JobAccess {
+        set: Option<bool>,
+    },
     /// The hub's shared `agents.autoTitle` (automatic session names): read
     /// (`None`) or change one field and verify it on readback. The owning hub
     /// writes the titles, so this is hub configuration, not a device setting.
@@ -461,6 +466,7 @@ impl Request {
             Self::BrowseFolders { .. } => "project-browse",
             Self::ProjectIcons { .. } => "project-icons",
             Self::ChildAccess { .. } => "child-access",
+            Self::JobAccess { .. } => "job-access",
             Self::Titles { .. } => "titles",
             Self::TerminalShell { .. } => "terminal-shell",
             Self::Jobs => "jobs",
@@ -732,6 +738,23 @@ impl Request {
                     "childFullAccess": config["agents"]["childFullAccess"] == true,
                     "fleetFullAccess": config["agents"]["fleetFullAccess"] == true,
                 }))
+            }
+            Self::JobAccess { set } => {
+                let config = match set {
+                    // `agents` deep-merges on save, so only this key changes.
+                    Some(enabled) => {
+                        let saved = backend
+                            .call("config.save", json!({"agents":{"jobFullAccess":enabled}}))
+                            .await?;
+                        ensure!(
+                            (saved["agents"]["jobFullAccess"] == true) == *enabled,
+                            "The hub did not save the setting (its config may be busy); try again"
+                        );
+                        saved
+                    }
+                    None => backend.call("config.get", json!({})).await?,
+                };
+                Ok(json!({"jobFullAccess": config["agents"]["jobFullAccess"] == true}))
             }
             Self::Titles { set } => {
                 let config = match set {

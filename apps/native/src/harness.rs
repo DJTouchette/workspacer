@@ -153,6 +153,7 @@ impl Fixture {
                 "projects": {},
                 "agents": {
                     "childFullAccess": false,
+                    "jobFullAccess": false,
                     "autoTitle": {"enabled": true, "model": "haiku"},
                 },
             }),
@@ -536,8 +537,10 @@ impl Fixture {
         if let Some(projects) = params.get("projects") {
             self.config["projects"] = projects.clone();
         }
-        if let Some(enabled) = params.pointer("/agents/childFullAccess") {
-            self.config["agents"]["childFullAccess"] = enabled.clone();
+        for key in ["childFullAccess", "jobFullAccess"] {
+            if let Some(enabled) = params.pointer(&format!("/agents/{key}")) {
+                self.config["agents"][key] = enabled.clone();
+            }
         }
         let auto = params
             .pointer("/agents/autoTitle")

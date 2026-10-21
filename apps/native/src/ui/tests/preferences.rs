@@ -74,6 +74,74 @@ fn child_agent_full_access_is_a_hub_setting_toggled_from_agents(cx: &mut TestApp
     });
 }
 
+/// Settings → Agents shows the hub's job access setting as read and the
+/// switch asks the hub to change it; a refused save keeps the last value.
+#[gpui::test]
+fn job_full_access_is_a_hub_setting_toggled_from_agents(cx: &mut TestAppContext) {
+    use wks_native::features::{Request, RequestState};
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            this.update_view(Arc::new(state("a")), window, cx);
+            this.show_screen(Screen::Settings, window, cx);
+            this.settings_section = settings::SettingsSection::Agents;
+        })
+    });
+    let read = std::iter::from_fn(|| commands.try_recv().ok())
+        .any(|c| matches!(c, Command::Request(Request::JobAccess { set: None })));
+    assert!(read, "opening Settings reads the hub's setting");
+    visual.simulate_resize(size(px(1000.), px(2000.)));
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("setting-job-access").is_some());
+    let mut next = state("a");
+    next.requests.insert(
+        "job-access",
+        RequestState {
+            number: 1,
+            request: Request::JobAccess { set: None },
+            loading: false,
+            value: Arc::new(serde_json::json!({"jobFullAccess":false})),
+            error: None,
+        },
+    );
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.update_view(Arc::new(next), window, cx))
+    });
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.extras.job_access, Some(false))
+    });
+    let switch = visual.debug_bounds("job-access-switch").unwrap();
+    visual.simulate_click(
+        gpui::point(switch.left() + px(12.), switch.center().y),
+        gpui::Modifiers::none(),
+    );
+    visual.run_until_parked();
+    let set = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+        Command::Request(Request::JobAccess { set }) => Some(set),
+        _ => None,
+    });
+    assert_eq!(set, Some(Some(true)));
+    let mut refused = state("a");
+    refused.requests.insert(
+        "job-access",
+        RequestState {
+            number: 2,
+            request: Request::JobAccess { set: Some(true) },
+            loading: false,
+            value: Arc::new(serde_json::Value::Null),
+            error: Some("operator scope required".into()),
+        },
+    );
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(refused), window, cx);
+            assert_eq!(this.extras.job_access, Some(false));
+        })
+    });
+}
+
 /// Settings → Workspace offers the hub host's shells for new terminals,
 /// marks the hub's configured one, saves a pick to the hub, and keeps the
 /// last confirmed choice when the hub refuses.

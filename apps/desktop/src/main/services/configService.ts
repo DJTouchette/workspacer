@@ -237,6 +237,9 @@ interface Config {
      *  sessions (resumes and running sessions keep theirs). Provider policy
      *  only; not a Workspacer gate or facade/token grant. */
     childFullAccess?: boolean;
+    /** Bypass provider approval prompts for agents launched by hub jobs
+     *  when they fire. Provider policy only, like childFullAccess. */
+    jobFullAccess?: boolean;
     /** Coding-agent harness the Fleet Manager itself runs on ('' = claude).
      *  The manager needs an MCP client to dispatch at all, so this is
      *  claude/codex/copilot — see SupervisorSection. */

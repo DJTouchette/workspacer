@@ -106,7 +106,7 @@ async fn empty_context_and_failed_context_never_reach_agent_admission() {
         let result = perform(&spawn(step), &runner).await;
         assert_eq!(result.is_ok(), success);
         let calls = runner.calls.lock().unwrap();
-        assert_eq!(calls.len(), if success { 3 } else { 1 });
+        assert_eq!(calls.len(), if success { 4 } else { 1 });
         if !success {
             assert!(result.unwrap_err().downcast_ref::<Skip>().is_none());
         }
