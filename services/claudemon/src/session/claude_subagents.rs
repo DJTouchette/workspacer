@@ -319,6 +319,178 @@ async fn read_rows(path: &Path) -> Result<Vec<Value>> {
         .collect())
 }
 
+/// Everything `artifacts` derives from a child transcript's rows, independent
+/// of the parent's current view of that child.
+#[derive(Debug, Default, PartialEq)]
+struct RowSummary {
+    started_at: Option<i64>,
+    model: Option<String>,
+    description: Option<String>,
+    last_tool: Option<(String, String)>,
+    tokens: Option<u64>,
+    cost_usd: Option<f64>,
+    tool_calls: u64,
+    /// Present when the final row is an explicit end_turn, with its stamp.
+    completed: Option<Option<i64>>,
+}
+
+impl RowSummary {
+    fn from_rows(rows: &[Value]) -> Self {
+        let mut summary = Self::default();
+        let mut tokens = 0u64;
+        let mut tools = std::collections::BTreeSet::new();
+        let mut usage_seen = std::collections::BTreeSet::new();
+        let mut usage_reported = false;
+        for row in rows {
+            if let Some(stamp) = row["timestamp"].as_str().and_then(|s| {
+                time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
+            }) {
+                let stamp = milliseconds(stamp);
+                summary.started_at = Some(summary.started_at.map_or(stamp, |s| s.min(stamp)));
+            }
+            if let Some(model) = row.pointer("/message/model").and_then(Value::as_str) {
+                summary.model = Some(text(model, 256));
+            }
+            if summary.description.is_none() && row["type"] == "user" {
+                summary.description = transcript::blocks(&row["message"]["content"])
+                    .iter()
+                    .find_map(|block| {
+                        if let transcript::Block::Text { text } = block {
+                            Some(text.chars().take(180).collect())
+                        } else {
+                            None
+                        }
+                    });
+            }
+            if let Some(usage) = row.pointer("/message/usage") {
+                usage_reported |= usage.is_object();
+                let key = row
+                    .pointer("/message/id")
+                    .or_else(|| row.get("uuid"))
+                    .and_then(Value::as_str);
+                if usage.is_object() && key.is_none_or(|k| usage_seen.insert(k.to_owned())) {
+                    for name in [
+                        "input_tokens",
+                        "output_tokens",
+                        "cache_read_input_tokens",
+                        "cache_creation_input_tokens",
+                    ] {
+                        tokens = tokens.saturating_add(usage[name].as_u64().unwrap_or_default());
+                    }
+                }
+            }
+            for block in transcript::blocks(&row["message"]["content"]) {
+                if let transcript::Block::ToolUse { id, name, input } = block {
+                    if let Some(id) = id.filter(|s| s.len() <= 512) {
+                        tools.insert(id.to_owned());
+                    }
+                    summary.last_tool = Some((
+                        text(name, 256),
+                        text(&transcript::summarize_tool_input(name, input), 512),
+                    ));
+                }
+            }
+        }
+        summary.tokens = usage_reported.then_some(tokens);
+        let transcript = transcript::Transcript {
+            messages: rows
+                .iter()
+                .filter_map(|row| {
+                    let role = row["type"].as_str()?;
+                    let mut raw = row.clone();
+                    raw["isSidechain"] = Value::Bool(false);
+                    Some(transcript::TranscriptMessage {
+                        role: role.into(),
+                        content: row["message"]["content"].clone(),
+                        raw,
+                    })
+                })
+                .collect(),
+            ..Default::default()
+        };
+        summary.cost_usd = super::usage::from_transcript(&transcript).map(|usage| usage.cost_usd);
+        summary.tool_calls = tools.len() as u64;
+        // Parent Input is not a child completion signal: detached workers can
+        // outlive that turn. Only an explicit final child stop is authoritative.
+        if let Some(last) = rows
+            .last()
+            .filter(|row| row["type"] == "assistant" && row["message"]["stop_reason"] == "end_turn")
+        {
+            summary.completed = Some(
+                last["timestamp"]
+                    .as_str()
+                    .and_then(|s| {
+                        time::OffsetDateTime::parse(
+                            s,
+                            &time::format_description::well_known::Rfc3339,
+                        )
+                        .ok()
+                    })
+                    .map(milliseconds),
+            );
+        }
+        summary
+    }
+
+    fn apply(&self, child: &mut SubagentInfo) {
+        if let Some(stamp) = self.started_at {
+            child.started_at = if child.started_at == 0 {
+                stamp
+            } else {
+                child.started_at.min(stamp)
+            };
+        }
+        if let Some(model) = &self.model {
+            child.model = Some(model.clone());
+        }
+        if child.description.is_none() {
+            child.description = self.description.clone();
+        }
+        if let Some((name, summary)) = &self.last_tool {
+            child.last_tool_name = Some(name.clone());
+            child.last_tool_summary = Some(summary.clone());
+        }
+        child.tokens = self.tokens;
+        child.cost_usd = self.cost_usd;
+        child.tool_calls = Some(self.tool_calls);
+        if let Some(completed_at) = self.completed {
+            child.status = SubagentStatus::Complete;
+            child.completed_at = completed_at.or(child.completed_at);
+        }
+    }
+}
+
+type SummaryKey = (u64, Option<std::time::SystemTime>);
+type SummaryCache = std::collections::HashMap<PathBuf, (SummaryKey, std::sync::Arc<RowSummary>)>;
+/// Live parents rescan every child every few seconds; finished children never
+/// change, so unchanged files reuse their last parse.
+static SUMMARIES: std::sync::LazyLock<std::sync::Mutex<SummaryCache>> =
+    std::sync::LazyLock::new(Default::default);
+const MAX_CACHED_SUMMARIES: usize = 4096;
+
+async fn read_summary(path: &Path) -> Result<std::sync::Arc<RowSummary>> {
+    let metadata = tokio::fs::metadata(path).await?;
+    let key = (metadata.len(), metadata.modified().ok());
+    if key.1.is_some() {
+        if let Some((_, summary)) = SUMMARIES
+            .lock()
+            .unwrap()
+            .get(path)
+            .filter(|(cached, _)| *cached == key)
+        {
+            return Ok(summary.clone());
+        }
+    }
+    let rows = read_rows(path).await?;
+    let summary = std::sync::Arc::new(RowSummary::from_rows(&rows));
+    let mut cache = SUMMARIES.lock().unwrap();
+    if cache.len() >= MAX_CACHED_SUMMARIES {
+        cache.clear();
+    }
+    cache.insert(path.to_owned(), (key, summary.clone()));
+    Ok(summary)
+}
+
 /// Claude's sidecar names the parent Agent tool that actually spawned this
 /// child. It is optional; a missing or refused file leaves transcript fallback.
 async fn read_metadata(transcript_path: &Path) -> Result<Value> {
@@ -374,7 +546,7 @@ pub async fn artifacts(state: &SessionState) -> Result<Vec<SubagentInfo>> {
         let Ok(path) = child_path(main.to_str().unwrap_or_default(), id).await else {
             continue;
         };
-        let Ok(rows) = read_rows(&path).await else {
+        let Ok(summary) = read_summary(&path).await else {
             continue;
         };
         let mut child = state
@@ -411,98 +583,7 @@ pub async fn artifacts(state: &SessionState) -> Result<Vec<SubagentInfo>> {
             }
             // A requested model in metadata is not runtime model evidence.
         }
-        let mut tokens = 0u64;
-        let mut tools = std::collections::BTreeSet::new();
-        let mut usage_seen = std::collections::BTreeSet::new();
-        let mut usage_reported = false;
-        for row in &rows {
-            if let Some(stamp) = row["timestamp"].as_str().and_then(|s| {
-                time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
-            }) {
-                let stamp = milliseconds(stamp);
-                child.started_at = if child.started_at == 0 {
-                    stamp
-                } else {
-                    child.started_at.min(stamp)
-                };
-            }
-            if let Some(model) = row.pointer("/message/model").and_then(Value::as_str) {
-                child.model = Some(text(model, 256));
-            }
-            if child.description.is_none() && row["type"] == "user" {
-                child.description = transcript::blocks(&row["message"]["content"])
-                    .iter()
-                    .find_map(|block| {
-                        if let transcript::Block::Text { text } = block {
-                            Some(text.chars().take(180).collect())
-                        } else {
-                            None
-                        }
-                    });
-            }
-            if let Some(usage) = row.pointer("/message/usage") {
-                usage_reported |= usage.is_object();
-                let key = row
-                    .pointer("/message/id")
-                    .or_else(|| row.get("uuid"))
-                    .and_then(Value::as_str);
-                if usage.is_object() && key.is_none_or(|k| usage_seen.insert(k.to_owned())) {
-                    for name in [
-                        "input_tokens",
-                        "output_tokens",
-                        "cache_read_input_tokens",
-                        "cache_creation_input_tokens",
-                    ] {
-                        tokens = tokens.saturating_add(usage[name].as_u64().unwrap_or_default());
-                    }
-                }
-            }
-            for block in transcript::blocks(&row["message"]["content"]) {
-                if let transcript::Block::ToolUse { id, name, input } = block {
-                    if let Some(id) = id.filter(|s| s.len() <= 512) {
-                        tools.insert(id.to_owned());
-                    }
-                    child.last_tool_name = Some(text(name, 256));
-                    child.last_tool_summary =
-                        Some(text(&transcript::summarize_tool_input(name, input), 512));
-                }
-            }
-        }
-        child.tokens = usage_reported.then_some(tokens);
-        let transcript = transcript::Transcript {
-            messages: rows
-                .iter()
-                .filter_map(|row| {
-                    let role = row["type"].as_str()?;
-                    let mut raw = row.clone();
-                    raw["isSidechain"] = Value::Bool(false);
-                    Some(transcript::TranscriptMessage {
-                        role: role.into(),
-                        content: row["message"]["content"].clone(),
-                        raw,
-                    })
-                })
-                .collect(),
-            ..Default::default()
-        };
-        child.cost_usd = super::usage::from_transcript(&transcript).map(|usage| usage.cost_usd);
-        child.tool_calls = Some(tools.len() as u64);
-        // Parent Input is not a child completion signal: detached workers can
-        // outlive that turn. Only an explicit final child stop is authoritative.
-        if let Some(last) = rows
-            .last()
-            .filter(|row| row["type"] == "assistant" && row["message"]["stop_reason"] == "end_turn")
-        {
-            child.status = SubagentStatus::Complete;
-            child.completed_at = last["timestamp"]
-                .as_str()
-                .and_then(|s| {
-                    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
-                        .ok()
-                })
-                .map(milliseconds)
-                .or(child.completed_at);
-        }
+        summary.apply(&mut child);
         children.push(child);
     }
     Ok(children)
@@ -700,6 +781,47 @@ mod tests {
                 "a redirected JSONL must not substitute another child's sidecar identity"
             );
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn unchanged_child_transcripts_reuse_their_parse_until_they_change() {
+        let root = std::env::temp_dir().join(format!("claude-cache-{}", uuid::Uuid::new_v4()));
+        let project = root.join("projects/-project");
+        let directory = project.join("parent/subagents");
+        std::fs::create_dir_all(&directory).unwrap();
+        transcript::allow_root(root.join("projects"));
+        let main = project.join("parent.jsonl");
+        std::fs::write(&main, "").unwrap();
+        let child_path = directory.join("agent-child.jsonl");
+        let first =
+            json!({"type":"user","timestamp":"2026-10-01T10:00:00Z","message":{"content":"first"}})
+                .to_string();
+        std::fs::write(&child_path, &first).unwrap();
+        let mut state = SessionState::new("parent".into(), Some("/project".into()));
+        state.transcript_path = Some(main.canonicalize().unwrap().to_string_lossy().into_owned());
+        assert_eq!(
+            artifacts(&state).await.unwrap()[0].description.as_deref(),
+            Some("first")
+        );
+        // Same length and mtime: the cached parse stands in for a re-read.
+        let stamp = std::fs::metadata(&child_path).unwrap().modified().unwrap();
+        std::fs::write(&child_path, first.replace("first", "other")).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&child_path)
+            .unwrap()
+            .set_modified(stamp)
+            .unwrap();
+        assert_eq!(
+            artifacts(&state).await.unwrap()[0].description.as_deref(),
+            Some("first")
+        );
+        let done = json!({"type":"assistant","timestamp":"2026-10-01T10:00:02Z","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"ok"}]}});
+        std::fs::write(&child_path, format!("{first}\n{done}")).unwrap();
+        let child = &artifacts(&state).await.unwrap()[0];
+        assert_eq!(child.status, SubagentStatus::Complete);
+        assert_eq!(child.completed_at.unwrap() - child.started_at, 2000);
         std::fs::remove_dir_all(root).unwrap();
     }
 
