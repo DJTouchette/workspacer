@@ -19,7 +19,7 @@ use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::broadcast;
 
-use super::state::{Plan, PlanStatus, PlanStep, Transport};
+use super::state::{Plan, PlanStatus, PlanStep, SessionState, Transport};
 use super::transcript::{blocks, flatten_tool_result, path_is_allowed, Block};
 use super::{SessionMode, SessionStore};
 
@@ -203,6 +203,19 @@ pub fn items_before_user(items: &[ConversationItem], uuid: &str) -> Option<Vec<C
         |i| matches!(i, ConversationItem::UserMessage { uuid: Some(u), .. } if u == uuid),
     )?;
     Some(items[..at].to_vec())
+}
+
+/// Whether a tail pass could still read, broadcast or forget anything for
+/// this session: a stopped one past its drain window matters only while it
+/// still holds a log.
+fn needs_tail_pass(
+    state: &SessionState,
+    now: time::OffsetDateTime,
+    has_log: impl FnOnce() -> bool,
+) -> bool {
+    state.mode != SessionMode::Stopped
+        || (now - state.updated_at).whole_seconds() <= STOPPED_DRAIN_SECS
+        || has_log()
 }
 
 fn stopped_drain_finished(age_secs: i64, backlog: bool) -> bool {
@@ -733,7 +746,14 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
             // One pass per session, with bounded file reads. Independent
             // sessions can advance while another awaits slow filesystem I/O;
             // never overlap two passes for the same session.
-            futures::stream::iter(sessions.list()).for_each_concurrent(TAIL_CONCURRENCY, |state| {
+            // Hydrated history can hold a hundred stopped rows. One past its
+            // drain window with no log has nothing left to tail or forget, so
+            // skip it before cloning it or touching the filesystem.
+            let now = time::OffsetDateTime::now_utc();
+            let targets = sessions.list_where(|state| {
+                needs_tail_pass(state, now, || conv.logs.contains_key(&state.session_id))
+            });
+            futures::stream::iter(targets).for_each_concurrent(TAIL_CONCURRENCY, |state| {
                 let sessions = &sessions;
                 let conv = &conv;
                 async move {
@@ -1845,6 +1865,28 @@ pub(crate) mod tests {
         assert!(stopped_drain_finished(STOPPED_DRAIN_SECS + 1, false));
         assert!(!stopped_drain_finished(STOPPED_DRAIN_SECS + 1, true));
         assert!(stopped_drain_finished(STOPPED_MAX_DRAIN_SECS + 1, true));
+    }
+
+    #[test]
+    fn drained_stopped_sessions_without_a_log_are_skipped_before_any_io() {
+        let now = time::OffsetDateTime::now_utc();
+        let mut state = SessionState::new("s".into(), None);
+        let unexpected = || panic!("a live session needs no log lookup");
+        assert!(needs_tail_pass(&state, now, unexpected));
+        state.mode = SessionMode::Stopped;
+        state.updated_at = now - time::Duration::seconds(STOPPED_DRAIN_SECS);
+        assert!(needs_tail_pass(&state, now, unexpected));
+        state.updated_at = now - time::Duration::seconds(STOPPED_DRAIN_SECS + 1);
+        assert!(!needs_tail_pass(&state, now, || false));
+        assert!(
+            needs_tail_pass(&state, now, || true),
+            "its log must still be forgotten"
+        );
+
+        let store = SessionStore::new();
+        store.register_managed("live", "/project", "claude");
+        assert_eq!(store.list_where(|s| s.session_id == "live").len(), 1);
+        assert!(store.list_where(|_| false).is_empty());
     }
 
     #[tokio::test]

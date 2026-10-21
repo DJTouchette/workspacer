@@ -1669,6 +1669,15 @@ impl SessionStore {
         self.states.iter().map(|e| e.value().clone()).collect()
     }
 
+    /// [`list`](Self::list), cloning only the sessions `keep` accepts.
+    pub fn list_where(&self, keep: impl Fn(&SessionState) -> bool) -> Vec<SessionState> {
+        self.states
+            .iter()
+            .filter(|e| keep(e.value()))
+            .map(|e| e.value().clone())
+            .collect()
+    }
+
     pub fn get(&self, session_id: &str) -> Option<SessionState> {
         if let Some(engine) = self.engines.bound(session_id) {
             return engine.snapshot(self, session_id);
