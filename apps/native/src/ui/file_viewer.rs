@@ -1587,7 +1587,8 @@ impl Render for PreviewPane {
                         .id("file-viewer-explorer-scroll")
                         .flex_1()
                         .min_h_0()
-                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
                         .child(explorer::render_tree(
                             "file-viewer-tree",
                             &tree,

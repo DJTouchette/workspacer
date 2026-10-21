@@ -1062,7 +1062,8 @@ impl Workspace {
                     .id("review-files-scroll")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
                     .child(self.render_review_tree(changes, root, cx)),
             ),
             Mode::Commits => card.child(self.render_commit_list(cx)),
@@ -1120,6 +1121,8 @@ impl Workspace {
         });
         let show_ignored = self.explorer.show_ignored;
         div()
+            .flex_1()
+            .min_h_0()
             .flex()
             .flex_col()
             .child(

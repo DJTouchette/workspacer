@@ -36,6 +36,10 @@ pub(super) struct Entry {
 #[derive(Default)]
 pub(super) struct Explorer {
     dirs: HashMap<String, Dir>,
+    /// Bumped by every change to `dirs`; a flattened tree is reused until
+    /// it moves, or its root, open folders or filter change.
+    generation: u64,
+    trees: std::cell::RefCell<HashMap<String, TreeCache>>,
     queue: VecDeque<String>,
     inflight: Option<String>,
     seen: u64,
@@ -53,6 +57,13 @@ pub(super) struct TreeRow {
     pub error: Option<String>,
 }
 
+struct TreeCache {
+    generation: u64,
+    expanded: BTreeSet<String>,
+    tracked_only: bool,
+    tree: std::rc::Rc<Tree>,
+}
+
 pub(super) struct Tree {
     pub rows: Vec<TreeRow>,
     /// The root's own state, for its loading/error line.
@@ -66,9 +77,42 @@ pub(super) struct Tree {
 }
 
 impl Explorer {
+    fn dirs_mut(&mut self) -> &mut HashMap<String, Dir> {
+        self.generation += 1;
+        &mut self.dirs
+    }
+
     /// `root`'s tree with the `expanded` directories open, leaving out what
-    /// git does not track when `tracked_only`.
-    pub fn tree(&self, root: &str, expanded: &BTreeSet<String>, tracked_only: bool) -> Tree {
+    /// git does not track when `tracked_only`. Built once per change: both
+    /// trees ask for it on every frame.
+    pub fn tree(
+        &self,
+        root: &str,
+        expanded: &BTreeSet<String>,
+        tracked_only: bool,
+    ) -> std::rc::Rc<Tree> {
+        let mut trees = self.trees.borrow_mut();
+        if let Some(held) = trees.get(root)
+            && held.generation == self.generation
+            && held.tracked_only == tracked_only
+            && held.expanded == *expanded
+        {
+            return held.tree.clone();
+        }
+        let tree = std::rc::Rc::new(self.build(root, expanded, tracked_only));
+        trees.insert(
+            root.to_owned(),
+            TreeCache {
+                generation: self.generation,
+                expanded: expanded.clone(),
+                tracked_only,
+                tree: tree.clone(),
+            },
+        );
+        tree
+    }
+
+    fn build(&self, root: &str, expanded: &BTreeSet<String>, tracked_only: bool) -> Tree {
         let mut rows = Vec::new();
         let mut truncated = false;
         self.walk(root, 0, expanded, tracked_only, &mut rows, &mut truncated);
@@ -142,7 +186,7 @@ impl Workspace {
         {
             return;
         }
-        self.explorer.dirs.insert(
+        self.explorer.dirs_mut().insert(
             path.to_owned(),
             Dir {
                 loading: true,
@@ -159,7 +203,7 @@ impl Workspace {
     pub(super) fn refresh_explorer(&mut self, root: &str, cx: &mut Context<Self>) {
         let root = root.trim_end_matches(['/', '\\']).to_owned();
         self.explorer
-            .dirs
+            .dirs_mut()
             .retain(|path, _| !wks_native::links::within(&root, path));
         self.explorer
             .queue
@@ -228,7 +272,7 @@ impl Workspace {
                     },
                 };
                 if current {
-                    self.explorer.dirs.insert(path.clone(), dir);
+                    self.explorer.dirs_mut().insert(path.clone(), dir);
                 }
                 self.refresh_popout(cx);
             }
@@ -251,7 +295,7 @@ impl Workspace {
         }
         self.explorer.show_ignored = show;
         let listed: Vec<_> = self.explorer.dirs.keys().cloned().collect();
-        self.explorer.dirs.clear();
+        self.explorer.dirs_mut().clear();
         self.explorer.queue.clear();
         for path in listed {
             self.explore(&path, cx);
@@ -273,7 +317,7 @@ pub(super) type OnRow = std::rc::Rc<dyn Fn(&TreeRow, &mut Window, &mut App)>;
 /// Draw `tree`: chevrons for folders, file icons, an optional status mark.
 pub(super) fn render_tree(
     id: &'static str,
-    tree: &Tree,
+    tree: &std::rc::Rc<Tree>,
     selected: Option<&str>,
     marks: &Marks,
     p: Palette,
@@ -287,27 +331,27 @@ pub(super) fn render_tree(
             .text_color(rgb(tone))
             .child(text)
     };
-    let mut body = div().flex().flex_col().py_1();
+    let mut head = div().flex().flex_col().pt_1();
     if tree.root.hides_ignored && !tree.root.loading && tree.root.error.is_none() {
-        body = body.child(status("Git-ignored files are hidden.".into(), p.disabled));
+        head = head.child(status("Git-ignored files are hidden.".into(), p.disabled));
     }
     if tree.hides_untracked && !tree.root.loading && tree.root.error.is_none() {
-        body = body.child(status("Untracked files are hidden.".into(), p.disabled));
+        head = head.child(status("Untracked files are hidden.".into(), p.disabled));
     } else if tree.untracked_unknown && tree.root.error.is_none() {
-        body = body.child(status(
+        head = head.child(status(
             "Git can’t say which files are tracked here, so all are shown.".into(),
             p.disabled,
         ));
     }
     if let Some(error) = &tree.root.error {
-        body = body.child(status(
+        head = head.child(status(
             format!("Couldn’t list this folder: {error}"),
             p.error,
         ));
     } else if tree.root.loading {
-        body = body.child(status("Loading files…".into(), p.muted));
+        head = head.child(status("Loading files…".into(), p.muted));
     } else if tree.rows.is_empty() {
-        body = body.child(status(
+        head = head.child(status(
             if tree.hides_untracked && !tree.root.entries.is_empty() {
                 "Git tracks nothing in this folder.".into()
             } else {
@@ -316,99 +360,149 @@ pub(super) fn render_tree(
             p.muted,
         ));
     }
-    for (ix, row) in tree.rows.iter().enumerate() {
-        let active = selected == Some(row.entry.path.as_str());
-        let mark = marks.get(&row.entry.path).copied();
-        let on_row = on_row.clone();
-        let clicked = row.clone();
-        let indent = 8. + row.depth as f32 * 14.;
-        body = body.child(
-            div()
-                .id((id, ix))
-                .debug_selector({
-                    let name = format!("{id}-row-{}", row.entry.name);
-                    move || name
-                })
-                .h(px(24.))
-                .pl(px(indent))
-                .pr_2()
-                .flex()
-                .items_center()
-                .gap_1()
-                .cursor_pointer()
-                .text_size(px(chrome::scale::META))
-                .when(active, |d| d.bg(rgb(p.selected)))
-                .hover(|s| s.bg(rgb(p.selected)))
-                .on_click(move |_, window, cx| on_row(&clicked, window, cx))
-                .child(div().w(px(12.)).flex_shrink_0().when(row.entry.dir, |d| {
-                    d.child(
-                        Icon::new(if row.expanded {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        })
-                        .size(px(12.))
-                        .text_color(rgb(p.muted)),
-                    )
-                }))
-                .child(
-                    Icon::new(if row.entry.dir {
-                        if row.expanded {
-                            IconName::FolderOpen
-                        } else {
-                            IconName::Folder
-                        }
-                    } else {
-                        IconName::File
-                    })
-                    .size(px(13.))
-                    .flex_shrink_0()
-                    .text_color(rgb(if active { p.accent } else { p.muted })),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(rgb(match mark {
-                            Some((_, color)) => color,
-                            None if active => p.text,
-                            None => p.prose,
-                        }))
-                        .child(row.entry.name.clone()),
-                )
-                .when(row.loading, |d| {
-                    d.child(div().text_size(px(10.)).text_color(rgb(p.muted)).child("…"))
-                })
-                .when_some(mark, |d, (letter, color)| {
-                    d.child(
-                        div()
-                            .flex_shrink_0()
-                            .font_family(mono_font())
-                            .text_size(px(11.))
-                            .text_color(rgb(color))
-                            .child(letter.to_string()),
-                    )
-                }),
-        );
-        if let Some(error) = &row.error {
-            body = body.child(
-                div()
-                    .pl(px(indent + 26.))
-                    .pr_2()
-                    .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(p.error))
-                    .child(error.clone()),
-            );
-        }
-    }
-    if tree.truncated {
-        body = body.child(status(
+    // Each row, and each folder's listing error, is one fixed-height line,
+    // so the list builds only the lines in view (a tree can hold thousands).
+    let lines: Vec<(usize, bool)> = tree
+        .rows
+        .iter()
+        .enumerate()
+        .flat_map(|(ix, row)| {
+            std::iter::once((ix, false)).chain(row.error.is_some().then_some((ix, true)))
+        })
+        .collect();
+    let truncated = tree.truncated.then(|| {
+        status(
             format!("Showing the first {MAX_ROWS} entries. Collapse folders to see more."),
             p.muted,
-        ));
-    }
-    body.into_any_element()
+        )
+    });
+    let tree = tree.clone();
+    let selected = selected.map(str::to_owned);
+    let marks = std::rc::Rc::new(marks.clone());
+    let count = lines.len();
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .child(head)
+        .child(
+            gpui::uniform_list(id, count, move |range, _, _| {
+                range
+                    .map(|line| {
+                        let (ix, error) = lines[line];
+                        let row = &tree.rows[ix];
+                        let indent = 8. + row.depth as f32 * 14.;
+                        if error {
+                            return div()
+                                .id((id, line))
+                                .h(px(24.))
+                                .pl(px(indent + 26.))
+                                .pr_2()
+                                .flex()
+                                .items_center()
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.error))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(row.error.clone().unwrap_or_default()),
+                                );
+                        }
+                        tree_row(id, ix, row, indent, &selected, &marks, p, &on_row)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .flex_1()
+            .pb_1(),
+        )
+        .children(truncated)
+        .into_any_element()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tree_row(
+    id: &'static str,
+    ix: usize,
+    row: &TreeRow,
+    indent: f32,
+    selected: &Option<String>,
+    marks: &Marks,
+    p: Palette,
+    on_row: &OnRow,
+) -> gpui::Stateful<Div> {
+    let active = selected.as_deref() == Some(row.entry.path.as_str());
+    let mark = marks.get(&row.entry.path).copied();
+    let on_row = on_row.clone();
+    let clicked = row.clone();
+    div()
+        .id((id, ix))
+        .debug_selector({
+            let name = format!("{id}-row-{}", row.entry.name);
+            move || name
+        })
+        .h(px(24.))
+        .pl(px(indent))
+        .pr_2()
+        .flex()
+        .items_center()
+        .gap_1()
+        .cursor_pointer()
+        .text_size(px(chrome::scale::META))
+        .when(active, |d| d.bg(rgb(p.selected)))
+        .hover(|s| s.bg(rgb(p.selected)))
+        .on_click(move |_, window, cx| on_row(&clicked, window, cx))
+        .child(div().w(px(12.)).flex_shrink_0().when(row.entry.dir, |d| {
+            d.child(
+                Icon::new(if row.expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .size(px(12.))
+                .text_color(rgb(p.muted)),
+            )
+        }))
+        .child(
+            Icon::new(if row.entry.dir {
+                if row.expanded {
+                    IconName::FolderOpen
+                } else {
+                    IconName::Folder
+                }
+            } else {
+                IconName::File
+            })
+            .size(px(13.))
+            .flex_shrink_0()
+            .text_color(rgb(if active { p.accent } else { p.muted })),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_color(rgb(match mark {
+                    Some((_, color)) => color,
+                    None if active => p.text,
+                    None => p.prose,
+                }))
+                .child(row.entry.name.clone()),
+        )
+        .when(row.loading, |d| {
+            d.child(div().text_size(px(10.)).text_color(rgb(p.muted)).child("…"))
+        })
+        .when_some(mark, |d, (letter, color)| {
+            d.child(
+                div()
+                    .flex_shrink_0()
+                    .font_family(mono_font())
+                    .text_size(px(11.))
+                    .text_color(rgb(color))
+                    .child(letter.to_string()),
+            )
+        })
 }
 
 /// Git's colour for a status letter.
@@ -438,7 +532,7 @@ mod tests {
     #[test]
     fn trees_flatten_open_folders_in_order() {
         let mut explorer = Explorer::default();
-        explorer.dirs.insert(
+        explorer.dirs_mut().insert(
             "/r".into(),
             Dir {
                 entries: vec![
@@ -448,7 +542,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        explorer.dirs.insert(
+        explorer.dirs_mut().insert(
             "/r/src".into(),
             Dir {
                 entries: vec![entry("lib.rs", "/r/src/lib.rs", false)],
@@ -478,7 +572,7 @@ mod tests {
             ..entry(name, path, dir)
         };
         let mut explorer = Explorer::default();
-        explorer.dirs.insert(
+        explorer.dirs_mut().insert(
             "/r".into(),
             Dir {
                 entries: vec![
@@ -490,7 +584,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        explorer.dirs.insert(
+        explorer.dirs_mut().insert(
             "/r/src".into(),
             Dir {
                 entries: vec![
@@ -521,7 +615,7 @@ mod tests {
         assert_eq!(names(&tracked), ["src", "lib.rs", "README.md"]);
         assert!(tracked.hides_untracked && !tracked.untracked_unknown);
         // A listing without marks (no repository, an older hub) shows all.
-        explorer.dirs.insert(
+        explorer.dirs_mut().insert(
             "/x".into(),
             Dir {
                 entries: vec![entry("a.txt", "/x/a.txt", false)],
