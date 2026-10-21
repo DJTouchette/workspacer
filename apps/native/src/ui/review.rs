@@ -7,7 +7,7 @@
 //! (`git.*`, `fs.*`), and paths are joined under the repository root the hub
 //! reports, never outside it.
 use super::*;
-use gpui::{AnyElement, KeyDownEvent, ListHorizontalSizingBehavior};
+use gpui::{AnyElement, KeyDownEvent, ListHorizontalSizingBehavior, StyledText};
 use gpui_component::Sizable;
 use std::collections::BTreeSet;
 use wks_native::{
@@ -48,7 +48,8 @@ pub(super) struct ReviewUi {
     /// it (for the same folder) until the new answer lands, so the list never
     /// blanks and nothing is re-parsed per frame.
     status: Option<Status>,
-    parsed: Option<(u64, Arc<diff::Diff>, usize)>,
+    /// The answer number and appearance it was parsed and colored for.
+    parsed: Option<(u64, Appearance, ParsedDiff)>,
     pub scroll: gpui::UniformListScrollHandle,
     list_scroll: gpui::UniformListScrollHandle,
 }
@@ -575,21 +576,35 @@ impl Workspace {
             .child(text)
     }
 
-    /// The parsed rows of a loaded diff, parsed once per answer.
-    fn parsed_diff(&mut self, state: Option<&RequestState>) -> Option<(Arc<diff::Diff>, usize)> {
+    /// The parsed rows of a loaded diff, parsed and syntax-colored once per
+    /// answer and again when the appearance changes.
+    fn parsed_diff(&mut self, state: Option<&RequestState>) -> Option<ParsedDiff> {
         let s = state.filter(|s| !s.loading && s.error.is_none())?;
         Some(match &self.review.parsed {
-            Some((number, parsed, widest)) if *number == s.number => (parsed.clone(), *widest),
+            Some((number, appearance, parsed))
+                if *number == s.number && *appearance == self.appearance =>
+            {
+                parsed.clone()
+            }
             _ => {
-                let parsed = Arc::new(diff::parse(s.value["diff"].as_str().unwrap_or("")));
-                let widest = parsed
+                let diff = Arc::new(diff::parse(s.value["diff"].as_str().unwrap_or("")));
+                let widest = diff
                     .rows
                     .iter()
                     .enumerate()
                     .max_by_key(|(_, r)| r.text.len())
                     .map_or(0, |(ix, _)| ix);
-                self.review.parsed = Some((s.number, parsed.clone(), widest));
-                (parsed, widest)
+                let highlights = Arc::new(syntax::highlight_diff(
+                    &diff,
+                    &syntax::highlight_theme(self.appearance),
+                ));
+                let parsed = ParsedDiff {
+                    diff,
+                    widest,
+                    highlights,
+                };
+                self.review.parsed = Some((s.number, self.appearance, parsed.clone()));
+                parsed
             }
         })
     }
@@ -631,7 +646,7 @@ impl Workspace {
         &self,
         panel: Div,
         state: Option<&RequestState>,
-        parsed: Option<(Arc<diff::Diff>, usize)>,
+        parsed: Option<ParsedDiff>,
         open_hint: &'static str,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -647,7 +662,12 @@ impl Workspace {
         if state.loading || state.error.is_some() {
             return panel.child(div().px_4().py_2().child(self.feature_message("diff")));
         }
-        let Some((parsed, widest)) = parsed else {
+        let Some(ParsedDiff {
+            diff: parsed,
+            widest,
+            highlights,
+        }) = parsed
+        else {
             return panel;
         };
         if parsed.rows.is_empty() || parsed.binary {
@@ -673,7 +693,7 @@ impl Workspace {
                     count,
                     cx.processor(move |_this, range: std::ops::Range<usize>, _, _| {
                         range
-                            .map(|ix| diff_row(&rows.rows[ix], ix, p))
+                            .map(|ix| diff_row(&rows.rows[ix], &highlights[ix], ix, p))
                             .collect::<Vec<_>>()
                     }),
                 )
@@ -782,8 +802,8 @@ impl Workspace {
                             .child(dir),
                     ),
             )
-            .when_some(parsed.as_ref(), |d, (parsed, _)| {
-                d.child(Self::diff_counts(parsed, p))
+            .when_some(parsed.as_ref(), |d, parsed| {
+                d.child(Self::diff_counts(&parsed.diff, p))
             });
         if let Some(change) = change.clone()
             && change.has_unstaged()
@@ -952,8 +972,8 @@ impl Workspace {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(subject),
             )
-            .when_some(parsed.as_ref(), |d, (parsed, _)| {
-                d.child(Self::diff_counts(parsed, p))
+            .when_some(parsed.as_ref(), |d, parsed| {
+                d.child(Self::diff_counts(&parsed.diff, p))
             });
         self.diff_body(
             panel.child(header),
@@ -1599,8 +1619,23 @@ impl Workspace {
     }
 }
 
-/// One numbered diff line: old and new line numbers, marker, text.
-fn diff_row(row: &diff::Row, ix: usize, p: Palette) -> gpui::Stateful<Div> {
+/// A loaded diff's rows and the syntax colors for each.
+#[derive(Clone)]
+struct ParsedDiff {
+    diff: Arc<diff::Diff>,
+    /// The row with the longest text, which sizes the list's width.
+    widest: usize,
+    highlights: Arc<syntax::RowHighlights>,
+}
+
+/// One numbered diff line: old and new line numbers, marker, text in its
+/// file's syntax colors.
+fn diff_row(
+    row: &diff::Row,
+    highlights: &[(std::ops::Range<usize>, gpui::HighlightStyle)],
+    ix: usize,
+    p: Palette,
+) -> gpui::Stateful<Div> {
     let (bg, fg, marker) = match row.kind {
         Kind::Added => (
             Some(gpui::Hsla::from(rgb(p.success)).opacity(0.14)),
@@ -1659,9 +1694,9 @@ fn diff_row(row: &diff::Row, ix: usize, p: Palette) -> gpui::Stateful<Div> {
                 .pr_4()
                 .text_color(rgb(fg))
                 .child(if row.text.is_empty() {
-                    " ".to_owned()
+                    StyledText::new(" ")
                 } else {
-                    row.text.clone()
+                    StyledText::new(row.text.clone()).with_highlights(highlights.to_vec())
                 }),
         )
 }

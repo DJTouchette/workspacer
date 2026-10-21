@@ -151,4 +151,15 @@ Native interaction polish also patches:
   no button pressed ends the drag. Regression test: native
   `island_controls_do_not_select_the_transcript_under_them`.
 
+- Highlight queries for C#, Swift, CMake, GraphQL and Proto (`highlighter/languages.rs`):
+  upstream registers these grammars with an empty highlights query, so files
+  in those languages parsed but drew uncolored in the editor, code blocks and
+  review diffs. Each now uses its grammar crate's own `HIGHLIGHTS_QUERY`; its
+  dotted capture names fall back to the theme's base names. Their crates do
+  not export one for GraphQL and Proto, so those queries live beside the other
+  vendored ones: `languages/proto/highlights.scm` is tree-sitter-proto's own
+  (MIT), and `languages/graphql/highlights.scm` is written here, since
+  tree-sitter-graphql ships none. Regression test: native
+  `ui::syntax::tests::grammars_without_upstream_queries_still_highlight`.
+
 Reapply these interaction changes explicitly when upgrading the component.

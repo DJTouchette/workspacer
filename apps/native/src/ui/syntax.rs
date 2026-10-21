@@ -4,9 +4,16 @@
 //! The Omarchy ports use their themes' editor conventions (Tokyo Night,
 //! Catppuccin, Gruvbox Material, Everforest) with Omarchy's colors.toml hues;
 //! Latte's tokens are darkened slightly to stay readable on its code blocks.
-use gpui_component::highlighter::{HighlightTheme, SyntaxColors};
+use gpui::HighlightStyle;
+use gpui_component::Rope;
+use gpui_component::highlighter::{
+    HighlightTheme, LanguageRegistry, SyntaxColors, SyntaxHighlighter,
+};
+use std::ops::Range;
 use std::sync::Arc;
 use wks_native::appearance::Appearance;
+use wks_native::diff::{self, Kind};
+use wks_native::links;
 
 /// Tree-sitter capture → color for each appearance. Captures left out render
 /// in the editor foreground, as plain identifiers do in the desktop chat.
@@ -197,6 +204,99 @@ pub(super) fn highlight_theme(appearance: Appearance) -> Arc<HighlightTheme> {
     Arc::new(theme)
 }
 
+/// Syntax colors for each diff row, as byte ranges into the row's text.
+pub(super) type RowHighlights = Vec<Vec<(Range<usize>, HighlightStyle)>>;
+
+/// The registered highlighter language for `path`, if there is one.
+fn diff_language(path: &str) -> Option<&'static str> {
+    let language = links::language(path);
+    LanguageRegistry::singleton()
+        .language(language)
+        .is_some()
+        .then_some(language)
+}
+
+/// `--- a/src/x.rs` / `+++ b/src/x.rs` → `src/x.rs`; `/dev/null` → None.
+fn diff_path(line: &str) -> Option<&str> {
+    let path = line.get(4..)?.trim_end();
+    (path != "/dev/null").then(|| {
+        path.strip_prefix("a/")
+            .or_else(|| path.strip_prefix("b/"))
+            .unwrap_or(path)
+    })
+}
+
+/// Highlights each hunk as its old side (context and removed lines) and its
+/// new side (context and added lines), so a line reads as it does in the
+/// file it belongs to; context lines take the new side's colors.
+pub(super) fn highlight_diff(parsed: &diff::Diff, theme: &HighlightTheme) -> RowHighlights {
+    let rows = &parsed.rows;
+    let mut out = vec![Vec::new(); rows.len()];
+    let mut language = None;
+    let mut start = 0;
+    for (ix, row) in rows.iter().enumerate() {
+        if matches!(
+            row.kind,
+            Kind::Context | Kind::Added | Kind::Removed | Kind::Note
+        ) {
+            continue;
+        }
+        if let Some(language) = language {
+            highlight_hunk(rows, start..ix, language, theme, &mut out);
+        }
+        start = ix + 1;
+        if row.kind == Kind::Meta && row.text.starts_with("diff --git ") {
+            language = None;
+        } else if row.kind == Kind::File
+            && let Some(path) = diff_path(&row.text)
+        {
+            language = diff_language(path);
+        }
+    }
+    if let Some(language) = language {
+        highlight_hunk(rows, start..rows.len(), language, theme, &mut out);
+    }
+    out
+}
+
+fn highlight_hunk(
+    rows: &[diff::Row],
+    range: Range<usize>,
+    language: &str,
+    theme: &HighlightTheme,
+    out: &mut RowHighlights,
+) {
+    for side in [Kind::Removed, Kind::Added] {
+        let mut text = String::new();
+        let mut lines = Vec::new();
+        for ix in range.clone() {
+            let row = &rows[ix];
+            if row.kind == side || row.kind == Kind::Context {
+                lines.push((ix, text.len()));
+                text.push_str(&row.text);
+                text.push('\n');
+            }
+        }
+        if !lines.iter().any(|&(ix, _)| rows[ix].kind == side) {
+            continue;
+        }
+        let mut highlighter = SyntaxHighlighter::new(language);
+        highlighter.update(None, &Rope::from(text.as_str()));
+        for (ix, offset) in lines {
+            let row = &rows[ix];
+            if row.text.is_empty() || (side == Kind::Removed && row.kind == Kind::Context) {
+                continue;
+            }
+            out[ix] = highlighter
+                .styles(&(offset..offset + row.text.len()), theme)
+                .into_iter()
+                .filter(|(r, style)| !r.is_empty() && *style != HighlightStyle::default())
+                .map(|(r, style)| (r.start - offset..r.end - offset, style))
+                .collect();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +314,81 @@ mod tests {
             highlight_theme(Appearance::Dark).style("keyword"),
             highlight_theme(Appearance::Light).style("keyword")
         );
+    }
+
+    #[test]
+    fn diff_rows_take_their_files_syntax_colors() {
+        let parsed = diff::parse(
+            "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,2 @@
+ // a comment
+-fn old() {}
++let s = \"new\";
+diff --git a/notes.unknown b/notes.unknown
+--- a/notes.unknown
++++ b/notes.unknown
+@@ -1 +1 @@
+-fn plain() {}
++fn plain() {}
+",
+        );
+        let theme = highlight_theme(Appearance::Dark);
+        let highlights = highlight_diff(&parsed, &theme);
+        let styled = |ix: usize, name: &str| {
+            let want = theme.style(name).unwrap();
+            highlights[ix].iter().any(|(_, style)| *style == want)
+        };
+        let row = |text: &str| parsed.rows.iter().position(|r| r.text == text).unwrap();
+        assert!(styled(row("// a comment"), "comment"));
+        assert!(styled(row("fn old() {}"), "keyword"));
+        assert!(styled(row("let s = \"new\";"), "string"));
+        // Headers and files with no highlighter stay plain.
+        assert!(highlights[0].is_empty());
+        assert!(
+            parsed
+                .rows
+                .iter()
+                .zip(&highlights)
+                .filter(|(r, _)| r.text == "fn plain() {}")
+                .all(|(_, h)| h.is_empty())
+        );
+        // A dark theme and a light theme color the same keyword differently.
+        let light = highlight_diff(&parsed, &highlight_theme(Appearance::Light));
+        let ix = row("fn old() {}");
+        assert_ne!(highlights[ix], light[ix]);
+    }
+
+    /// The vendored component registers these grammars with no highlights
+    /// query upstream; files in them must still color.
+    #[test]
+    fn grammars_without_upstream_queries_still_highlight() {
+        let theme = highlight_theme(Appearance::Dark);
+        for (language, code) in [
+            ("csharp", "public class Foo { // note\n string s = \"x\"; }"),
+            ("swift", "let s = \"x\" // note"),
+            ("cmake", "set(NAME \"x\") # note"),
+            (
+                "graphql",
+                "# note\nquery Q($id: ID!) { user(id: $id) { name } }\nscalar S @deprecated(reason: \"x\")",
+            ),
+            (
+                "proto",
+                "option go_package = \"x\"; // note\nmessage M { string name = 1; }",
+            ),
+        ] {
+            let mut highlighter = SyntaxHighlighter::new(language);
+            highlighter.update(None, &Rope::from(code));
+            let styles = highlighter.styles(&(0..code.len()), &theme);
+            for name in ["string", "comment"] {
+                let want = theme.style(name).unwrap();
+                assert!(
+                    styles.iter().any(|(_, style)| *style == want),
+                    "{language} {name}: {styles:?}"
+                );
+            }
+        }
     }
 
     fn hex(color: &str) -> u32 {
