@@ -47,18 +47,24 @@ fn install_with_git(mut options: Options, home: PathBuf, git: GitCommand) -> Opt
                     .await??;
                     // The command future stays in the owned handler: cancelling
                     // it drops the process-group/job guard before hub teardown.
-                    let ignored = if include_ignored {
-                        BTreeSet::new()
-                    } else {
-                        git_ignored_async(&listing.path, &listing.names, git.clone()).await
-                    };
-                    let tracked = if mark_tracked {
-                        git_tracked_async(&listing.path, git).await
-                    } else {
-                        None
-                    };
+                    let (ignored, tracked) = tokio::join!(
+                        async {
+                            if include_ignored {
+                                BTreeSet::new()
+                            } else {
+                                git_ignored_async(&listing.path, &listing.names, git.clone()).await
+                            }
+                        },
+                        async {
+                            if mark_tracked {
+                                git_tracked_cached(&listing.path, git.clone()).await
+                            } else {
+                                None
+                            }
+                        }
+                    );
                     return tokio::task::spawn_blocking(move || {
-                        listing.finish(&ignored, include_ignored, tracked.as_ref())
+                        listing.finish(&ignored, include_ignored, tracked.as_deref())
                     })
                     .await?;
                 }
@@ -132,7 +138,7 @@ pub fn call(method: &str, params: Value, home: &Path) -> Result<Value> {
             } else {
                 None
             };
-            listing.finish(&ignored, include_ignored, tracked.as_ref())
+            listing.finish(&ignored, include_ignored, tracked.as_deref())
         }
         _ => bail!("unknown filesystem method"),
     }
@@ -432,12 +438,70 @@ async fn git_tracked_async(path: &Path, git: GitCommand) -> Option<BTreeSet<Stri
             .collect(),
     )
 }
-fn git_tracked(path: &Path) -> Option<BTreeSet<String>> {
+fn git_tracked(path: &Path) -> Option<Arc<BTreeSet<String>>> {
     let path = path.to_owned();
     block_on_git(async move {
-        git_tracked_async(&path, Arc::new(|| tokio::process::Command::new("git"))).await
+        git_tracked_cached(&path, Arc::new(|| tokio::process::Command::new("git"))).await
     })
     .flatten()
+}
+
+/// `ls-files` lists the whole subtree, so a file tree expanding folder by
+/// folder in a large repository re-lists it on every click. The answer only
+/// changes with the index, so reuse it briefly while the index is unchanged.
+const TRACKED_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+type IndexStamp = (PathBuf, u64, std::time::SystemTime);
+type TrackedEntry = (IndexStamp, std::time::Instant, Arc<BTreeSet<String>>);
+static TRACKED: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<PathBuf, TrackedEntry>>,
+> = std::sync::LazyLock::new(Default::default);
+
+async fn git_tracked_cached(path: &Path, git: GitCommand) -> Option<Arc<BTreeSet<String>>> {
+    let stamp = {
+        let path = path.to_owned();
+        tokio::task::spawn_blocking(move || index_stamp(&path))
+            .await
+            .ok()
+            .flatten()
+    };
+    if let Some(stamp) = &stamp
+        && let Some((cached, at, names)) = TRACKED.lock().unwrap().get(path)
+        && cached == stamp
+        && at.elapsed() < TRACKED_TTL
+    {
+        return Some(names.clone());
+    }
+    let names = Arc::new(git_tracked_async(path, git).await?);
+    if let Some(stamp) = stamp {
+        let mut cache = TRACKED.lock().unwrap();
+        cache.retain(|_, (_, at, _)| at.elapsed() < TRACKED_TTL);
+        if cache.len() < 256 {
+            cache.insert(
+                path.to_owned(),
+                (stamp, std::time::Instant::now(), names.clone()),
+            );
+        }
+    }
+    Some(names)
+}
+
+/// The index file governing `path`, with its size and mtime. None when it
+/// cannot be found, which simply disables the cache.
+fn index_stamp(path: &Path) -> Option<IndexStamp> {
+    let dot = path
+        .ancestors()
+        .map(|dir| dir.join(".git"))
+        .find(|dot| dot.symlink_metadata().is_ok())?;
+    let git_dir = if dot.is_dir() {
+        dot
+    } else {
+        let text = std::fs::read_to_string(&dot).ok()?;
+        let target = PathBuf::from(text.strip_prefix("gitdir:")?.trim());
+        dot.parent()?.join(target)
+    };
+    let index = git_dir.join("index");
+    let metadata = std::fs::metadata(&index).ok()?;
+    Some((index, metadata.len(), metadata.modified().ok()?))
 }
 /// Preserve the public synchronous API, including calls from inside Tokio.
 fn block_on_git<T: Send + 'static>(
@@ -687,6 +751,44 @@ mod listing_process_tests {
         assert_eq!(
             std::fs::read(dir.join("stdin")).unwrap(),
             names.join("\0").as_bytes()
+        );
+    }
+    #[tokio::test]
+    async fn tracked_names_are_reused_until_the_index_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("repo");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join(".git/index"), "one").unwrap();
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = runs.clone();
+        let git: GitCommand = Arc::new(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut command = tokio::process::Command::new("/bin/sh");
+            command.args(["-c", r"printf 'a.txt\0deep/b.rs\0'"]);
+            command
+        });
+        let runs = || runs.load(std::sync::atomic::Ordering::SeqCst);
+        let first = git_tracked_cached(&dir, git.clone()).await.unwrap();
+        assert_eq!(*first, BTreeSet::from(["a.txt".into(), "deep".into()]));
+        let again = git_tracked_cached(&dir, git.clone()).await.unwrap();
+        assert!(Arc::ptr_eq(&first, &again));
+        assert_eq!(runs(), 1);
+        std::fs::write(dir.join(".git/index"), "two!").unwrap();
+        git_tracked_cached(&dir, git.clone()).await.unwrap();
+        assert_eq!(runs(), 2, "index change must re-list");
+        // Each directory is its own listing.
+        git_tracked_cached(&dir.join("src"), git.clone())
+            .await
+            .unwrap();
+        assert_eq!(runs(), 3);
+        // A worktree's .git file points at the governing index.
+        let linked = root.path().join("linked");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::write(linked.join(".git"), "gitdir: ../repo/.git\n").unwrap();
+        assert_eq!(
+            index_stamp(&linked).unwrap().0,
+            linked.join("../repo/.git/index")
         );
     }
     #[tokio::test]
