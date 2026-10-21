@@ -110,12 +110,30 @@ pub(crate) async fn read(cwd: &Path, values: &[&str]) -> Result<Option<String>> 
 fn args(values: &[&str]) -> Vec<String> {
     values.iter().map(|s| (*s).into()).collect()
 }
+/// Every git call resolves its work tree first; panes poll status often, and
+/// a directory's work tree practically never changes within a few seconds.
+const ROOT_TTL: Duration = Duration::from_secs(5);
+type RootCache = std::collections::HashMap<PathBuf, (std::time::Instant, PathBuf)>;
+static ROOTS: std::sync::LazyLock<std::sync::Mutex<RootCache>> =
+    std::sync::LazyLock::new(Default::default);
+
 async fn root(cwd: &Path) -> Result<PathBuf> {
+    if let Some((at, root)) = ROOTS.lock().unwrap().get(cwd)
+        && at.elapsed() < ROOT_TTL
+    {
+        return Ok(root.clone());
+    }
     let result = run(cwd, &args(&["rev-parse", "--show-toplevel"])).await?;
     if !result.ok || result.stdout.trim().is_empty() {
         bail!("cwd is not inside a git work tree");
     }
-    paths::canonicalize(Path::new(result.stdout.trim()))
+    let root = paths::canonicalize(Path::new(result.stdout.trim()))?;
+    let mut roots = ROOTS.lock().unwrap();
+    roots.retain(|_, (at, _)| at.elapsed() < ROOT_TTL);
+    if roots.len() < 256 {
+        roots.insert(cwd.to_owned(), (std::time::Instant::now(), root.clone()));
+    }
+    Ok(root)
 }
 fn operand(root: &Path, path: &str) -> Result<String> {
     let path = Path::new(path);
@@ -194,6 +212,20 @@ pub fn numstat(text: &str) -> Vec<Value> {
         .collect()
 }
 
+/// The local branch named by a `--branch` status header. None when HEAD is
+/// detached or unborn, as `rev-parse --abbrev-ref HEAD` reports neither.
+fn header_branch(header: &str) -> Option<String> {
+    let rest = header.strip_prefix("## ")?;
+    if rest.starts_with("No commits yet on ")
+        || rest.starts_with("Initial commit on ")
+        || rest.starts_with("HEAD (no branch)")
+    {
+        return None;
+    }
+    let name = rest.split_once("...").map_or(rest, |(name, _)| name);
+    let name = name.split_once(" [").map_or(name, |(name, _)| name);
+    (!name.is_empty() && name != "HEAD").then(|| name.to_owned())
+}
 fn branch_header(header: &str) -> (Value, u64, u64) {
     let mut upstream = Value::Null;
     let mut ahead = 0;
@@ -317,12 +349,7 @@ pub async fn call(method: &str, params: Value) -> Result<Value> {
                 ("", result.stdout.as_str())
             };
             let (upstream, ahead, behind) = branch_header(header);
-            let branch = run(&root, &args(&["rev-parse", "--abbrev-ref", "HEAD"]))
-                .await
-                .ok()
-                .filter(|r| r.ok)
-                .map(|r| r.stdout.trim().to_owned())
-                .filter(|s| !s.is_empty() && s != "HEAD");
+            let branch = header_branch(header);
             Ok(
                 json!({"branch":branch,"files":porcelain(body),"upstream":upstream,"ahead":ahead,"behind":behind,"root":root}),
             )
@@ -554,6 +581,25 @@ pub fn format_action_error(raw: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn status_header_names_the_branch_rev_parse_would() {
+        for (header, branch) in [
+            ("## master", Some("master")),
+            (
+                "## feat/x...origin/feat/x [ahead 1, behind 2]",
+                Some("feat/x"),
+            ),
+            ("## m...origin/m [gone]", Some("m")),
+            ("## m [ahead 3]", Some("m")),
+            ("## HEAD (no branch)", None),
+            ("## No commits yet on main", None),
+            ("## Initial commit on main", None),
+            ("M a.ts", None),
+            ("", None),
+        ] {
+            assert_eq!(header_branch(header).as_deref(), branch, "{header}");
+        }
+    }
     #[test]
     fn branch_and_log_parsers_retain_legacy_vectors() {
         for (header, upstream, ahead, behind) in [

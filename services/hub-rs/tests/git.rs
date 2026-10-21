@@ -476,6 +476,10 @@ async fn canonical_symlink_cwd_is_used_instead_of_reopening_the_requested_spelli
     let requested = format!("{}/../nope/../", cwd.join("sub/link").display());
     let status = call("git.status", json!({"cwd":requested})).await.unwrap();
     assert!(status["branch"].is_string());
+    assert_eq!(
+        status["branch"].as_str(),
+        Some(fixture_git(root, &["branch", "--show-current"]).trim())
+    );
     assert!(
         status["files"]
             .as_array()
