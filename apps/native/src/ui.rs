@@ -257,6 +257,16 @@ type RowsSignature = (
     Option<u64>,
 );
 
+/// What the turn duration labels were built from: the rows and the
+/// selected session's completed turns.
+type DurationLabelsKey = (RowsSignature, Option<(usize, Option<i64>)>);
+
+/// A session's sidebar children and the subagents inventory they came from.
+type SidebarChildren = (
+    Arc<serde_json::Value>,
+    std::rc::Rc<Vec<wks_native::child_agents::ChildAgent>>,
+);
+
 fn rows_signature(view: &View) -> RowsSignature {
     (
         view.selected.clone(),
@@ -648,20 +658,12 @@ pub struct Workspace {
     work_summaries: memo::RowMemo<wks_native::tool_preview::WorkSummary>,
     step_previews: memo::RowMemo<wks_native::tool_preview::ToolPreview>,
     turn_files: memo::RowMemo<Vec<wks_native::transcript::FileChange>>,
-    /// Each session's provider-native children for the sidebar, by the
-    /// subagents inventory they were read from (replaced only on change).
     /// The text each Markdown view last drew, shared rather than copied
     /// on every frame.
     markdown_sources: std::cell::RefCell<HashMap<String, SharedString>>,
-    sidebar_children: std::cell::RefCell<
-        HashMap<
-            String,
-            (
-                Arc<serde_json::Value>,
-                std::rc::Rc<Vec<wks_native::child_agents::ChildAgent>>,
-            ),
-        >,
-    >,
+    /// Each session's provider-native children for the sidebar, by the
+    /// subagents inventory they were read from (replaced only on change).
+    sidebar_children: std::cell::RefCell<HashMap<String, SidebarChildren>>,
     /// How the capsule's context hairline fills and its glow warms.
     gauge_motion: gauge::GaugeMotion,
     /// Prompt caches going cold: the re-render at the next expiry and the
@@ -673,7 +675,7 @@ pub struct Workspace {
     duration_labels: HashMap<u64, String>,
     /// What `duration_labels` was built from: the rows and the selected
     /// session's completed turns.
-    duration_labels_key: Option<(RowsSignature, Option<(usize, Option<i64>)>)>,
+    duration_labels_key: Option<DurationLabelsKey>,
     new_session: bool,
     launch_details_open: bool,
     provider: &'static str,

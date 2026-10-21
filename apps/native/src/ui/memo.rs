@@ -12,8 +12,11 @@ use wks_native::model::Row;
 /// Entries kept before the memo starts over (long sessions, many cards).
 const MAX_ENTRIES: usize = 2048;
 
+/// The rows a value was derived from, and the value.
+type Entry<T> = (Vec<Arc<Row>>, Rc<T>);
+
 pub(super) struct RowMemo<T> {
-    entries: RefCell<HashMap<String, (Vec<Arc<Row>>, Rc<T>)>>,
+    entries: RefCell<HashMap<String, Entry<T>>>,
 }
 
 impl<T> Default for RowMemo<T> {
