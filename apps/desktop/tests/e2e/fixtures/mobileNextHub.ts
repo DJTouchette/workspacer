@@ -208,9 +208,21 @@ export async function startNextHub(): Promise<NextHub> {
       case 'sessions.snapshot':
         return reply(f.id, snapshots.get(p.sessionId) ?? null);
       case 'sessions.conversation': {
+        // As claudemon: `limit` keeps the newest N items after `since`, and
+        // `window_first_seq` (the first returned item's seq) exceeding
+        // `first_seq` says older ones remain.
         const items = CONVERSATIONS[p.sessionId] ?? [];
         const since = typeof p.sinceSeq === 'number' ? p.sinceSeq : 0;
-        return reply(f.id, { seq: items.length, items: items.slice(since) });
+        const start =
+          typeof p.limit === 'number' && p.limit > 0
+            ? Math.max(since, items.length - p.limit)
+            : since;
+        return reply(f.id, {
+          seq: items.length,
+          first_seq: items.length ? 1 : 0,
+          window_first_seq: start < items.length ? start + 1 : null,
+          items: items.slice(start),
+        });
       }
       case 'sessions.subagentConversation':
         return reply(f.id, {
@@ -594,6 +606,8 @@ const CARD = JSON.stringify({
   ],
 });
 
+export const LONG_ROUNDS = 260;
+
 export const CONVERSATIONS: Record<string, any[]> = {
   work: [
     {
@@ -676,6 +690,19 @@ export const CONVERSATIONS: Record<string, any[]> = {
       timestamp: iso(50_000),
     },
   ],
+  // 520 items: more than two of the client's 200-item pages.
+  ended: Array.from({ length: LONG_ROUNDS }, (_, i) => [
+    {
+      kind: 'user_message',
+      text: `Question ${i + 1} of the long run`,
+      timestamp: iso(4 * 86_400_000 - i * 60_000),
+    },
+    {
+      kind: 'assistant_text',
+      text: `Answer ${i + 1}.\n\n- the VAT line for row ${i + 1} reconciles\n- nothing else changed`,
+      timestamp: iso(4 * 86_400_000 - i * 60_000 - 30_000),
+    },
+  ]).flat(),
 };
 
 const CHILD_ITEMS = [

@@ -89,15 +89,29 @@ function userHtml(t) {
   return `<div class="you"><div class="lbl">You</div>${tags.length ? `<div class="atts">${tags.join('')}</div>` : ''}<div class="tx">${esc(text)}</div></div>`;
 }
 
+// Markdown is the costly part of a render and a turn's text rarely changes
+// once written, so each live update re-parses only what is new.
+const mdCache = new Map();
+function md(text) {
+  let html = mdCache.get(text);
+  if (html === undefined) {
+    if (mdCache.size >= 800) mdCache.clear();
+    html = renderMarkdown(text);
+    mdCache.set(text, html);
+  }
+  return html;
+}
+
+/** One block per element, so the view can keep the ones that did not change. */
 function assistantHtml(text, ctx) {
   return assistantBlocks(text).map((b) => {
     if (b.kind === 'card') {
       const card = parseCard(b.text);
-      return card ? cardHtml(card) : `<div class="prose">${renderMarkdown('```wks-html-card\n' + b.text + '\n```')}</div>`;
+      return card ? cardHtml(card) : `<div class="prose">${md('```wks-html-card\n' + b.text + '\n```')}</div>`;
     }
     if (b.kind === 'result') return resultCardHtml(b.text, '', { openKey: ctx.key('result'), open: ctx.open });
-    return `<div class="prose">${renderMarkdown(b.text)}</div>`;
-  }).join('');
+    return `<div class="prose">${md(b.text)}</div>`;
+  });
 }
 
 function toolRow(tc, key, open) {
@@ -174,10 +188,16 @@ function traceHtml(r) {
     `<div class="q">${esc(q.question)}</div><div class="a">↳ ${esc((r.answers && r.answers[i]) || '—')}</div>`).join('')}</div></div>`;
 }
 
-/** Render turns. `ctx`: { s, open:Set, resolved:[], pending:[], editedByKey:Map, readOnly } */
+/** Render turns as one string. See transcriptBlocks. */
 export function transcriptHtml(turns, ctx) {
+  return transcriptBlocks(turns, ctx).join('');
+}
+
+/** Render turns as a list of blocks, each one element's markup, in order.
+ *  `ctx`: { s, open:Set, resolved:[], pending:[], editedByKey:Map, readOnly } */
+export function transcriptBlocks(turns, ctx) {
   const { s, open } = ctx;
-  if (!turns.length) return '';
+  if (!turns.length) return [];
   const out = [];
   let work = [], groupCalls = [], group = 0, seq = 0, groupStart = 0, groupEnd = 0, sawAssistant = false;
   const anchors = new Map();
@@ -221,7 +241,7 @@ export function transcriptHtml(turns, ctx) {
     sawAssistant = true;
     if (t.timestamp) groupEnd = Math.max(groupEnd, t.timestamp);
     const text = String(t.content || '').trim();
-    if (text) { flushWork(); out.push(assistantHtml(t.content, { key: keyFor(i), open })); }
+    if (text) { flushWork(); out.push(...assistantHtml(t.content, { key: keyFor(i), open })); }
     for (const tc of t.toolCalls || []) {
       groupCalls.push(tc);
       if (tc.completedAt) groupEnd = Math.max(groupEnd, tc.completedAt);
@@ -231,5 +251,5 @@ export function transcriptHtml(turns, ctx) {
   }
   flushGroup(true);
   for (const r of anchors.get(turns.length) || []) out.push(traceHtml(r));
-  return out.join('');
+  return out;
 }

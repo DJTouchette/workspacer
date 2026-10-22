@@ -5,12 +5,12 @@ import { bus, can, call } from '../bus.js';
 import {
   sessions, status, isLive, isWorking, isPaused, canResume, hubDown, hubOf, offlineHubs, titleOf, modelOf,
   providerOf, permissionOf, context, gaugeTone, coldCache, LARGE_CONTEXT, turnsOf, convOf, watchConversation,
-  resolved, questionSig, runningTasks, isArchived, drafts,
+  resolved, questionSig, runningTasks, isArchived, drafts, loadOlder,
 } from '../store.js';
 import { esc, ic, mark, spinner, fmtElapsed, fmtTokens, fmtUSD, ago, modelName, errText, copyText } from '../util.js';
-import { transcriptHtml } from './transcript.js';
+import { transcriptBlocks } from './transcript.js';
 import * as act from '../actions.js';
-import { notice, stickToBottom, sheet, pick } from '../ui.js';
+import { notice, stickToBottom, sheet, pick, patchBlocks } from '../ui.js';
 import { openMenu, openModelPicker, openHandoff, openChanges, openDiff } from './island.js';
 import { openTasks } from './tasks.js';
 
@@ -18,6 +18,11 @@ const pendingSends = new Map();   // sessionId -> [{text, at, queued}]
 const dismissedCold = new Set();  // sessionId@expiresAt
 const qstate = new Map();         // sessionId -> {sig, page, picks: Map<qi, Set<oi>>, text: Map<qi, string>}
 const workingSince = new Map();   // sessionId -> first seen working (for "Working · 18s")
+// The transcript is windowed: the newest WINDOW blocks render first and older
+// ones join, STEP at a time, as you scroll toward them — from memory while the
+// store holds them, then a page at a time from the hub.
+const WINDOW = 60;
+const STEP = 40;
 
 function summarizeInput(input) {
   if (input == null) return '';
@@ -56,6 +61,7 @@ export function mount(root, ctx, sessionId) {
   const editedByKey = new Map();
   let attach = [], attachSeq = 0;
   let sending = false;
+  let shown = WINDOW, hiddenBlocks = 0, growOnLoad = false, drawn = false;
 
   input.value = drafts.get(sessionId) || '';
   const autosize = () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px'; };
@@ -259,25 +265,62 @@ export function mount(root, ctx, sessionId) {
     const turns = turnsOf(s);
     const st = convOf(sessionId);
     editedByKey.clear();
-    let html = transcriptHtml(turns, { s, open, resolved: resolved.get(sessionId), editedByKey, working: isWorking(s) });
+    const blocks = transcriptBlocks(turns, { s, open, resolved: resolved.get(sessionId), editedByKey, working: isWorking(s) });
     // Sent messages wait here until the transcript acknowledges them.
     const pend = (pendingSends.get(sessionId) || []).filter((p) => {
       const seen = turns.slice(-8).some((t) => t.role === 'user' && String(t.content || '').trim() === p.text);
       return !seen && Date.now() - p.at < 120000;
     });
     pendingSends.set(sessionId, pend);
-    html += pend.map((p) => `<div class="you pending"><div class="lbl">You</div><div class="tx">${esc(p.text)}</div>` +
-      `<div class="meta">${p.queued ? 'Queued — sends when this turn ends' : 'Sent'}</div></div>`).join('');
-    if (!html) {
-      html = !st.loaded && !(s.conversation && s.conversation.length)
-        ? `<div class="empty">${spinner()}<p>Loading the conversation…</p></div>`
-        : `<div class="empty">${ic('message-square-plus', 's20 muted')}<b>No messages yet</b><p>${isLive(s) ? 'Say what you want done.' : 'This session has no conversation to show.'}</p></div>`;
+    for (const p of pend) {
+      blocks.push(`<div class="you pending"><div class="lbl">You</div><div class="tx">${esc(p.text)}</div>` +
+        `<div class="meta">${p.queued ? 'Queued — sends when this turn ends' : 'Sent'}</div></div>`);
     }
-    if (st.error && !turns.length) html += `<div class="empty"><p class="t-error">${esc(st.error)}</p></div>`;
-    const top = scroll.scrollTop;
-    tx.innerHTML = html;
-    if (pin.pinned) pin.after(); else scroll.scrollTop = top;
+    if (!blocks.length) {
+      blocks.push(!st.loaded && !(s.conversation && s.conversation.length)
+        ? `<div class="empty">${spinner()}<p>Loading the conversation…</p></div>`
+        : `<div class="empty">${ic('message-square-plus', 's20 muted')}<b>No messages yet</b><p>${isLive(s) ? 'Say what you want done.' : 'This session has no conversation to show.'}</p></div>`);
+    }
+    if (st.error && !turns.length) blocks.push(`<div class="empty"><p class="t-error">${esc(st.error)}</p></div>`);
+    if (growOnLoad && !st.loadingOlder) { growOnLoad = false; shown += STEP; }
+    hiddenBlocks = Math.max(0, blocks.length - shown);
+    const visible = blocks.slice(hiddenBlocks);
+    if (hiddenBlocks || st.hasOlder || st.loadingOlder) {
+      visible.unshift(`<div class="earlier" role="status">${spinner()}<span>Loading earlier messages…</span></div>`);
+    }
+    // Keep what you are reading where it is when blocks land above it.
+    const anchor = pin.pinned ? null : firstVisible();
+    patchBlocks(tx, visible);
+    drawn = true;
+    if (pin.pinned) pin.after();
+    else if (anchor && anchor.el.isConnected) {
+      const moved = anchor.el.offsetTop - anchor.top;
+      if (moved) scroll.scrollTop += moved;
+    }
+    // A short transcript cannot be scrolled toward its top: fill the screen.
+    if ((hiddenBlocks || st.hasOlder) && scroll.scrollHeight <= scroll.clientHeight * 1.5) setTimeout(backfill);
   }
+  function firstVisible() {
+    const top = scroll.scrollTop;
+    for (const el of tx.children) {
+      if (!el.offsetParent || el.classList.contains('earlier')) continue;
+      if (el.offsetTop + el.offsetHeight > top) return { el, top: el.offsetTop };
+    }
+    return null;
+  }
+  function backfill() {
+    if (scroll.scrollTop > scroll.clientHeight * 1.5) return;
+    if (hiddenBlocks) { shown += STEP; renderTranscript(); }
+    else if (loadOlder(sessionId)) growOnLoad = true;
+  }
+  let settle = 0;
+  scroll.addEventListener('scroll', () => {
+    clearTimeout(settle);
+    // Moving content under an iOS momentum fling stops the fling: wait for the
+    // scroll to settle, unless the top is about to come into view.
+    if (scroll.scrollTop < scroll.clientHeight * 0.5) backfill();
+    else settle = setTimeout(backfill, 120);
+  }, { passive: true });
 
   function cardsHtml(s) {
     if (hubDown(s)) {
@@ -403,7 +446,8 @@ export function mount(root, ctx, sessionId) {
   function render() {
     const s = sessions.get(sessionId);
     if (!s) {
-      tx.innerHTML = `<div class="empty">${spinner()}<p>Looking for this session…</p></div>`;
+      // A reseed can drop the row for a moment: keep what is already drawn.
+      if (!drawn) patchBlocks(tx, [`<div class="empty">${spinner()}<p>Looking for this session…</p></div>`]);
       return;
     }
     if (isArchived(sessionId)) island.classList.add('archived'); else island.classList.remove('archived');
@@ -422,7 +466,7 @@ export function mount(root, ctx, sessionId) {
       if (ids.has('*') || ids.has(sessionId)) render();
       else renderDock();
     },
-    destroy() { clearInterval(tick); ro.disconnect(); watchConversation(''); },
+    destroy() { clearInterval(tick); clearTimeout(settle); ro.disconnect(); watchConversation(''); },
     sessionId,
   };
 }

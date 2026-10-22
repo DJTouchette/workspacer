@@ -4,8 +4,8 @@
 // says subagents take instructions from the parent.
 import { sessions, childrenOf, childStatus, childActive, childConvOf, fetchChild, titleOf, providerOf } from '../store.js';
 import { esc, ic, mark, spinner, fmtElapsed, modelName } from '../util.js';
-import { transcriptHtml } from './transcript.js';
-import { stickToBottom } from '../ui.js';
+import { transcriptBlocks } from './transcript.js';
+import { stickToBottom, patchBlocks } from '../ui.js';
 
 export function mount(root, ctx, parentId, agentId) {
   root.innerHTML = `<div class="screen chat child">
@@ -46,9 +46,9 @@ export function mount(root, ctx, parentId, agentId) {
     const crumb = `<button class="crumb" data-goparent><span class="peer">${ic('bot', 's12')}Subagent</span>of <b>${esc(parent ? titleOf(parent) : 'its parent')}</b>${ic('chevron-right', 's12')}</button>`;
     const task = child && (child.prompt || child.description)
       ? `<div class="toolcard"><div class="overline">Task from parent</div><div class="quote big">${esc(child.prompt || child.description)}</div></div>` : '';
-    let body = transcriptHtml(conv.turns, { s: { sessionId: parentId + '/' + agentId, cwd: parent && parent.cwd }, open, editedByKey: new Map(), working: child && childActive(child) });
-    if (!body) body = conv.loaded ? `<div class="empty"><p>${esc(conv.error || 'Nothing to show yet.')}</p></div>` : `<div class="empty">${spinner()}<p>Loading…</p></div>`;
-    $('[data-tx]').innerHTML = crumb + task + body;
+    const body = transcriptBlocks(conv.turns, { s: { sessionId: parentId + '/' + agentId, cwd: parent && parent.cwd }, open, editedByKey: new Map(), working: child && childActive(child) });
+    if (!body.length) body.push(conv.loaded ? `<div class="empty"><p>${esc(conv.error || 'Nothing to show yet.')}</p></div>` : `<div class="empty">${spinner()}<p>Loading…</p></div>`);
+    patchBlocks($('[data-tx]'), [crumb, task, ...body].filter(Boolean));
     pin.after();
     const elapsed = child && child.startedAt ? fmtElapsed((child.completedAt || Date.now()) - child.startedAt) : '';
     $('[data-line]').innerHTML = child && childActive(child) && st.label === 'Working'

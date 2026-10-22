@@ -100,3 +100,42 @@ export function stickToBottom(scroller) {
     after() { if (pinned) scroller.scrollTop = scroller.scrollHeight; },
   };
 }
+
+/** Make `parent`'s children the blocks in `htmls`, in order, reusing every
+ *  element whose markup did not change. A live transcript update then touches
+ *  only the turn that moved: nothing above it is rebuilt, so the scroll
+ *  position, an iOS momentum fling and a text selection all survive it. A block
+ *  whose markup holds more than one element is wrapped in a `display: contents`
+ *  run, so it still lays out as siblings. */
+export function patchBlocks(parent, htmls) {
+  const pool = new Map();
+  for (const el of [...parent.children]) {
+    if (el.__html === undefined) { el.remove(); continue; }
+    const same = pool.get(el.__html);
+    if (same) same.push(el); else pool.set(el.__html, [el]);
+  }
+  let at = parent.firstElementChild;
+  for (const html of htmls) {
+    const reuse = pool.get(html);
+    const el = (reuse && reuse.shift()) || blockEl(html);
+    if (el === at) at = at.nextElementSibling;
+    else parent.insertBefore(el, at);
+  }
+  for (const left of pool.values()) for (const el of left) el.remove();
+}
+const tpl = document.createElement('template');
+function blockEl(html) {
+  tpl.innerHTML = html;
+  const frag = tpl.content;
+  let el = frag.firstElementChild;
+  if (!el || frag.childElementCount !== 1 || [...frag.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) {
+    el = document.createElement('div');
+    el.className = 'blockrun';
+    el.append(frag);
+  } else {
+    el.remove();
+  }
+  tpl.innerHTML = '';
+  el.__html = html;
+  return el;
+}

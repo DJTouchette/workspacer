@@ -68,7 +68,6 @@ function route() {
   else if (head === 'settings') view = settingsView.mount(app, ctx);
   else if (head === 'briefs') view = briefsView.mount(app, ctx);
   else view = sessionsView.mount(app, ctx);
-  app.querySelector('.scrolly')?.scrollTo?.(0, 0);
 }
 function destroy() {
   if (view && view.destroy) view.destroy();

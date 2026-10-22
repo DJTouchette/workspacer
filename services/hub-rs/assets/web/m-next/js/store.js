@@ -362,12 +362,25 @@ export const proposals = () => (jobs || []).filter((j) => j && String(j.proposed
 // stream transports coalesces, PTY blocks dedup, tool results attach to their
 // call. `sinceSeq` anchors follow-ups; a backwards seq means the daemon
 // rebuilt its log and we resync from zero.
+//
+// The first read is a page, as native's (`limit`: the newest CONV_PAGE
+// items), so a long session opens without shipping its whole log. Older items
+// remain while the reply's `window_first_seq` exceeds `first_seq`; loadOlder
+// re-reads with a larger window. A daemon without paging answers in full and
+// never reports a window, so it never offers older items.
 const conv = new Map();
 const CONV_REFRESH_MS = 1000;
+const CONV_PAGE = 200;
+const CONV_MAX = 3000;   // past this the phone stops paging; History owns the rest
+const MAX_TURNS = 1500;
 const MAX_RESULT = 4000;
 export function convOf(id) {
   let st = conv.get(id);
-  if (!st) { st = { seq: 0, turns: [], tools: new Map(), at: 0, loaded: false, inflight: false, timer: null, error: '' }; conv.set(id, st); }
+  if (!st) {
+    st = { seq: 0, turns: [], tools: new Map(), at: 0, loaded: false, inflight: false, timer: null, error: '',
+      limit: CONV_PAGE, hasOlder: false, loadingOlder: false, reload: false };
+    conv.set(id, st);
+  }
   return st;
 }
 /** The turns to render: a rich snapshot's own conversation, else the fetched one. */
@@ -397,31 +410,70 @@ async function fetchConv(id) {
   if (!s) return;
   const st = convOf(id);
   if (st.inflight) return;
-  if (s.conversation && s.conversation.length) { st.loaded = true; return; }
-  if (hubDown(s)) return;
+  if (s.conversation && s.conversation.length) { st.loaded = true; st.loadingOlder = false; return; }
+  if (hubDown(s)) { st.loadingOlder = false; return; }
   st.inflight = true;
   let didChange = false;
+  // A windowed read (first load, or a larger window for older items) replaces
+  // the turns; a follow-up appends what came after the cursor.
+  const full = st.seq === 0 || st.reload;
+  st.reload = false;
   try {
     const params = { sessionId: id };
-    if (st.seq > 0) params.sinceSeq = st.seq;
+    if (full) params.limit = st.limit; else params.sinceSeq = st.seq;
     const r = await call(qualify(id, 'sessions.conversation'), params);
     st.at = Date.now();
     const seq = r && typeof r.seq === 'number' ? r.seq : 0;
     const items = r && Array.isArray(r.items) ? r.items : [];
-    if (st.seq > 0 && seq < st.seq) {
-      st.seq = 0; st.turns = []; st.tools = new Map(); st.inflight = false;
+    if (!full && seq < st.seq) {
+      st.seq = 0; st.turns = []; st.tools = new Map(); st.limit = CONV_PAGE; st.hasOlder = false; st.inflight = false;
       return fetchConv(id);
     }
-    // Only a real advance counts: an empty log answers {seq:0} forever.
-    didChange = items.length > 0 || (st.seq === 0 && seq > 0) || !st.loaded;
+    if (full) {
+      const fresh = { seq: 0, turns: [], tools: new Map(), plan: st.plan };
+      applyItems(fresh, items, s);
+      shiftResolved(id, prependedTurns(st.turns, fresh.turns));
+      st.turns = fresh.turns; st.tools = fresh.tools; st.plan = fresh.plan;
+      const windowFirst = r && typeof r.window_first_seq === 'number' ? r.window_first_seq : 0;
+      const first = Math.max(1, r && typeof r.first_seq === 'number' ? r.first_seq : 1);
+      st.hasOlder = windowFirst > first && st.limit < CONV_MAX && st.turns.length < MAX_TURNS;
+      didChange = true;
+    } else {
+      // Only a real advance counts: an empty log answers {seq:0} forever.
+      didChange = items.length > 0 || (st.seq === 0 && seq > 0) || !st.loaded;
+      if (items.length) applyItems(st, items, s);
+      if (st.turns.length >= MAX_TURNS) st.hasOlder = false;
+    }
     st.seq = seq;
     st.loaded = true;
     st.error = '';
-    if (items.length) applyItems(st, items, s);
-  } catch (e) { st.at = Date.now(); st.error = errText(e); }
+  } catch (e) { st.at = Date.now(); st.error = errText(e); didChange = didChange || st.loadingOlder; }
+  if (full) st.loadingOlder = false;
   st.inflight = false;
   if (didChange) changed(id);
-  scheduleConv(id);
+  if (st.reload && watching === id) fetchConv(id);
+  else scheduleConv(id);
+}
+/** Ask for the next older page of `id`'s conversation. False when there is
+ *  none (or one is already on its way). */
+export function loadOlder(id) {
+  const st = conv.get(id);
+  if (!st || !st.hasOlder || st.loadingOlder) return false;
+  st.loadingOlder = true;
+  st.limit = Math.min(CONV_MAX, st.limit + CONV_PAGE);
+  st.reload = true;
+  clearTimeout(st.timer); st.timer = null;
+  if (!st.inflight) fetchConv(id);
+  changed(id);
+  return true;
+}
+/** How many turns a wider window added in front of the ones already held. */
+function prependedTurns(before, after) {
+  if (!before.length) return 0;
+  const head = before[0];
+  const same = (t) => t.role === head.role && t.content === head.content && (t.timestamp || 0) === (head.timestamp || 0);
+  const at = after.findIndex(same);
+  return at >= 0 ? at : Math.max(0, after.length - before.length);
 }
 const tsOf = (it) => {
   const raw = it.timestamp || it.updatedAt || it.ts;
@@ -479,7 +531,7 @@ export function applyItems(st, items, s) {
     }
   }
   // Bound the client copy: the phone can stay open for days.
-  if (st.turns.length > 1500) st.turns.splice(0, st.turns.length - 1500);
+  if (st.turns.length > MAX_TURNS) st.turns.splice(0, st.turns.length - MAX_TURNS);
 }
 
 // ── provider subagent (child) conversation ────────────────────────────────
@@ -515,6 +567,11 @@ export function recordResolved(id, declined, answers, questions, anchorLen) {
   if (list.some((r) => r.sig === sig && r.anchorLen === anchorLen)) return;
   list.push({ sig, anchorLen, questions, answers, declined });
   resolved.set(id, list);
+}
+/** Older turns arrived in front: answered-question traces move with theirs. */
+function shiftResolved(id, by) {
+  if (!by) return;
+  for (const r of resolved.get(id) || []) r.anchorLen += by;
 }
 /** A pick belongs to the question SET it was made against. */
 export function questionSig(s) {

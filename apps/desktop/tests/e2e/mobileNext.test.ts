@@ -159,6 +159,75 @@ test.describe('/m-next', () => {
       .toContainEqual({ sessionId: 'work', signal: 'SIGINT' });
   });
 
+  test('opens a long chat at its newest page and backfills older ones while scrolling up', async ({
+    page,
+  }) => {
+    await open(page);
+    await row(page, 'Fix the VAT export').click();
+    await expect(page.locator('.prose', { hasText: 'Answer 260.' })).toBeVisible();
+    // One page from the hub, and only a window of it in the DOM.
+    const reads = () =>
+      hub.callsTo('sessions.conversation').filter((c) => c.params.sessionId === 'ended');
+    expect(reads()[0].params).toEqual({ sessionId: 'ended', limit: 200 });
+    expect(await page.locator('.thread > .you').count()).toBeLessThan(60);
+    const scroller = page.locator('.transcript');
+    const fromBottom = () =>
+      scroller.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+    expect(await fromBottom()).toBeLessThan(4);
+
+    // A live update patches in place: the blocks you are reading are not rebuilt.
+    await page.locator('.thread > .you').first().evaluate((el: any) => (el.__probe = 1));
+    hub.pushSnapshot({ ...hub.snapshots.get('ended'), lastActivity: Date.now() });
+    await page.waitForTimeout(300);
+    expect(await page.locator('.thread > .you').first().evaluate((el: any) => el.__probe)).toBe(1);
+
+    // Reaching the top backfills above you without moving what you were reading.
+    const held = await scroller.evaluate(async (el) => {
+      el.scrollTop = 0;
+      const mark = el.querySelector('.thread > .you')!;
+      const before = mark.getBoundingClientRect().top;
+      await new Promise((r) => setTimeout(r, 400));
+      return {
+        moved: Math.abs(mark.getBoundingClientRect().top - before),
+        connected: mark.isConnected,
+        top: el.scrollTop,
+      };
+    });
+    expect(held).toMatchObject({ connected: true });
+    expect(held.moved).toBeLessThan(2);
+    expect(held.top).toBeGreaterThan(0);
+
+    // Keep scrolling up: older pages arrive a page at a time until the first.
+    await expect(async () => {
+      await scroller.evaluate((el) => (el.scrollTop = 0));
+      await expect(page.locator('.you .tx', { hasText: 'Question 1 of the long run' })).toBeAttached({
+        timeout: 500,
+      });
+    }).toPass({ timeout: 20_000 });
+    expect(reads().filter((c) => c.params.limit).map((c) => c.params.limit)).toEqual([200, 400, 600]);
+    await expect(page.locator('.thread > .earlier')).toHaveCount(0);
+  });
+
+  test('reopening a chat lands on its newest message, and the composer has no focus ring', async ({
+    page,
+  }) => {
+    await open(page);
+    await row(page, 'Fix the VAT export').click();
+    await expect(page.locator('.prose', { hasText: 'Answer 260.' })).toBeVisible();
+    await page.locator('[data-back]').click();
+    await row(page, 'Fix the VAT export').click();
+    await expect(page.locator('.prose', { hasText: 'Answer 260.' })).toBeInViewport();
+    expect(
+      await page
+        .locator('.transcript')
+        .evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
+    ).toBeLessThan(4);
+    const input = page.locator('[data-input]');
+    await input.click();
+    await expect(input).toBeFocused();
+    expect(await input.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('none');
+  });
+
   test('answers a two-question set one page at a time', async ({ page }) => {
     await open(page);
     await row(page, 'Reconcile the fee rounding').click();

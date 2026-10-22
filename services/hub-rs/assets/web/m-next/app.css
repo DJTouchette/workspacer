@@ -30,6 +30,9 @@ input, textarea, select { font: inherit; font-size: 16px; color: var(--wks-text)
 ::selection { background: var(--wks-selection); }
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--wks-accent); outline-offset: 2px; border-radius: 6px; }
+/* A text field shows focus with its caret, as native's do: browsers match
+   :focus-visible on every tap into one, which drew a ring round the composer. */
+textarea:focus-visible, input:not([type="checkbox"], [type="radio"], [type="range"]):focus-visible { outline: none; }
 ::-webkit-scrollbar { width: 0; height: 0; }
 #app { position: relative; height: var(--vh, 100dvh); overflow: hidden; }
 .scrolly { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
@@ -181,8 +184,12 @@ input, textarea, select { font: inherit; font-size: 16px; color: var(--wks-text)
 .mchip { height: 28px; padding: 0 8px; border-radius: 14px; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; color: var(--wks-claude-clay); background: color-mix(in srgb, var(--wks-claude-clay) 13%, transparent); flex-shrink: 0; white-space: nowrap; }
 .mchip.other { color: var(--wks-text); background: var(--wks-selected); }
 .tchip { height: 40px; min-width: 44px; padding: 0 12px; border-radius: 20px; background: var(--wks-surface); border: 1px solid var(--wks-border); display: inline-flex; align-items: center; justify-content: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--wks-busy); flex-shrink: 0; }
-.transcript { position: absolute; inset: 0; padding: calc(var(--safe-t) + 62px) 16px calc(var(--dock-h, 160px) + 12px); }
+.transcript { position: absolute; inset: 0; padding: calc(var(--safe-t) + 62px) 16px calc(var(--dock-h, 160px) + 12px); overflow-anchor: none; }
+/* overflow-anchor: chat.js keeps the reading position itself when older blocks
+   land above it; Chrome's own anchoring would move it a second time. */
 .thread { display: flex; flex-direction: column; gap: 12px; max-width: 900px; margin: 0 auto; }
+.thread > .blockrun { display: contents; }
+.thread > .earlier { align-self: center; display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: var(--wks-caption); color: var(--wks-muted); }
 .prose { font-size: var(--chat-size); line-height: 1.55; color: var(--wks-prose); overflow-wrap: anywhere; }
 .prose > * + * { margin-top: .6em; }
 .prose strong { color: var(--wks-text); font-weight: 600; }

@@ -9,7 +9,7 @@ related_paths:
   - "services/hub-rs/src/server/web.rs"
   - "services/hub-rs/src/services/kept_sessions.rs"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-10-22
 ---
 
 # Remote and mobile clients
@@ -153,6 +153,21 @@ Paused sessions come from the host: `sessions.kept` (view/triage, hub-local,
 and the client reads aged-out kept rows by id with `sessions.snapshot`. A
 missing file is an empty set. Without the method, stopped sessions show as
 Ended and are still resumable by sending.
+
+Chat loading and scrolling (native parity): the first `sessions.conversation`
+read is a page (`limit` 200, native's `CONVERSATION_PAGE`); follow-ups poll
+`sinceSeq`. `loadOlder` re-reads with a window 200 larger while the reply's
+`window_first_seq` exceeds `first_seq` (capped at 3000 items / 1500 turns, past
+which History owns the rest), shifting answered-question trace anchors by the
+turns it prepended. The view renders a window of the newest 60 transcript
+blocks and backfills 40 at a time from memory, then a page from the hub, as
+you near the top. It holds the first visible block in place when blocks land
+above it (`overflow-anchor: none` so Chrome does not correct twice), and waits
+for a fling to settle before moving content, since that stops iOS momentum.
+`ui.patchBlocks` diffs blocks by their markup, so a live update replaces only
+changed elements; never reset a chat scroller to the top on route (that once
+landed reopened chats at their first message). The shell service worker is
+cache-first: a new hub's client opens on the launch after its worker installs.
 
 Tests: `apps/desktop/tests/e2e/mobileNext.test.ts` with
 `fixtures/mobileNextHub.ts` (real hub + fake provider shaped like the Rust
