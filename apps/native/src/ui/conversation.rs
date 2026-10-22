@@ -314,7 +314,8 @@ impl Workspace {
                             ))
                             .child(title_island),
                     )
-                    .children(plan),
+                    // Centred under the capsule, so it takes the same nudge.
+                    .children(plan.map(|plan| plan.relative().left(nudge))),
             )
     }
 
