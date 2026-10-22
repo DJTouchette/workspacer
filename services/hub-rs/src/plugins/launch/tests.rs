@@ -101,6 +101,7 @@ fn plan(provider: &str) -> Plan {
         metadata: json!({"settings":{"launchIntegrationId":"fixture.route"},"launchIntegrationResume":true}),
         full_access: false,
         mcp_item_ids: vec![],
+        strict_mcp: false,
     }
 }
 fn permit() -> LaunchPermit {

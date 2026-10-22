@@ -125,6 +125,10 @@ pub(super) struct Extras {
     /// read. Never assumed from a pending toggle.
     pub job_access: Option<bool>,
     pub job_access_receipt: u64,
+    /// The hub's `agents.ignoreExternalMcp` as last read or saved; `None`
+    /// until read. Never assumed from a pending toggle.
+    pub external_mcp: Option<bool>,
+    pub external_mcp_receipt: u64,
     /// The hub's `agents.autoTitle` as last read or saved (see
     /// `features::title_settings`); `None` until read.
     pub titles: Option<Value>,
@@ -253,6 +257,8 @@ impl Extras {
             child_access_receipt: 0,
             job_access: None,
             job_access_receipt: 0,
+            external_mcp: None,
+            external_mcp_receipt: 0,
             titles: None,
             titles_receipt: 0,
             terminal_shell: None,
@@ -562,6 +568,15 @@ impl Workspace {
             self.extras.job_access_receipt = state.number;
             if state.error.is_none() {
                 self.extras.job_access = Some(state.value["jobFullAccess"] == true);
+            }
+        }
+        if let Some(state) = next.requests.get("external-mcp")
+            && !state.loading
+            && state.number > self.extras.external_mcp_receipt
+        {
+            self.extras.external_mcp_receipt = state.number;
+            if state.error.is_none() {
+                self.extras.external_mcp = Some(state.value["ignoreExternalMcp"] == true);
             }
         }
         if let Some(state) = next.requests.get("titles")

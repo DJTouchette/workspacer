@@ -701,3 +701,45 @@ async fn worker_escalation_survives_facade_preparation_and_profile_prompt_forms(
     assert_eq!(checked, 6);
     assert!(!facade.tokens.exists());
 }
+
+#[tokio::test]
+async fn ignore_external_mcp_makes_every_claude_launch_strict() {
+    let dir = tempfile::tempdir().unwrap();
+    let facade = SessionFacade {
+        endpoint: None,
+        expected_hub: "in-process".into(),
+        readiness: workspacer_hub::services::session_facade::Readiness::Disabled,
+        tokens: dir.path().join("tokens.json"),
+        directory: dir.path().join("mcp"),
+        home: dir.path().join("unused-home"),
+        instructions: String::new(),
+    };
+    let strict = |plan: &spawn_plan::Plan| {
+        plan.request["argv"]
+            .as_array()
+            .is_some_and(|argv| argv.contains(&json!("--strict-mcp-config")))
+    };
+    for (config, provider, expected) in [
+        (json!({}), "claude", false),
+        (
+            json!({"agents":{"ignoreExternalMcp":false}}),
+            "claude",
+            false,
+        ),
+        (json!({"agents":{"ignoreExternalMcp":true}}), "claude", true),
+        (json!({"agents":{"ignoreExternalMcp":true}}), "codex", false),
+    ] {
+        let mut plan = spawn_plan::resolve(
+            &json!({"cwd":dir.path(),"provider":provider}),
+            &config,
+            None,
+            dir.path(),
+            "session",
+            false,
+        )
+        .unwrap();
+        assert_eq!(plan.strict_mcp, expected, "{config} {provider}");
+        facade.prepare(&mut plan, "one").await.unwrap();
+        assert_eq!(strict(&plan), expected, "{config} {provider}");
+    }
+}

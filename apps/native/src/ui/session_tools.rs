@@ -917,7 +917,10 @@ impl Workspace {
                                 }),
                             )
                         })
-                })),
+                }))
+                .when(s.provider_id() == "claude" && !self.demo, |d| {
+                    d.child(self.render_external_mcp(cx))
+                }),
         )
     }
 

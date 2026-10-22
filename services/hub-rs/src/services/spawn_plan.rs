@@ -20,6 +20,10 @@ pub struct Plan {
     pub metadata: Value,
     pub full_access: bool,
     pub mcp_item_ids: Vec<String>,
+    /// Claude launches with `--strict-mcp-config` even with no library
+    /// servers selected (`agents.ignoreExternalMcp`): `.mcp.json`, project
+    /// and user servers are skipped; the facade and library picks still load.
+    pub strict_mcp: bool,
 }
 impl Plan {
     pub fn receipt(&self, response: &Value) -> Result<Value> {
@@ -501,6 +505,7 @@ pub fn resolve(
             }
         }
     }
+    let strict_mcp = provider == "claude" && config["agents"]["ignoreExternalMcp"] == true;
     Ok(Plan {
         provider,
         session_id: session_id.into(),
@@ -513,6 +518,7 @@ pub fn resolve(
         metadata,
         full_access: skip,
         mcp_item_ids,
+        strict_mcp,
     })
 }
 

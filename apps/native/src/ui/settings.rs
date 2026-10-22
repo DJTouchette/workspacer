@@ -667,6 +667,15 @@ impl Workspace {
             self.render_job_access(cx),
         ));
         entries.push(Entry::new(
+            S::Agents,
+            "external-mcp",
+            "Skip external MCP servers",
+            "New Claude sessions ignore the MCP servers in a project's .mcp.json and in your Claude project and user settings, so a server that fails to start no longer shows as MCP failed. The workspacer tools and servers picked from the MCP library still load. Saved in the hub's shared settings, so every client of this hub sees it; running sessions keep the servers they started with.",
+            "mcp servers failed disable ignore skip strict .mcp.json external tools",
+            Layout::Block,
+            self.render_external_mcp(cx),
+        ));
+        entries.push(Entry::new(
             S::Chat,
             "merge-turn",
             "One card per turn",
@@ -940,6 +949,71 @@ impl Workspace {
                                     cx,
                                 );
                             })),
+                    ),
+            )
+            .child(chrome::notice_line(status, tone, p))
+    }
+
+    /// The `agents.ignoreExternalMcp` switch and its status line; also shown
+    /// on the Session page's MCP card.
+    pub(super) fn render_external_mcp(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        let state = self.view.requests.get("external-mcp");
+        let pending = state.is_some_and(|s| s.loading);
+        let can_write = self.view.connected && !self.demo && !pending;
+        let current = self.extras.external_mcp;
+        let error = state.filter(|s| !s.loading).and_then(|s| s.error.clone());
+        let (status, tone) = match (current, &error) {
+            (_, Some(error)) => (
+                format!("Couldn't reach the hub's setting: {error}"),
+                chrome::Tone::Error,
+            ),
+            (None, None) if pending || self.view.connected => (
+                "Reading the hub's setting…".to_owned(),
+                chrome::Tone::Loading,
+            ),
+            (None, None) => (
+                "Connect to a hub to change this.".to_owned(),
+                chrome::Tone::Info,
+            ),
+            (Some(true), None) => (
+                "On: new Claude sessions load only workspacer and MCP library servers.".to_owned(),
+                chrome::Tone::Warning,
+            ),
+            (Some(false), None) => (
+                "Off: new Claude sessions load every MCP server Claude is configured with."
+                    .to_owned(),
+                chrome::Tone::Info,
+            ),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .debug_selector(|| "external-mcp-switch".into())
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        Switch::new("settings-external-mcp")
+                            .checked(current == Some(true))
+                            .disabled(!can_write || current.is_none())
+                            .tooltip("Skip external MCP servers in new sessions")
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.request(
+                                    Request::ExternalMcp {
+                                        set: Some(*checked),
+                                    },
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .child("Skip external MCP servers in new sessions"),
                     ),
             )
             .child(chrome::notice_line(status, tone, p))

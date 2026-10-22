@@ -242,7 +242,7 @@ impl LaunchPreparation for SessionFacade {
                 if !instructions.is_empty() {
                     argv.extend([json!("--append-system-prompt"), json!(instructions)]);
                 }
-                if !selected.is_empty() {
+                if !selected.is_empty() || plan.strict_mcp {
                     argv.push(json!("--strict-mcp-config"));
                 }
                 compose_instructions(argv)?;

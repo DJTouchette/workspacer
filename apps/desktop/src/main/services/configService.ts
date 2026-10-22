@@ -240,6 +240,10 @@ interface Config {
     /** Bypass provider approval prompts for agents launched by hub jobs
      *  when they fire. Provider policy only, like childFullAccess. */
     jobFullAccess?: boolean;
+    /** New Claude sessions launch with `--strict-mcp-config`: `.mcp.json`,
+     *  project and user MCP servers are skipped; the workspacer facade and
+     *  MCP-library picks still load. Read by the hub's spawn plan. */
+    ignoreExternalMcp?: boolean;
     /** Coding-agent harness the Fleet Manager itself runs on ('' = claude).
      *  The manager needs an MCP client to dispatch at all, so this is
      *  claude/codex/copilot — see SupervisorSection. */

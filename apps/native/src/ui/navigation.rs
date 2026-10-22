@@ -189,6 +189,18 @@ impl Workspace {
         {
             self.request(wks_native::features::Request::JobAccess { set: None }, cx);
         }
+        // Settings and the Session page's MCP card both show this switch.
+        if matches!(screen, Screen::Settings | Screen::Session)
+            && !self.demo
+            && self.view.connected
+            && !self
+                .view
+                .requests
+                .get("external-mcp")
+                .is_some_and(|s| s.loading)
+        {
+            self.request(wks_native::features::Request::ExternalMcp { set: None }, cx);
+        }
         if screen == Screen::Settings {
             self.load_terminal_shell(cx);
             self.fonts.fill(&self.settings, window, cx);

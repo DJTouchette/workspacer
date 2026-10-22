@@ -154,6 +154,7 @@ impl Fixture {
                 "agents": {
                     "childFullAccess": false,
                     "jobFullAccess": false,
+                    "ignoreExternalMcp": false,
                     "autoTitle": {"enabled": true, "model": "haiku"},
                 },
             }),
@@ -537,7 +538,7 @@ impl Fixture {
         if let Some(projects) = params.get("projects") {
             self.config["projects"] = projects.clone();
         }
-        for key in ["childFullAccess", "jobFullAccess"] {
+        for key in ["childFullAccess", "jobFullAccess", "ignoreExternalMcp"] {
             if let Some(enabled) = params.pointer(&format!("/agents/{key}")) {
                 self.config["agents"][key] = enabled.clone();
             }

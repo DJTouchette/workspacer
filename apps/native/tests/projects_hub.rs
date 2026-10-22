@@ -594,6 +594,10 @@ async fn child_access_setting_round_trips_through_the_hub() {
         jobs.value["jobFullAccess"], true,
         "persisted beside childFullAccess"
     );
+    let mcp = run(&controller, Request::ExternalMcp { set: Some(true) }).await;
+    assert_eq!(mcp.value["ignoreExternalMcp"], true);
+    let mcp = run(&controller, Request::ExternalMcp { set: None }).await;
+    assert_eq!(mcp.value["ignoreExternalMcp"], true, "persisted in agents");
     let off = run(&controller, Request::ChildAccess { set: Some(false) }).await;
     assert!(off.error.is_none(), "{:?}", off.error);
     assert_eq!(off.value["childFullAccess"], false);

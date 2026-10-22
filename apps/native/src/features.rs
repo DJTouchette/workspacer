@@ -234,6 +234,12 @@ pub enum Request {
     JobAccess {
         set: Option<bool>,
     },
+    /// The hub's shared `agents.ignoreExternalMcp`: read (`None`) or set and
+    /// verified on readback. New Claude sessions skip `.mcp.json`, project
+    /// and user MCP servers while it is on.
+    ExternalMcp {
+        set: Option<bool>,
+    },
     /// The hub's shared `agents.autoTitle` (automatic session names): read
     /// (`None`) or change one field and verify it on readback. The owning hub
     /// writes the titles, so this is hub configuration, not a device setting.
@@ -467,6 +473,7 @@ impl Request {
             Self::ProjectIcons { .. } => "project-icons",
             Self::ChildAccess { .. } => "child-access",
             Self::JobAccess { .. } => "job-access",
+            Self::ExternalMcp { .. } => "external-mcp",
             Self::Titles { .. } => "titles",
             Self::TerminalShell { .. } => "terminal-shell",
             Self::Jobs => "jobs",
@@ -755,6 +762,26 @@ impl Request {
                     None => backend.call("config.get", json!({})).await?,
                 };
                 Ok(json!({"jobFullAccess": config["agents"]["jobFullAccess"] == true}))
+            }
+            Self::ExternalMcp { set } => {
+                let config = match set {
+                    // `agents` deep-merges on save, so only this key changes.
+                    Some(ignore) => {
+                        let saved = backend
+                            .call(
+                                "config.save",
+                                json!({"agents":{"ignoreExternalMcp":ignore}}),
+                            )
+                            .await?;
+                        ensure!(
+                            (saved["agents"]["ignoreExternalMcp"] == true) == *ignore,
+                            "The hub did not save the setting (its config may be busy); try again"
+                        );
+                        saved
+                    }
+                    None => backend.call("config.get", json!({})).await?,
+                };
+                Ok(json!({"ignoreExternalMcp": config["agents"]["ignoreExternalMcp"] == true}))
             }
             Self::Titles { set } => {
                 let config = match set {
