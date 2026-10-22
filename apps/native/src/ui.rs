@@ -670,6 +670,9 @@ pub struct Workspace {
     /// cold-cache notes closed.
     cache: cache::CacheUi,
     header_bounds: gpui::Bounds<gpui::Pixels>,
+    /// The conversation pane's width last frame: the tool rail floats only
+    /// where it clears the chat column.
+    chat_width: gpui::Pixels,
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
     duration_labels: HashMap<u64, String>,
@@ -978,6 +981,7 @@ impl Workspace {
             gauge_motion: Default::default(),
             cache: Default::default(),
             header_bounds: Default::default(),
+            chat_width: Default::default(),
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
             duration_labels: HashMap::new(),

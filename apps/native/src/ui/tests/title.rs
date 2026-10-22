@@ -1218,7 +1218,7 @@ fn wide_windows_float_the_tools_at_the_chats_right_edge(cx: &mut TestAppContext)
         "open-handoff",
     ];
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
-    visual.simulate_resize(size(px(1200.), px(800.)));
+    visual.simulate_resize(size(px(1600.), px(900.)));
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
             this.update_view(Arc::new(state("a")), window, cx)
@@ -1229,7 +1229,7 @@ fn wide_windows_float_the_tools_at_the_chats_right_edge(cx: &mut TestAppContext)
     let rail = visual
         .debug_bounds("tool-rail")
         .expect("rail on a wide window");
-    assert!(rail.right() > px(1200. - 40.), "{rail:?}");
+    assert!(rail.right() > px(1600. - 40.), "{rail:?}");
     let bar = visual.debug_bounds("title-bar").unwrap();
     assert!(rail.top() > bar.bottom(), "{rail:?} below {bar:?}");
     for action in ACTIONS {
@@ -1244,11 +1244,17 @@ fn wide_windows_float_the_tools_at_the_chats_right_edge(cx: &mut TestAppContext)
     assert!(matches!(effects(&mut commands).as_slice(),
         [Command::Terminal(T::Open { agent, .. })] if agent == "a"));
 
-    // Narrow: the rail is gone and the capsule reveals the tools again.
-    visual.simulate_resize(size(px(720.), px(600.)));
-    visual.run_until_parked();
-    reveal_title(&workspace, &mut visual);
-    let open = visual.debug_bounds("title-bar").unwrap();
-    let changes = visual.debug_bounds("open-changes").unwrap();
-    assert!(open.contains(&changes.center()), "{changes:?} in {open:?}");
+    // Where the rail would cover the chat column's edge, or the window is
+    // narrow, the capsule reveals the tools again.
+    for (width, height) in [(1200., 800.), (720., 600.)] {
+        visual.simulate_resize(size(px(width), px(height)));
+        visual.run_until_parked();
+        reveal_title(&workspace, &mut visual);
+        let open = visual.debug_bounds("title-bar").unwrap();
+        let changes = visual.debug_bounds("open-changes").unwrap();
+        assert!(
+            open.contains(&changes.center()),
+            "{width}: {changes:?} in {open:?}"
+        );
+    }
 }

@@ -119,6 +119,9 @@ struct ChatLayout {
     working: bool,
 }
 
+/// The tool rail's width and its gap from the chat's right edge.
+const RAIL_ROOM: f32 = 56.;
+
 impl Workspace {
     pub(super) fn render_conversation(
         &mut self,
@@ -175,6 +178,14 @@ impl Workspace {
             .flex()
             .flex_col()
             .bg(rgb(p.chat))
+            .child(chrome::measure(
+                cx.entity().downgrade(),
+                |this: &mut Self, bounds, _| {
+                    let changed = this.chat_width != bounds.size.width;
+                    this.chat_width = bounds.size.width;
+                    changed
+                },
+            ))
             .when(empty && !only_children, |d| {
                 d.child(self.render_empty_state(compact, window, cx))
             })
@@ -203,8 +214,10 @@ impl Workspace {
     }
 
     /// Whether the session's tools float in the rail rather than the title.
+    /// Only where the rail clears the centred chat column, so it never
+    /// covers a card's own controls at the column's edge.
     fn tools_float(&self, narrow: bool) -> bool {
-        self.settings.tool_rail && !narrow
+        self.settings.tool_rail && !narrow && self.chat_width >= px(CHAT_WIDTH + 2. * RAIL_ROOM)
     }
 
     /// The session's tools in a floating pill at the chat's right edge,
