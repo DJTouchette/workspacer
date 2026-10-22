@@ -1043,11 +1043,20 @@ impl Workspace {
             .children(session.and_then(|session| self.render_tasks_chip(session, cx)))
     }
 
-    pub(super) fn chat_actions(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
+    /// The session's tools: revealed in the title capsule, or stacked in the
+    /// floating rail at the chat's right edge (`floating`), where a click
+    /// needs no reveal to have settled first.
+    pub(super) fn chat_actions(
+        &self,
+        enabled: bool,
+        floating: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let selected = self.view.selected.is_some();
         let model_enabled = enabled && self.supported_session();
         div()
             .flex()
+            .when(floating, |d| d.flex_col())
             .items_center()
             .gap(px(2.))
             .flex_shrink_0()
@@ -1055,8 +1064,8 @@ impl Workspace {
                 self.icon_button("open-changes", "Changes", IconName::Replace, selected)
                     .debug_selector(|| "open-changes".into())
                     .when(selected, |d| {
-                        d.on_click(cx.listener(|this, event, window, cx| {
-                            if !this.title_action_allowed(event) {
+                        d.on_click(cx.listener(move |this, event, window, cx| {
+                            if !(floating || this.title_action_allowed(event)) {
                                 return;
                             }
                             this.open_feature(Screen::Changes, window, cx)
@@ -1072,8 +1081,8 @@ impl Workspace {
                 )
                 .debug_selector(|| "open-editor".into())
                 .when(selected, |d| {
-                    d.on_click(cx.listener(|this, event, window, cx| {
-                        if this.title_action_allowed(event) {
+                    d.on_click(cx.listener(move |this, event, window, cx| {
+                        if floating || this.title_action_allowed(event) {
                             this.open_selected_editor(window, cx)
                         }
                     }))
@@ -1095,8 +1104,8 @@ impl Workspace {
                     d.text_color(rgb(self.appearance.palette().accent))
                 })
                 .when(selected, |d| {
-                    d.on_click(cx.listener(|this, event, window, cx| {
-                        if this.title_action_allowed(event) {
+                    d.on_click(cx.listener(move |this, event, window, cx| {
+                        if floating || this.title_action_allowed(event) {
                             this.toggle_terminal(window, cx)
                         }
                     }))
@@ -1111,8 +1120,8 @@ impl Workspace {
                 )
                 .debug_selector(|| "open-history".into())
                 .when(selected, |d| {
-                    d.on_click(cx.listener(|this, event, window, cx| {
-                        if !this.title_action_allowed(event) {
+                    d.on_click(cx.listener(move |this, event, window, cx| {
+                        if !(floating || this.title_action_allowed(event)) {
                             return;
                         }
                         this.open_feature(Screen::History, window, cx)
@@ -1123,8 +1132,8 @@ impl Workspace {
                 self.icon_button("open-session", "Session details", IconName::Info, selected)
                     .debug_selector(|| "open-session".into())
                     .when(selected, |d| {
-                        d.on_click(cx.listener(|this, event, window, cx| {
-                            if !this.title_action_allowed(event) {
+                        d.on_click(cx.listener(move |this, event, window, cx| {
+                            if !(floating || this.title_action_allowed(event)) {
                                 return;
                             }
                             this.open_feature(Screen::Session, window, cx)
@@ -1140,21 +1149,21 @@ impl Workspace {
                 )
                 .debug_selector(|| "open-model".into())
                 .when(model_enabled, |d| {
-                    d.on_click(cx.listener(|this, event, window, cx| {
-                        if !this.title_action_allowed(event) {
+                    d.on_click(cx.listener(move |this, event, window, cx| {
+                        if !(floating || this.title_action_allowed(event)) {
                             return;
                         }
                         this.open_feature(Screen::Model, window, cx)
                     }))
                 }),
             )
-            .child(self.handoff_action(cx))
+            .child(self.handoff_action(floating, cx))
     }
 
     /// "Continue with…": the other provider's successor (see `handoff.rs`).
     /// Shown for Claude and Codex sessions; a Fleet Manager's page explains
     /// why ordinary handoff is not offered.
-    fn handoff_action(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn handoff_action(&self, floating: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let label = match self.selected_session().map(|s| s.provider.as_str()) {
             Some("codex") => "Continue with Claude…",
             Some("claude" | "") => "Continue with Codex…",
@@ -1164,8 +1173,8 @@ impl Workspace {
         self.icon_button("open-handoff", label, IconName::ArrowRight, enabled)
             .debug_selector(|| "open-handoff".into())
             .when(enabled, |d| {
-                d.on_click(cx.listener(|this, event, window, cx| {
-                    if !this.title_action_allowed(event) {
+                d.on_click(cx.listener(move |this, event, window, cx| {
+                    if !(floating || this.title_action_allowed(event)) {
                         return;
                     }
                     this.open_feature(Screen::Handoff, window, cx)

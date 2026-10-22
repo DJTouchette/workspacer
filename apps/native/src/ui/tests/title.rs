@@ -380,6 +380,8 @@ fn title_notices_grow_the_capsule_into_one_island(cx: &mut TestAppContext) {
 #[gpui::test]
 fn title_island_springs_into_notices_and_lets_go(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    // The title's own reveal; the floating rail has its own test.
+    visual.update(|_, cx| workspace.update(cx, |this, _| this.settings.tool_rail = false));
     let with_notice = |notice: &str| {
         let mut view = state("a");
         view.notice = notice.into();
@@ -517,6 +519,8 @@ fn title_actions_show_only_on_hover_focus_or_tap(cx: &mut TestAppContext) {
         "open-model",
     ];
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    // The title's own reveal; the floating rail has its own test.
+    visual.update(|_, cx| workspace.update(cx, |this, _| this.settings.tool_rail = false));
     let with_notice = |notice: &str| {
         let mut view = state("a");
         Arc::make_mut(&mut view.sessions)[0].model = "claude-opus-5-5".into();
@@ -1196,4 +1200,55 @@ fn title_model_chip_switches_model_and_effort_without_substitution(cx: &mut Test
         ),
         other => panic!("model and effort: {:?}", other.map(|_| ())),
     }
+}
+
+/// Wide windows float the session's tools in a rail at the chat's right
+/// edge instead of the title capsule: every tool is there at rest, takes a
+/// click with no reveal first, and narrow windows keep them in the capsule.
+#[gpui::test]
+fn wide_windows_float_the_tools_at_the_chats_right_edge(cx: &mut TestAppContext) {
+    use wks_native::terminal::Command as T;
+    const ACTIONS: [&str; 7] = [
+        "open-changes",
+        "open-editor",
+        "open-terminal",
+        "open-history",
+        "open-session",
+        "open-model",
+        "open-handoff",
+    ];
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(800.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(state("a")), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    settle_title(&workspace, &mut visual);
+    let rail = visual
+        .debug_bounds("tool-rail")
+        .expect("rail on a wide window");
+    assert!(rail.right() > px(1200. - 40.), "{rail:?}");
+    let bar = visual.debug_bounds("title-bar").unwrap();
+    assert!(rail.top() > bar.bottom(), "{rail:?} below {bar:?}");
+    for action in ACTIONS {
+        let bounds = visual.debug_bounds(action).unwrap();
+        assert!(
+            rail.contains(&bounds.center()),
+            "{action} {bounds:?} in {rail:?}"
+        );
+    }
+    // No reveal needed: the pointer never touched the capsule.
+    click(&mut visual, "open-terminal");
+    assert!(matches!(effects(&mut commands).as_slice(),
+        [Command::Terminal(T::Open { agent, .. })] if agent == "a"));
+
+    // Narrow: the rail is gone and the capsule reveals the tools again.
+    visual.simulate_resize(size(px(720.), px(600.)));
+    visual.run_until_parked();
+    reveal_title(&workspace, &mut visual);
+    let open = visual.debug_bounds("title-bar").unwrap();
+    let changes = visual.debug_bounds("open-changes").unwrap();
+    assert!(open.contains(&changes.center()), "{changes:?} in {open:?}");
 }

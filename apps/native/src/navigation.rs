@@ -91,6 +91,9 @@ pub struct Settings {
     /// Chrome changes shape at once instead of on springs (the title
     /// island's reveal and notices); fades stay.
     pub reduce_motion: bool,
+    /// Wide windows float the session's tools at the chat's right edge
+    /// instead of revealing them in the title capsule.
+    pub tool_rail: bool,
     /// Client-local session organization, scoped by hub identity.
     pub names: BTreeMap<String, BTreeMap<String, String>>,
     pub archived: BTreeMap<String, Vec<String>>,
@@ -126,6 +129,7 @@ impl Default for Settings {
             notifications: true,
             review_panel: true,
             reduce_motion: false,
+            tool_rail: true,
             names: BTreeMap::new(),
             archived: BTreeMap::new(),
             cleared_children: BTreeMap::new(),

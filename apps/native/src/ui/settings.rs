@@ -377,6 +377,21 @@ impl Workspace {
                     this.save_settings(cx);
                 })),
         ));
+        entries.push(Entry::new(
+            S::Appearance,
+            "tool-rail",
+            "Floating tool rail",
+            "On wide windows, the session's tools (changes, files, terminal, history, details, model, continue with) float at the chat's right edge instead of showing when you hover the title. Narrow windows always keep them in the title.",
+            "tools toolbar rail floating actions title capsule pill buttons right side",
+            Layout::Row,
+            Switch::new("settings-tool-rail")
+                .checked(self.settings.tool_rail)
+                .tooltip("Floating tool rail")
+                .on_click(cx.listener(|this, checked, _, cx| {
+                    this.settings.tool_rail = *checked;
+                    this.save_settings(cx);
+                })),
+        ));
 
         entries.push(Entry::new(
             S::Typography,

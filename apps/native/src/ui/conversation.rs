@@ -185,6 +185,10 @@ impl Workspace {
                 d.child(transcript).child(self.wheel_smoother(cx))
             })
             .child(header)
+            .when(
+                self.tools_float(narrow) && selected.is_some() && self.viewed_child().is_none(),
+                |d| d.child(self.render_tool_rail(enabled, cx)),
+            )
             .when(!self.follow, |d| d.child(self.render_jump_latest(cx)))
             .child(self.render_dock(layout, selected.as_ref(), window, cx));
         div()
@@ -196,6 +200,36 @@ impl Workspace {
             .bg(rgb(p.chat))
             .child(chat)
             .children(terminal_panel)
+    }
+
+    /// Whether the session's tools float in the rail rather than the title.
+    fn tools_float(&self, narrow: bool) -> bool {
+        self.settings.tool_rail && !narrow
+    }
+
+    /// The session's tools in a floating pill at the chat's right edge,
+    /// centred between the title and the composer.
+    fn render_tool_rail(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        div()
+            .absolute()
+            .top(self.header_bounds.size.height)
+            .bottom(self.composer_dock_bounds.size.height)
+            .right_3()
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .debug_selector(|| "tool-rail".into())
+                    .occlude()
+                    .p_1()
+                    .rounded_full()
+                    .bg(rgb(p.surface))
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .shadow(chrome::floating_shadow(p))
+                    .child(self.chat_actions(enabled, true, cx)),
+            )
     }
 
     /// The title capsule over a transparent fade rather than a ruled strip:
@@ -217,7 +251,13 @@ impl Workspace {
             Some(bar) => (bar, None),
             None => (
                 self.render_title_bar(layout.narrow, layout.enabled, &title, selected, cx),
-                Some(self.chat_actions(layout.enabled, cx)),
+                // Wide windows float the tools at the chat's right edge; the
+                // capsule still reveals the context figures on hover.
+                Some(if !self.tools_float(layout.narrow) {
+                    self.chat_actions(layout.enabled, false, cx)
+                } else {
+                    div()
+                }),
             ),
         };
         let title_island = self.render_title_island(title_bar, title_actions, notice, window, cx);
