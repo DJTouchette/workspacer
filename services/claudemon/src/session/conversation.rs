@@ -69,7 +69,15 @@ pub async fn replay_transcript(path: &str) -> std::io::Result<Vec<ConversationIt
         ));
     }
     let mut file = tokio::fs::File::open(path).await?;
-    let len = file.metadata().await?.len();
+    let metadata = file.metadata().await?;
+    let len = metadata.len();
+    let key = metadata
+        .modified()
+        .ok()
+        .map(|mtime| (path.to_owned(), len, mtime));
+    if let Some(items) = key.as_ref().and_then(cached_replay) {
+        return Ok(items);
+    }
     let start = len.saturating_sub(REPLAY_TAIL_BYTES);
     file.seek(SeekFrom::Start(start)).await?;
     let mut buf = Vec::new();
@@ -89,7 +97,38 @@ pub async fn replay_transcript(path: &str) -> std::io::Result<Vec<ConversationIt
     if items.len() > REPLAY_MAX_ITEMS {
         items.drain(..items.len() - REPLAY_MAX_ITEMS);
     }
+    if let Some(key) = key {
+        remember_replay(key, &items);
+    }
     Ok(items)
+}
+
+/// Recent [`replay_transcript`] results, keyed by (path, len, mtime). A
+/// stopped session's `/conversation` is asked for on every view, and its
+/// transcript has stopped changing: re-reading and re-parsing up to
+/// [`REPLAY_TAIL_BYTES`] per request was the whole cost. Kept small, since an
+/// entry holds up to [`REPLAY_MAX_ITEMS`] items; any growth misses the key.
+type ReplayKey = (String, u64, std::time::SystemTime);
+type ReplayCache = std::collections::VecDeque<(ReplayKey, Arc<Vec<ConversationItem>>)>;
+static REPLAYS: std::sync::LazyLock<std::sync::Mutex<ReplayCache>> =
+    std::sync::LazyLock::new(Default::default);
+const MAX_CACHED_REPLAYS: usize = 4;
+
+fn cached_replay(key: &ReplayKey) -> Option<Vec<ConversationItem>> {
+    let cache = REPLAYS.lock().unwrap_or_else(|p| p.into_inner());
+    cache
+        .iter()
+        .find(|(cached, _)| cached == key)
+        .map(|(_, items)| items.as_ref().clone())
+}
+
+fn remember_replay(key: ReplayKey, items: &[ConversationItem]) {
+    let mut cache = REPLAYS.lock().unwrap_or_else(|p| p.into_inner());
+    cache.retain(|(cached, _)| cached.0 != key.0);
+    if cache.len() >= MAX_CACHED_REPLAYS {
+        cache.pop_front();
+    }
+    cache.push_back((key, Arc::new(items.to_vec())));
 }
 
 /// Rebuild a transcript's task-tool state and its current plan, for a resumed
@@ -753,7 +792,7 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
             let targets = sessions.list_where(|state| {
                 needs_tail_pass(state, now, || conv.logs.contains_key(&state.session_id))
             });
-            futures::stream::iter(targets).for_each_concurrent(TAIL_CONCURRENCY, |state| {
+            futures::stream::iter(targets).for_each_concurrent(TAIL_CONCURRENCY, |mut state| {
                 let sessions = &sessions;
                 let conv = &conv;
                 async move {
@@ -785,9 +824,11 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
                 }
                 let scan_children = conv.logs.get(&state.session_id).is_none_or(|log| log.side_scanned_at.is_none_or(|at| at.elapsed() >= SIDE_SCAN_INTERVAL));
                 if scan_children && state.provider == "claude" {
-                    let mut parent = state.clone();
-                    parent.transcript_path = Some(path.clone());
-                    let children = super::claude_subagents::artifacts(&parent).await.unwrap_or_default();
+                    // `state` is this pass's own copy: nothing below reads its
+                    // transcript path, and the enrich reads only its id, epoch
+                    // and children — so no second clone of the whole session.
+                    state.transcript_path = Some(path.clone());
+                    let children = super::claude_subagents::artifacts(&state).await.unwrap_or_default();
                     sessions.enrich_claude_artifacts(&state, &path, children);
                 }
                 if let Err(err) = tail_subagents(conv, &state.session_id, &path).await {
@@ -1857,6 +1898,35 @@ pub(crate) mod tests {
             refused.unwrap_err().kind(),
             std::io::ErrorKind::PermissionDenied
         );
+    }
+
+    #[tokio::test]
+    async fn replay_transcript_is_cached_until_the_file_changes() {
+        let (_dir, path) = transcript_fixture(&two_turn_rows());
+        let first = serde_json::to_string(&replay_transcript(&path).await.unwrap()).unwrap();
+        // Same length and mtime: the cached replay answers, not a re-read.
+        let stamp = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, body.replace("later", "LATER")).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(stamp)
+            .unwrap();
+        let cached = serde_json::to_string(&replay_transcript(&path).await.unwrap()).unwrap();
+        assert_eq!(cached, first);
+        // Growth is a new key.
+        let more = json!({"type":"user","message":{"role":"user","content":"one more thing"},"timestamp":"2026-10-07T10:01:00Z"});
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        std::io::Write::write_all(&mut file, format!("{more}\n").as_bytes()).unwrap();
+        drop(file);
+        let grown = serde_json::to_string(&replay_transcript(&path).await.unwrap()).unwrap();
+        assert!(grown.contains("one more thing"));
+        assert!(grown.contains("pick this up LATER"));
     }
 
     #[test]

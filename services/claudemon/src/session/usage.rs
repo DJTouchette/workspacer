@@ -396,6 +396,33 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
     any.then_some(usage)
 }
 
+/// [`from_transcript`], resumable: fold a transcript in batches and read the
+/// same answer as one call over the concatenation, for callers that see a
+/// growing file one appended chunk at a time.
+#[derive(Debug, Clone, Default)]
+pub(super) struct TranscriptFold {
+    usage: Usage,
+    seen: HashSet<String>,
+    peak_context: u64,
+    any: bool,
+}
+
+impl TranscriptFold {
+    pub(super) fn push(&mut self, tx: &Transcript) {
+        self.any |= fold_transcript(
+            tx,
+            &mut self.usage,
+            &mut self.seen,
+            &mut self.peak_context,
+            false,
+        );
+    }
+
+    pub(super) fn usage(&self) -> Option<&Usage> {
+        self.any.then_some(&self.usage)
+    }
+}
+
 /// Fold one transcript's assistant turns into `usage`, deduping cost by message
 /// id via the caller-owned `seen` set and tracking the caller-owned
 /// `peak_context` high-water mark. Returns whether any assistant usage block was
@@ -670,9 +697,15 @@ fn read_range(path: &str, from: u64, to: u64) -> Option<Vec<u8>> {
 /// FNV-1a: a stable hash for cache file names and fingerprints (std's hasher
 /// is not guaranteed stable across builds).
 pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf29ce484222325u64, |h, b| {
-        (h ^ *b as u64).wrapping_mul(0x100000001b3)
-    })
+    fnv1a_from(0xcbf29ce484222325u64, bytes)
+}
+
+/// [`fnv1a`] continued from an earlier state: `fnv1a_from(fnv1a(a), b)` is
+/// `fnv1a(a ++ b)`.
+pub(crate) fn fnv1a_from(state: u64, bytes: &[u8]) -> u64 {
+    bytes
+        .iter()
+        .fold(state, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3))
 }
 
 /// Memo for [`usage_for_path`], keyed on the main transcript path.

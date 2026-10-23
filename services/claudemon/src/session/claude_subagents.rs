@@ -7,7 +7,7 @@ use super::{
 use anyhow::{bail, Result};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 pub const MAX_CHILD_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_CHILDREN: usize = 128;
@@ -27,12 +27,15 @@ fn milliseconds(stamp: time::OffsetDateTime) -> i64 {
 fn text(value: &str, limit: usize) -> String {
     value.chars().take(limit).collect()
 }
-fn trusted(path: &Path) -> bool {
+/// The transcript roots, canonicalized — once per scan, not once per check.
+fn trusted_roots() -> Vec<PathBuf> {
     transcript::allowed_roots()
         .iter()
         .filter_map(|root| root.canonicalize().ok())
-        .any(|root| path.starts_with(root))
-        || transcript::path_is_allowed(path)
+        .collect()
+}
+fn trusted(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| path.starts_with(root)) || transcript::path_is_allowed(path)
 }
 
 /// Enrichment only: never mutate mode, pending ownership or background counts.
@@ -241,26 +244,51 @@ pub async fn discover_parent(state: &SessionState) -> Option<String> {
     None
 }
 
+/// A trusted parent transcript's `subagents` directory, confined: resolved
+/// once per scan, then every child in it is checked against it.
+struct ChildDir {
+    directory: PathBuf,
+    roots: Vec<PathBuf>,
+}
+
+impl ChildDir {
+    async fn open(main: &str) -> Result<Self> {
+        let main = tokio::fs::canonicalize(main).await?;
+        Self::confine(main, trusted_roots()).await
+    }
+
+    /// [`Self::open`] for a parent path that is already canonical.
+    async fn confine(main: PathBuf, roots: Vec<PathBuf>) -> Result<Self> {
+        if !trusted(&main, &roots) || main.extension().is_none_or(|e| e != "jsonl") {
+            bail!("untrusted parent transcript");
+        }
+        let base = main.with_extension("");
+        let directory = tokio::fs::canonicalize(base.join("subagents")).await?;
+        // A symlinked child directory must not redirect to another parent or root.
+        if directory != base.join("subagents") {
+            bail!("redirected child directory");
+        }
+        Ok(Self { directory, roots })
+    }
+
+    async fn child(&self, id: &str) -> Result<PathBuf> {
+        if !valid_id(id) {
+            bail!("invalid child id");
+        }
+        let expected = self.directory.join(format!("agent-{id}.jsonl"));
+        let path = tokio::fs::canonicalize(&expected).await?;
+        if path != expected || !trusted(&path, &self.roots) {
+            bail!("redirected child transcript");
+        }
+        Ok(path)
+    }
+}
+
 async fn child_path(main: &str, id: &str) -> Result<PathBuf> {
     if !valid_id(id) {
         bail!("invalid child id");
     }
-    let main = tokio::fs::canonicalize(main).await?;
-    if !trusted(&main) || main.extension().is_none_or(|e| e != "jsonl") {
-        bail!("untrusted parent transcript");
-    }
-    let base = main.with_extension("");
-    let directory = tokio::fs::canonicalize(base.join("subagents")).await?;
-    // A symlinked child directory must not redirect to another parent or root.
-    if directory != base.join("subagents") {
-        bail!("redirected child directory");
-    }
-    let expected = directory.join(format!("agent-{id}.jsonl"));
-    let path = tokio::fs::canonicalize(&expected).await?;
-    if path != expected || !trusted(&path) {
-        bail!("redirected child transcript");
-    }
-    Ok(path)
+    ChildDir::open(main).await?.child(id).await
 }
 
 pub struct Replay {
@@ -301,27 +329,39 @@ pub async fn replay(state: &SessionState, id: &str) -> Result<Replay> {
 }
 
 async fn read_rows(path: &Path) -> Result<Vec<Value>> {
-    let file = tokio::fs::File::open(path).await?;
-    if !file.metadata().await?.is_file() || file.metadata().await?.len() > MAX_CHILD_BYTES {
+    Ok(parse_rows(&read_from(path, 0).await?))
+}
+
+/// A child transcript's bytes from `from` to its end, within the same
+/// [`MAX_CHILD_BYTES`] bound as a whole-file read.
+async fn read_from(path: &Path, from: u64) -> Result<Vec<u8>> {
+    let mut file = tokio::fs::File::open(path).await?;
+    let metadata = file.metadata().await?;
+    if !metadata.is_file() || metadata.len() > MAX_CHILD_BYTES || from > metadata.len() {
         bail!("child transcript too large");
     }
+    file.seek(std::io::SeekFrom::Start(from)).await?;
     let mut bytes = Vec::new();
-    file.take(MAX_CHILD_BYTES + 1)
+    file.take(MAX_CHILD_BYTES + 1 - from)
         .read_to_end(&mut bytes)
         .await?;
-    if bytes.len() as u64 > MAX_CHILD_BYTES {
+    if from + bytes.len() as u64 > MAX_CHILD_BYTES {
         bail!("child transcript too large");
     }
-    Ok(String::from_utf8_lossy(&bytes)
+    Ok(bytes)
+}
+
+fn parse_rows(bytes: &[u8]) -> Vec<Value> {
+    String::from_utf8_lossy(bytes)
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter(Value::is_object)
-        .collect())
+        .collect()
 }
 
 /// Everything `artifacts` derives from a child transcript's rows, independent
 /// of the parent's current view of that child.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 struct RowSummary {
     started_at: Option<i64>,
     model: Option<String>,
@@ -334,13 +374,24 @@ struct RowSummary {
     completed: Option<Option<i64>>,
 }
 
-impl RowSummary {
-    fn from_rows(rows: &[Value]) -> Self {
-        let mut summary = Self::default();
-        let mut tokens = 0u64;
-        let mut tools = std::collections::BTreeSet::new();
-        let mut usage_seen = std::collections::BTreeSet::new();
-        let mut usage_reported = false;
+/// [`RowSummary`] folded row by row, so a growing child transcript parses only
+/// what it appended. [`RowSummary::from_rows`] is this over every row at once,
+/// so an incremental summary equals a whole-file one by construction.
+#[derive(Debug, Clone, Default)]
+struct RowFold {
+    /// Fields kept current row by row; the counted ones are filled in by
+    /// [`RowFold::summary`].
+    summary: RowSummary,
+    tokens: u64,
+    tools: std::collections::BTreeSet<String>,
+    usage_seen: std::collections::BTreeSet<String>,
+    usage_reported: bool,
+    cost: super::usage::TranscriptFold,
+}
+
+impl RowFold {
+    fn push(&mut self, rows: &[Value]) {
+        let summary = &mut self.summary;
         for row in rows {
             if let Some(stamp) = row["timestamp"].as_str().and_then(|s| {
                 time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
@@ -363,26 +414,28 @@ impl RowSummary {
                     });
             }
             if let Some(usage) = row.pointer("/message/usage") {
-                usage_reported |= usage.is_object();
+                self.usage_reported |= usage.is_object();
                 let key = row
                     .pointer("/message/id")
                     .or_else(|| row.get("uuid"))
                     .and_then(Value::as_str);
-                if usage.is_object() && key.is_none_or(|k| usage_seen.insert(k.to_owned())) {
+                if usage.is_object() && key.is_none_or(|k| self.usage_seen.insert(k.to_owned())) {
                     for name in [
                         "input_tokens",
                         "output_tokens",
                         "cache_read_input_tokens",
                         "cache_creation_input_tokens",
                     ] {
-                        tokens = tokens.saturating_add(usage[name].as_u64().unwrap_or_default());
+                        self.tokens = self
+                            .tokens
+                            .saturating_add(usage[name].as_u64().unwrap_or_default());
                     }
                 }
             }
             for block in transcript::blocks(&row["message"]["content"]) {
                 if let transcript::Block::ToolUse { id, name, input } = block {
                     if let Some(id) = id.filter(|s| s.len() <= 512) {
-                        tools.insert(id.to_owned());
+                        self.tools.insert(id.to_owned());
                     }
                     summary.last_tool = Some((
                         text(name, 256),
@@ -390,8 +443,25 @@ impl RowSummary {
                     ));
                 }
             }
+            // Parent Input is not a child completion signal: detached workers
+            // can outlive that turn. Only an explicit final child stop is
+            // authoritative, so each row overwrites the last one's verdict.
+            summary.completed = (row["type"] == "assistant"
+                && row["message"]["stop_reason"] == "end_turn")
+                .then(|| {
+                    row["timestamp"]
+                        .as_str()
+                        .and_then(|s| {
+                            time::OffsetDateTime::parse(
+                                s,
+                                &time::format_description::well_known::Rfc3339,
+                            )
+                            .ok()
+                        })
+                        .map(milliseconds)
+                });
         }
-        summary.tokens = usage_reported.then_some(tokens);
+        // Cost only reads each row's role and raw form (not `content`).
         let transcript = transcript::Transcript {
             messages: rows
                 .iter()
@@ -401,35 +471,32 @@ impl RowSummary {
                     raw["isSidechain"] = Value::Bool(false);
                     Some(transcript::TranscriptMessage {
                         role: role.into(),
-                        content: row["message"]["content"].clone(),
+                        content: Value::Null,
                         raw,
                     })
                 })
                 .collect(),
             ..Default::default()
         };
-        summary.cost_usd = super::usage::from_transcript(&transcript).map(|usage| usage.cost_usd);
-        summary.tool_calls = tools.len() as u64;
-        // Parent Input is not a child completion signal: detached workers can
-        // outlive that turn. Only an explicit final child stop is authoritative.
-        if let Some(last) = rows
-            .last()
-            .filter(|row| row["type"] == "assistant" && row["message"]["stop_reason"] == "end_turn")
-        {
-            summary.completed = Some(
-                last["timestamp"]
-                    .as_str()
-                    .and_then(|s| {
-                        time::OffsetDateTime::parse(
-                            s,
-                            &time::format_description::well_known::Rfc3339,
-                        )
-                        .ok()
-                    })
-                    .map(milliseconds),
-            );
+        self.cost.push(&transcript);
+    }
+
+    fn summary(&self) -> RowSummary {
+        RowSummary {
+            tokens: self.usage_reported.then_some(self.tokens),
+            cost_usd: self.cost.usage().map(|usage| usage.cost_usd),
+            tool_calls: self.tools.len() as u64,
+            ..self.summary.clone()
         }
-        summary
+    }
+}
+
+impl RowSummary {
+    #[cfg(test)]
+    fn from_rows(rows: &[Value]) -> Self {
+        let mut fold = RowFold::default();
+        fold.push(rows);
+        fold.summary()
     }
 
     fn apply(&self, child: &mut SubagentInfo) {
@@ -461,43 +528,99 @@ impl RowSummary {
 }
 
 type SummaryKey = (u64, Option<std::time::SystemTime>);
-type SummaryCache = std::collections::HashMap<PathBuf, (SummaryKey, std::sync::Arc<RowSummary>)>;
+/// One child transcript's summary and how far it has been folded. `offset` is
+/// the end of the last complete line folded; `tail` is the bytes just before
+/// it, so a file rewritten in place (rather than appended to) is noticed and
+/// folded again from the top.
+#[derive(Default)]
+struct ChildSummary {
+    key: SummaryKey,
+    offset: u64,
+    tail: Vec<u8>,
+    pricing: u64,
+    fold: RowFold,
+    summary: std::sync::Arc<RowSummary>,
+}
+const SUMMARY_TAIL_BYTES: usize = 64;
+type SummaryCache = std::collections::HashMap<PathBuf, ChildSummary>;
 /// Live parents rescan every child every few seconds; finished children never
-/// change, so unchanged files reuse their last parse.
+/// change, so unchanged files reuse their last parse, and a growing one parses
+/// only the lines it appended.
 static SUMMARIES: std::sync::LazyLock<std::sync::Mutex<SummaryCache>> =
     std::sync::LazyLock::new(Default::default);
-const MAX_CACHED_SUMMARIES: usize = 4096;
+/// Each entry carries its fold's dedup sets, so this is lower than a cache of
+/// bare summaries would need; a parent has at most [`MAX_CHILDREN`].
+const MAX_CACHED_SUMMARIES: usize = 1024;
 
 async fn read_summary(path: &Path) -> Result<std::sync::Arc<RowSummary>> {
     let metadata = tokio::fs::metadata(path).await?;
     let key = (metadata.len(), metadata.modified().ok());
     if key.1.is_some() {
-        if let Some((_, summary)) = SUMMARIES
+        if let Some(cached) = SUMMARIES
             .lock()
             .unwrap()
             .get(path)
-            .filter(|(cached, _)| *cached == key)
+            .filter(|cached| cached.key == key)
         {
-            return Ok(summary.clone());
+            return Ok(cached.summary.clone());
         }
     }
-    let rows = read_rows(path).await?;
-    let summary = std::sync::Arc::new(RowSummary::from_rows(&rows));
+    let pricing = super::pricing::fingerprint();
+    // Taken out while folding; a concurrent reader of the same child just
+    // folds from the top.
+    let fresh = || ChildSummary {
+        pricing,
+        ..Default::default()
+    };
+    let mut entry = SUMMARIES
+        .lock()
+        .unwrap()
+        .remove(path)
+        .filter(|c| c.pricing == pricing && c.offset <= key.0)
+        .unwrap_or_else(fresh);
+    let resume_at = entry.offset - entry.tail.len() as u64;
+    let mut bytes = read_from(path, resume_at).await?;
+    if !bytes.starts_with(&entry.tail) {
+        entry = fresh();
+        bytes = read_from(path, 0).await?;
+    }
+    let appended = &bytes[entry.tail.len()..];
+    let complete = appended
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map_or(0, |i| i + 1);
+    entry.fold.push(&parse_rows(&appended[..complete]));
+    entry.offset += complete as u64;
+    let folded = &bytes[..entry.tail.len() + complete];
+    entry.tail = folded[folded.len().saturating_sub(SUMMARY_TAIL_BYTES)..].to_vec();
+    // A final line with no newline yet counts as a whole-file read would count
+    // it, without being committed: it may still be mid-write.
+    let partial = parse_rows(&appended[complete..]);
+    let summary = if partial.is_empty() {
+        entry.fold.summary()
+    } else {
+        let mut fold = entry.fold.clone();
+        fold.push(&partial);
+        fold.summary()
+    };
+    entry.key = key;
+    entry.summary = std::sync::Arc::new(summary);
+    let summary = entry.summary.clone();
     let mut cache = SUMMARIES.lock().unwrap();
     if cache.len() >= MAX_CACHED_SUMMARIES {
         cache.clear();
     }
-    cache.insert(path.to_owned(), (key, summary.clone()));
+    cache.insert(path.to_owned(), entry);
     Ok(summary)
 }
 
 /// Claude's sidecar names the parent Agent tool that actually spawned this
 /// child. It is optional; a missing or refused file leaves transcript fallback.
-async fn read_metadata(transcript_path: &Path) -> Result<Value> {
+async fn read_metadata(transcript_path: &Path, roots: &[PathBuf]) -> Result<Value> {
     const MAX_METADATA_BYTES: u64 = 64 * 1024;
     let expected = transcript_path.with_extension("meta.json");
     let path = tokio::fs::canonicalize(&expected).await?;
-    if path != expected || !trusted(&path) {
+    if path != expected || !trusted(&path, roots) {
         bail!("redirected child metadata");
     }
     let file = tokio::fs::File::open(path).await?;
@@ -524,10 +647,15 @@ pub async fn artifacts(state: &SessionState) -> Result<Vec<SubagentInfo>> {
         return Ok(vec![]);
     };
     let main = tokio::fs::canonicalize(main).await?;
-    if !trusted(&main) {
+    let roots = trusted_roots();
+    if !trusted(&main, &roots) {
         bail!("untrusted parent transcript");
     }
     let mut directory = tokio::fs::read_dir(main.with_extension("").join("subagents")).await?;
+    // Confined once for every child below; a parent that fails it exposes none.
+    let Ok(confined) = ChildDir::confine(main, roots).await else {
+        return Ok(vec![]);
+    };
     let mut children = Vec::new();
     let mut examined = 0usize;
     while children.len() < MAX_CHILDREN && examined < MAX_CHILDREN * 2 {
@@ -543,7 +671,7 @@ pub async fn artifacts(state: &SessionState) -> Result<Vec<SubagentInfo>> {
         else {
             continue;
         };
-        let Ok(path) = child_path(main.to_str().unwrap_or_default(), id).await else {
+        let Ok(path) = confined.child(id).await else {
             continue;
         };
         let Ok(summary) = read_summary(&path).await else {
@@ -569,7 +697,7 @@ pub async fn artifacts(state: &SessionState) -> Result<Vec<SubagentInfo>> {
                 cost_usd: None,
                 tool_calls: None,
             });
-        if let Ok(metadata) = read_metadata(&path).await {
+        if let Ok(metadata) = read_metadata(&path, &confined.roots).await {
             if let Some(kind) = metadata["agentType"].as_str() {
                 child.agent_type = text(kind, 256);
             }
@@ -822,6 +950,63 @@ mod tests {
         let child = &artifacts(&state).await.unwrap()[0];
         assert_eq!(child.status, SubagentStatus::Complete);
         assert_eq!(child.completed_at.unwrap() - child.started_at, 2000);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn incremental_child_summary_equals_a_whole_file_read() {
+        let root = std::env::temp_dir().join(format!("claude-incr-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("agent-child.jsonl");
+        let rows = [
+            json!({"type":"user","timestamp":"2026-10-01T10:00:01Z","message":{"content":"Audit the parser"}}),
+            json!({"type":"assistant","timestamp":"2026-10-01T10:00:02Z","message":{"id":"m1","model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":3,"cache_read_input_tokens":100},"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"src/a.rs"}}]}}),
+            json!({"type":"user","timestamp":"2026-10-01T10:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}),
+            // A streamed row repeating m1's usage must count once across reads.
+            json!({"type":"assistant","timestamp":"2026-10-01T10:00:04Z","message":{"id":"m1","model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":3,"cache_read_input_tokens":100},"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"cargo test"}}]}}),
+            json!({"type":"assistant","timestamp":"2026-10-01T10:00:00Z","message":{"id":"m2","model":"claude-haiku-4-5","usage":{"input_tokens":5,"output_tokens":7},"content":[{"type":"text","text":"x"}]}}),
+            json!({"type":"assistant","timestamp":"2026-10-01T10:00:09Z","message":{"id":"m3","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1},"content":[{"type":"text","text":"Done"}]}}),
+        ]
+        .map(|row| row.to_string());
+        let full = |path: &Path| {
+            let rows = parse_rows(&std::fs::read(path).unwrap());
+            RowSummary::from_rows(&rows)
+        };
+        let mut written = String::new();
+        for (i, row) in rows.iter().enumerate() {
+            // Each row lands in two writes, so some reads see a torn last line
+            // and others a complete final row with no newline yet.
+            let (head, rest) = row.split_at(row.len() / 2);
+            for piece in [head, rest, "\n"] {
+                written.push_str(piece);
+                std::fs::write(&path, &written).unwrap();
+                let incremental = read_summary(&path).await.unwrap();
+                assert_eq!(*incremental, full(&path), "row {i}, after {piece:?}");
+            }
+        }
+        let summary = read_summary(&path).await.unwrap();
+        assert_eq!(summary.tokens, Some(10 + 3 + 100 + 5 + 7 + 1 + 1));
+        assert_eq!(summary.tool_calls, 2);
+        assert!(summary.completed.is_some());
+        // Rewritten shorter, then rewritten in place at the same length (its
+        // last row, which the kept tail covers — the same append-only check
+        // as the usage fold): both fold from the top rather than resuming past
+        // bytes that changed.
+        let shorter = format!("{}\n{}\n", rows[0], rows[1]);
+        std::fs::write(&path, &shorter).unwrap();
+        assert_eq!(*read_summary(&path).await.unwrap(), full(&path));
+        let mut longer = shorter.clone();
+        longer.push_str(&rows[4]);
+        longer.push('\n');
+        std::fs::write(&path, &longer).unwrap();
+        assert_eq!(*read_summary(&path).await.unwrap(), full(&path));
+        let before = read_summary(&path).await.unwrap();
+        let replaced = longer.replace("10:00:00Z", "09:00:00Z");
+        assert_eq!(replaced.len(), longer.len());
+        std::fs::write(&path, format!("{replaced}{}\n", rows[5])).unwrap();
+        let after = read_summary(&path).await.unwrap();
+        assert_eq!(*after, full(&path));
+        assert_ne!(after.started_at, before.started_at);
         std::fs::remove_dir_all(root).unwrap();
     }
 

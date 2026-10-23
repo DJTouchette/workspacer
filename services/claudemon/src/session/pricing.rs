@@ -123,20 +123,22 @@ pub fn overrides_path() -> Option<PathBuf> {
     )
 }
 
-/// mtime-keyed cache of the parsed overrides file, so the hot paths (usage
-/// events, status-line assembly) cost one stat, not one parse.
-type CachedOverrides = (Option<SystemTime>, HashMap<String, ModelRates>);
+/// mtime-keyed cache of the parsed overrides file and the [`fingerprint`] it
+/// gives, so the hot paths (usage events, status-line assembly) cost one stat,
+/// not one parse or one format of the whole rate table.
+type CachedOverrides = (Option<SystemTime>, HashMap<String, ModelRates>, u64);
 static OVERRIDES: Mutex<Option<CachedOverrides>> = Mutex::new(None);
 
-fn overrides() -> HashMap<String, ModelRates> {
+fn with_overrides<T>(read: impl FnOnce(&HashMap<String, ModelRates>, u64) -> T) -> T {
     let Some(path) = overrides_path() else {
-        return HashMap::new();
+        let none = HashMap::new();
+        return read(&none, fingerprint_of(&none));
     };
     let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
     let mut guard = OVERRIDES.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some((cached_mtime, table)) = guard.as_ref() {
+    if let Some((cached_mtime, table, print)) = guard.as_ref() {
         if *cached_mtime == mtime {
-            return table.clone();
+            return read(table, *print);
         }
     }
     let table: HashMap<String, ModelRates> = match mtime {
@@ -146,8 +148,14 @@ fn overrides() -> HashMap<String, ModelRates> {
             .map(|s| parse_overrides(&path, &s))
             .unwrap_or_default(),
     };
-    *guard = Some((mtime, table.clone()));
-    table
+    let print = fingerprint_of(&table);
+    let answer = read(&table, print);
+    *guard = Some((mtime, table, print));
+    answer
+}
+
+fn overrides() -> HashMap<String, ModelRates> {
+    with_overrides(|table, _| table.clone())
 }
 
 /// Parse the overrides file *per entry*, mirroring the desktop reader
@@ -250,9 +258,18 @@ fn rates_for_in(
 /// overrides. A cost folded under one fingerprint and persisted (see
 /// `usage::usage_for_path`) is stale under any other, so it is refolded.
 pub fn fingerprint() -> u64 {
-    let mut user: Vec<(String, ModelRates)> = overrides().into_iter().collect();
-    user.sort_by(|a, b| a.0.cmp(&b.0));
-    super::usage::fnv1a(format!("{BUILTIN:?}{user:?}").as_bytes())
+    with_overrides(|_, print| print)
+}
+
+/// The hash of `format!("{BUILTIN:?}{user:?}")`, with the built-in half — a
+/// constant — hashed once: FNV-1a runs left to right, so the user half resumes
+/// from that state and the value is unchanged.
+fn fingerprint_of(user: &HashMap<String, ModelRates>) -> u64 {
+    static BUILTIN_STATE: std::sync::LazyLock<u64> =
+        std::sync::LazyLock::new(|| super::usage::fnv1a(format!("{BUILTIN:?}").as_bytes()));
+    let mut user: Vec<(&String, &ModelRates)> = user.iter().collect();
+    user.sort_by(|a, b| a.0.cmp(b.0));
+    super::usage::fnv1a_from(*BUILTIN_STATE, format!("{user:?}").as_bytes())
 }
 
 pub fn override_window_for(model: &str) -> Option<u64> {
@@ -283,6 +300,23 @@ pub fn estimate_cost(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingerprint_hashes_the_builtins_once_without_changing_its_value() {
+        // Persisted usage folds carry this value; the cached built-in half
+        // must reproduce the whole-string hash exactly or every fold refolds.
+        let mut user = HashMap::new();
+        user.insert("gpt-9".to_string(), rates(1.0, 2.0, Some(0.1)));
+        user.insert("claude-x".to_string(), rates(3.0, 4.0, None));
+        for table in [HashMap::new(), user] {
+            let mut sorted: Vec<(String, ModelRates)> = table.clone().into_iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            assert_eq!(
+                fingerprint_of(&table),
+                crate::session::usage::fnv1a(format!("{BUILTIN:?}{sorted:?}").as_bytes())
+            );
+        }
+    }
 
     #[test]
     fn longest_prefix_wins() {

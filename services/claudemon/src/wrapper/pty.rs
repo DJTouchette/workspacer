@@ -155,6 +155,9 @@ pub fn signal_child(handle: &PtyHandle, sig: crate::protocol::Signal) -> Result<
 
 /// A blocking waiter that releases the child mutex between polls, so an external
 /// wrapper's lifetime wait does not prevent another thread from terminating it.
+/// It runs for a terminal's whole life, so it polls at a pace a person cannot
+/// tell from instant rather than 50 wakeups a second; a blocking wait would
+/// have to hold the mutex that `signal_child` needs.
 pub fn wait_child(handle: &PtyHandle) -> Result<portable_pty::ExitStatus> {
     loop {
         if let Some(status) = handle
@@ -165,7 +168,7 @@ pub fn wait_child(handle: &PtyHandle) -> Result<portable_pty::ExitStatus> {
         {
             return Ok(status);
         }
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 

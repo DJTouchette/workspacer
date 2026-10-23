@@ -379,18 +379,43 @@ fn paths_eq(a: &str, b: &str) -> bool {
     norm(a) == norm(b)
 }
 
-/// Read the `session_meta.cwd` from the first JSON line of a rollout file.
-async fn rollout_cwd(path: &Path) -> Option<String> {
-    let content = tokio::fs::read_to_string(path).await.ok()?;
-    let first = content.lines().find(|l| !l.trim().is_empty())?;
-    let v: Value = serde_json::from_str(first).ok()?;
-    if v.get("type").and_then(Value::as_str) != Some("session_meta") {
-        return None;
+/// Upper bound on the first line [`rollout_cwd`] will read. `session_meta`
+/// carries the base instructions, so it is tens of KB, not bytes — but the rest
+/// of the file is the whole conversation and can run to megabytes.
+const MAX_META_LINE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Read the `session_meta.cwd` from the first JSON line of a rollout file —
+/// that line only, through a bounded reader, never the whole (growing) file.
+/// The flag says whether the answer is final: the line was complete, so a
+/// later read of the same file cannot change it.
+fn rollout_cwd(path: &Path) -> (Option<String>, bool) {
+    use std::io::{BufRead, Read};
+    let Ok(file) = std::fs::File::open(path) else {
+        return (None, false);
+    };
+    let mut reader = std::io::BufReader::new(file.take(MAX_META_LINE_BYTES));
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => return (None, false),
+            Ok(_) if line.iter().all(u8::is_ascii_whitespace) => continue,
+            Ok(_) => break,
+        }
     }
-    v.get("payload")
+    let complete = line.last() == Some(&b'\n');
+    let Ok(v) = serde_json::from_slice::<Value>(&line) else {
+        return (None, complete);
+    };
+    if v.get("type").and_then(Value::as_str) != Some("session_meta") {
+        return (None, complete);
+    }
+    let cwd = v
+        .get("payload")
         .and_then(|p| p.get("cwd"))
         .and_then(Value::as_str)
-        .map(str::to_string)
+        .map(str::to_string);
+    (cwd, complete)
 }
 
 // ── Session ↔ thread persistence (restart durability + resume) ──────────────
@@ -403,12 +428,20 @@ async fn rollout_cwd(path: &Path) -> Option<String> {
 // SQLite sessions table) because the schema is columnar with no migration
 // machinery, and this is one provider-scoped string.
 
-/// `~/.workspacer/codex-threads`, created on demand.
+/// `~/.workspacer/codex-threads`, not touched on disk.
+fn threads_dir_path() -> Option<PathBuf> {
+    Some(
+        BaseDirs::new()?
+            .home_dir()
+            .join(".workspacer")
+            .join("codex-threads"),
+    )
+}
+
+/// `~/.workspacer/codex-threads`, created on demand — for writers only; a read
+/// of a missing dir simply finds no sidecar.
 fn threads_dir() -> Option<PathBuf> {
-    let dir = BaseDirs::new()?
-        .home_dir()
-        .join(".workspacer")
-        .join("codex-threads");
+    let dir = threads_dir_path()?;
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
@@ -424,7 +457,7 @@ pub fn record_thread(session_id: &str, thread_id: &str) {
 
 /// The thread recorded for a (possibly prior-life) session id.
 pub fn thread_for(session_id: &str) -> Option<String> {
-    let path = threads_dir()?.join(format!("{session_id}.json"));
+    let path = threads_dir_path()?.join(format!("{session_id}.json"));
     let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str::<Value>(&text)
         .ok()?
@@ -433,18 +466,59 @@ pub fn thread_for(session_id: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Thread → rollout paths already located, keyed by sessions root too so a
+/// changed `CODEX_HOME` cannot serve another home's file. A rollout never moves
+/// once written; an entry whose file has gone is dropped and looked up again.
+type ThreadRollouts = std::collections::HashMap<(PathBuf, String), PathBuf>;
+static THREAD_ROLLOUTS: std::sync::LazyLock<std::sync::Mutex<ThreadRollouts>> =
+    std::sync::LazyLock::new(Default::default);
+const MAX_THREAD_ROLLOUTS: usize = 1024;
+
 /// Locate a thread's rollout on disk: the filename ends `-<thread_id>.jsonl`.
+/// Remembered once found, and otherwise walked newest day first, stopping at
+/// the first match — the thread asked about is almost always a recent one.
 pub fn rollout_for_thread(thread_id: &str) -> Option<PathBuf> {
     let root = codex_home()?.join("sessions");
+    let key = (root.clone(), thread_id.to_owned());
+    let cached = THREAD_ROLLOUTS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&key)
+        .cloned();
+    if let Some(path) = cached.filter(|p| p.is_file()) {
+        return Some(path);
+    }
     let suffix = format!("-{thread_id}.jsonl");
-    collect_rollouts(&root)
-        .into_iter()
-        .find(|(p, _)| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.ends_with(&suffix))
-        })
-        .map(|(p, _)| p)
+    let found = find_newest_first(&root, &|name| {
+        name.starts_with("rollout-") && name.ends_with(&suffix)
+    })?;
+    let mut cache = THREAD_ROLLOUTS.lock().unwrap_or_else(|p| p.into_inner());
+    if cache.len() >= MAX_THREAD_ROLLOUTS {
+        cache.clear();
+    }
+    cache.insert(key, found.clone());
+    Some(found)
+}
+
+/// Depth-first walk of `dir` in descending name order (newest first under the
+/// YYYY/MM/DD layout), returning the first file whose name satisfies `matches`.
+fn find_newest_first(dir: &Path, matches: &dyn Fn(&str) -> bool) -> Option<PathBuf> {
+    let mut entries: Vec<(PathBuf, bool)> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| Some((e.path(), e.file_type().ok()?.is_dir())))
+        .collect();
+    entries.sort_by(|a, b| b.0.cmp(&a.0));
+    if let Some((path, _)) = entries
+        .iter()
+        .find(|(p, is_dir)| !is_dir && p.file_name().and_then(|n| n.to_str()).is_some_and(matches))
+    {
+        return Some(path.clone());
+    }
+    entries
+        .iter()
+        .filter(|(_, is_dir)| *is_dir)
+        .find_map(|(path, _)| find_newest_first(path, matches))
 }
 
 /// Replay a whole rollout file into conversation items — the offline half of
@@ -491,6 +565,98 @@ pub(crate) fn collect_rollouts(sessions_root: &Path) -> Vec<(PathBuf, std::time:
     out
 }
 
+/// The `rollout-*.jsonl` files directly in `dir` (no recursion), with mtimes.
+fn rollouts_in(dir: &Path) -> Vec<(PathBuf, std::time::SystemTime)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(".jsonl"))
+        })
+        .filter_map(|e| Some((e.path(), e.metadata().and_then(|m| m.modified()).ok()?)))
+        .collect()
+}
+
+/// The `YYYY/MM/DD` directories a rollout created between `since` and `now`
+/// can be in. Codex names the directory from its LOCAL clock; this build has
+/// no local-offset source, but a local date is always within a day of the UTC
+/// one, so every UTC date from the day before `since` to the day after `now`
+/// covers both readings at any offset (and a midnight crossed mid-poll).
+fn day_dirs(
+    sessions_root: &Path,
+    since: std::time::SystemTime,
+    now: std::time::SystemTime,
+) -> Vec<PathBuf> {
+    let day = time::Duration::days(1);
+    let first = (time::OffsetDateTime::from(since) - day).date();
+    let last = (time::OffsetDateTime::from(now.max(since)) + day).date();
+    let mut dirs = Vec::new();
+    let mut date = first;
+    // Bounded: discovery spans minutes, so this is 3-4 days; a wild clock jump
+    // must not turn it into a walk of years.
+    while date <= last && dirs.len() < 8 {
+        dirs.push(
+            sessions_root
+                .join(date.year().to_string())
+                .join(format!("{:02}", u8::from(date.month())))
+                .join(format!("{:02}", date.day())),
+        );
+        let Some(next) = date.next_day() else { break };
+        date = next;
+    }
+    dirs
+}
+
+/// One discovery pass, blocking: list the candidate rollouts modified at/after
+/// `cutoff` — in the day directories `since` can have written to, or the whole
+/// tree when `full` — and return the newest whose `session_meta.cwd` matches.
+/// Files whose complete first line named another cwd go into `rejected` and are
+/// not opened again on later passes.
+fn scan_for_rollout(
+    sessions_root: &Path,
+    cwd: &str,
+    since: std::time::SystemTime,
+    cutoff: std::time::SystemTime,
+    full: bool,
+    rejected: &mut std::collections::HashSet<PathBuf>,
+) -> Option<PathBuf> {
+    let mut candidates: Vec<(PathBuf, std::time::SystemTime)> = if full {
+        collect_rollouts(sessions_root)
+    } else {
+        // The root itself too: a flat layout costs one listing to honour.
+        std::iter::once(sessions_root.to_path_buf())
+            .chain(day_dirs(sessions_root, since, std::time::SystemTime::now()))
+            .flat_map(|dir| rollouts_in(&dir))
+            .collect()
+    };
+    candidates.retain(|(p, m)| *m >= cutoff && !rejected.contains(p));
+    // Newest first, so the first cwd match is the most recent session.
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
+    for (path, _) in candidates {
+        match rollout_cwd(&path) {
+            (Some(c), _) if paths_eq(&c, cwd) => return Some(path),
+            (_, true) => {
+                rejected.insert(path);
+            }
+            (_, false) => {}
+        }
+    }
+    None
+}
+
+/// Overall discovery budget, and the backoff between passes.
+const DISCOVERY_BUDGET: Duration = Duration::from_secs(180);
+const DISCOVERY_FIRST_DELAY: Duration = Duration::from_millis(250);
+const DISCOVERY_MAX_DELAY: Duration = Duration::from_secs(2);
+/// How often a pass walks the whole sessions tree instead of the day dirs — a
+/// backstop should Codex ever lay rollouts out somewhere [`day_dirs`] misses.
+const DISCOVERY_FULL_WALK_EVERY: Duration = Duration::from_secs(30);
+
 /// Find the rollout file for a session we just spawned in `cwd`: the newest
 /// rollout, modified at/after `since`, whose `session_meta.cwd` matches.
 ///
@@ -498,7 +664,9 @@ pub(crate) fn collect_rollouts(sessions_root: &Path) -> Vec<(PathBuf, std::time:
 /// the old 20s budget to write its first `session_meta` — a cold start pays for
 /// model + MCP startup and a large base-instruction flush — and if we gave up
 /// first, the rollout showed up orphaned and the GUI view stayed empty forever
-/// (the Term/PTY still worked). Waiting is cheap (250ms sleeps), and we bail the
+/// (the Term/PTY still worked). Waiting is cheap: a pass lists only the day
+/// directories the rollout can be in and reads one line per new candidate, off
+/// the async workers, and the polls back off from 250ms to 2s. We bail the
 /// instant the session is deregistered so a dead or never-recording session
 /// can't poll forever. The ceiling is a backstop, not the expected path.
 async fn discover_rollout(
@@ -510,25 +678,35 @@ async fn discover_rollout(
     let sessions_root = codex_home()?.join("sessions");
     // A small grace window before `since` guards against coarse mtime / clock skew.
     let cutoff = since.checked_sub(Duration::from_secs(5)).unwrap_or(since);
-    // ~3 min backstop at 250ms/iter — long enough for any realistic cold start,
-    // bounded so a session that never records eventually stops scanning.
-    for _ in 0..720 {
+    // ~3 min backstop — long enough for any realistic cold start, bounded so a
+    // session that never records eventually stops scanning.
+    let deadline = tokio::time::Instant::now() + DISCOVERY_BUDGET;
+    let mut last_full = tokio::time::Instant::now();
+    let mut delay = DISCOVERY_FIRST_DELAY;
+    let mut rejected = std::collections::HashSet::new();
+    loop {
         store.get(session_id)?;
-        let mut candidates: Vec<(PathBuf, std::time::SystemTime)> =
-            collect_rollouts(&sessions_root)
-                .into_iter()
-                .filter(|(_, m)| *m >= cutoff)
-                .collect();
-        // Newest first, so the first cwd match is the most recent session.
-        candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
-        for (path, _) in candidates {
-            if rollout_cwd(&path).await.is_some_and(|c| paths_eq(&c, cwd)) {
-                return Some(path);
-            }
+        let full = last_full.elapsed() >= DISCOVERY_FULL_WALK_EVERY;
+        if full {
+            last_full = tokio::time::Instant::now();
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        let (root, want) = (sessions_root.clone(), cwd.to_owned());
+        let (found, back) = tokio::task::spawn_blocking(move || {
+            let found = scan_for_rollout(&root, &want, since, cutoff, full, &mut rejected);
+            (found, rejected)
+        })
+        .await
+        .ok()?;
+        if found.is_some() {
+            return found;
+        }
+        rejected = back;
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(delay).await;
+        delay = (delay * 3 / 2).min(DISCOVERY_MAX_DELAY);
     }
-    None
 }
 
 /// Spawn the rollout tailer for a hybrid Codex session. Returns immediately; the
@@ -828,6 +1006,14 @@ mod tests {
             Some(rollout.as_path())
         );
         assert!(rollout_for_thread("th-2").is_none(), "no rollout for th-2");
+        // A remembered path is checked before it is served: once the file is
+        // gone the lookup walks again and finds a newer day's copy.
+        let newer = home.join("sessions").join("2026").join("07").join("11");
+        std::fs::create_dir_all(&newer).unwrap();
+        std::fs::remove_file(&rollout).unwrap();
+        let moved = newer.join("rollout-2026-07-11-th-1.jsonl");
+        std::fs::write(&moved, "").unwrap();
+        assert_eq!(rollout_for_thread("th-1").as_deref(), Some(moved.as_path()));
 
         match prev {
             Some(v) => std::env::set_var("CODEX_HOME", v),
@@ -1269,5 +1455,88 @@ mod tests {
                 context_window: None,
             }]
         );
+    }
+
+    fn meta_line(cwd: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"session_meta","payload":{"cwd":cwd,"instructions":"x".repeat(64)}})
+        )
+    }
+
+    #[test]
+    fn rollout_cwd_reads_only_the_first_line() {
+        let dir = std::env::temp_dir().join(format!("wks-rollout-cwd-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rollout-a.jsonl");
+        // Everything after the first line is irrelevant — here not even UTF-8,
+        // which a whole-file read_to_string would have choked on.
+        let mut bytes = format!("\n{}", meta_line("/w/a")).into_bytes();
+        bytes.extend(std::iter::repeat_n(0xff, 1 << 20));
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(rollout_cwd(&path), (Some("/w/a".into()), true));
+        // A first line still being written is not final.
+        std::fs::write(&path, r#"{"type":"session_meta","payload":{"cwd":"/w"#).unwrap();
+        assert_eq!(rollout_cwd(&path), (None, false));
+        // A complete line that is not session_meta is final.
+        std::fs::write(&path, "{\"type\":\"event_msg\"}\n").unwrap();
+        assert_eq!(rollout_cwd(&path), (None, true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn day_dirs_span_the_utc_day_either_side() {
+        let root = Path::new("/s");
+        // 2026-10-23T00:30Z: local time anywhere is the 22nd, 23rd or 24th.
+        let since = std::time::UNIX_EPOCH + Duration::from_secs(1_792_715_400);
+        let dirs = day_dirs(root, since, since + Duration::from_secs(60));
+        assert_eq!(
+            dirs,
+            ["22", "23", "24"]
+                .iter()
+                .map(|d| root.join("2026").join("10").join(d))
+                .collect::<Vec<_>>()
+        );
+        // Polling across midnight adds the new day's neighbour.
+        let dirs = day_dirs(root, since, since + Duration::from_secs(86_400));
+        assert_eq!(
+            dirs.last().unwrap(),
+            &root.join("2026").join("10").join("25")
+        );
+    }
+
+    #[test]
+    fn discovery_finds_a_rollout_in_todays_dir_and_skips_old_days() {
+        let root = std::env::temp_dir().join(format!("wks-rollout-scan-{}", uuid::Uuid::new_v4()));
+        let since = std::time::SystemTime::now();
+        let cutoff = since - Duration::from_secs(5);
+        let today = day_dirs(&root, since, since)[1].clone();
+        std::fs::create_dir_all(&today).unwrap();
+        let other = today.join("rollout-1-other.jsonl");
+        std::fs::write(&other, meta_line("/w/other")).unwrap();
+        let mine = today.join("rollout-2-mine.jsonl");
+        std::fs::write(&mine, meta_line("/w/mine/")).unwrap();
+        let mut rejected = std::collections::HashSet::new();
+        assert_eq!(
+            scan_for_rollout(&root, "/w/mine", since, cutoff, false, &mut rejected).as_deref(),
+            Some(mine.as_path())
+        );
+        // Another session's rollout is read once, then never opened again.
+        std::fs::remove_file(&mine).unwrap();
+        assert!(scan_for_rollout(&root, "/w/mine", since, cutoff, false, &mut rejected).is_none());
+        assert!(rejected.contains(&other));
+
+        // A fresh file in a long-past day dir is outside the day scan; only the
+        // periodic full walk sees it.
+        let old = root.join("2020").join("01").join("01");
+        std::fs::create_dir_all(&old).unwrap();
+        let stray = old.join("rollout-3-mine.jsonl");
+        std::fs::write(&stray, meta_line("/w/mine")).unwrap();
+        assert!(scan_for_rollout(&root, "/w/mine", since, cutoff, false, &mut rejected).is_none());
+        assert_eq!(
+            scan_for_rollout(&root, "/w/mine", since, cutoff, true, &mut rejected).as_deref(),
+            Some(stray.as_path())
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

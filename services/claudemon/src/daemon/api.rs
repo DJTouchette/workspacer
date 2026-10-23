@@ -425,7 +425,15 @@ async fn get_usage(State(store): State<SessionStore>) -> Response {
 /// See `session::usage_report` for the shape and for why each field is
 /// three-valued.
 async fn get_usage_report(State(store): State<SessionStore>) -> Response {
-    Json(crate::session::usage_report::build(&store)).into_response()
+    // Every transcript, rollout and foreign SQLite store it reads is blocking
+    // fs work; keep it off the async workers.
+    match tokio::task::spawn_blocking(move || crate::session::usage_report::build(&store)).await {
+        Ok(report) => Json(report).into_response(),
+        Err(err) => {
+            tracing::warn!(?err, "usage report task failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1855,10 +1863,17 @@ async fn retained_conversation(
     id: &str,
 ) -> ConversationStore {
     if !conv.has_conversation(id) {
-        if let Some(replayed) = crate::providers::codex_rollout::thread_for(id)
-            .and_then(|tid| crate::providers::codex_rollout::rollout_for_thread(&tid))
-            .map(|path| crate::providers::codex_rollout::replay_conversation(&path))
-            .filter(|replayed| !replayed.is_empty())
+        // Sidecar, rollout lookup and whole-rollout read are all blocking fs.
+        let owned = id.to_owned();
+        if let Some(replayed) = tokio::task::spawn_blocking(move || {
+            crate::providers::codex_rollout::thread_for(&owned)
+                .and_then(|tid| crate::providers::codex_rollout::rollout_for_thread(&tid))
+                .map(|path| crate::providers::codex_rollout::replay_conversation(&path))
+        })
+        .await
+        .ok()
+        .flatten()
+        .filter(|replayed| !replayed.is_empty())
         {
             conv.push(id, replayed);
         }
