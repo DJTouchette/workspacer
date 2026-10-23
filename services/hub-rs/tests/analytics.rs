@@ -364,7 +364,8 @@ async fn owned_watcher_records_terminal_hooks_without_an_analytics_query_and_joi
             .error_for_status()
             .unwrap();
     }
-    let observed = tokio::time::timeout(std::time::Duration::from_secs(8), async {
+    // A pass follows engine updates within the watcher's active cadence (5 s).
+    let observed = tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
             let rows = service.read("analytics.recent", &json!({})).unwrap();
             if rows
@@ -444,4 +445,72 @@ fn recomputation_replaces_old_model_slices_and_sidechains_do_not_replace_main_mo
     assert_eq!(summary["byModel"].as_array().unwrap().len(), 1);
     assert_eq!(summary["byModel"][0]["key"], "claude-opus");
     assert_eq!(summary["totals"]["inputTokens"], 50);
+}
+
+#[test]
+fn background_passes_skip_unchanged_rows_and_refold_growing_transcripts_at_most_every_30s() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("projects");
+    let project = root.join("one");
+    std::fs::create_dir_all(&project).unwrap();
+    let main = project.join("live.jsonl");
+    let turn = |id: &str, input: u64| {
+        json!({"type":"assistant","message":{"id":id,"model":"claude-sonnet","usage":{"input_tokens":input,"output_tokens":1}}})
+            .to_string()
+    };
+    std::fs::write(&main, turn("a", 100) + "\n").unwrap();
+    let path = dir.path().join("history.sqlite");
+    let service = Analytics::open(path.clone(), Arc::new(Pricing::new(dir.path().into()))).unwrap();
+    let rows = vec![
+        json!({"session_id":"live","provider":"claude","mode":"input","transcript_path":main}),
+    ];
+    let stamp = || -> String {
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .query_row(
+                "SELECT updated_at FROM session_history WHERE session_id='live'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let first = service
+        .observe_in_background(
+            "analytics.recent",
+            &json!({}),
+            &rows,
+            &[root.clone()],
+            1_000,
+        )
+        .unwrap();
+    assert_eq!(first[0]["inputTokens"], 100);
+    let written = stamp();
+    // Nothing changed: the row is not rewritten, so its stamp holds.
+    service
+        .observe_in_background(
+            "analytics.recent",
+            &json!({}),
+            &rows,
+            &[root.clone()],
+            11_000,
+        )
+        .unwrap();
+    assert_eq!(stamp(), written);
+    // The transcript grows: a background pass moments after the last fold
+    // keeps the totals it has; an explicit query folds at once.
+    std::fs::write(&main, turn("a", 100) + "\n" + &turn("b", 50) + "\n").unwrap();
+    let held = service
+        .observe_in_background(
+            "analytics.recent",
+            &json!({}),
+            &rows,
+            &[root.clone()],
+            12_000,
+        )
+        .unwrap();
+    assert_eq!(held[0]["inputTokens"], 100);
+    let now = service
+        .observe_and_read("analytics.recent", &json!({}), &rows, &[root], 13_000)
+        .unwrap();
+    assert_eq!(now[0]["inputTokens"], 150);
 }

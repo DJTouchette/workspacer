@@ -10,13 +10,19 @@
 //! rendered, which here is the whole Workspace, so one visible spinner
 //! re-rendered everything at the display's refresh rate. They read a shared
 //! clock instead ([`looping`]), and each view's [`Ticker`] redraws it at
-//! [`LOOP_FRAME`] only while one was drawn since its last redraw.
+//! [`LOOP_FRAME`] only while one was drawn since its last redraw — and at
+//! [`BACKGROUND_LOOP_FRAME`] while its window is not the active one, where a
+//! tiled window is still in view but is not what the user is looking at.
 use std::cell::Cell;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-/// How often a view showing a looping indicator redraws: 20 frames a second.
-pub(super) const LOOP_FRAME: Duration = Duration::from_millis(50);
+/// How often a view showing a looping indicator redraws: 12.5 frames a
+/// second. Each redraw renders the whole view, so this is what a working
+/// agent costs the machine while it shows.
+pub(super) const LOOP_FRAME: Duration = Duration::from_millis(80);
+/// The same while the window is not active: 2 frames a second.
+pub(super) const BACKGROUND_LOOP_FRAME: Duration = Duration::from_millis(500);
 
 thread_local! {
     /// Bumped by every looping indicator drawn; a ticker redraws when it moved.
@@ -51,6 +57,7 @@ pub(super) struct Ticker(Option<gpui::Task<()>>);
 impl Ticker {
     pub(super) fn arm<T: 'static>(
         &mut self,
+        window: &gpui::Window,
         cx: &mut gpui::Context<T>,
         ticker: fn(&mut T) -> &mut Ticker,
     ) {
@@ -58,8 +65,13 @@ impl Ticker {
             return;
         }
         let seen = LOOPS.get();
+        let frame = if window.is_window_active() {
+            LOOP_FRAME
+        } else {
+            BACKGROUND_LOOP_FRAME
+        };
         self.0 = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(LOOP_FRAME).await;
+            cx.background_executor().timer(frame).await;
             let _ = this.update(cx, |this, cx| {
                 ticker(this).0 = None;
                 if LOOPS.get() != seen {

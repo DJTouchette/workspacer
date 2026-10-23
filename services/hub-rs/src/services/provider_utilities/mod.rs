@@ -308,7 +308,9 @@ impl Service {
         let mut stop = self.stop.subscribe();
         let mut jobs = tokio::task::JoinSet::new();
         let mut version = self.version();
-        let mut poll = tokio::time::interval(Duration::from_millis(200));
+        // A settings change re-arms readiness within a second; each look
+        // clones the config and serializes three of its sections.
+        let mut poll = tokio::time::interval(Duration::from_secs(1));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let startup = tokio::time::sleep(self.startup_delay);
         tokio::pin!(startup);

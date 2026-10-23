@@ -56,13 +56,21 @@ impl Watcher {
         }
         roots
     }
-    /// Every query first records every session the engine knows into the
-    /// analytics store, so its cost is logged: a pass that takes a while is
-    /// a pass the whole app waits on and the disk feels.
+    /// Record every session the engine knows into the analytics store, then
+    /// answer `method` from it.
     pub async fn query(self: &Arc<Self>, method: &'static str, params: Value) -> Result<Value> {
+        self.timed(method, params, Pass::Query).await
+    }
+    /// Every pass is logged by its cost: a slow one is one the disk feels.
+    async fn timed(
+        self: &Arc<Self>,
+        method: &'static str,
+        params: Value,
+        pass: Pass,
+    ) -> Result<Value> {
         let started = std::time::Instant::now();
         let sessions = std::sync::atomic::AtomicUsize::new(0);
-        let result = self.observe(method, params, &sessions).await;
+        let result = self.observe(method, params, &sessions, pass).await;
         let took = started.elapsed();
         let sessions = sessions.into_inner();
         if took >= Duration::from_secs(1) {
@@ -97,6 +105,7 @@ impl Watcher {
         method: &'static str,
         params: Value,
         sessions: &std::sync::atomic::AtomicUsize,
+        pass: Pass,
     ) -> Result<Value> {
         let engine = self
             .engine
@@ -106,7 +115,11 @@ impl Watcher {
             Duration::from_secs(15),
             engine.request(Command::Request {
                 method: "GET".into(),
-                path: "/sessions?include_archived=true&include_empty=true".into(),
+                path: if matches!(pass, Pass::Background { archived: false }) {
+                    "/sessions?include_empty=true".into()
+                } else {
+                    "/sessions?include_archived=true&include_empty=true".into()
+                },
                 payload: None,
             }),
         )
@@ -127,7 +140,13 @@ impl Watcher {
         sessions.store(rows.len(), std::sync::atomic::Ordering::Relaxed);
         let watcher = self.clone();
         tokio::task::spawn_blocking(move || {
-            watcher.service.observe_and_read(
+            let observe = if matches!(pass, Pass::Query) {
+                Analytics::observe_and_read
+            } else {
+                Analytics::observe_in_background
+            };
+            observe(
+                &watcher.service,
                 method,
                 &params,
                 &rows,
@@ -150,15 +169,45 @@ impl Watcher {
             return Ok(());
         };
         let mut updates = engine.subscribe()?;
-        let mut ticker = tokio::time::interval(Duration::from_secs(2));
+        // Engine updates arrive many times a second while agents work; a pass
+        // follows them at most every ACTIVE_PASS, and otherwise every
+        // IDLE_PASS. Archived sessions only change by being archived, so a
+        // pass reads them every ARCHIVED_PASS. A failed pass retries after
+        // RETRY_PASS rather than on the next tick.
+        const ACTIVE_PASS: Duration = Duration::from_secs(5);
+        const IDLE_PASS: Duration = Duration::from_secs(60);
+        const ARCHIVED_PASS: Duration = Duration::from_secs(300);
+        const RETRY_PASS: Duration = Duration::from_secs(30);
+        let mut ticker = tokio::time::interval(Duration::from_secs(1));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut dirty = true;
-        let mut since = 0u32;
+        let mut last: Option<tokio::time::Instant> = None;
+        let mut last_archived: Option<tokio::time::Instant> = None;
+        let mut wait = ACTIVE_PASS;
         loop {
             tokio::select! {
              _=cancelled.changed()=>return Ok(()),
              update=updates.recv()=>{match update{Ok(_)|Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>dirty=true,Err(tokio::sync::broadcast::error::RecvError::Closed)=>{if *cancelled.borrow(){return Ok(());}bail!("analytics engine update stream closed");}}},
-             _=ticker.tick()=>{since+=1;if dirty||since>=15{match self.query("analytics.recent",json!({"limit":1})).await{Ok(_)=>{dirty=false;since=0;},Err(error)=>{dirty=true;eprintln!("Analytics observation retained previous history: {error:#}");}}if *cancelled.borrow(){return Ok(());}}}
+             _=ticker.tick()=>{
+                let since = last.map_or(Duration::MAX, |at| at.elapsed());
+                if (dirty && since >= wait) || since >= IDLE_PASS {
+                    let archived = last_archived.is_none_or(|at| at.elapsed() >= ARCHIVED_PASS);
+                    last = Some(tokio::time::Instant::now());
+                    match self.timed("analytics.recent", json!({"limit":1}), Pass::Background { archived }).await {
+                        Ok(_) => {
+                            dirty = false;
+                            wait = ACTIVE_PASS;
+                            if archived { last_archived = last; }
+                        }
+                        Err(error) => {
+                            dirty = true;
+                            wait = RETRY_PASS;
+                            eprintln!("Analytics observation retained previous history: {error:#}");
+                        }
+                    }
+                    if *cancelled.borrow(){return Ok(());}
+                }
+             }
             }
         }
     }
@@ -181,4 +230,12 @@ pub fn install(
         });
     }
     (options, watcher)
+}
+/// What a pass is for: an explicit analytics query folds everything that
+/// changed; the watcher's background pass is throttled and reads archived
+/// sessions only when `archived`.
+#[derive(Clone, Copy)]
+enum Pass {
+    Query,
+    Background { archived: bool },
 }

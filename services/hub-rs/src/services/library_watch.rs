@@ -12,7 +12,9 @@ use std::{
 };
 
 type Rows = Arc<RwLock<BTreeMap<String, Value>>>;
-const PERIOD: Duration = Duration::from_secs(2);
+/// External library edits show within this; each sample reads every library
+/// file of every live project.
+const PERIOD: Duration = Duration::from_secs(5);
 
 pub(crate) struct Watcher {
     library: Arc<Library>,

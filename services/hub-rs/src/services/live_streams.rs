@@ -352,7 +352,9 @@ impl LiveStreams {
             tokio::select! {
              _=closed.changed()=>return Ok(()),
              _=self.changed.notified()=>(),
-             _=visibility.tick()=>{if !self.source.available(){bail!("embedded live stream producer stopped");}
+             // Visibility only matters while a client wants a stream; idle,
+             // the loop waits on `changed` instead of waking ten times a second.
+             _=visibility.tick(), if wanted =>{if !self.source.available(){bail!("embedded live stream producer stopped");}
               // A hidden interval ends the ready contract. Reappearance needs a new
               // handshake even without an unsubscribe from the consumer.
               let mut layout=None;let mut state=self.state.lock().unwrap();for(id,demand)in &mut state.wanted{if !self.visible_with(id,&mut layout){demand.active=false;demand.ready_queued=false;}}

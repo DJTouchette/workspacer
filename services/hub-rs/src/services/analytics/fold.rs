@@ -88,6 +88,11 @@ pub fn recompute(files: &[PathBuf], rates: &Value) -> Result<Option<Fold>> {
         };
         for line in BufReader::new(file).lines() {
             let line = line?;
+            // Only assistant rows with usage count, and most of a transcript
+            // is tool output: don't parse a line that cannot hold usage.
+            if !line.contains("\"usage\"") {
+                continue;
+            }
             let Ok(row) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };

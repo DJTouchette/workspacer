@@ -130,29 +130,54 @@ pub fn read(db: &Connection, method: &str, input: &Value, now_ms: i64) -> Result
         json!({"totals":totals,"byDay":days,"byProject":projects,"byModel":models,"byProvider":providers}),
     )
 }
+/// session_history's columns and the record keys they are written from.
+const FIELDS: &[(&str, &str)] = &[
+    ("session_id", "sessionId"),
+    ("cwd", "cwd"),
+    ("agent_name", "agentName"),
+    ("provider", "provider"),
+    ("model", "model"),
+    ("git_branch", "gitBranch"),
+    ("started_at", "startedAt"),
+    ("ended_at", "endedAt"),
+    ("duration_ms", "durationMs"),
+    ("input_tokens", "inputTokens"),
+    ("output_tokens", "outputTokens"),
+    ("cost_usd", "costUSD"),
+    ("peak_context", "peakContext"),
+    ("tool_calls", "toolCalls"),
+    ("message_count", "messageCount"),
+    ("subagent_count", "subagentCount"),
+    ("workflow_runs", "workflowRuns"),
+    ("workflow_failed", "workflowFailed"),
+    ("status", "status"),
+    ("updated_at", "updatedAt"),
+];
+/// Whether writing `record` would leave the `prior` row as it is: nothing but
+/// the update stamp differs, and a live session's running duration moved by
+/// less than a minute.
+pub fn unchanged(prior: &Value, record: &Value) -> bool {
+    fn text(v: &Value) -> String {
+        match v {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => String::new(),
+        }
+    }
+    prior.is_object()
+        && FIELDS.iter().all(|(column, key)| {
+            let (old, new) = (&prior[*column], &record[*key]);
+            match *column {
+                "updated_at" => true,
+                "duration_ms" => (n(&[old]) - n(&[new])).abs() < 60_000.,
+                _ => match (old.as_f64(), new.as_f64()) {
+                    (Some(a), Some(b)) => (a - b).abs() < 1e-9,
+                    _ => text(old) == text(new),
+                },
+            }
+        })
+}
 pub fn record(db: &Connection, row: &Value) -> Result<()> {
-    const FIELDS: &[(&str, &str)] = &[
-        ("session_id", "sessionId"),
-        ("cwd", "cwd"),
-        ("agent_name", "agentName"),
-        ("provider", "provider"),
-        ("model", "model"),
-        ("git_branch", "gitBranch"),
-        ("started_at", "startedAt"),
-        ("ended_at", "endedAt"),
-        ("duration_ms", "durationMs"),
-        ("input_tokens", "inputTokens"),
-        ("output_tokens", "outputTokens"),
-        ("cost_usd", "costUSD"),
-        ("peak_context", "peakContext"),
-        ("tool_calls", "toolCalls"),
-        ("message_count", "messageCount"),
-        ("subagent_count", "subagentCount"),
-        ("workflow_runs", "workflowRuns"),
-        ("workflow_failed", "workflowFailed"),
-        ("status", "status"),
-        ("updated_at", "updatedAt"),
-    ];
     let columns = FIELDS.iter().map(|f| f.0).collect::<Vec<_>>().join(",");
     let binds = vec!["?"; FIELDS.len()].join(",");
     let updates = FIELDS

@@ -1136,7 +1136,8 @@ impl PreviewPane {
 
 impl Render for PreviewPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.loop_ticker.arm(cx, |this| &mut this.loop_ticker);
+        self.loop_ticker
+            .arm(window, cx, |this| &mut this.loop_ticker);
         let Some(workspace) = self.workspace.upgrade() else {
             return div().into_any_element();
         };

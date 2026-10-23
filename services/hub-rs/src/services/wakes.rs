@@ -791,7 +791,8 @@ impl Wakes {
         if *stop.borrow() {
             return Ok(());
         }
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        // Due wakes go out within half a second of their time.
+        let mut interval = tokio::time::interval(Duration::from_millis(500));
         let mut backstop = tokio::time::interval(Duration::from_secs(120));
         backstop.tick().await;
         let mut tasks = tokio::task::JoinSet::new();

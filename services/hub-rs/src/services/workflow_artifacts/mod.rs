@@ -25,6 +25,9 @@ pub struct Service {
     rows: Arc<RwLock<BTreeMap<String, Value>>>,
     lifecycle: Option<Arc<Lifecycle>>,
     watches: Mutex<BTreeMap<String, Entry>>,
+    /// Sessions whose transcript `locate` did not find: when to look again
+    /// and how many misses so far. Each look lists every project directory.
+    misses: Mutex<BTreeMap<String, (std::time::Instant, u32)>>,
     cache: Mutex<BTreeMap<String, (Value, Value)>>,
     telemetry: Mutex<telemetry::Telemetry>,
     sink: Mutex<Option<Sink>>,
@@ -112,6 +115,8 @@ impl Service {
             .filter(|id| !present.contains(*id))
             .cloned()
             .collect();
+        let mut misses = self.misses.lock().unwrap();
+        misses.retain(|id, _| present.contains(id));
         for id in removed {
             watches.remove(&id);
             self.cache.lock().unwrap().remove(&id);
@@ -133,13 +138,26 @@ impl Service {
                 .is_some_and(|entry| entry.identity != identity)
             {
                 watches.remove(&id);
+                misses.remove(&id);
                 self.cache.lock().unwrap().remove(&id);
                 self.telemetry.lock().unwrap().forget(&id);
             }
             if !watches.contains_key(&id) {
+                if misses
+                    .get(&id)
+                    .is_some_and(|(retry, _)| std::time::Instant::now() < *retry)
+                {
+                    continue;
+                }
                 let Some(path) = self.artifacts.locate(&id, &row) else {
+                    // 5 s, doubling to a minute: a new session's transcript
+                    // appears within seconds; most misses never appear.
+                    let tries = misses.get(&id).map_or(0, |(_, n)| *n);
+                    let wait = Duration::from_secs(5 << tries.min(4)).min(Duration::from_secs(60));
+                    misses.insert(id.clone(), (std::time::Instant::now() + wait, tries + 1));
                     continue;
                 };
+                misses.remove(&id);
                 let Some(root) = path.to_str().and_then(|p| p.strip_suffix(".jsonl")) else {
                     continue;
                 };
@@ -213,6 +231,7 @@ pub(crate) fn prepare(mut options: Options, _hub: Handle) -> Options {
             rows: options.session_snapshots.clone(),
             lifecycle: options.launch_lifecycle.clone(),
             watches: Default::default(),
+            misses: Default::default(),
             cache: Default::default(),
             telemetry: Default::default(),
             sink: Default::default(),

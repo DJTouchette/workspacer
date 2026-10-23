@@ -16,6 +16,9 @@ const SECRET: &str = "__WKS_SECRET__";
 const KINDS: &[&str] = &["prompt", "skill", "agent", "mcp", "command", "dispatch"];
 pub struct Library {
     directory: PathBuf,
+    /// Starters are seeded once; after that the marker is the record, so
+    /// reads (the library watcher lists every few seconds) skip the lock file.
+    seeded: std::sync::atomic::AtomicBool,
 }
 fn validate(input: &Value) -> Result<()> {
     if !input.is_object() && !input.is_null() {
@@ -239,7 +242,10 @@ fn restore(mut incoming: Value, stored: &Value) -> Value {
 }
 impl Library {
     pub fn new(directory: PathBuf) -> Self {
-        Self { directory }
+        Self {
+            directory,
+            seeded: std::sync::atomic::AtomicBool::new(false),
+        }
     }
     fn global(&self) -> PathBuf {
         self.directory.join("library")
@@ -437,7 +443,11 @@ impl Library {
         } else {
             Some(paths::canonicalize(Path::new(string(params, "cwd")))?)
         };
-        self.seed()?;
+        if !self.seeded.load(std::sync::atomic::Ordering::Acquire) {
+            self.seed()?;
+            self.seeded
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
         let mut items = BTreeMap::new();
         for item in self.read_dir(&self.global(), "global", cwd.as_deref()) {
             items.insert(string(&item, "id").to_owned(), item);

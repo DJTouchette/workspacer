@@ -24,7 +24,9 @@ use crate::{
 const MAX_SESSIONS: usize = 10_000;
 /// Bound on sessions read one by one per fleet refresh to keep them listed.
 pub const MAX_KEPT_SESSIONS: usize = 64;
-const FRAME_INTERVAL: Duration = Duration::from_millis(33);
+/// How often a changed view is published to the UI (20 a second): each
+/// publish clones the view and re-renders the window.
+const FRAME_INTERVAL: Duration = Duration::from_millis(50);
 /// Conversation items per page: opening a session reads only the newest page,
 /// and each "earlier messages" step widens the window by one more.
 pub const CONVERSATION_PAGE: usize = 200;
