@@ -87,18 +87,25 @@ the GUI process. `logs/perf.jsonl` (see `apps/native/src/perf.rs`) samples app
 CPU by thread, the agents it spawned, system load, renders/s, controller steps
 and hub-call latency; check it before guessing.
 
-Confirmed costs, 2026-10 (reviewed in code, not yet measured on a user machine):
-- Analytics watcher (`hub-rs/src/services/analytics/watcher.rs`): every 2 s while
-  any engine update arrives, else every 30 s, it fetches every session including
-  archived, then per session runs a SELECT and its own IMMEDIATE transaction
-  stamping `updatedAt=now` (rewritten even when unchanged; `synchronous` unset,
-  so each commit syncs). A changed transcript fingerprint re-reads and parses the
-  whole JSONL (`fold::recompute`). Passes over 200 ms now log.
-- Library watcher (`library_watch.rs`, 2 s, always): `seed()` creates and deletes
-  a lock file, then re-reads every library/skill/agent/command file.
-- Native spinners redraw the whole Workspace at 20 fps (`ui/motion.rs` Ticker)
-  while any looping indicator is visible; reduced motion stops it.
-- claudemon: Codex rollout discovery walks all of `~/.codex/sessions` every
-  250 ms for up to 3 min per spawn; the subagent artifact scan re-reads changed
-  child transcripts (up to 4 MB each) every 2 s; `claudemon wrap` polls
-  `try_wait` every 20 ms.
+Background cadences after the 2026-10 cost pass (keep them event-driven or
+change-detected; regressions here slow the whole machine, not just the app):
+- Analytics watcher (`hub-rs/src/services/analytics/watcher.rs`): a background
+  pass at most every 5 s while engine updates arrive, else every 60 s; archived
+  sessions every 5 min; one transaction per pass, `synchronous=NORMAL`, rows
+  written only when changed (`store::unchanged`); a live transcript re-folds at
+  most every 30 s, an ended one is re-checked every 5 min; the fold skips lines
+  without `"usage"`. Explicit `analytics.*` queries still fold everything that
+  changed. Passes over 200 ms log.
+- Library watcher: 5 s; `Library::list` seeds starters once per process (it
+  used to take a lock file on every read).
+- Workflow artifacts: unfound transcripts back off 5 s doubling to 60 s.
+- Provider settings poll 1 s, wake scan 500 ms, live-stream visibility only
+  while a stream is wanted.
+- Native: looping indicators redraw the whole Workspace at 12.5 fps (2 fps
+  while the window is inactive); views publish at 20 Hz. Reduced motion stops
+  the loop redraws.
+- claudemon: Codex rollout discovery lists only the plausible UTC day dirs,
+  reads one bounded line per candidate, off the async workers, backing off
+  250 ms to 2 s (full walk every 30 s); subagent summaries fold incrementally;
+  stopped-session replays are cached by (path, len, mtime); `claudemon wrap`
+  polls child exit every 100 ms.
