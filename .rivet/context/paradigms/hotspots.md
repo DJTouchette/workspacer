@@ -79,3 +79,26 @@ inputs can be missed by Go's ordinary cache key.
 Documentation-only changes use `rivet context lint` and
 `python3 scripts/check-rivet-docs.py`, plus focused implementation checks for
 behavioral claims. Neither checker establishes semantic accuracy by itself.
+
+## Runtime cost (machine load, not change risk)
+
+The native app embeds the hub and claudemon, so their background loops share
+the GUI process. `logs/perf.jsonl` (see `apps/native/src/perf.rs`) samples app
+CPU by thread, the agents it spawned, system load, renders/s, controller steps
+and hub-call latency; check it before guessing.
+
+Confirmed costs, 2026-10 (reviewed in code, not yet measured on a user machine):
+- Analytics watcher (`hub-rs/src/services/analytics/watcher.rs`): every 2 s while
+  any engine update arrives, else every 30 s, it fetches every session including
+  archived, then per session runs a SELECT and its own IMMEDIATE transaction
+  stamping `updatedAt=now` (rewritten even when unchanged; `synchronous` unset,
+  so each commit syncs). A changed transcript fingerprint re-reads and parses the
+  whole JSONL (`fold::recompute`). Passes over 200 ms now log.
+- Library watcher (`library_watch.rs`, 2 s, always): `seed()` creates and deletes
+  a lock file, then re-reads every library/skill/agent/command file.
+- Native spinners redraw the whole Workspace at 20 fps (`ui/motion.rs` Ticker)
+  while any looping indicator is visible; reduced motion stops it.
+- claudemon: Codex rollout discovery walks all of `~/.codex/sessions` every
+  250 ms for up to 3 min per spawn; the subagent artifact scan re-reads changed
+  child transcripts (up to 4 MB each) every 2 s; `claudemon wrap` polls
+  `try_wait` every 20 ms.

@@ -1818,6 +1818,7 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _timer = wks_native::perf::RENDER.time();
         motion::reduce_loops(self.settings.reduce_motion);
         self.loop_ticker.arm(cx, |this| &mut this.loop_ticker);
         self.track_orientation(window);

@@ -56,7 +56,48 @@ impl Watcher {
         }
         roots
     }
+    /// Every query first records every session the engine knows into the
+    /// analytics store, so its cost is logged: a pass that takes a while is
+    /// a pass the whole app waits on and the disk feels.
     pub async fn query(self: &Arc<Self>, method: &'static str, params: Value) -> Result<Value> {
+        let started = std::time::Instant::now();
+        let sessions = std::sync::atomic::AtomicUsize::new(0);
+        let result = self.observe(method, params, &sessions).await;
+        let took = started.elapsed();
+        let sessions = sessions.into_inner();
+        if took >= Duration::from_secs(1) {
+            tracing::warn!(
+                method,
+                sessions,
+                took_ms = took.as_millis() as u64,
+                ok = result.is_ok(),
+                "slow analytics pass"
+            );
+        } else if took >= Duration::from_millis(200) {
+            tracing::info!(
+                method,
+                sessions,
+                took_ms = took.as_millis() as u64,
+                ok = result.is_ok(),
+                "analytics pass"
+            );
+        } else {
+            tracing::debug!(
+                method,
+                sessions,
+                took_ms = took.as_millis() as u64,
+                ok = result.is_ok(),
+                "analytics pass"
+            );
+        }
+        result
+    }
+    async fn observe(
+        self: &Arc<Self>,
+        method: &'static str,
+        params: Value,
+        sessions: &std::sync::atomic::AtomicUsize,
+    ) -> Result<Value> {
         let engine = self
             .engine
             .as_ref()
@@ -83,6 +124,7 @@ impl Watcher {
                 )
             })
             .collect::<Vec<_>>();
+        sessions.store(rows.len(), std::sync::atomic::Ordering::Relaxed);
         let watcher = self.clone();
         tokio::task::spawn_blocking(move || {
             watcher.service.observe_and_read(

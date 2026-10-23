@@ -180,7 +180,8 @@ async fn termination_signals(tx: async_channel::Sender<()>) -> std::io::Result<(
 /// `logs/wks-native.log` under the native data directory (or the
 /// `--rust-local-dir` override, so two instances never rotate one log),
 /// replaced each launch with the previous run kept as `wks-native.log.1`.
-/// `RUST_LOG` overrides the default filter.
+/// `RUST_LOG` overrides the default filter. `perf.jsonl` beside it samples
+/// what the app and its agents cost the machine (see `wks_native::perf`).
 fn log_to_file(data_dir: Option<PathBuf>) {
     use tracing_subscriber::EnvFilter;
     let Some(directory) =
@@ -205,6 +206,7 @@ fn log_to_file(data_dir: Option<PathBuf>) {
         .with_ansi(false)
         .with_writer(std::sync::Mutex::new(file))
         .try_init();
+    wks_native::perf::start(directory);
 }
 
 /// The update helper starts in its own process group, which makes Windows

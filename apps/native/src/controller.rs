@@ -867,11 +867,17 @@ impl Worker {
         loop {
             tokio::select! {
                 command = commands.recv() => match command {
-                    Some(command) => self.handle_command(command).await,
+                    Some(command) => {
+                        let _timer = crate::perf::COMMAND.time();
+                        self.handle_command(command).await
+                    }
                     None => break,
                 },
                 event = events.recv() => match event {
-                    Ok(event) => self.event(event).await,
+                    Ok(event) => {
+                        let _timer = crate::perf::EVENT.time();
+                        self.event(event).await
+                    }
                     Err(_) => {
                         if self.view.connected {
                             self.disconnected("Backend event stream closed".into(), false);
@@ -883,9 +889,18 @@ impl Worker {
                         break;
                     }
                 },
-                Some(result) = self.jobs.next(), if !self.jobs.is_empty() => self.complete(result).await,
-                _ = frame.tick(), if self.dirty || self.fleet_dirty => self.publish(&updates),
-                _ = maintenance.tick() => self.maintain(),
+                Some(result) = self.jobs.next(), if !self.jobs.is_empty() => {
+                    let _timer = crate::perf::COMPLETION.time();
+                    self.complete(result).await
+                }
+                _ = frame.tick(), if self.dirty || self.fleet_dirty => {
+                    let _timer = crate::perf::PUBLISH.time();
+                    self.publish(&updates)
+                }
+                _ = maintenance.tick() => {
+                    let _timer = crate::perf::MAINTAIN.time();
+                    self.maintain()
+                }
             }
         }
         // Dropping jobs and bus closes pending calls and releases subscriptions.

@@ -259,6 +259,7 @@ fn ansi(index: u8, p: Palette) -> u32 {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _timer = wks_native::perf::TERMINAL_RENDER.time();
         let family = gpui_component::Theme::global(cx).mono_font_family.clone();
         let p = cx.global::<TerminalPalette>().0;
         let font = gpui::font(family.clone());

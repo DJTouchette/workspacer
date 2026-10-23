@@ -151,6 +151,13 @@ impl Client {
         params: Value,
         deadline: Duration,
     ) -> Result<Value> {
+        let started = Instant::now();
+        let result = self.call_inner(method, params, deadline).await;
+        crate::perf::hub_call(method, started.elapsed(), result.is_ok());
+        result
+    }
+
+    async fn call_inner(&self, method: &str, params: Value, deadline: Duration) -> Result<Value> {
         if !self.connected.load(Ordering::Acquire) {
             bail!("Hub disconnected; request was not sent");
         }
