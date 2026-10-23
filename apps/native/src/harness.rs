@@ -1025,12 +1025,14 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
                 {"id":"fixture-native-audit","type":"Explore","description":"Audit settings search","status":"running","model":"claude-haiku-4-5","startedAt":chrono::Utc::now().timestamp_millis() - 59_000,"toolCalls":3}
             ]);
             // Background work beside the turn (stream transport): a dev
-            // server with a proven pid, the running audit child, and two
-            // finished tasks. Logs are answered by `sessions.taskOutput`.
+            // server with a proven pid, a deploy that redirects its output
+            // into a file, the running audit child, and two finished tasks.
+            // Logs are answered by `sessions.taskOutput`.
             let now = chrono::Utc::now().timestamp_millis();
-            snapshot["background_tasks"] = json!(2);
+            snapshot["background_tasks"] = json!(3);
             snapshot["background_task_list"] = json!([
                 {"id":"bdevsrv01","taskType":"local_bash","status":"running","description":"npm run dev -- --port 5173","startedAt":now - 754_000,"hasOutput":true,"pid":48213,"toolUseId":"fixture-bg-dev"},
+                {"id":"bdeploy04","taskType":"local_bash","status":"running","description":"$log = \"$env:USERPROFILE\\scratch\\deploy.log\"; & .\\infra\\deploy.ps1 backend *> $log; \"rc=$LASTEXITCODE\"","startedAt":now - 212_000,"hasOutput":true,"redirectFile":"deploy.log","toolUseId":"fixture-bg-deploy"},
                 {"id":"fixture-native-audit","taskType":"local_agent","status":"running","description":"Audit settings search","startedAt":now - 59_000,"subagentId":"fixture-native-audit","usage":{"totalTokens":9100,"toolUses":3,"durationMs":59000},"lastToolName":"Grep","summary":"Running Search settings labels"},
                 {"id":"btestwch2","taskType":"local_bash","status":"failed","description":"cargo test --locked -- --test-threads=1","startedAt":now - 1_900_000,"endedAt":now - 1_640_000,"hasOutput":true,"summary":"Background command \"cargo test --locked -- --test-threads=1\" failed with exit code 101"},
                 {"id":"wfrelease3","taskType":"local_workflow","status":"completed","description":"Release checklist","workflowName":"release-checklist","startedAt":now - 3_600_000,"endedAt":now - 3_420_000,"hasOutput":true}
@@ -1056,7 +1058,26 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
 /// served like claudemon's bounded read (tail first, then from `offset`).
 fn rich_task_output(session: &str, params: &Value) -> Value {
     let task = params["taskId"].as_str().unwrap_or_default();
-    let text = match task {
+    let redirect = params["source"].as_str() == Some("redirect");
+    let text = match (task, redirect) {
+        // The deploy's task file stays empty; its output is in the file.
+        ("bdeploy04", false) => String::new(),
+        ("bdeploy04", true) => [
+            "Building backend handlers",
+            "C:\\work\\backend\\Handlers\\FileStore\\src\\FileStore",
+            "Success",
+            "C:\\work\\backend\\Handlers\\JobRunner\\src\\JobRunner",
+            "Success",
+            "C:\\work\\backend\\Handlers\\LabPoller\\src\\LabPoller",
+            "Success",
+            "Packaging lambdas (3/9)",
+        ]
+        .join("\n")
+            + "\n",
+        (_, true) => {
+            return json!({"ok": false, "error": "this task's command redirects its output nowhere known"});
+        }
+        (task, false) => match task {
         "bdevsrv01" => {
             let mut lines = vec![
                 "> project@0.4.0 dev".to_owned(),
@@ -1082,6 +1103,7 @@ fn rich_task_output(session: &str, params: &Value) -> Value {
         "btestwch2" => "running 214 tests\ntest ui::tests::title::chip ... ok\ntest model::merge ... FAILED\n\nfailures:\n    model::merge\n\ntest result: FAILED. 213 passed; 1 failed\n\n[exited with code 101]\n".to_owned(),
         "wfrelease3" => "step 1/3 changelog ... done\nstep 2/3 version bump ... done\nstep 3/3 tag ... done\n".to_owned(),
         _ => return json!({"ok": false, "error": "background task not found for that session"}),
+        },
     };
     let size = text.len() as u64;
     let max = params["maxBytes"].as_u64().unwrap_or(65_536).max(1);
@@ -1096,14 +1118,15 @@ fn rich_task_output(session: &str, params: &Value) -> Value {
     while !text.is_char_boundary(end) {
         end -= 1;
     }
-    let running = task == "bdevsrv01";
+    let running = matches!(task, "bdevsrv01" | "bdeploy04");
     json!({
         "session_id": session, "task_id": task,
+        "source": if redirect { "redirect" } else { "task" },
         "status": if running { "running" } else if task == "btestwch2" { "failed" } else { "completed" },
         "running": running, "offset": start, "next_offset": end, "size": size,
         "text": &text[start..end], "reset": false,
         "done": !running && end as u64 >= size,
-        "process": if running {
+        "process": if task == "bdevsrv01" {
             json!({"pid":48213,"alive":true,"processes":3,"rss_bytes":187_432_960u64,"cpu_seconds":41.2,"cpu_percent":2.4})
         } else {
             Value::Null

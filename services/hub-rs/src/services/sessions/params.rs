@@ -90,6 +90,11 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
                 bail!("{key} must be a non-negative integer");
             }
         }
+        if params.get("source").is_some_and(|value| {
+            !value.is_null() && !matches!(value.as_str(), Some("task" | "redirect"))
+        }) {
+            bail!("source must be \"task\" or \"redirect\"");
+        }
     }
     if matches!(method, "sessions.taskOutput" | "sessions.taskStop")
         && params

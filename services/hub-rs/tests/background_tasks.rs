@@ -174,6 +174,7 @@ async fn task_log_and_stop_ride_the_bus_with_tiered_access() {
         json!({"sessionId":SID,"taskId":7}),
         json!({"sessionId":SID,"taskId":"t1","offset":-1}),
         json!({"sessionId":SID,"taskId":"t1","maxBytes":"lots"}),
+        json!({"sessionId":SID,"taskId":"t1","source":"/etc/passwd"}),
         json!({"sessionId":SID,"taskId":"nope"}),
     ] {
         assert!(

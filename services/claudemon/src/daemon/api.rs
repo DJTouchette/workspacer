@@ -1998,6 +1998,10 @@ struct TaskOutputQuery {
     offset: Option<u64>,
     /// Bytes to return, capped at `background_tasks::MAX_READ_BYTES`.
     max: Option<u64>,
+    /// `redirect`: the file the shell's command redirects its output into
+    /// (resolved daemon-side from the task's command); absent = the CLI's
+    /// own task file.
+    source: Option<String>,
 }
 
 fn task_not_found(error: &str) -> Response {
@@ -2034,8 +2038,24 @@ async fn get_task_output(
     else {
         return task_not_found("background task not found for that session");
     };
-    let Some(path) = task.output_file.clone().filter(|_| task.has_output) else {
-        return task_not_found("this task has no log (agents open their own transcript)");
+    let redirect = match q.source.as_deref() {
+        None | Some("task") => false,
+        Some("redirect") => true,
+        Some(_) => return (StatusCode::BAD_REQUEST, "unknown output source").into_response(),
+    };
+    let path = if redirect {
+        match crate::session::task_redirect::redirect_file(&task, state.cwd.as_deref()) {
+            Ok(path) => path,
+            Err(bg::OutputError::NoOutput) => {
+                return task_not_found("this task's command redirects its output nowhere known")
+            }
+            Err(bg::OutputError::Unavailable(error)) => return task_not_found(&error),
+        }
+    } else {
+        let Some(path) = task.output_file.clone().filter(|_| task.has_output) else {
+            return task_not_found("this task has no log (agents open their own transcript)");
+        };
+        path
     };
     let max = q.max.unwrap_or(bg::DEFAULT_READ_BYTES);
     let offset = q.offset;
@@ -2070,6 +2090,7 @@ async fn get_task_output(
     Json(json!({
         "session_id": id,
         "task_id": task_id,
+        "source": if redirect { "redirect" } else { "task" },
         "status": task.status,
         "running": running,
         "offset": chunk.offset,
@@ -3927,6 +3948,79 @@ mod tests {
                 request(state.clone(), get("/sessions/s-tasks/tasks/sh1/output")).await;
             assert_eq!(status, StatusCode::NOT_FOUND);
             assert!(!String::from_utf8_lossy(&body).contains("nope"));
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn task_output_can_follow_the_file_the_command_redirects_into() {
+        use crate::session::background_tasks::{apply, TaskEvent};
+        let dir =
+            std::env::temp_dir().join(format!("claudemon-task-redirect-{}", uuid::Uuid::new_v4()));
+        let state = test_state();
+        seed_tasks(&state, "s-redir", &dir);
+        let log = dir.join("deploy.log");
+        std::fs::write(&log, "step 1\nstep 2\n").unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let command = format!(
+            "$log = \"{}\"; deploy *> $log; \"rc=$LASTEXITCODE\"",
+            log.display()
+        );
+        state
+            .store
+            .update_background_task_list("s-redir", move |tasks| {
+                apply(
+                    tasks,
+                    TaskEvent::LiveSet(vec![(
+                        "sh2".into(),
+                        "local_bash".into(),
+                        Some(command),
+                        false,
+                    )]),
+                    now,
+                )
+            });
+
+        // The row names the file, never its directory.
+        let (_, body) = request(state.clone(), get("/sessions/s-redir")).await;
+        let snap: Value = serde_json::from_slice(&body).unwrap();
+        let row = snap["background_task_list"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == "sh2")
+            .unwrap()
+            .clone();
+        assert_eq!(row["redirectFile"], "deploy.log");
+        assert!(snap["background_task_list"][0]
+            .get("redirectFile")
+            .is_none());
+
+        let (status, body) = request(
+            state.clone(),
+            get("/sessions/s-redir/tasks/sh2/output?source=redirect"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let read: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(read["text"], "step 1\nstep 2\n");
+        assert_eq!(read["source"], "redirect");
+
+        // A command without a redirect, or an unknown source, has no such log.
+        for (url, want) in [
+            (
+                "/sessions/s-redir/tasks/sh1/output?source=redirect",
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                "/sessions/s-redir/tasks/sh2/output?source=elsewhere",
+                StatusCode::BAD_REQUEST,
+            ),
+        ] {
+            assert_eq!(request(state.clone(), get(url)).await.0, want, "{url}");
         }
         let _ = std::fs::remove_dir_all(dir);
     }

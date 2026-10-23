@@ -44,6 +44,7 @@ fn log_request(commands: &[Command]) -> Option<Option<u64>> {
             session,
             task,
             offset,
+            ..
         }) if session == "a" && task == "sh1" => Some(*offset),
         _ => None,
     })
@@ -65,6 +66,7 @@ fn log_answer(
             request: Request::TaskOutput {
                 session: "a".into(),
                 task: "sh1".into(),
+                source: wks_native::background_tasks::Source::Task,
                 offset,
             },
             loading: false,
@@ -167,6 +169,57 @@ fn a_shell_log_reads_the_tail_then_follows_from_where_it_stopped(cx: &mut TestAp
     click(&mut visual, "tasks-close");
     // (debug_bounds can outlive an element by a frame; the state is the truth.)
     assert!(!workspace.read_with(&visual, |this, _| this.tasks.open));
+}
+
+#[gpui::test]
+fn a_redirected_shell_follows_its_log_file_and_can_switch_back(cx: &mut TestAppContext) {
+    use wks_native::background_tasks::Source;
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(gpui::size(px(1400.), px(800.)));
+    let rows = serde_json::json!([
+        {"id":"sh1","taskType":"local_bash","status":"running",
+         "description":"$log = \"C:\\x\\deploy.log\"; deploy *> $log; \"rc=$LASTEXITCODE\"",
+         "startedAt":1,"hasOutput":true,"redirectFile":"deploy.log"}
+    ]);
+    show(
+        &workspace,
+        &mut visual,
+        with_tasks(serde_json::json!({"background_tasks":1,"background_task_list":rows})),
+    );
+    click(&mut visual, "title-tasks");
+    drain(&mut commands);
+    let source = |commands: &[Command]| {
+        commands.iter().find_map(|c| match c {
+            Command::Request(Request::TaskOutput { source, .. }) => Some(*source),
+            _ => None,
+        })
+    };
+    click(&mut visual, "task-row-sh1");
+    assert_eq!(
+        source(&drain(&mut commands)),
+        Some(Source::Redirect),
+        "the redirected file is where the output is"
+    );
+    assert!(visual.debug_bounds("task-log-source").is_some());
+
+    // An answer for the task file does not land in the redirected log.
+    log_answer(
+        &workspace,
+        &mut visual,
+        3,
+        None,
+        serde_json::json!({"session_id":"a","task_id":"sh1","offset":0,"next_offset":5,
+            "size":5,"text":"rc=0\n","running":true,"status":"running","done":false}),
+    );
+    let log = workspace.read_with(&visual, |this, _| this.tasks.log.clone().unwrap());
+    assert!(log.text.is_empty());
+
+    click(&mut visual, "task-log-switch");
+    assert_eq!(source(&drain(&mut commands)), Some(Source::Task));
+    let log = workspace.read_with(&visual, |this, _| this.tasks.log.clone().unwrap());
+    assert_eq!(log.source, Source::Task);
+    click(&mut visual, "task-log-switch");
+    assert_eq!(source(&drain(&mut commands)), Some(Source::Redirect));
 }
 
 #[gpui::test]

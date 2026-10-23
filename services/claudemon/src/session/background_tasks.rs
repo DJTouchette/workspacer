@@ -102,6 +102,11 @@ pub struct BackgroundTask {
     /// Whether `GET /sessions/:id/tasks/:task_id/output` can serve a log.
     #[serde(default)]
     pub has_output: bool,
+    /// The file name a shell's command redirects its output into, which
+    /// `…/output?source=redirect` follows (see `task_redirect`). A name
+    /// only: the path is resolved daemon-side at read time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_file: Option<String>,
     /// The task's root process, only when proven (see [`discover_process`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
@@ -134,6 +139,7 @@ impl BackgroundTask {
             owned_by_subagent: false,
             subagent_id: (task_type == "local_agent").then(|| id.to_string()),
             has_output: false,
+            redirect_file: None,
             pid: None,
             output_file: None,
             process: None,
@@ -539,6 +545,12 @@ pub fn apply(tasks: &mut Vec<BackgroundTask>, event: TaskEvent, now: i64) -> boo
     };
     if changed {
         share_tasks_dir(tasks);
+        for task in tasks.iter_mut().filter(|t| t.task_type != "local_agent") {
+            task.redirect_file = task
+                .description
+                .as_deref()
+                .and_then(super::task_redirect::display_name);
+        }
     }
     retain_bounded(tasks, now) || changed
 }
@@ -650,6 +662,10 @@ pub fn read_output(path: &Path, offset: Option<u64>, max: u64) -> Result<OutputC
         .metadata()
         .map_err(|e| OutputError::Unavailable(e.to_string()))?
         .len();
+    let mut bom = [0u8; 2];
+    if size >= 2 && file.read_exact(&mut bom).is_ok() && bom == [0xFF, 0xFE] {
+        return read_utf16(&mut file, size, offset, max);
+    }
     let (start, reset, tail) = match offset {
         Some(o) if o <= size => (o, false, false),
         Some(_) => (size.saturating_sub(max), true, true),
@@ -681,6 +697,54 @@ pub fn read_output(path: &Path, offset: Option<u64>, max: u64) -> Result<OutputC
         next_offset: start + end as u64,
         size,
         text,
+        reset,
+    })
+}
+
+/// A UTF-16LE file (Windows PowerShell 5.1 writes `>` and `*>` this way):
+/// reads stay on whole code units after the BOM and never split a
+/// surrogate pair; offsets are still byte offsets into the file.
+fn read_utf16(
+    file: &mut std::fs::File,
+    size: u64,
+    offset: Option<u64>,
+    max: u64,
+) -> Result<OutputChunk, OutputError> {
+    use std::io::{Read, Seek, SeekFrom};
+    let even = |n: u64| n & !1;
+    let max = even(max).max(2);
+    let tail = |size: u64| (size.saturating_sub(max) + 1).max(2) & !1;
+    let (start, reset) = match offset {
+        Some(o) if o <= size => (even(o).max(2), false),
+        Some(_) => (tail(size), true),
+        None => (tail(size), false),
+    };
+    let len = even(size.saturating_sub(start).min(max));
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| OutputError::Unavailable(e.to_string()))?;
+    let mut buf = vec![0u8; len as usize];
+    file.read_exact(&mut buf)
+        .map_err(|e| OutputError::Unavailable(e.to_string()))?;
+    let mut units: Vec<u16> = buf
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| u16::from_le_bytes(*b))
+        .collect();
+    // A tail read can start on a pair's low half; a read can end on its high one.
+    if offset.is_none() && units.first().is_some_and(|u| (0xDC00..0xE000).contains(u)) {
+        units.remove(0);
+    }
+    let lead = (len / 2 - units.len() as u64) * 2;
+    if units.last().is_some_and(|u| (0xD800..0xDC00).contains(u)) {
+        units.pop();
+    }
+    let used = units.len() as u64 * 2;
+    Ok(OutputChunk {
+        offset: start + lead,
+        next_offset: start + lead + used,
+        size,
+        text: String::from_utf16_lossy(&units),
         reset,
     })
 }
@@ -1266,6 +1330,27 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn utf16_logs_read_as_text_on_whole_code_units() {
+        let dir = Scratch::new("bg-task-utf16");
+        let path = dir.join("ps51.log");
+        let mut bytes = vec![0xFF, 0xFE];
+        for u in "héllo\r\nwörld\r\n".encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        std::fs::write(&path, &bytes).unwrap();
+        let all = read_output(&path, None, 4096).unwrap();
+        assert_eq!(all.text, "héllo\r\nwörld\r\n");
+        assert_eq!((all.offset, all.next_offset), (2, bytes.len() as u64));
+        let tail = read_output(&path, None, 15).unwrap();
+        assert_eq!(tail.offset % 2, 0, "a tail read starts on a code unit");
+        assert!("héllo\r\nwörld\r\n".ends_with(&tail.text));
+        let rest = read_output(&path, Some(2), 4).unwrap();
+        assert_eq!((rest.text.as_str(), rest.next_offset), ("hé", 6));
+        let more = read_output(&path, Some(rest.next_offset), 4096).unwrap();
+        assert_eq!(format!("{}{}", rest.text, more.text), all.text);
+    }
+
     #[test]
     fn reads_refuse_symlinks_and_directories() {
         let dir = Scratch::new("bg-task-link");

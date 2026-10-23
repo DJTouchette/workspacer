@@ -7,14 +7,16 @@
 //! Rows come from the session snapshot (`background_task_list`, Claude stream
 //! sessions only). A shell's or workflow's log is read by task id through
 //! `sessions.taskOutput`, from the tail and then from where the last read
-//! stopped, once a second while the panel shows it. Agents open their own
+//! stopped, once a second while the panel shows it. A shell whose command
+//! redirects its output opens on that file instead, with a switch back to
+//! the task file. Agents open their own
 //! conversation (the provider-native child view). Stop sends the CLI's own
 //! `stop_task` request after a confirmation; it never signals a process.
 use super::*;
 use chrome::{Tone, interactive_control};
 use gpui::{AnyElement, ListHorizontalSizingBehavior, ScrollStrategy, ScrollWheelEvent, deferred};
 use gpui_component::tooltip::Tooltip;
-use wks_native::background_tasks::{self as bg, Kind, Log};
+use wks_native::background_tasks::{self as bg, Kind, Log, Source};
 use wks_native::features::Request;
 
 /// Same slide as the file viewer.
@@ -158,17 +160,23 @@ impl Workspace {
     /// A row: a shell/workflow opens its log here, an agent its conversation.
     fn open_task(&mut self, task: &bg::Task, cx: &mut Context<Self>) {
         if task.shows_log() {
-            self.tasks.log = Some(Log::new(&self.tasks.session, &task.id));
-            self.tasks.lines = Arc::default();
-            self.tasks.widest = 0;
-            self.tasks.following = true;
-            self.tasks.failed = None;
-            self.tasks.notice = None;
-            self.poll_task_log(cx);
+            self.open_task_log(&task.id, task.first_source(), cx);
         } else if let Some(agent) = task.subagent_id.clone() {
             let parent = self.tasks.session.clone();
             self.open_sidebar_child(&parent, &agent, cx);
         }
+        cx.notify();
+    }
+
+    /// Start reading one of a task's logs from its tail.
+    fn open_task_log(&mut self, task: &str, source: Source, cx: &mut Context<Self>) {
+        self.tasks.log = Some(Log::new(&self.tasks.session, task, source));
+        self.tasks.lines = Arc::default();
+        self.tasks.widest = 0;
+        self.tasks.following = true;
+        self.tasks.failed = None;
+        self.tasks.notice = None;
+        self.poll_task_log(cx);
         cx.notify();
     }
 
@@ -189,6 +197,7 @@ impl Workspace {
         let request = Request::TaskOutput {
             session: log.session.clone(),
             task: log.task.clone(),
+            source: log.source,
             offset: log.next_offset,
         };
         // Not `request()`: a once-a-second read must not clear notices.
@@ -252,10 +261,18 @@ impl Workspace {
             && state.number > self.tasks.applied
         {
             self.tasks.applied = state.number;
-            if let (Some(log), Request::TaskOutput { session, task, .. }) =
-                (&mut self.tasks.log, &state.request)
+            if let (
+                Some(log),
+                Request::TaskOutput {
+                    session,
+                    task,
+                    source,
+                    ..
+                },
+            ) = (&mut self.tasks.log, &state.request)
                 && log.session == *session
                 && log.task == *task
+                && log.source == *source
             {
                 match &state.error {
                     Some(error) => self.tasks.failed = Some(error.clone()),
@@ -704,6 +721,13 @@ impl Workspace {
                         ))
                     }),
             )
+            .when_some(
+                task.as_ref()
+                    .and_then(|t| Some((t.redirect_file.clone()?, t.has_output))),
+                |d, (file, has_task_file)| {
+                    d.child(self.render_log_source(&log.task, log.source, file, has_task_file, cx))
+                },
+            )
             .when(log.truncated, |d| {
                 d.child(
                     div()
@@ -814,6 +838,61 @@ impl Workspace {
                 )
             })
             .into_any_element()
+    }
+
+    /// Which file the log follows, and the switch to the other one: the
+    /// file the command redirects into, or the CLI's task file.
+    fn render_log_source(
+        &self,
+        task: &str,
+        source: Source,
+        file: String,
+        has_task_file: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let (caption, other): (SharedString, Option<(&'static str, IconName, Source)>) =
+            match source {
+                Source::Redirect => (
+                    format!("Following {file}, where the command sends its output").into(),
+                    has_task_file.then_some((
+                        "Task output",
+                        IconName::SquareTerminal,
+                        Source::Task,
+                    )),
+                ),
+                Source::Task => (
+                    format!("The command sends its output to {file}").into(),
+                    Some(("Tail file", IconName::File, Source::Redirect)),
+                ),
+            };
+        let task = task.to_owned();
+        div()
+            .px_3()
+            .pb_1()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .debug_selector(|| "task-log-source".into())
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(p.muted))
+                    .child(caption),
+            )
+            .when_some(other, |d, (label, icon, to)| {
+                d.child(
+                    self.quiet_button("task-log-switch", label, icon, true)
+                        .debug_selector(|| "task-log-switch".into())
+                        .flex_shrink_0()
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.open_task_log(&task, to, cx)),
+                        ),
+                )
+            })
     }
 
     fn render_tasks_panel(&self, cx: &mut Context<Self>) -> Stateful<Div> {

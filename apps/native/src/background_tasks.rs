@@ -8,6 +8,10 @@
 //! sessions carry only the count. A shell's (or workflow's) log is read by id
 //! through `sessions.taskOutput`; an agent's transcript is the existing child
 //! view. A pid appears only when the daemon proved it.
+//!
+//! A shell whose command redirects its output (`… *> $log`, `| tee x.log`)
+//! leaves the CLI's task file empty while it runs; the daemon names that
+//! file (`redirectFile`) and serves it as `source: "redirect"`.
 use serde_json::Value;
 
 /// Rows kept per session (the daemon keeps 40).
@@ -87,6 +91,9 @@ pub struct Task {
     /// Proven by the daemon; never guessed here.
     pub pid: Option<u32>,
     pub has_output: bool,
+    /// The file name the command redirects its output into, which the
+    /// daemon serves as the `redirect` source. A name, never a path.
+    pub redirect_file: Option<String>,
     /// The provider-native child this task is (async agents).
     pub subagent_id: Option<String>,
     pub tool_use_id: Option<String>,
@@ -133,6 +140,10 @@ impl Task {
                 .and_then(|p| u32::try_from(p).ok())
                 .filter(|p| *p > 0),
             has_output: value["hasOutput"].as_bool().unwrap_or(false),
+            redirect_file: value["redirectFile"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(|s| crate::transcript::head(s, 200)),
             subagent_id: id(value, "subagentId"),
             tool_use_id: id(value, "toolUseId"),
             ambient: value["ambient"].as_bool().unwrap_or(false),
@@ -180,7 +191,17 @@ impl Task {
 
     /// Opens a log in the panel (agents open their own conversation).
     pub fn shows_log(&self) -> bool {
-        self.has_output && self.kind != Kind::Agent
+        (self.has_output || self.redirect_file.is_some()) && self.kind != Kind::Agent
+    }
+
+    /// Which log opens first: the redirected file when the command names
+    /// one (the task file holds little more than the exit line then).
+    pub fn first_source(&self) -> Source {
+        if self.redirect_file.is_some() {
+            Source::Redirect
+        } else {
+            Source::Task
+        }
     }
 }
 
@@ -237,11 +258,32 @@ impl Process {
     }
 }
 
+/// Which file of a task a log follows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Source {
+    /// The CLI's own task output file.
+    #[default]
+    Task,
+    /// The file the command redirects its output into.
+    Redirect,
+}
+
+impl Source {
+    /// The wire spelling (`sessions.taskOutput` `source`, reply `source`).
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Task => "task",
+            Self::Redirect => "redirect",
+        }
+    }
+}
+
 /// One task's log as this client holds it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Log {
     pub session: String,
     pub task: String,
+    pub source: Source,
     pub text: String,
     /// Where the next read starts; `None` before the first read (which asks
     /// for the tail).
@@ -258,10 +300,11 @@ pub struct Log {
 }
 
 impl Log {
-    pub fn new(session: &str, task: &str) -> Self {
+    pub fn new(session: &str, task: &str, source: Source) -> Self {
         Self {
             session: session.to_owned(),
             task: task.to_owned(),
+            source,
             running: true,
             ..Default::default()
         }
@@ -281,6 +324,8 @@ impl Log {
             || reply["session_id"]
                 .as_str()
                 .is_some_and(|s| s != self.session)
+            // Daemons that predate sources only ever answer for the task file.
+            || reply["source"].as_str().unwrap_or("task") != self.source.wire()
         {
             return false;
         }
@@ -421,7 +466,7 @@ mod tests {
 
     #[test]
     fn the_log_follows_and_ignores_stale_or_foreign_reads() {
-        let mut log = Log::new("s", "t");
+        let mut log = Log::new("s", "t", Source::Task);
         assert!(log.apply(&reply(100, 106, "tail\nx")));
         assert!(
             log.truncated,
@@ -456,7 +501,7 @@ mod tests {
 
     #[test]
     fn the_log_stays_bounded_and_whole_lined() {
-        let mut log = Log::new("s", "t");
+        let mut log = Log::new("s", "t", Source::Task);
         let line = "0123456789abcdef\n";
         let big = line.repeat(MAX_LOG_BYTES / line.len() + 100);
         log.apply(&reply(0, big.len() as u64, &big));
@@ -469,8 +514,33 @@ mod tests {
     }
 
     #[test]
+    fn a_redirected_log_takes_only_its_own_source() {
+        let row = json!({"id":"b1","taskType":"local_bash","status":"running",
+            "hasOutput":true,"redirectFile":"deploy.log"});
+        let task = Task::from_value(&row).unwrap();
+        assert_eq!(task.redirect_file.as_deref(), Some("deploy.log"));
+        assert_eq!(task.first_source(), Source::Redirect);
+        assert!(task.shows_log());
+        let only_redirect = json!({"id":"b2","taskType":"local_bash","redirectFile":"x.log"});
+        assert!(Task::from_value(&only_redirect).unwrap().shows_log());
+
+        let mut log = Log::new("s", "t", Source::Redirect);
+        let mut from_task_file = reply(0, 4, "rc=0");
+        assert!(
+            !log.apply(&from_task_file),
+            "an old daemon's answer is the task file"
+        );
+        from_task_file["source"] = json!("task");
+        assert!(!log.apply(&from_task_file));
+        let mut redirected = reply(0, 7, "step 1\n");
+        redirected["source"] = json!("redirect");
+        assert!(log.apply(&redirected));
+        assert_eq!(log.text, "step 1\n");
+    }
+
+    #[test]
     fn behind_means_more_was_written_than_read() {
-        let mut log = Log::new("s", "t");
+        let mut log = Log::new("s", "t", Source::Task);
         assert!(!log.behind());
         let mut r = reply(0, 10, "0123456789");
         r["size"] = json!(500);

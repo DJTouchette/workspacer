@@ -179,6 +179,8 @@ pub enum Request {
     TaskOutput {
         session: String,
         task: String,
+        /// The task file, or the file its command redirects into.
+        source: crate::background_tasks::Source,
         offset: Option<u64>,
     },
     /// Stop one background task through the CLI's own `stop_task` request
@@ -923,12 +925,16 @@ impl Request {
             Self::TaskOutput {
                 session,
                 task,
+                source,
                 offset,
             } => {
                 let mut params = json!({"sessionId":session,"taskId":task,
                     "maxBytes":crate::background_tasks::READ_BYTES});
                 if let Some(offset) = offset {
                     params["offset"] = json!(offset);
+                }
+                if *source == crate::background_tasks::Source::Redirect {
+                    params["source"] = json!("redirect");
                 }
                 let value = backend.call("sessions.taskOutput", params).await?;
                 ensure!(

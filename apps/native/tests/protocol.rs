@@ -3311,6 +3311,7 @@ async fn background_task_logs_and_stops_name_ids_never_paths() {
     let read = |offset| Request::TaskOutput {
         session: "a".into(),
         task: "t1".into(),
+        source: wks_native::background_tasks::Source::Task,
         offset,
     };
     controller.command(Command::Request(read(None))).unwrap();
@@ -3335,6 +3336,10 @@ async fn background_task_logs_and_stops_name_ids_never_paths() {
     controller.command(Command::Request(read(Some(6)))).unwrap();
     let call = hub.frame("call", Some("sessions.taskOutput")).await;
     assert_eq!(call.value["params"]["offset"], 6);
+    assert!(
+        call.value["params"].get("source").is_none(),
+        "the task file is the default"
+    );
     call.result(
         json!({"session_id":"a","task_id":"other","offset":6,"next_offset":9,
         "size":9,"text":"no\n"}),
@@ -3344,6 +3349,32 @@ async fn background_task_logs_and_stops_name_ids_never_paths() {
         v.requests
             .get("task-output")
             .is_some_and(|s| s.error.as_deref() == Some("The log belongs to another task"))
+    })
+    .await;
+    // The redirected file is asked for by name of source, never by path.
+    controller
+        .command(Command::Request(Request::TaskOutput {
+            session: "a".into(),
+            task: "t1".into(),
+            source: wks_native::background_tasks::Source::Redirect,
+            offset: None,
+        }))
+        .unwrap();
+    let call = hub.frame("call", Some("sessions.taskOutput")).await;
+    assert_eq!(
+        call.value["params"],
+        json!({"sessionId":"a","taskId":"t1","source":"redirect",
+            "maxBytes":wks_native::background_tasks::READ_BYTES})
+    );
+    call.result(
+        json!({"session_id":"a","task_id":"t1","source":"redirect","offset":0,"next_offset":7,
+        "size":7,"text":"step 1\n","running":true,"status":"running","done":false}),
+    )
+    .await;
+    view(&controller, |v| {
+        v.requests
+            .get("task-output")
+            .is_some_and(|s| !s.loading && s.value["text"] == "step 1\n")
     })
     .await;
 

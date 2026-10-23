@@ -1489,9 +1489,14 @@ fn task_segment(params: &Value) -> Result<&str> {
     Ok(id)
 }
 
-/// claudemon task-output query for `offset` (resume a follow) / `maxBytes`.
+/// claudemon task-output query for `offset` (resume a follow) / `maxBytes` /
+/// `source` (`redirect`: the file the command redirects into).
 fn task_output_query(params: &Value) -> String {
     let query: Vec<String> = [
+        params["source"]
+            .as_str()
+            .filter(|s| *s == "redirect")
+            .map(|s| format!("source={s}")),
         params["offset"].as_u64().map(|o| format!("offset={o}")),
         params["maxBytes"]
             .as_u64()
@@ -1541,6 +1546,11 @@ mod task_query_tests {
             "?offset=9&max=4096"
         );
         assert_eq!(task_output_query(&json!({"maxBytes":0})), "");
+        assert_eq!(
+            task_output_query(&json!({"source":"redirect","offset":4})),
+            "?source=redirect&offset=4"
+        );
+        assert_eq!(task_output_query(&json!({"source":"task"})), "");
     }
 }
 

@@ -13,6 +13,7 @@ pub mod slash_commands;
 pub mod state;
 pub mod store;
 pub mod summary_source;
+pub mod task_redirect;
 pub mod transcript;
 pub mod usage;
 pub mod usage_report;
