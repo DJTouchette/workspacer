@@ -421,13 +421,13 @@ pub(super) async fn run(
     if !serve.hub_only && !serve.no_claudemon_init {
         match tokio::time::timeout(
             Duration::from_secs(15),
-            claudemon::daemon::init::run_with_port_quiet(false, plan.hook_port),
+            claudemon::daemon::init::strip_legacy_global(),
         )
         .await
         {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => writeln!(err, "hook initialization failed: {error:#}; continuing")?,
-            Err(_) => writeln!(err, "hook initialization timed out; continuing")?,
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => writeln!(err, "legacy hook cleanup failed: {error:#}; continuing")?,
+            Err(_) => writeln!(err, "legacy hook cleanup timed out; continuing")?,
         }
     }
     let engine_options = claudemon::daemon::embedded::Options {

@@ -149,16 +149,14 @@ impl Backend {
             )
         };
         let engine = self.engine.as_mut().expect("engine owner present");
-        let endpoints = engine.ready().await?;
+        engine.ready().await?;
         stage("engine");
-        // The hook merge (Claude's settings file) and hub startup do not
-        // depend on each other, so neither waits for the other.
+        // PTY Claude launches carry their hooks per launch; this only strips
+        // the entries an earlier version merged into Claude's settings file.
+        // It and hub startup do not depend on each other.
         let hooks = options.claude_hook_settings.clone().map(|path| async move {
-            if let Err(error) =
-                claudemon::daemon::init::run_at_with_port_quiet(path, endpoints.hook_addr.port())
-                    .await
-            {
-                eprintln!("hook initialization failed: {error:#}; continuing");
+            if let Err(error) = claudemon::daemon::init::strip_legacy_global_at(path).await {
+                eprintln!("legacy hook cleanup failed: {error:#}; continuing");
             }
             stage("hooks");
         });

@@ -44,9 +44,11 @@ the configured loopback API port. This integration does not own the borrowed
 process, hooks, database or lifetime. A control plane can also start without a
 borrowed daemon; external capability providers may register later.
 
-Full mode initializes hooks through the claudemon library, bounded to 15 seconds,
-unless `--no-claudemon-init` is selected. Failure warns and continues. It does not
-spawn `claudemon init`, and healthy APIs alone do not establish hook installation.
+Full mode strips claudemon hook entries an earlier version merged into
+`~/.claude/settings.json` (`init::strip_legacy_global`), bounded to 15 seconds,
+unless `--no-claudemon-init` is selected. Failure warns and continues. Nothing is
+written into the global file any more: PTY Claude launches carry their hooks per
+launch through `--settings` (see `claudemon-http-api`).
 The owned engine binds loopback; `--host` selects the hub listener. Startup errors
 clean up the owned graph. The readiness check verifies MCP service identity,
 Rust implementation, listener, expected hub and initial catalog readiness.

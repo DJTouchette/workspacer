@@ -337,7 +337,8 @@ fn standalone_smoke(parent_pipe: bool) {
     let banner: Value =
         serde_json::from_str(&banner).expect("launcher stdout should contain only JSON banner");
     assert_eq!(banner["service"], "workspacer-rust");
-    assert_eq!(home.join(".claude/settings.json").exists(), !parent_pipe);
+    // Serve only strips legacy claudemon hooks; it never creates the file.
+    assert!(!home.join(".claude/settings.json").exists());
     assert!(banner["busUrl"].as_str().unwrap().starts_with("ws://"));
     assert_eq!(
         std::fs::read_to_string(config.join("remote-token"))

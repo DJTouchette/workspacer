@@ -2025,7 +2025,7 @@ enum ProbeState {
 /// one binary share a single probe. The probe runs in the session's own cwd
 /// with the session's env (a profile's `PATH` / `CLAUDE_CONFIG_DIR` apply),
 /// never in the daemon's directory. `None` when it cannot be learned.
-async fn cli_version(
+pub(crate) async fn cli_version(
     bin: &str,
     cwd: &str,
     env: &HashMap<String, String>,
@@ -2201,6 +2201,10 @@ async fn run_session(
     // flag. Gated flags go right after the fixed head, found by name, so
     // they never land after a variadic option in the caller's extra args.
     let version = cli_version(&cfg.bin, &cfg.cwd, &cfg.env).await;
+    // Hooks an earlier version merged into this account's settings would fire
+    // for this session too, a process per hook; the stream needs none of them.
+    let env = cfg.env.clone();
+    let _ = tokio::task::spawn_blocking(move || crate::daemon::init::strip_legacy_for(&env)).await;
     let settings_choose = settings_choose_thinking_display(&cfg.cwd, &cfg.env, &cfg.extra_args);
     let mut gated = thinking_display_args(version, &cfg.extra_args, settings_choose);
     // Hook lifecycle frames feed the row's `active_hooks` (see

@@ -32,7 +32,7 @@ announced callback base uses `127.0.0.1`.
 - `services/claudemon/src/daemon/hook.rs` — hook-port router: `POST /hook`, `POST /hook/:kind` (mapped via `subroute_to_event`), `POST /statusline`, `GET /health`; same 16MB `DefaultBodyLimit`. Holds `DECISION_TIMEOUT = 30s` for the PreToolUse gate.
 - `services/claudemon/src/daemon/wrapper_ws.rs` — `GET /wrapper/:id` WS upgrade; wrapper sends `Register` first, then `Output`/`Exited` frames; daemon pumps `Input`/`Signal`/`Resize` back over an unbounded mpsc.
 - `services/claudemon/src/daemon/mcp_ask.rs` — one-tool MCP streamable-HTTP server (`POST /mcp/ask/:session_id`; GET 405s).
-- `services/claudemon/src/daemon/init.rs` — `claudemon init` / `run_with_port` / `run_overlay`: idempotent JSON merge into `~/.claude/settings.json` (or a `--settings` overlay file).
+- `services/claudemon/src/daemon/init.rs` — `launch_settings` builds each PTY Claude launch's `--settings` file (the launch's own `--settings` merged with our hooks for all 12 events plus the statusLine forwarder; content-addressed under `<db dir>/claude-settings/`); `strip_legacy_at`/`strip_legacy_global` remove entries earlier versions merged into user settings (once per file per process, writing through profile symlinks). The standalone CLI `claudemon init` / `run_overlay` still merge for a hand-run daemon.
 - `services/claudemon/src/daemon/mod.rs` — `run`, `ServeConfig`, `API_BASE`, graceful shutdown (`wait_for_parent_exit`, `kill_all_ptys`); out of scope for this doc beyond the two-listener bind.
 
 ## Failure modes
@@ -109,6 +109,15 @@ pipes are drained. The one-shot UUID is marked as heartbeat traffic so its hooks
 do not create an ordinary fleet session; this is not a general suppression of
 all hook installation. These are real model calls when invoked against a real
 provider, unlike the fake-CLI unit fixtures.
+
+Hook delivery is per launch, never global: `spawn::attach_launch_hooks` (PTY
+Claude only) writes `type: "http"` hooks when the CLI is >= 2.1.63
+(`HTTP_HOOKS_SINCE`, probed via the cached `cli_version`), else the curl command.
+Global command hooks fired for every Claude process, stream sessions included,
+and on Windows each started Git Bash plus curl; that was the bursty slowdown with
+several agents. Claude stream launches strip legacy entries from their
+account's settings (`strip_legacy_for`) and register no hooks. Claude sessions
+started outside Workspacer are no longer adopted through hooks.
 
 `claudemon init` uses marker-based merges to preserve unrelated hook/status-line
 configuration. Overlay mode writes the standalone overlay and removes previously

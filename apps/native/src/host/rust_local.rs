@@ -81,8 +81,8 @@ pub(super) async fn run(
         .data_dir
         .as_ref()
         .map(|directory| directory.join("jobs.json"));
-    // Like the previous native launcher, the desktop owner opts into the
-    // user's manual/PTY Claude hook integration. Backend stores stay isolated.
+    // The desktop owner strips the claudemon hooks earlier versions merged
+    // into the user's Claude settings; PTY launches now carry their own.
     hub_options.claude_hook_settings = options
         .claude_hooks
         .then(|| options.home_dir.join(".claude/settings.json"));

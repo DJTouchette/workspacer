@@ -56,8 +56,9 @@ Window close quits by default; `--keep-running` minimizes the existing window
 so the taskbar/dock can restore it. Explicit Quit remains the shutdown action. GPUI quit observers synchronously
 join the backend before returning their ready future: macOS termination need
 not return from Application::run, and GPUI allows only 100ms for async quit work.
-Native launches use stream transport. The local owner explicitly configures
-manual Claude hook integration; do not claim it never touches hook settings.
+Native launches use stream transport. The local owner (unless
+`--no-claude-hooks`) strips legacy claudemon entries from the user's Claude
+settings at startup; it never adds any. Stream sessions need no hooks.
 
 Use the native UI/protocol suite, claudemon lifecycle tests and shared Rust
 backend/launcher tests for changes here. The native harness Rust embedded probe

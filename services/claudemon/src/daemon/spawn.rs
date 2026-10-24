@@ -323,6 +323,9 @@ pub async fn handle(
     let effective_context_window =
         context_window_for_spawn(payload.context_window, prior_context_window);
     set_context_window_in_argv(&mut payload.argv, input_provider, effective_context_window);
+    if is_claude_argv(&payload.argv, payload.rollout_provider.as_deref()) {
+        attach_launch_hooks(&mut payload).await;
+    }
     match store.engines.start_pty(
         &store,
         &conv,
@@ -333,6 +336,36 @@ pub async fn handle(
     ) {
         Ok(response) => response,
         Err(err) => (StatusCode::SERVICE_UNAVAILABLE, err.to_string()).into_response(),
+    }
+}
+
+/// Point a PTY Claude launch at our hooks through its own `--settings` (see
+/// [`super::init::launch_settings`]): HTTP hooks when the CLI has them, so no
+/// hook starts a process, else the curl command. The hooks are this session's
+/// state machine; nothing global carries them any more. A failure leaves the
+/// launch as asked, unobserved rather than refused.
+async fn attach_launch_hooks(payload: &mut SpawnPayload) {
+    let Some((port, dir)) = super::HOOK_LAUNCH.read().unwrap().clone() else {
+        return;
+    };
+    let version =
+        crate::providers::claude_stream::cli_version(&payload.argv[0], &payload.cwd, &payload.env)
+            .await;
+    let http = version.is_some_and(|version| version >= super::init::HTTP_HOOKS_SINCE);
+    let (mut argv, cwd, env) = (
+        payload.argv.clone(),
+        payload.cwd.clone(),
+        payload.env.clone(),
+    );
+    let built = tokio::task::spawn_blocking(move || {
+        super::init::strip_legacy_for(&env);
+        super::init::launch_settings(&mut argv, &cwd, &env, &dir, port, http).map(|_| argv)
+    })
+    .await;
+    match built {
+        Ok(Ok(argv)) => payload.argv = argv,
+        Ok(Err(err)) => tracing::warn!(?err, "PTY launch runs without claudemon hooks"),
+        Err(err) => tracing::warn!(?err, "PTY launch hook settings task failed"),
     }
 }
 

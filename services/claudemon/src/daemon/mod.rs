@@ -55,6 +55,10 @@ impl CallbackBase {
     }
 }
 
+/// Where a PTY Claude launch sends its hooks (the bound hook port) and where
+/// its per-launch `--settings` files live. Set while a daemon runs.
+pub static HOOK_LAUNCH: std::sync::RwLock<Option<(u16, PathBuf)>> = std::sync::RwLock::new(None);
+
 static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 struct DaemonLease;
 impl DaemonLease {
@@ -69,6 +73,7 @@ impl DaemonLease {
 impl Drop for DaemonLease {
     fn drop(&mut self) {
         *API_BASE.0.write().unwrap() = None;
+        *HOOK_LAUNCH.write().unwrap() = None;
         RUNNING.store(false, std::sync::atomic::Ordering::Release);
     }
 }
@@ -128,6 +133,10 @@ async fn run_controlled(
         api_addr.ip().to_string()
     };
     let _ = API_BASE.set(format!("http://{callback_host}:{}", api_addr.port()));
+    *HOOK_LAUNCH.write().unwrap() = Some((
+        hook_addr.port(),
+        cfg.db_path.with_file_name("claude-settings"),
+    ));
     let store = SessionStore::new();
     if let Some(control) = &control {
         *control.cleanup.lock().unwrap() = Some(store.clone());

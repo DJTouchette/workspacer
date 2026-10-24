@@ -63,6 +63,8 @@ pub struct Options {
     pub(crate) external_claudemon: Option<Arc<crate::services::external_claudemon::ExternalDaemon>>,
     pub(crate) provider_utilities: Option<Arc<crate::services::provider_utilities::Service>>,
     pub(crate) workflow_artifacts: Option<Arc<crate::services::workflow_artifacts::Service>>,
+    /// Claude settings file to strip legacy claudemon hook entries from at
+    /// startup. Nothing is written into it; PTY launches carry their hooks.
     pub claude_hook_settings: Option<std::path::PathBuf>,
     pub network_admin_socket: Option<std::path::PathBuf>,
     pub network_admin_token_file: Option<std::path::PathBuf>,

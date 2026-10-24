@@ -15,10 +15,17 @@
 //!
 //! We identify our own entries by a tagged command string so re-running
 //! `init` doesn't append duplicates.
+//!
+//! Workspacer itself no longer writes the global file: a PTY Claude launch gets
+//! our hooks per launch through `--settings` ([`launch_settings`]), and the
+//! host strips entries an earlier version left behind ([`strip_legacy_at`]).
+//! Global hooks fired for every Claude process on the machine, stream sessions
+//! included, and on Windows each one started Git Bash plus curl.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use directories::BaseDirs;
@@ -143,28 +150,203 @@ fn settings_path() -> Result<PathBuf> {
     Ok(base.home_dir().join(".claude").join("settings.json"))
 }
 
-pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
-    run_with_port_reporting(dry_run, hook_port, true).await
-}
-/// Install hooks without writing to stdout, for an in-process launcher whose
-/// stdout is reserved for its machine-readable readiness banner.
-pub async fn run_with_port_quiet(dry_run: bool, hook_port: u16) -> Result<()> {
-    run_with_port_reporting(dry_run, hook_port, false).await
-}
-async fn run_with_port_reporting(dry_run: bool, hook_port: u16, report: bool) -> Result<()> {
-    merge_settings_at(settings_path()?, dry_run, hook_port, report)
+/// First Claude Code release with `type: "http"` hooks (its CHANGELOG, 2.1.63).
+/// Claude POSTs the event itself, so a hook costs no process; older CLIs get
+/// the curl command.
+pub const HTTP_HOOKS_SINCE: (u32, u32, u32) = (2, 1, 63);
+
+fn hook_entry(hook_port: u16, http: bool) -> Value {
+    if http {
+        json!({ "type": "http", "url": format!("http://127.0.0.1:{hook_port}/hook") })
+    } else {
+        json!({ "type": "command", "command": hook_command(hook_port) })
+    }
 }
 
-/// Explicit owner-selected settings integration for embedded hosts. This never
-/// resolves HOME or changes process environment; merely starting the library
-/// does not opt a caller into writing provider settings.
-pub async fn run_at_with_port_quiet(path: PathBuf, hook_port: u16) -> Result<()> {
+/// The user-level settings file a Claude child reads: its `CLAUDE_CONFIG_DIR`
+/// (a profile) or `~/.claude`.
+pub fn user_settings_path(env: &HashMap<String, String>) -> Option<PathBuf> {
+    env.get("CLAUDE_CONFIG_DIR")
+        .map(|dir| dir.trim())
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| PathBuf::from(dir).join("settings.json"))
+        .or_else(|| settings_path().ok())
+}
+
+/// Strip claudemon entries an earlier version merged into `path`, once per file
+/// per process. Profile settings are symlinks to the primary file, so the write
+/// goes to the link's target rather than replacing the link.
+pub fn strip_legacy_at(path: &Path) -> Result<bool> {
+    static DONE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
+        std::sync::OnceLock::new();
+    let target = match fs::canonicalize(path) {
+        Ok(target) => target,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).with_context(|| format!("resolving {}", path.display())),
+    };
+    if !DONE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .insert(target.clone())
+    {
+        return Ok(false);
+    }
+    let text =
+        fs::read_to_string(&target).with_context(|| format!("reading {}", target.display()))?;
+    if !text.contains(TAG) && !text.contains(STATUS_TAG) {
+        return Ok(false);
+    }
+    let doc =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", target.display()))?;
+    let (stripped, removed) = strip_our_entries(doc);
+    if removed {
+        write_atomic(&target, &(serde_json::to_string_pretty(&stripped)? + "\n"))
+            .with_context(|| format!("rewriting {}", target.display()))?;
+    }
+    Ok(removed)
+}
+
+/// [`strip_legacy_at`] for the file a child with `env` reads, logging rather
+/// than failing a launch.
+pub fn strip_legacy_for(env: &HashMap<String, String>) {
+    let Some(path) = user_settings_path(env) else {
+        return;
+    };
+    match strip_legacy_at(&path) {
+        Ok(true) => tracing::info!(path = %path.display(), "stripped legacy claudemon hooks"),
+        Ok(false) => {}
+        Err(err) => tracing::warn!(?err, "could not strip legacy claudemon hooks"),
+    }
+}
+
+/// Host startup: strip the legacy entries from `~/.claude/settings.json`.
+pub async fn strip_legacy_global() -> Result<bool> {
+    let path = settings_path()?;
+    tokio::task::spawn_blocking(move || strip_legacy_at(&path)).await?
+}
+
+/// [`strip_legacy_global`] for an embedded host that names the file itself.
+pub async fn strip_legacy_global_at(path: PathBuf) -> Result<bool> {
     anyhow::ensure!(path.is_absolute(), "hook settings path must be absolute");
-    anyhow::ensure!(
-        hook_port != 0,
-        "hook forwarding requires the bound listener port"
+    tokio::task::spawn_blocking(move || strip_legacy_at(&path)).await?
+}
+
+/// The settings document a PTY Claude launch passes with `--settings`: the
+/// launch's own `--settings` (a profile's, if any) with our hooks for every
+/// registered event and the statusLine forwarder layered on. The forwarder
+/// wraps the profile's statusLine, else the user's, so their line still renders.
+fn launch_doc(base: Value, user: Option<&Value>, hook_port: u16, http: bool) -> Value {
+    let (mut doc, _) = strip_our_entries(base);
+    if !doc.is_object() {
+        doc = json!({});
+    }
+    let obj = doc.as_object_mut().expect("checked above");
+    if !obj.contains_key("statusLine") {
+        if let Some(line) = user.and_then(|user| user.get("statusLine")) {
+            obj.insert("statusLine".into(), line.clone());
+        }
+    }
+    let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
+    if !hooks.is_object() {
+        *hooks = json!({});
+    }
+    let hooks = hooks.as_object_mut().expect("checked above");
+    let entry = hook_entry(hook_port, http);
+    for event in HOOK_EVENTS {
+        let groups = hooks
+            .entry((*event).to_string())
+            .or_insert_with(|| json!([]));
+        if !groups.is_array() {
+            *groups = json!([]);
+        }
+        groups
+            .as_array_mut()
+            .expect("checked above")
+            .push(json!({ "hooks": [entry.clone()] }));
+    }
+    merge_status_line(&mut doc, hook_port);
+    doc
+}
+
+/// Take every `--settings` (either spelling, argv[0] skipped) out of argv and
+/// return the last value, the one the CLI would have used.
+fn take_settings_args(argv: &mut Vec<String>) -> Option<String> {
+    let mut last = None;
+    let mut i = 1;
+    while i < argv.len() {
+        if let Some(value) = argv[i].strip_prefix("--settings=") {
+            last = Some(value.to_string());
+            argv.remove(i);
+        } else if argv[i] == "--settings" && i + 1 < argv.len() {
+            last = Some(argv.remove(i + 1));
+            argv.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+    last
+}
+
+/// Give a PTY Claude launch our hooks without touching the user's files: build
+/// [`launch_doc`] from the launch's `--settings` (inline JSON or a file,
+/// relative to `cwd`), write it to a content-addressed file in `dir`, and point
+/// argv's single `--settings` at that file. A file rather than inline JSON so
+/// the argument survives Windows `.cmd` shims. When the launch's own settings
+/// cannot be read the argv is left alone: the session runs, just unobserved.
+pub fn launch_settings(
+    argv: &mut Vec<String>,
+    cwd: &str,
+    env: &HashMap<String, String>,
+    dir: &Path,
+    hook_port: u16,
+    http: bool,
+) -> Result<PathBuf> {
+    anyhow::ensure!(!argv.is_empty(), "argv must not be empty");
+    let mut rest = argv.clone();
+    let own = take_settings_args(&mut rest);
+    let base = match &own {
+        None => json!({}),
+        Some(value) if value.trim_start().starts_with('{') => {
+            serde_json::from_str(value).context("parsing the launch's inline --settings")?
+        }
+        Some(value) => {
+            let path = Path::new(cwd).join(value);
+            let text =
+                fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
+        }
+    };
+    let user = user_settings_path(env)
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+    let doc = launch_doc(base, user.as_ref(), hook_port, http);
+    let text = serde_json::to_string_pretty(&doc)? + "\n";
+    let name = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut hasher);
+        format!("claude-settings-{:016x}.json", hasher.finish())
+    };
+    let path = dir.join(name);
+    if fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        write_atomic(&path, &text).with_context(|| format!("writing {}", path.display()))?;
+    }
+    rest.splice(
+        1..1,
+        [
+            "--settings".to_string(),
+            path.to_string_lossy().into_owned(),
+        ],
     );
-    tokio::task::spawn_blocking(move || merge_settings_at(path, false, hook_port, false)).await?
+    *argv = rest;
+    Ok(path)
+}
+
+/// `claudemon init`: merge our hooks into `~/.claude/settings.json` for a
+/// standalone daemon. Workspacer hosts never call this (see the module docs).
+pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
+    merge_settings_at(settings_path()?, dry_run, hook_port, true)
 }
 
 fn merge_settings_at(path: PathBuf, dry_run: bool, hook_port: u16, report: bool) -> Result<()> {
@@ -250,7 +432,7 @@ fn merge_settings_at(path: PathBuf, dry_run: bool, hook_port: u16, report: bool)
 /// and once from a prior `claudemon init` that wrote into the global file — we
 /// also strip any previously-installed claudemon entries from the global file
 /// (the only mutation, and a purely subtractive cleanup of our own tag).
-pub async fn run_overlay(dry_run: bool, hook_port: u16, overlay_path: &PathBuf) -> Result<()> {
+pub async fn run_overlay(dry_run: bool, hook_port: u16, overlay_path: &Path) -> Result<()> {
     let global = settings_path()?;
 
     // Read the user's existing statusLine command (if any) so we can wrap it —
@@ -310,11 +492,17 @@ pub async fn run_overlay(dry_run: bool, hook_port: u16, overlay_path: &PathBuf) 
 }
 
 /// Atomic write: tmpfile in the same dir, fsync, then rename over the target.
-fn write_atomic(path: &PathBuf, contents: &str) -> Result<()> {
+/// The tmp name is unique so two launches writing the same file cannot race.
+fn write_atomic(path: &Path, contents: &str) -> Result<()> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
-    let tmp = path.with_extension("json.claudemon.tmp");
+    let tmp = path.with_extension(format!(
+        "json.claudemon.{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     {
         let mut f =
             fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
@@ -747,5 +935,144 @@ mod tests {
             .as_str()
             .unwrap();
         assert_eq!(cmd, new);
+    }
+
+    fn scratch() -> PathBuf {
+        let dir = crate::testtmp::dir().join(format!("init-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn launch_doc_uses_http_hooks_and_wraps_the_users_status_line() {
+        let user =
+            json!({"statusLine": {"type": "command", "command": "printf mine", "padding": 2}});
+        let doc = launch_doc(json!({}), Some(&user), 4321, true);
+        for event in HOOK_EVENTS {
+            assert_eq!(
+                doc["hooks"][*event],
+                json!([{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:4321/hook" }] }]),
+                "{event}"
+            );
+        }
+        let line = &doc["statusLine"];
+        assert_eq!(line["padding"], 2);
+        assert_eq!(line[STATUS_STASH_KEY], "printf mine");
+        assert!(line["command"]
+            .as_str()
+            .unwrap()
+            .contains("127.0.0.1:4321/statusline"));
+    }
+
+    #[test]
+    fn launch_doc_falls_back_to_curl_and_keeps_a_profiles_own_settings() {
+        let profile = json!({
+            "model": "opus",
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo profile"}]}]},
+            "statusLine": {"type": "command", "command": "printf profile"},
+        });
+        let user = json!({"statusLine": {"type": "command", "command": "printf user"}});
+        let doc = launch_doc(profile, Some(&user), 4321, false);
+        assert_eq!(doc["model"], "opus");
+        let stop = doc["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(stop[0]["hooks"][0]["command"], "echo profile");
+        assert_eq!(stop[1]["hooks"][0]["command"], hook_command(4321));
+        assert_eq!(doc["statusLine"][STATUS_STASH_KEY], "printf profile");
+    }
+
+    #[test]
+    fn launch_settings_replaces_every_settings_flag_with_one_file() {
+        let dir = scratch();
+        let profile = dir.as_path().join("profile.json");
+        fs::write(&profile, r#"{"model":"sonnet"}"#).unwrap();
+        let mut argv = args(&[
+            "claude",
+            "--settings",
+            r#"{"model":"haiku"}"#,
+            "--session-id",
+            "s1",
+            "--settings=profile.json",
+        ]);
+        let env = HashMap::from([(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            dir.as_path().join("none").to_string_lossy().into_owned(),
+        )]);
+        let out = dir.as_path().join("out");
+        let path = launch_settings(
+            &mut argv,
+            &dir.as_path().to_string_lossy(),
+            &env,
+            &out,
+            4321,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            argv,
+            args(&[
+                "claude",
+                "--settings",
+                &path.to_string_lossy(),
+                "--session-id",
+                "s1"
+            ])
+        );
+        let doc: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(doc["model"], "sonnet");
+        assert!(doc.get("statusLine").is_some());
+        // Same inputs, same file.
+        let mut again = args(&["claude", "--settings=profile.json", "--session-id", "s1"]);
+        let second = launch_settings(
+            &mut again,
+            &dir.as_path().to_string_lossy(),
+            &env,
+            &out,
+            4321,
+            true,
+        )
+        .unwrap();
+        assert_eq!(second, path);
+    }
+
+    #[test]
+    fn launch_settings_leaves_argv_alone_when_the_profile_is_unreadable() {
+        let dir = scratch();
+        let mut argv = args(&["claude", "--settings", "missing.json"]);
+        let before = argv.clone();
+        assert!(launch_settings(
+            &mut argv,
+            &dir.as_path().to_string_lossy(),
+            &HashMap::new(),
+            dir.as_path(),
+            4321,
+            true
+        )
+        .is_err());
+        assert_eq!(argv, before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn strip_legacy_writes_through_a_profile_symlink() {
+        let dir = scratch();
+        let primary = dir.as_path().join("settings.json");
+        let doc = json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": hook_command(7890)}]}]}, "theme": "x"});
+        fs::write(&primary, doc.to_string()).unwrap();
+        let profile = dir.as_path().join("profile");
+        fs::create_dir(&profile).unwrap();
+        std::os::unix::fs::symlink(&primary, profile.join("settings.json")).unwrap();
+        assert!(strip_legacy_at(&profile.join("settings.json")).unwrap());
+        assert!(fs::symlink_metadata(profile.join("settings.json"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let after: Value = serde_json::from_str(&fs::read_to_string(&primary).unwrap()).unwrap();
+        assert_eq!(after, json!({"hooks": {}, "theme": "x"}));
+        // Once per file per process.
+        assert!(!strip_legacy_at(&primary).unwrap());
     }
 }

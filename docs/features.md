@@ -209,7 +209,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Model pricing | Built-in per-model rates (Claude + OpenAI) price every session's cost readout; edit/extend via `~/.workspacer/model-rates.json` (`{"<model-prefix>": {"input": $/M, "output": $/M, "cached_input": $/M}}`, longest prefix wins, hot-reloaded) | 🔵 Working |
 | Wrapper protocol | External-process PTY mirroring over WebSocket | 🔵 Working |
 | `claudemon watch` TUI | Built-in dashboard + chat TUI | 🔵 Working |
-| `claudemon init` | Merge hooks into `~/.claude/settings.json` | 🔵 Working |
+| `claudemon init` | Merge hooks into `~/.claude/settings.json` (standalone daemon only; Workspacer passes hooks per PTY launch) | 🔵 Working |
 | Summarizer | One-shot Haiku summary endpoint | 🔵 Working |
 
 ## 13. Platform, packaging & ops
