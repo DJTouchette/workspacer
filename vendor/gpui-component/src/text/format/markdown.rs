@@ -52,6 +52,50 @@ fn parse_table_cell(row: &mut node::TableRow, node: &mdast::TableCell, cx: &mut 
     row.children.push(table_cell);
 }
 
+/// Push `text` with `mark`, splitting out the spans `TextViewStyle::linkify`
+/// detects as links to their own text (Workspacer patch). Each piece is its
+/// own node with whole-node marks, like a written Markdown link.
+fn push_linkified(paragraph: &mut Paragraph, text: &str, mark: TextMark, cx: &NodeContext) {
+    let ranges = match &cx.style.linkify {
+        Some(linkify) if !cx.in_link => linkify(text, mark.code),
+        _ => Vec::new(),
+    };
+    let mut push = |piece: &str, link: Option<LinkMark>| {
+        if piece.is_empty() {
+            return;
+        }
+        let mut marks = vec![(0..piece.len(), mark.clone())];
+        if let Some(link) = link {
+            marks.push((
+                0..piece.len(),
+                TextMark {
+                    link: Some(link),
+                    ..Default::default()
+                },
+            ));
+        }
+        paragraph.push(InlineNode::new(piece.to_owned()).marks(marks));
+    };
+    let mut last = 0;
+    for range in ranges {
+        // Ignore overlapping, out-of-order or non-boundary ranges.
+        if range.start < last || range.start >= range.end || text.get(range.clone()).is_none() {
+            continue;
+        }
+        push(&text[last..range.start], None);
+        let piece = &text[range.clone()];
+        push(
+            piece,
+            Some(LinkMark {
+                url: piece.to_owned().into(),
+                ..Default::default()
+            }),
+        );
+        last = range.end;
+    }
+    push(&text[last..], None);
+}
+
 /// Thin space placed around inline code in prose mode (see `TextView`).
 pub(crate) const INLINE_CODE_MARGIN: &str = "\u{2009}";
 
@@ -74,7 +118,7 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
         }
         Node::Text(val) => {
             text = val.value.clone();
-            paragraph.push_str(&val.value)
+            push_linkified(paragraph, &val.value, TextMark::default(), cx);
         }
         Node::Emphasis(val) => {
             let mut child_paragraph = Paragraph::default();
@@ -112,9 +156,7 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
             if margin {
                 paragraph.push(InlineNode::new(INLINE_CODE_MARGIN));
             }
-            paragraph.push(
-                InlineNode::new(&text).marks(vec![(0..text.len(), TextMark::default().code())]),
-            );
+            push_linkified(paragraph, &text, TextMark::default().code(), cx);
             if margin {
                 paragraph.push(InlineNode::new(INLINE_CODE_MARGIN));
             }
@@ -127,9 +169,11 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
             });
 
             let mut child_paragraph = Paragraph::default();
+            let in_link = std::mem::replace(&mut cx.in_link, true);
             for child in val.children.iter() {
                 text.push_str(&parse_paragraph(&mut child_paragraph, &child, cx));
             }
+            cx.in_link = in_link;
 
             // FIXME: GPUI InteractiveText does not support inline images yet.
             // So here we push images to the paragraph directly.
@@ -200,9 +244,11 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
         Node::LinkReference(link) => {
             let mut child_paragraph = Paragraph::default();
             let mut child_text = String::new();
+            let in_link = std::mem::replace(&mut cx.in_link, true);
             for child in link.children.iter() {
                 child_text.push_str(&parse_paragraph(&mut child_paragraph, child, cx));
             }
+            cx.in_link = in_link;
 
             let link_mark = LinkMark {
                 url: "".into(),

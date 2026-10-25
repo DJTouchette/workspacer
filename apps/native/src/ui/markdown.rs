@@ -66,6 +66,11 @@ impl Workspace {
         let p = self.appearance.palette();
         TextViewStyle {
             on_link_click: Some(on_link_click),
+            // Chat paths resolve against the session's cwd on click. A
+            // previewed document's own relative paths mean something else.
+            linkify: (!document).then(|| {
+                Arc::new(wks_native::path_detect::spans) as Arc<gpui_component::text::LinkifyFn>
+            }),
             unordered_list_marker: Some("• ".into()),
             // Desktop chat parity (components/markdown.tsx): bright emphasis,
             // accent inline code, accent bullets, labeled bordered fences.

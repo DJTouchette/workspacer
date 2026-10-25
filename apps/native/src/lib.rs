@@ -19,6 +19,7 @@ pub mod links;
 pub mod live;
 pub mod model;
 pub mod navigation;
+pub mod path_detect;
 pub mod perf;
 pub mod plan;
 pub mod projects;

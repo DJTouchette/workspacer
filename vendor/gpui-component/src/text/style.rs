@@ -5,6 +5,11 @@ use gpui::{App, Hsla, Pixels, Rems, SharedString, StyleRefinement, Window, px, r
 /// Application-owned link routing, invoked for clicks rather than selections.
 pub type LinkClickFn = dyn Fn(&str, &mut Window, &mut App) + Send + Sync + 'static;
 
+/// Application-owned link detection for Markdown text outside links: byte
+/// ranges of `text` that become links targeting the covered text. The flag is
+/// true for an inline code span. Runs during the (background) parse.
+pub type LinkifyFn = dyn Fn(&str, bool) -> Vec<std::ops::Range<usize>> + Send + Sync + 'static;
+
 use crate::highlighter::HighlightTheme;
 
 /// Application chat colors. When set, emphasis, inline code, list markers,
@@ -31,6 +36,8 @@ pub struct ProseColors {
 #[derive(Clone)]
 pub struct TextViewStyle {
     pub on_link_click: Option<Arc<LinkClickFn>>,
+    /// Turns detected spans of plain text and inline code into links.
+    pub linkify: Option<Arc<LinkifyFn>>,
     pub unordered_list_marker: Option<SharedString>,
     pub prose: Option<ProseColors>,
     /// Gap of each paragraphs, default is 1 rem.
@@ -62,6 +69,8 @@ impl PartialEq for TextViewStyle {
             && self.heading_base_font_size == other.heading_base_font_size
             && self.highlight_theme == other.highlight_theme
             && self.inline_code_family == other.inline_code_family
+            // Identity is excluded like `on_link_click`; turning it on or off reparses.
+            && self.linkify.is_some() == other.linkify.is_some()
     }
 }
 
@@ -69,6 +78,7 @@ impl Default for TextViewStyle {
     fn default() -> Self {
         Self {
             on_link_click: None,
+            linkify: None,
             unordered_list_marker: None,
             prose: None,
             paragraph_gap: rems(1.),

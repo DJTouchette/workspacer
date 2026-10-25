@@ -18,6 +18,15 @@ tables and code, and its asynchronous parse cache:
   source when unlinked. Upstream `img(url)` would read a path from the client's
   own disk (wrong machine for a remote agent) or fetch any URL unasked, and its
   click handler called `cx.open_url` directly with any scheme.
+- `linkify`: optional application path detection for Markdown. Each text
+  run and inline code span outside a link is passed to the callback during
+  the (background) parse; returned byte ranges become their own inline nodes
+  with a link mark whose URL is the covered text, so clicks go through
+  `on_link_click` like a written link (`push_linkified` in
+  `format/markdown.rs`; `NodeContext::in_link` keeps link text untouched).
+  Only presence takes part in style equality. Native chat passes
+  `wks_native::path_detect::spans`; the file viewer's document preview does
+  not.
 - `unordered_list_marker`: an optional visual bullet override. The default
   preserves upstream behavior; the native transcript chooses a round bullet.
 

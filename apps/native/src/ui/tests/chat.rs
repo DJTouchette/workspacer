@@ -148,6 +148,71 @@ fn chat_selection_follows_the_drag_in_reading_order(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn bare_paths_in_chat_text_and_code_open_as_files(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    // Each message starts with its path, at the left edge of its row.
+    let cases = [
+        (
+            "src/ui/chat.rs:42 changed",
+            Some(("/fixture/repo/src/ui/chat.rs", Some(42))),
+        ),
+        (
+            "`package.json` too",
+            Some(("/fixture/repo/package.json", None)),
+        ),
+        (
+            "assets/logo.png is new",
+            Some(("/fixture/repo/assets/logo.png", None)),
+        ),
+        ("no paths here, just words", None),
+    ];
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = state("a");
+            Arc::make_mut(&mut view.sessions)[0].cwd = "/fixture/repo".into();
+            view.transcript.snapshot(ConversationSnapshot {
+                seq: 1,
+                first_seq: 1,
+                items: cases
+                    .iter()
+                    .map(|(text, _)| Item {
+                        kind: "assistant_text".into(),
+                        text: (*text).into(),
+                        ..Default::default()
+                    })
+                    .collect(),
+            });
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    for (row, (text, expected)) in cases.into_iter().enumerate() {
+        let key = format!("markdown-inline-live:a:{row}-0").leak();
+        let bounds = visual
+            .debug_bounds(key)
+            .unwrap_or_else(|| panic!("{text:?} renders as its own message"));
+        visual.simulate_click(
+            bounds.origin + gpui::point(px(12.), bounds.size.height / 2.),
+            gpui::Modifiers::default(),
+        );
+        visual.run_until_parked();
+        let previews: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::Request(wks_native::features::Request::FilePreview { target, .. }) => {
+                    Some((target.path, target.line))
+                }
+                _ => None,
+            })
+            .collect();
+        let expected: Vec<_> = expected
+            .map(|(path, line)| (path.to_owned(), line))
+            .into_iter()
+            .collect();
+        assert_eq!(previews, expected, "{text:?}");
+    }
+}
+
+#[gpui::test]
 fn markdown_file_link_requests_preview_and_shows_the_result(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.update(|window, cx| {

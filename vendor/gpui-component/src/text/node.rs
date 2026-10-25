@@ -494,6 +494,8 @@ pub(crate) struct NodeContext {
     pub(crate) link_refs: HashMap<SharedString, LinkMark>,
     pub(crate) style: TextViewStyle,
     pub(crate) code_block_actions: Option<Arc<CodeBlockActionsFn>>,
+    /// Inside a link's text, where `TextViewStyle::linkify` must not add links.
+    pub(crate) in_link: bool,
 }
 
 impl NodeContext {

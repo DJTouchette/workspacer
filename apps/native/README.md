@@ -378,6 +378,14 @@ Transcript rendering is described below.
   and a Nord palette under Nord, and recolors when the appearance changes.
   Image attachment markers and mentioned image paths load host-backed thumbnails.
   Missing/unsupported previews leave the original text visible.
+  File paths written in plain chat text (`src/ui/chat.rs:42`, `/etc/x.conf`,
+  `./run.sh`) and whole inline code spans (`` `package.json` ``) are links too,
+  opening in the file viewer like a written link: Markdown rendered, images
+  shown, everything else as source, at the `:line` when one is given. The
+  detector (`src/path_detect.rs`, a port of desktop `lib/filePathDetect.ts`)
+  is lexical and conservative: prose needs a separator and a file-like name,
+  and URLs, domains, globs, flags and directories never link. Relative paths
+  resolve against the session's working directory on click.
 - The file viewer (`src/ui/file_viewer.rs`) is one pane per window shown
   three ways, identically for source, images and Markdown and in its
   loading/error states. When the window leaves the conversation at least
