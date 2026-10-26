@@ -30,6 +30,7 @@ pub(super) enum Action {
     OpenDefault,
     ShowInFolder,
     CopyLink,
+    CopyHash,
 }
 
 impl Action {
@@ -41,6 +42,7 @@ impl Action {
             Self::OpenDefault => "Open in default app",
             Self::ShowInFolder => "Show in folder",
             Self::CopyLink => "Copy link",
+            Self::CopyHash => "Copy hash",
         }
     }
     fn id(self) -> &'static str {
@@ -51,6 +53,7 @@ impl Action {
             Self::OpenDefault => "open-default",
             Self::ShowInFolder => "show-in-folder",
             Self::CopyLink => "copy-link",
+            Self::CopyHash => "copy-hash",
         }
     }
 }
@@ -69,7 +72,8 @@ pub(super) fn actions(link: &Link, on_this_computer: bool) -> Vec<Action> {
             }
             rows
         }
-        Link::Web(_) => vec![Action::Open, Action::CopyLink],
+        Link::Web(_) | Link::Reference(_) => vec![Action::Open, Action::CopyLink],
+        Link::Commit(_) => vec![Action::Open, Action::CopyHash],
         Link::Anchor | Link::Refused(_) => Vec::new(),
     }
 }
@@ -267,6 +271,11 @@ impl Workspace {
                 cx.reveal_path(std::path::Path::new(&target.path))
             }
             (Action::CopyLink, Link::Web(url)) => copy(url.clone(), cx),
+            (Action::CopyLink, Link::Reference(number)) => {
+                let url = self.reference_url(*number);
+                copy(url.unwrap_or_else(|| format!("#{number}")), cx)
+            }
+            (Action::CopyHash, Link::Commit(hash)) => copy(hash.clone(), cx),
             _ => {}
         }
         cx.notify();
@@ -299,5 +308,13 @@ mod tests {
         let web = links::classify("/repo", "https://example.com");
         assert_eq!(actions(&web, false), [Action::Open, Action::CopyLink]);
         assert!(actions(&links::classify("/repo", "~/x.md"), true).is_empty());
+        assert_eq!(
+            actions(&Link::Commit("9a1b2c3".into()), true),
+            [Action::Open, Action::CopyHash]
+        );
+        assert_eq!(
+            actions(&Link::Reference(4), true),
+            [Action::Open, Action::CopyLink]
+        );
     }
 }

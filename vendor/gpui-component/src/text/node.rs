@@ -379,20 +379,19 @@ impl CodeBlock {
         };
         let mut links: Vec<(Range<usize>, LinkMark)> = vec![];
         if let Some(linkify) = &style.linkify {
-            for range in linkify(&code, super::LinkifySource::CodeBlock) {
+            for (range, url) in linkify(&code, super::LinkifySource::CodeBlock) {
                 let start = links.last().map_or(0, |(r, _)| r.end);
-                if range.start < start || range.start >= range.end {
+                if range.start < start || range.start >= range.end || code.get(range.clone()).is_none()
+                {
                     continue;
                 }
-                if let Some(url) = code.get(range.clone()) {
-                    links.push((
-                        range,
-                        LinkMark {
-                            url: url.to_owned().into(),
-                            ..Default::default()
-                        },
-                    ));
-                }
+                links.push((
+                    range,
+                    LinkMark {
+                        url: url.into(),
+                        ..Default::default()
+                    },
+                ));
             }
         }
 

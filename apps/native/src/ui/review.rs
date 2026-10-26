@@ -206,6 +206,26 @@ impl Workspace {
         );
     }
 
+    /// Open Changes on the commit list with `hash`'s patch shown, as a
+    /// clicked commit link does.
+    pub(super) fn open_commit(&mut self, hash: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_feature(Screen::Changes, window, cx);
+        if self.screen != Screen::Changes {
+            return;
+        }
+        self.review.commit = Some(hash.to_owned());
+        if self.review.mode == Mode::Commits {
+            if let Some((cwd, _)) = self.review_paths() {
+                self.request(Request::Log { cwd }, cx);
+            }
+            self.show_commit(hash, cx);
+        } else {
+            // Entering Commits reads the log and shows `review.commit`.
+            self.set_review_mode(Mode::Commits, cx);
+        }
+        cx.notify();
+    }
+
     fn show_commit(&mut self, hash: &str, cx: &mut Context<Self>) {
         let Some((cwd, _)) = self.review_paths() else {
             return;

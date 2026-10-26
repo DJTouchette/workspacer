@@ -82,6 +82,24 @@ impl Link {
     }
 }
 
+/// Where `#number` goes in the repository of a linked pull request: the
+/// issue (GitHub redirects it to a pull request of that number), or the work
+/// item on Azure DevOps, where `#` names work items. `None` when the link's
+/// address has neither shape.
+pub fn reference_url(link: &Link, number: u64) -> Option<String> {
+    match link.provider.as_str() {
+        "github" => {
+            let (base, _) = link.url.split_once("/pull/")?;
+            Some(format!("{base}/issues/{number}"))
+        }
+        "azure-devops" => {
+            let (base, _) = link.url.split_once("/_git/")?;
+            Some(format!("{base}/_workitems/edit/{number}"))
+        }
+        _ => None,
+    }
+}
+
 pub fn provider_label(provider: &str) -> &'static str {
     match provider {
         "github" => "GitHub",
@@ -221,6 +239,22 @@ pub fn agent_brief(link: &Link, threads: &[&Thread]) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn references_resolve_in_the_linked_repository() {
+        let github = Link::parse(&json!({"url":"https://github.com/o/r/pull/3","provider":"github","repo":"o/r","number":3})).unwrap();
+        assert_eq!(
+            reference_url(&github, 42).as_deref(),
+            Some("https://github.com/o/r/issues/42")
+        );
+        let ado = Link::parse(&json!({"url":"https://dev.azure.com/o/p/_git/r/pullrequest/7","provider":"azure-devops","repo":"o/p/r","number":7})).unwrap();
+        assert_eq!(
+            reference_url(&ado, 42).as_deref(),
+            Some("https://dev.azure.com/o/p/_workitems/edit/42")
+        );
+        let odd = Link::parse(&json!({"url":"https://example.com/x","provider":"github"})).unwrap();
+        assert_eq!(reference_url(&odd, 1), None);
+    }
 
     #[test]
     fn a_link_reads_the_snapshot_field() {

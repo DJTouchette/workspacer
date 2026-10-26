@@ -27,10 +27,10 @@ pub enum LinkifySource {
 }
 
 /// Application-owned link detection for Markdown text outside links: byte
-/// ranges of `text` that become links targeting the covered text. Runs
-/// during the (background) parse.
+/// ranges of `text` that become links, each with its URL (often the covered
+/// text itself). Runs during the (background) parse.
 pub type LinkifyFn =
-    dyn Fn(&str, LinkifySource) -> Vec<std::ops::Range<usize>> + Send + Sync + 'static;
+    dyn Fn(&str, LinkifySource) -> Vec<(std::ops::Range<usize>, String)> + Send + Sync + 'static;
 
 use crate::highlighter::HighlightTheme;
 

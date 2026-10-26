@@ -18,15 +18,23 @@ tables and code, and its asynchronous parse cache:
   source when unlinked. Upstream `img(url)` would read a path from the client's
   own disk (wrong machine for a remote agent) or fetch any URL unasked, and its
   click handler called `cx.open_url` directly with any scheme.
-- `linkify`: optional application path detection for Markdown. Each text
-  run and inline code span outside a link is passed to the callback during
-  the (background) parse; returned byte ranges become their own inline nodes
-  with a link mark whose URL is the covered text, so clicks go through
-  `on_link_click` like a written link (`push_linkified` in
-  `format/markdown.rs`; `NodeContext::in_link` keeps link text untouched).
-  Only presence takes part in style equality. Native chat passes
-  `wks_native::path_detect::spans`; the file viewer's document preview does
-  not.
+- `linkify`: optional application link detection for Markdown. Each text
+  run and inline code span outside a link, and each code block's text, is
+  passed to the callback with its `LinkifySource` during the (background)
+  parse. Returned `(byte range, url)` pairs become links routed through
+  `on_link_click` like a written link: their own inline nodes in paragraphs
+  (`push_linkified` in `format/markdown.rs`; `NodeContext::in_link` keeps
+  link text untouched), and `CodeBlock::links` drawn over the syntax colors
+  in code blocks. Only presence takes part in style equality. Native chat and
+  tool output pass `wks_native::path_detect::links`; the file viewer's
+  document preview does not.
+- `on_link_hover` / `on_link_menu`: optional application callbacks from
+  `Inline`. Hover reports `Some(url)` on entering a link and `None` on
+  leaving it, tagged with the reporting run so a late `None` cannot clear
+  another run's link. A right-press on a link calls the menu callback with
+  the window position and stops propagation (no selection starts). A link's
+  release now opens it only for the left button, so a right-click never also
+  opens it.
 - `unordered_list_marker`: an optional visual bullet override. The default
   preserves upstream behavior; the native transcript chooses a round bullet.
 

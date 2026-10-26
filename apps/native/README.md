@@ -386,6 +386,21 @@ Transcript rendering is described below.
   is lexical and conservative: prose needs a separator and a file-like name,
   and URLs, domains, globs, flags and directories never link. Relative paths
   resolve against the session's working directory on click.
+  Tool output links the locations tools print, opening at their line:
+  `--> src/main.rs:3:5`, `src/a.ts(12,5)`, `Program.cs(7)`,
+  `main_test.go:42:`, stack-trace `(src/a.test.ts:9:3)` and search hits
+  (`path:line:`), relative to the tool's own working directory when it
+  reported one.
+  Commit hashes (7–40 lowercase hex with a digit and a letter; in tool output
+  only first on a line or after `commit`) open Changes on the commit list
+  with that commit's patch. `#123` in chat text opens the issue or pull
+  request in the repository of the session's linked pull request (a work
+  item on Azure DevOps); without a linked pull request a notice says so.
+  Hovering any link shows where it goes in a status line above the
+  composer. Right-click offers Open, Copy path, Copy path:line, and for files
+  that exist on this computer Open in default app and Show in folder; web
+  and reference links offer Copy link, commits Copy hash. Esc, clicking away
+  or switching sessions closes the menu.
 - The file viewer (`src/ui/file_viewer.rs`) is one pane per window shown
   three ways, identically for source, images and Markdown and in its
   loading/error states. When the window leaves the conversation at least

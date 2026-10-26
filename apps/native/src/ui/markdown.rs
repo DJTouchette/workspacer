@@ -288,12 +288,12 @@ fn result_value(value: &serde_json::Value) -> String {
     }
 }
 
-/// File-path detection for chat and tool output Markdown.
+/// File path, commit and reference detection for chat and tool output.
 pub(super) fn linkify() -> Arc<gpui_component::text::LinkifyFn> {
     use gpui_component::text::LinkifySource;
-    use wks_native::path_detect::{Source, spans};
+    use wks_native::path_detect::{Source, links};
     Arc::new(|text, source| {
-        spans(
+        links(
             text,
             match source {
                 LinkifySource::Text => Source::Text,

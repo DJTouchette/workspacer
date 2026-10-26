@@ -53,7 +53,7 @@ fn parse_table_cell(row: &mut node::TableRow, node: &mdast::TableCell, cx: &mut 
 }
 
 /// Push `text` with `mark`, splitting out the spans `TextViewStyle::linkify`
-/// detects as links to their own text (Workspacer patch). Each piece is its
+/// detects as links (Workspacer patch). Each piece is its
 /// own node with whole-node marks, like a written Markdown link.
 fn push_linkified(paragraph: &mut Paragraph, text: &str, mark: TextMark, cx: &NodeContext) {
     let ranges = match &cx.style.linkify {
@@ -84,17 +84,16 @@ fn push_linkified(paragraph: &mut Paragraph, text: &str, mark: TextMark, cx: &No
         paragraph.push(InlineNode::new(piece.to_owned()).marks(marks));
     };
     let mut last = 0;
-    for range in ranges {
+    for (range, url) in ranges {
         // Ignore overlapping, out-of-order or non-boundary ranges.
         if range.start < last || range.start >= range.end || text.get(range.clone()).is_none() {
             continue;
         }
         push(&text[last..range.start], None);
-        let piece = &text[range.clone()];
         push(
-            piece,
+            &text[range.clone()],
             Some(LinkMark {
-                url: piece.to_owned().into(),
+                url: url.into(),
                 ..Default::default()
             }),
         );

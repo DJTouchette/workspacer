@@ -20,12 +20,21 @@ pub const MAX_IMAGE_SIDE: u32 = 2560;
 /// the first parse runs on the UI thread.
 pub const MAX_RENDERED_MARKDOWN_BYTES: usize = 256 * 1024;
 
+/// Detected commit hashes link as `wks-commit:<hash>` (see `path_detect`).
+pub const COMMIT_SCHEME: &str = "wks-commit";
+/// Detected `#123` references link as `wks-ref:123`.
+pub const REFERENCE_SCHEME: &str = "wks-ref";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Link {
     /// An `http`/`https` URL for the system browser.
     Web(String),
     /// A file on the session's machine.
     File(FileTarget),
+    /// A commit of the session's repository, shown in the review view.
+    Commit(String),
+    /// An issue or pull request number of the session's repository.
+    Reference(u64),
     /// A same-document anchor (`#heading`); nothing to open.
     Anchor,
     /// Recognised but not opened; the message says why.
@@ -84,6 +93,8 @@ pub fn describe(link: &Link) -> Option<String> {
         Link::File(target) => Some(target.location()),
         Link::Web(url) => Some(url.clone()),
         Link::Refused(message) => Some(message.clone()),
+        Link::Commit(hash) => Some(format!("Commit {hash}: show its changes")),
+        Link::Reference(number) => Some(format!("#{number} in this session's repository")),
         Link::Anchor => None,
     }
 }
@@ -199,6 +210,27 @@ pub fn classify(cwd: &str, raw: &str) -> Link {
     }
     if raw.contains(['\0', '\n', '\r']) || raw.len() > 4096 {
         return Link::Refused("This link is malformed and was not opened.".into());
+    }
+    // Detected hashes and numbers often start with a digit, which `scheme`
+    // reads as a `file:line` location, so these are matched first.
+    if let Some(hash) = raw
+        .strip_prefix(COMMIT_SCHEME)
+        .and_then(|r| r.strip_prefix(':'))
+    {
+        return if (4..=40).contains(&hash.len()) && hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            Link::Commit(hash.to_ascii_lowercase())
+        } else {
+            Link::Refused("This commit link is malformed and was not opened.".into())
+        };
+    }
+    if let Some(number) = raw
+        .strip_prefix(REFERENCE_SCHEME)
+        .and_then(|r| r.strip_prefix(':'))
+    {
+        return match number.parse::<u64>() {
+            Ok(number) if number > 0 => Link::Reference(number),
+            _ => Link::Refused("This reference is malformed and was not opened.".into()),
+        };
     }
     if let Some(scheme) = scheme(raw) {
         return match scheme.to_ascii_lowercase().as_str() {
@@ -622,6 +654,20 @@ mod tests {
             Some("https://example.com/x")
         );
         assert_eq!(describe(&classify("/repo", "#top")), None);
+    }
+
+    #[test]
+    fn detected_commits_and_references_classify() {
+        assert_eq!(
+            classify("/repo", "wks-commit:9A1B2C3"),
+            Link::Commit("9a1b2c3".into())
+        );
+        assert_eq!(classify("/repo", "wks-ref:42"), Link::Reference(42));
+        assert!(matches!(classify("/repo", "wks-ref:0"), Link::Refused(_)));
+        assert!(matches!(
+            classify("/repo", "wks-commit:zz"),
+            Link::Refused(_)
+        ));
     }
 
     #[test]

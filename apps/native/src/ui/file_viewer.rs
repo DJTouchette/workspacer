@@ -507,6 +507,9 @@ impl PreviewPane {
             DocumentLink::Other(Link::Web(url)) => cx.open_url(&url),
             DocumentLink::Other(Link::Anchor) => {}
             DocumentLink::Other(Link::Refused(message)) => self.notice = Some(message.into()),
+            DocumentLink::Other(Link::Commit(_) | Link::Reference(_)) => {
+                self.notice = Some("Commit and issue links open from the chat.".into())
+            }
             DocumentLink::Other(Link::File(next)) => {
                 self.open_guarded(next, Navigation::Forward, window, cx);
             }
@@ -1954,7 +1957,38 @@ impl Workspace {
                     cx.notify();
                 }
             }
+            Link::Commit(hash) => {
+                if self.view.selected.as_deref() != Some(owner) {
+                    return;
+                }
+                // Changing screens needs the main window, which a link
+                // clicked in a popped-out viewer is not.
+                let (Some(window), workspace) = (self.main_window, cx.entity().downgrade()) else {
+                    return;
+                };
+                cx.defer(move |cx| {
+                    let _ = window.update(cx, |_, window, cx| {
+                        workspace.update(cx, |this, cx| this.open_commit(&hash, window, cx))
+                    });
+                });
+            }
+            Link::Reference(number) => match self.reference_url(number) {
+                Some(url) => cx.open_url(&url),
+                None => {
+                    self.extras.notice = format!(
+                        "#{number} needs a repository: link this session to a pull request first."
+                    );
+                    cx.notify();
+                }
+            },
         }
+    }
+
+    /// Where `#number` goes for the selected session: its linked pull
+    /// request's repository.
+    pub(super) fn reference_url(&self, number: u64) -> Option<String> {
+        let link = self.selected_session()?.pull_request.as_ref()?;
+        wks_native::pull_requests::reference_url(link, number)
     }
 
     /// Ask the connected hub to read a file of `owner`'s session. The

@@ -641,7 +641,10 @@ pub fn native_card_html(html: &str) -> String {
             crate::links::Link::File(target) => {
                 !image || target.kind == crate::links::FileKind::Image
             }
-            crate::links::Link::Anchor | crate::links::Link::Refused(_) => false,
+            crate::links::Link::Anchor
+            | crate::links::Link::Refused(_)
+            | crate::links::Link::Commit(_)
+            | crate::links::Link::Reference(_) => false,
         }
     }
     /// The component's minifier decodes attribute values and re-escapes them

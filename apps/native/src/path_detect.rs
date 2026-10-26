@@ -1,7 +1,9 @@
 //! File paths written in plain chat text (`see src/lib.rs:12`), inline code
 //! (`` `package.json` ``) and code blocks such as tool output, so they open
 //! like a written Markdown link. Text and inline code port the desktop's
-//! `lib/filePathDetect.ts`; keep the two in step.
+//! `lib/filePathDetect.ts`; keep the two in step. Commit hashes (`9a1b2c3`)
+//! and issue references (`#123`) link too, to the review view and the
+//! session's repository (see [`crate::links::COMMIT_SCHEME`]).
 //!
 //! Precision beats recall: a false positive turns prose into a dead link, so
 //! prose needs a separator (absolute, `./`-relative, or several segments
@@ -67,48 +69,105 @@ pub enum Source {
     Block,
 }
 
+/// What a detected span names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    /// A file path, with any line suffix; its link is the span itself.
+    Path,
+    /// An abbreviated or full commit hash.
+    Commit,
+    /// `#123`: an issue or pull request of the session's repository.
+    Reference,
+}
+
+/// Each span with the link it opens: a path as written, or a
+/// [`crate::links`] commit/reference link.
+pub fn links(text: &str, source: Source) -> Vec<(Range<usize>, String)> {
+    detect(text, source)
+        .into_iter()
+        .map(|(range, target)| {
+            let span = &text[range.clone()];
+            let url = match target {
+                Target::Path => span.to_owned(),
+                Target::Commit => format!("{}:{span}", crate::links::COMMIT_SCHEME),
+                Target::Reference => format!("{}:{}", crate::links::REFERENCE_SCHEME, &span[1..]),
+            };
+            (range, url)
+        })
+        .collect()
+}
+
 /// Byte ranges of `text` that are file paths, each with any line suffix.
 pub fn spans(text: &str, source: Source) -> Vec<Range<usize>> {
+    detect(text, source)
+        .into_iter()
+        .filter(|(_, target)| *target == Target::Path)
+        .map(|(range, _)| range)
+        .collect()
+}
+
+/// Every span and what it names.
+pub fn detect(text: &str, source: Source) -> Vec<(Range<usize>, Target)> {
     if source == Source::InlineCode {
         let start = text.len() - text.trim_start().len();
         let token = text.trim();
-        return std::iter::once(start..start + token.len())
-            .filter(|_| path_like(token, Rule::Code))
+        let target = if path_like(token, Rule::Code) {
+            Some(Target::Path)
+        } else if commit_like(token) {
+            Some(Target::Commit)
+        } else {
+            None
+        };
+        return target
+            .map(|target| (start..start + token.len(), target))
+            .into_iter()
             .collect();
     }
     let (limit, rule) = match source {
         Source::Block => (MAX_BLOCK, Rule::Output),
         _ => (MAX_TEXT, Rule::Prose),
     };
-    if text.len() > limit || (rule == Rule::Prose && !text.contains(['/', '\\'])) {
+    if text.len() > limit {
         return Vec::new();
     }
     let mut out = Vec::new();
     let mut rest = text;
     let mut offset = 0;
+    // Output names a commit only where git prints one: first on its line
+    // (`git log --oneline`, blame) or after `commit`.
+    let mut line_start = true;
+    let mut previous = "";
     while !rest.is_empty() {
         let run_start = rest
             .find(|c: char| !c.is_whitespace())
             .unwrap_or(rest.len());
+        if rest[..run_start].contains('\n') {
+            line_start = true;
+        }
         let run_len = rest[run_start..]
             .find(char::is_whitespace)
             .unwrap_or(rest.len() - run_start);
         let run = &rest[run_start..run_start + run_len];
-        if (rule == Rule::Output || run.contains(['/', '\\']))
-            && let Some(range) = token_in(run, rule)
-        {
+        let commits = rule == Rule::Prose || line_start || previous == "commit";
+        if let Some((range, target)) = token_in(run, rule, commits) {
             let base = offset + run_start;
-            out.push(base + range.start..base + range.end);
+            out.push((base + range.start..base + range.end, target));
         }
+        line_start = false;
+        previous = run;
         offset += run_start + run_len;
         rest = &rest[run_start + run_len..];
     }
     out
 }
 
-/// The path inside one whitespace-free run, after leading brackets/quotes and
+/// The link inside one whitespace-free run, after leading brackets/quotes and
 /// (only if needed) trailing clause punctuation.
-fn token_in(run: &str, rule: Rule) -> Option<Range<usize>> {
+fn token_in(run: &str, rule: Rule, commits: bool) -> Option<(Range<usize>, Target)> {
+    let separated = run.contains(['/', '\\']);
+    if !separated && rule == Rule::Prose && !commits {
+        return None;
+    }
     let start = run.len()
         - run
             .trim_start_matches(['(', '[', '\'', '"', '`', '{'])
@@ -118,13 +177,37 @@ fn token_in(run: &str, rule: Rule) -> Option<Range<usize>> {
         return None;
     }
     for _ in 0..=MAX_TRAILING {
-        if path_like(token, rule) {
-            return Some(start..start + token.len());
+        if (separated || rule == Rule::Output) && path_like(token, rule) {
+            return Some((start..start + token.len(), Target::Path));
+        }
+        if commits && commit_like(token) {
+            return Some((start..start + token.len(), Target::Commit));
+        }
+        if rule == Rule::Prose && reference_like(token) {
+            return Some((start..start + token.len(), Target::Reference));
         }
         token =
             token.strip_suffix(['.', ',', ';', '!', '?', ')', ']', '}', '\'', '"', '`', ':'])?;
     }
     None
+}
+
+/// 7 to 40 lowercase hex digits with at least one digit and one letter, as
+/// git abbreviates hashes: plain numbers and words like `defaced` are not.
+fn commit_like(token: &str) -> bool {
+    (7..=40).contains(&token.len())
+        && token
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        && token.bytes().any(|b| b.is_ascii_digit())
+        && token.bytes().any(|b| b.is_ascii_lowercase())
+}
+
+/// `#` and 1 to 6 digits, not `#0`.
+fn reference_like(token: &str) -> bool {
+    token.strip_prefix('#').is_some_and(|n| {
+        (1..=6).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit()) && !n.starts_with('0')
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -359,6 +442,53 @@ running 3 tests in lib.rs and main.go";
         assert!(
             prose("Program.cs(7) and main.go:42").is_empty(),
             "prose stays strict"
+        );
+    }
+
+    fn targets(text: &str, source: Source) -> Vec<(&str, Target)> {
+        detect(text, source)
+            .into_iter()
+            .map(|(r, t)| (&text[r], t))
+            .collect()
+    }
+
+    #[test]
+    fn commits_and_references_link_where_they_are_written() {
+        assert_eq!(
+            targets(
+                "Fixed in 9a1b2c3 (see #42), reverting 0123456789abcdef.",
+                Source::Text
+            ),
+            [
+                ("9a1b2c3", Target::Commit),
+                ("#42", Target::Reference),
+                ("0123456789abcdef", Target::Commit),
+            ]
+        );
+        assert_eq!(
+            targets("9a1b2c3", Source::InlineCode),
+            [("9a1b2c3", Target::Commit)]
+        );
+        for text in [
+            "1234567 rows, deadbeef, defaced, ABCDEF1, #0, #1234567, #12a, a1b2c3",
+            "color #1e1e2e and 550e8400-e29b-41d4-a716-446655440000",
+        ] {
+            assert!(targets(text, Source::Text).is_empty(), "{text:?}");
+        }
+        // Output: hashes where git prints them, never references.
+        assert_eq!(
+            targets(
+                "017bb2a feat: links\ncommit 95a3611e\nimage a1b2c3d4e5f6 #12",
+                Source::Block
+            ),
+            [("017bb2a", Target::Commit), ("95a3611e", Target::Commit)]
+        );
+        assert_eq!(
+            links("see 9a1b2c3 and #7", Source::Text)
+                .into_iter()
+                .map(|(_, url)| url)
+                .collect::<Vec<_>>(),
+            ["wks-commit:9a1b2c3", "wks-ref:7"]
         );
     }
 

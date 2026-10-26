@@ -458,6 +458,82 @@ fn hovering_a_path_names_it_and_right_click_offers_a_menu(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+fn commit_hashes_open_changes_and_references_open_the_linked_repository(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    let show = |linked: bool| {
+        let workspace = workspace.clone();
+        move |window: &mut Window, cx: &mut App| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                let session = &mut Arc::make_mut(&mut view.sessions)[0];
+                session.cwd = "/fixture/repo".into();
+                session.pull_request = linked.then(|| {
+                    wks_native::pull_requests::Link::parse(&serde_json::json!({
+                        "url": "https://github.com/o/r/pull/3",
+                        "provider": "github",
+                        "repo": "o/r",
+                        "number": 3
+                    }))
+                    .unwrap()
+                });
+                view.transcript.snapshot(ConversationSnapshot {
+                    seq: 1,
+                    first_seq: 1,
+                    items: ["9a1b2c3 fixed it", "#42 tracks it"]
+                        .into_iter()
+                        .map(|text| Item {
+                            kind: "assistant_text".into(),
+                            text: text.into(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                });
+                this.update_view(Arc::new(view), window, cx);
+            })
+        }
+    };
+    let click_row = |visual: &mut VisualTestContext, row: usize| {
+        let key = format!("markdown-inline-live:a:{row}-0").leak();
+        let bounds = visual.debug_bounds(key).unwrap();
+        visual.simulate_click(
+            bounds.origin + gpui::point(px(10.), bounds.size.height / 2.),
+            gpui::Modifiers::default(),
+        );
+        visual.run_until_parked();
+    };
+    // Without a linked pull request, a reference says what it needs.
+    visual.update(show(false));
+    visual.run_until_parked();
+    click_row(&mut visual, 1);
+    assert_eq!(visual.opened_url(), None);
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.extras.notice.contains("#42"), "{}", this.extras.notice)
+    });
+    // With one, it opens in that repository.
+    visual.update(show(true));
+    visual.run_until_parked();
+    click_row(&mut visual, 1);
+    assert_eq!(
+        visual.opened_url().as_deref(),
+        Some("https://github.com/o/r/issues/42")
+    );
+    // A commit opens Changes on the commit list, reading its patch.
+    click_row(&mut visual, 0);
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.screen, Screen::Changes);
+        assert_eq!(this.review.commit.as_deref(), Some("9a1b2c3"));
+    });
+    assert!(
+        std::iter::from_fn(|| commands.try_recv().ok()).any(|c| matches!(
+            c,
+            Command::Request(wks_native::features::Request::CommitDiff { ref hash, .. })
+                if hash == "9a1b2c3"
+        )),
+        "the commit's patch is requested"
+    );
+}
+
+#[gpui::test]
 fn markdown_file_link_requests_preview_and_shows_the_result(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.update(|window, cx| {
