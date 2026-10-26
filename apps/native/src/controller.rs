@@ -457,6 +457,9 @@ pub struct View {
     /// Kept ids (see [`Command::KeepSessions`]) the last fleet read found in
     /// neither the hub's session rows nor its history: nothing can show them.
     pub kept_gone: Arc<Vec<String>>,
+    /// The hub's persistent identity (its hello's `hubId`), once a fleet
+    /// read has answered; empty for a hub that does not send one.
+    pub hub_id: String,
     pub selected: Option<String>,
     pub transcript: Transcript,
     pub pending_messages: Vec<PendingMessage>,
@@ -2443,6 +2446,10 @@ impl Worker {
                     Ok(Value::Array(rows)) => {
                         if *self.view.kept_gone != gone {
                             self.view.kept_gone = Arc::new(gone);
+                        }
+                        let hub_id = self.backend.hub_id();
+                        if self.view.hub_id != hub_id {
+                            self.view.hub_id = hub_id;
                         }
                         if self.view.notice.starts_with("Sessions unavailable:") {
                             self.view.notice.clear();

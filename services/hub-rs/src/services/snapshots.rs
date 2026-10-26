@@ -599,6 +599,19 @@ mod visibility_tests {
                 "{method}"
             );
         }
+        // A client keeping its own list asks past the layout: ended rows
+        // follow the hub's own 24-hour rule (these are years old).
+        let rows = client
+            .call("sessions.snapshots", json!({"uncurated": true}))
+            .await
+            .unwrap();
+        let ids: BTreeSet<_> = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["sessionId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["live-idle", "live-working"].into());
         *layout.write().unwrap() = json!({"version":2,"data":{"agents":[]}});
         let rows = client.call("sessions.snapshots", json!({})).await.unwrap();
         assert_eq!(rows.as_array().unwrap().len(), 2);

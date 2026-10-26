@@ -84,6 +84,9 @@ pub struct Frame {
     pub error: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub scope: String,
+    /// Hello only: the hub's persistent identity (see `Options::hub_id`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub hub_id: String,
 }
 
 impl Frame {

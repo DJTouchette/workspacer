@@ -32,7 +32,14 @@ impl Workspace {
         self.permission = settings.default_access(self.provider);
         self.settings = settings;
         self.settings_path = path;
-        self.project_scope = scope;
+        self.project_scope = self.settings.scope_for(&scope);
+        self.address_scope = scope;
+        // Read once: a run that crashes leaves no close on record, so its
+        // sessions read as paused rather than finished (see `kept::fold`).
+        self.last_closed = self.settings.closed_at.remove(&self.project_scope);
+        if self.last_closed.is_some() && self.settings_path.is_some() {
+            self.save_settings_quietly();
+        }
         // Sessions kept from the last run reach the controller before it
         // connects, so its first fleet read includes them instead of a
         // second read once the first one lands without them.
@@ -73,16 +80,84 @@ impl Workspace {
     }
 
     pub(super) fn save_settings(&mut self, cx: &mut Context<Self>) {
-        self.settings_error = match &self.settings_path {
-            Some(path) => self
-                .settings
-                .save(path)
-                .err()
-                .map(|e| format!("Applied for this run, but could not save: {e}"))
-                .unwrap_or_default(),
+        self.save_settings_quietly();
+        cx.notify();
+    }
+
+    /// Save, keeping what other native processes saved for other hubs.
+    fn save_settings_quietly(&mut self) {
+        self.settings_error = match self.settings_path.clone() {
+            Some(path) => {
+                let own = [self.project_scope.clone(), self.address_scope.clone()];
+                let own: Vec<&str> = own.iter().map(String::as_str).collect();
+                self.settings
+                    .save_merged(&path, &own)
+                    .err()
+                    .map(|e| format!("Applied for this run, but could not save: {e}"))
+                    .unwrap_or_default()
+            }
             None => "Applied for this run; no settings location is available.".into(),
         };
-        cx.notify();
+    }
+
+    /// Key device state by the hub's own identity once it reports one, so
+    /// the same hub reached at another address (`localhost` or `127.0.0.1`,
+    /// a new port, `--local` or `workspacer serve` on the same directory)
+    /// keeps its kept, archived and named sessions. What was kept under the
+    /// address moves to the hub's scope, files keyed by scope included.
+    pub(super) fn adopt_hub_scope(&mut self, view: &View, cx: &mut Context<Self>) {
+        if self.demo || view.hub_id.is_empty() || !view.connected {
+            return;
+        }
+        let scope = format!("hub:{}", view.hub_id);
+        if scope == self.project_scope {
+            return;
+        }
+        let from = std::mem::replace(&mut self.project_scope, scope.clone());
+        let address = self.address_scope.clone();
+        self.settings.move_scope(&address, &from, &scope);
+        if let Some(path) = &self.settings_path {
+            let moves = [
+                (
+                    timing::history_path(path, &from, "")
+                        .parent()
+                        .map(std::path::Path::to_path_buf),
+                    timing::history_path(path, &scope, "")
+                        .parent()
+                        .map(std::path::Path::to_path_buf),
+                ),
+                (
+                    Some(wks_native::terminal::remembered_path(path, &from)),
+                    Some(wks_native::terminal::remembered_path(path, &scope)),
+                ),
+            ];
+            for (old, new) in moves {
+                if let (Some(old), Some(new)) = (old, new)
+                    && old.exists()
+                    && !new.exists()
+                    && let Err(error) = std::fs::rename(&old, &new)
+                {
+                    eprintln!("Could not move {} to its hub: {error}", old.display());
+                }
+            }
+        }
+        // A hub that changed identity under the same address (a fresh data
+        // directory) has no close on record for this run to compare against.
+        if from != address {
+            self.last_closed = None;
+        }
+        self.kept_sent.clear();
+        let kept = self
+            .settings
+            .kept_open
+            .get(&self.project_scope)
+            .map(wks_native::kept::read_order)
+            .unwrap_or_default();
+        if !kept.is_empty() {
+            self.kept_sent = kept.clone();
+            let _ = self.controller.command(Command::KeepSessions(kept));
+        }
+        self.save_settings(cx);
     }
 
     pub(super) fn project_rows(&self, cx: &App) -> Vec<KnownProject> {

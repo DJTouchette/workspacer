@@ -136,6 +136,8 @@ pub struct Client {
     events: broadcast::Sender<Event>,
     stop: watch::Sender<bool>,
     disconnected: watch::Receiver<Option<DisconnectReason>>,
+    /// The hub's persistent identity from its hello; empty until one names it.
+    hub_id: std::sync::Arc<std::sync::Mutex<String>>,
 }
 enum Request {
     Call {
@@ -170,9 +172,11 @@ impl Client {
         let (stop, mut stopped) = watch::channel(false);
         let (finished, disconnected) = watch::channel(None);
         let sink = events.clone();
+        let hub_id = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let hello = hub_id.clone();
         tokio::spawn(async move {
             let reason = tokio::select! {
-                reason = run(connection, rx, sink, cancel_calls) => reason,
+                reason = run(connection, rx, sink, cancel_calls, hello) => reason,
                 _ = stopped.changed() => DisconnectReason::LocalClosed,
             };
             finished.send_replace(Some(reason));
@@ -182,7 +186,17 @@ impl Client {
             events,
             stop,
             disconnected,
+            hub_id,
         }
+    }
+    /// The hub's persistent identity, as its hello named it (empty for a hub
+    /// that does not, or before the hello is read; any call's reply comes
+    /// after it on the same connection).
+    pub fn hub_id(&self) -> String {
+        self.hub_id
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
     /// Close this connection and every clone, including in-flight calls.
     pub fn close(&self) {
@@ -258,7 +272,9 @@ impl Client {
             bail!("peer did not send hello");
         }
         let cancel_calls = negotiated && hello.caller_context_version == 1;
-        Ok((Self::from_transport(transport, cancel_calls), hello))
+        let client = Self::from_transport(transport, cancel_calls);
+        *client.hub_id.lock().unwrap_or_else(|e| e.into_inner()) = hello.hub_id.clone();
+        Ok((client, hello))
     }
     pub fn disconnect_reason(&self) -> Option<DisconnectReason> {
         self.disconnected.borrow().clone()
@@ -340,6 +356,7 @@ async fn run(
     mut commands: mpsc::Receiver<Request>,
     events: broadcast::Sender<Event>,
     cancel_calls: bool,
+    hub_id: std::sync::Arc<std::sync::Mutex<String>>,
 ) -> DisconnectReason {
     let mut pending = HashMap::<String, oneshot::Sender<Result<Value>>>::new();
     let mut sequence = 0u64;
@@ -373,6 +390,7 @@ async fn run(
             _=sweep.tick(), if !pending.is_empty()=>(),
             frame=connection.recv()=>match frame {
                 Ok(frame) if frame.op=="event"=>{if let Some(event)=frame.event{let _=events.send(event);}},
+                Ok(frame) if frame.op=="hello"=>{*hub_id.lock().unwrap_or_else(|e| e.into_inner())=frame.hub_id;},
                 Ok(frame) if frame.op=="result" || frame.op=="error"=>{
                     if let Some(reply)=pending.remove(&frame.id){let _=reply.send(if frame.op=="error" {Err(anyhow!(frame.error))} else {Ok(frame.result.unwrap_or(Value::Null))});}
                 }

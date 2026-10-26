@@ -37,8 +37,10 @@ import * as fs from 'fs';
 // Capture every registered capability handler so tests can invoke them directly.
 const registered = new Map<string, (params: unknown) => unknown>();
 const emitToRenderer = vi.fn();
+const callHub = vi.fn();
 vi.mock('./hubClient', () => ({
   publishToHub: vi.fn(),
+  callHub: (...a: unknown[]) => callHub(...a),
   registerCapability: (method: string, handler: (params: unknown) => unknown) => {
     registered.set(method, handler);
   },
@@ -689,6 +691,29 @@ describe('sessions.snapshots — compacted before it leaves the process', () => 
     getSnapshot.mockReturnValue(bigSession() as never);
     const out = (await call('sessions.snapshot', { sessionId: 's1' })) as Record<string, any>;
     expect(out.conversation).toHaveLength(50);
+  });
+});
+
+// The native app keeps its own list of ended sessions; another window's
+// layout must not decide which stopped sessions it shows.
+describe('sessions.snapshots — uncurated', () => {
+  afterEach(() => callHub.mockReset());
+  const live = { sessionId: 'live', cwd: '/proj' };
+  const layout = { data: { agents: [{ lastSessionId: 'old', cwd: '/proj', name: 'Old' }] } };
+
+  it('appends layout-curated stopped rows by default', async () => {
+    getAllSnapshots.mockReturnValue([live] as never);
+    callHub.mockResolvedValue(layout);
+    const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
+    expect(out.map((s) => s.sessionId)).toEqual(['live', 'old']);
+  });
+
+  it('serves live rows only when asked uncurated', async () => {
+    getAllSnapshots.mockReturnValue([live] as never);
+    callHub.mockResolvedValue(layout);
+    const out = (await call('sessions.snapshots', { uncurated: true })) as Array<Record<string, any>>;
+    expect(out.map((s) => s.sessionId)).toEqual(['live']);
+    expect(callHub).not.toHaveBeenCalled();
   });
 });
 

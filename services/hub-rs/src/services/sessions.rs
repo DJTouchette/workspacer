@@ -854,7 +854,14 @@ impl Sessions {
         }
 
         if matches!(method, "agents.list" | "sessions.snapshots") {
-            let layout = self.layout();
+            // `uncurated`: ended sessions by the hub's own 24-hour rule, not
+            // by which panes another client's layout happens to have open.
+            // A client that keeps its own list (native) asks for this.
+            let layout = if params["uncurated"] == true {
+                Value::Null
+            } else {
+                self.layout()
+            };
             let now = time::OffsetDateTime::now_utc();
             let mut rows: Vec<Value> = self
                 .rows

@@ -228,3 +228,80 @@ fn a_failed_resume_keeps_the_draft_and_says_why(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+fn a_session_that_finished_while_away_from_an_outliving_hub_is_let_go(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    let closed = wks_native::timing::now_ms() - 60 * 60 * 1000;
+    let stopped = |id: &str, at: i64| Session {
+        last_activity: at,
+        ..session(id, "stopped")
+    };
+    let show = |local: bool, visual: &mut VisualTestContext| {
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let now = wks_native::timing::now_ms();
+                this.extras.local_paths = local;
+                this.last_closed = Some(closed);
+                this.settings.kept_open.insert(
+                    this.project_scope.clone(),
+                    [("quit".to_string(), now), ("away".to_string(), now)].into(),
+                );
+                let view = fleet(
+                    vec![
+                        stopped("quit", closed + 1_000),
+                        stopped("away", closed + 30 * 60 * 1000),
+                    ],
+                    "quit",
+                );
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+    };
+    // Attached: the hub kept running after the app quit.
+    show(false, &mut visual);
+    assert_eq!(kept(&workspace, &mut visual), ["quit"]);
+    // `--local`: the app's quit stopped everything it owned.
+    show(true, &mut visual);
+    let mut both = kept(&workspace, &mut visual);
+    both.sort();
+    assert_eq!(both, ["away", "quit"]);
+}
+
+#[gpui::test]
+fn device_state_follows_the_hub_identity_not_its_address(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            let now = wks_native::timing::now_ms();
+            this.settings
+                .kept_open
+                .insert("test".into(), [("a".to_string(), now)].into());
+            this.settings.names.insert(
+                "test".into(),
+                [("a".to_string(), "Named".to_string())].into(),
+            );
+            let mut view = fleet(vec![session("a", "stopped")], "a");
+            view.hub_id = "h1".into();
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.project_scope, "hub:h1");
+        assert_eq!(this.settings.scope_for("test"), "hub:h1");
+        assert!(!this.settings.kept_open.contains_key("test"));
+        assert!(this.settings.kept_open["hub:h1"].contains_key("a"));
+        assert_eq!(this.settings.names["hub:h1"]["a"], "Named");
+        assert!(this.paused(&this.view.sessions[0]));
+    });
+    let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+        .filter_map(|c| match c {
+            Command::KeepSessions(ids) => Some(ids),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent.first(), Some(&vec!["a".to_string()]));
+}

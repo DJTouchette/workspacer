@@ -1653,8 +1653,13 @@ export function registerHubCapabilities(): void {
   // transcript as JSON on a WebSocket, on connect and on every OverviewPane
   // refresh (up to 1/s while streaming). The ACTIVE pane is unaffected: it
   // reads `sessions.snapshot`, singular, which stays full.
-  registerCapability('sessions.snapshots', async () => {
+  //
+  // `{ uncurated: true }` skips that layout synthesis: a client that keeps its
+  // own list of ended sessions (the native app) asks for live rows only, so
+  // which panes this window has open never decides what it shows.
+  registerCapability('sessions.snapshots', async (params: unknown) => {
     const live = claudeSessionStore.getAllSnapshots().map(compactClaudeSnapshotForBackground);
+    if ((params as { uncurated?: unknown } | null | undefined)?.uncurated === true) return live;
     const liveIds = new Set(live.map((s) => s.sessionId));
     type LayoutAgentRef = {
       global?: boolean;

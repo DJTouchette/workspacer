@@ -615,7 +615,13 @@ pub struct Workspace {
     settings: Settings,
     fonts: typography::FontControls,
     settings_path: Option<std::path::PathBuf>,
+    /// Where device state is kept: the hub's identity (`hub:<id>`) once it
+    /// reported one, else the address it was reached at.
     project_scope: String,
+    /// The address this window reached its hub at (`ws://…`, `rust-local:…`).
+    address_scope: String,
+    /// When the app last quit with this hub, taken from settings at startup.
+    last_closed: Option<i64>,
     settings_error: String,
     project_filter: Option<String>,
     project_cursor: usize,
@@ -918,11 +924,24 @@ impl Workspace {
             // A popped-out file viewer or terminal never outlives its workspace.
             this.close_popout_window(cx);
             this.close_terminal_popout(cx);
-            if let Some(path) = &this.settings_path
-                && let Err(error) = this.settings.save(path)
-            {
-                eprintln!("Could not save native settings: {error}");
+            if let Some(path) = this.settings_path.clone() {
+                let own = [this.project_scope.clone(), this.address_scope.clone()];
+                let own: Vec<&str> = own.iter().map(String::as_str).collect();
+                if let Err(error) = this.settings.save_merged(&path, &own) {
+                    eprintln!("Could not save native settings: {error}");
+                }
             }
+        }));
+        // When the app last quit, per hub: a hub that outlives the app tells
+        // a session the quit stopped from one that finished while away.
+        focus_watch.push(cx.on_app_quit(|this, cx| {
+            if !this.demo && this.has_connected {
+                this.settings
+                    .closed_at
+                    .insert(this.project_scope.clone(), timing::now_ms());
+                this.save_settings(cx);
+            }
+            std::future::ready(())
         }));
         window.focus(&focus);
         let queue = queue::QueueUi::new(window, cx);
@@ -947,6 +966,8 @@ impl Workspace {
             fonts,
             settings_path: None,
             project_scope: "test".into(),
+            address_scope: "test".into(),
+            last_closed: None,
             settings_error: String::new(),
             project_filter: None,
             project_cursor: 0,
@@ -1075,6 +1096,7 @@ impl Workspace {
         self.sync_message_action(&view, cx);
         self.sync_tasks(&view, cx);
         self.sync_explorer(&view, cx);
+        self.adopt_hub_scope(&view, cx);
         self.sync_kept_open(&view, cx);
         self.arm_cache_clock(&view, cx);
         if let Some(receipt) = &view.spawn_receipt

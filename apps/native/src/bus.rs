@@ -91,6 +91,8 @@ pub struct Client {
     call_timeout: Duration,
     /// The methods the hub's latest hello allowed this connection.
     methods: Methods,
+    /// The hub's persistent identity from its latest hello (empty if none).
+    hub_id: Arc<std::sync::Mutex<String>>,
 }
 
 /// The `methods` of the hub's hello, `None` until one lists them.
@@ -105,15 +107,33 @@ impl Client {
         let connected = Arc::new(AtomicBool::new(false));
         let power_paused = Arc::new(AtomicBool::new(false));
         let methods = Methods::default();
+        let hub_id = Arc::<std::sync::Mutex<String>>::default();
         let client = Self {
             methods: methods.clone(),
+            hub_id: hub_id.clone(),
             commands,
             connected: connected.clone(),
             power_paused: power_paused.clone(),
             call_timeout: config.call_timeout,
         };
-        tokio::spawn(run(config, rx, events, connected, power_paused, methods));
+        tokio::spawn(run(
+            config,
+            rx,
+            events,
+            connected,
+            power_paused,
+            methods,
+            hub_id,
+        ));
         (client, incoming)
+    }
+
+    /// The hub's persistent identity, if its hello named one.
+    pub fn hub_id(&self) -> String {
+        self.hub_id
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// The methods the hub's hello allowed (`*` for the owner), if it said.
@@ -230,6 +250,7 @@ async fn run(
     connected: Arc<AtomicBool>,
     power_paused: Arc<AtomicBool>,
     methods: Methods,
+    hub_id: Arc<std::sync::Mutex<String>>,
 ) {
     let mut topics = BTreeSet::new();
     let mut counter = 0u64;
@@ -381,6 +402,7 @@ async fn run(
                                     Some("hello") if !ready => {
                                         ready = true;
                                         *methods.lock().unwrap_or_else(|e| e.into_inner()) = crate::controller::hello_methods(&v);
+                                        *hub_id.lock().unwrap_or_else(|e| e.into_inner()) = v["hubId"].as_str().unwrap_or("").to_owned();
                                         backoff = Duration::from_millis(250);
                                         connected.store(true, Ordering::Release);
                                         if !send_json(&mut socket, json!({"op": "subscribe", "topics": topics})).await {

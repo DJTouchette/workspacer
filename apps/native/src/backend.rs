@@ -86,6 +86,16 @@ impl Backend {
             HubClient::Embedded(_) => None,
         }
     }
+    /// The hub's persistent identity from its hello; empty for a hub that
+    /// does not send one. Read after a call has answered: the hello comes
+    /// first on the connection.
+    pub fn hub_id(&self) -> String {
+        match &self.hub {
+            HubClient::Remote(client) => client.hub_id(),
+            #[cfg(feature = "rust-hub")]
+            HubClient::Embedded(client) => client.hub_id(),
+        }
+    }
     pub fn can_resume_power_pause(&self) -> bool {
         matches!(&self.hub, HubClient::Remote(_))
     }
@@ -205,7 +215,11 @@ impl Backend {
     }
 
     pub async fn snapshots(&self) -> Result<Value> {
-        self.hub.call("sessions.snapshots", json!({})).await
+        // Uncurated: this app keeps its own list (`crate::kept`); another
+        // client's layout must not decide which ended sessions it shows.
+        self.hub
+            .call("sessions.snapshots", json!({"uncurated": true}))
+            .await
     }
 
     /// One session's row by id, including one the fleet list no longer shows.

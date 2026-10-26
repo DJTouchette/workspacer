@@ -23,10 +23,11 @@ last_reviewed: 2026-10-26
 | Question | Single owner |
 | --- | --- |
 | Which sessions exist and their live state | claudemon `SessionStore` (memory) |
-| Which ended sessions the fleet list shows | hub `snapshots::visible` |
+| Which ended sessions the fleet list shows | hub `snapshots::visible` (native asks `uncurated`) |
 | Which extra sessions this device keeps listed | `wks_native::kept` (policy) over `Settings::kept_open` |
 | Hidden by archive | hub shared archive, else device `Settings::archived` |
 | Hidden finished children | device `Settings::cleared_children` |
+| Which hub device state belongs to | `Settings::hub_scopes` (address → `hub:<id>`) |
 | History rows | hub `sessions.recent` (engine rows plus durable record) |
 | Durable "this session existed" | hub analytics `session_history` (`headless-analytics.sqlite`) |
 
@@ -49,24 +50,39 @@ kept session; change that policy there, not in the UI.
   failed engine read with no durable store is an error, never `[]`.
 - The fleet list shows a stopped row for 24h, unless a hub layout document
   exists (written by the desktop/web panes); then only stopped sessions the
-  layout names are shown. In bus mode against a desktop hub, the desktop's
-  open panes therefore decide which old sessions native lists.
+  layout names are shown. Native sends `sessions.snapshots {uncurated: true}`
+  (honored by both the Rust hub and the desktop hub), so another client's
+  open panes never decide which ended sessions native lists.
 - `kept_open` stamps are "last seen open" (refreshed hourly). Entries expire
   after seven days, are dropped when archived, when they end while this run
   watched them, or when the controller reports them in `View::kept_gone`
   (neither `sessions.snapshot` nor `sessions.recent` has them). Reads are
-  capped at 64, newest first; previously the cap took the alphabetically
-  first ids and nothing expired.
+  capped at 64, newest first.
+- When the hub outlives the app (attached, not `--local`), the app records
+  `Settings::closed_at` for the hub on quit. At the next start that value is
+  read once and cleared; a kept session first seen stopped whose
+  `lastActivity` is after it (plus a two-minute grace) finished while you
+  were away and is let go instead of shown as Paused. A crash leaves no
+  close on record, so everything stays Paused (conservative). `--local`
+  ignores it: the app's quit stopped everything it owned.
 
-## Known remaining gaps
+## Device state and hub identity
 
-- A kept session stopped by a hub that outlives the app (bus mode) still
-  reads as Paused until it expires; native cannot tell "app closed" from
-  "agent finished while away".
-- `Settings` is one JSON file written whole; two native processes on the
-  same machine overwrite each other's kept/archived/names.
-- Device state is scoped by hub identity (`rust-local:<dir>` or the bus URL),
-  so switching between `--local` and attaching to a hub shows different kept,
-  archived and renamed sets.
-- Sessions shorter than the analytics watcher's pass interval (5s active)
-  may never reach the durable record.
+The Rust hub writes a persistent id to `<data_dir>/hub-id.json` and sends it
+as `hubId` in every hello (embedded and remote clients expose it as
+`hub_id()`). Native starts in the scope remembered for the address it
+dialed, and once a fleet read answers it moves to `hub:<id>`: per-hub maps
+are merged into that scope, the turn-timing directory and remembered
+terminals file are renamed, and the address is aliased so the next launch
+starts there. `--local` and `workspacer serve` on the same directory, or
+`localhost` vs `127.0.0.1`, therefore share kept, archived and named
+sessions. Hubs without an id (the desktop hub) stay keyed by address.
+
+`Settings` is still one file, but saves are atomic (temp file + rename) and
+`save_merged` keeps the file's entries for every hub scope this process does
+not own, so a `--local` window and an attached one no longer overwrite each
+other. Two processes on the *same* hub remain last-writer-wins for that hub.
+
+The analytics watcher runs one final pass (2s engine budget) when the hub
+closes, so a session started or ended inside the 5-second pass interval
+before shutdown still reaches the durable record.

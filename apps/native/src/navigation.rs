@@ -105,6 +105,14 @@ pub struct Settings {
     /// when it closed, so it stays in the sidebar to pick back up until it is
     /// resumed, archived, or ends while the app is running.
     pub kept_open: BTreeMap<String, BTreeMap<String, i64>>,
+    /// When the app last quit, by hub identity (epoch ms). Read once at
+    /// startup and cleared, so a crash leaves no stale close behind; see
+    /// [`crate::kept::fold`].
+    pub closed_at: BTreeMap<String, i64>,
+    /// The address a hub was dialed at (`ws://…` or `rust-local:<dir>`) to
+    /// the identity scope it reported (`hub:<id>`), so device state follows
+    /// the hub rather than the address and the next launch starts in it.
+    pub hub_scopes: BTreeMap<String, String>,
     pub default_provider: Provider,
     pub default_claude_access: crate::launch::Permission,
     pub default_codex_access: crate::launch::Permission,
@@ -134,6 +142,8 @@ impl Default for Settings {
             archived: BTreeMap::new(),
             cleared_children: BTreeMap::new(),
             kept_open: BTreeMap::new(),
+            closed_at: BTreeMap::new(),
+            hub_scopes: BTreeMap::new(),
             default_provider: Provider::Claude,
             default_claude_access: crate::launch::Permission::Ask,
             default_codex_access: crate::launch::Permission::Ask,
@@ -169,11 +179,117 @@ impl Settings {
         }
     }
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        let parent = path.parent().unwrap_or(Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        // Written beside and renamed over: a crash or a second process
+        // reading mid-write never sees half a file.
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("settings");
+        let temp = parent.join(format!(".{name}.{}.tmp", std::process::id()));
+        let written = (|| -> anyhow::Result<()> {
+            let mut file = std::fs::File::create(&temp)?;
+            std::io::Write::write_all(&mut file, &serde_json::to_vec_pretty(self)?)?;
+            file.sync_all()?;
+            std::fs::rename(&temp, path)?;
+            Ok(())
+        })();
+        if written.is_err() {
+            let _ = std::fs::remove_file(&temp);
         }
-        std::fs::write(path, serde_json::to_vec_pretty(self)?)?;
-        Ok(())
+        written
+    }
+    /// Save, keeping what another process saved for hubs other than `own`.
+    ///
+    /// Device state is one file for every hub. Two native processes (say one
+    /// `--local`, one attached to a hub) each hold the whole file and used to
+    /// overwrite each other's kept, archived and named sessions. Per-hub maps
+    /// now take this process's entries only for the scopes it owns and the
+    /// file's for every other; everything else is this process's.
+    pub fn save_merged(&mut self, path: &Path, own: &[&str]) -> anyhow::Result<()> {
+        if let Ok(bytes) = std::fs::read(path)
+            && let Ok(disk) = serde_json::from_slice::<Self>(&bytes)
+        {
+            self.adopt_other_scopes(disk, own);
+        }
+        self.save(path)
+    }
+    fn adopt_other_scopes(&mut self, disk: Self, own: &[&str]) {
+        fn merge<V>(ours: &mut BTreeMap<String, V>, disk: BTreeMap<String, V>, own: &[&str]) {
+            ours.retain(|scope, _| own.contains(&scope.as_str()));
+            for (scope, value) in disk {
+                if !own.contains(&scope.as_str()) {
+                    ours.insert(scope, value);
+                }
+            }
+        }
+        merge(&mut self.names, disk.names, own);
+        merge(&mut self.archived, disk.archived, own);
+        merge(&mut self.cleared_children, disk.cleared_children, own);
+        merge(&mut self.kept_open, disk.kept_open, own);
+        merge(&mut self.closed_at, disk.closed_at, own);
+        merge(&mut self.projects, disk.projects, own);
+        // Aliases only ever gain entries; this process's own win.
+        for (address, scope) in disk.hub_scopes {
+            self.hub_scopes.entry(address).or_insert(scope);
+        }
+    }
+    /// The scope device state for `address` lives under: its hub's identity
+    /// once one was reported, else the address itself.
+    pub fn scope_for(&self, address: &str) -> String {
+        self.hub_scopes
+            .get(address)
+            .cloned()
+            .unwrap_or_else(|| address.to_owned())
+    }
+    /// Move everything kept under `from` into `to` (a hub's identity scope),
+    /// merging with what `to` already holds, and remember `address` → `to`.
+    pub fn move_scope(&mut self, address: &str, from: &str, to: &str) {
+        self.hub_scopes.insert(address.to_owned(), to.to_owned());
+        if from == to {
+            return;
+        }
+        if let Some(names) = self.names.remove(from) {
+            let target = self.names.entry(to.to_owned()).or_default();
+            for (id, name) in names {
+                target.entry(id).or_insert(name);
+            }
+        }
+        if let Some(ids) = self.archived.remove(from) {
+            let target = self.archived.entry(to.to_owned()).or_default();
+            for id in ids {
+                if !target.contains(&id) {
+                    target.push(id);
+                }
+            }
+        }
+        if let Some(marks) = self.cleared_children.remove(from) {
+            let target = self.cleared_children.entry(to.to_owned()).or_default();
+            for (id, mark) in marks {
+                target.entry(id).or_insert(mark);
+            }
+        }
+        if let Some(kept) = self.kept_open.remove(from) {
+            let target = self.kept_open.entry(to.to_owned()).or_default();
+            for (id, at) in kept {
+                let stamp = target.entry(id).or_insert(at);
+                *stamp = (*stamp).max(at);
+            }
+        }
+        if let Some(at) = self.closed_at.remove(from) {
+            let stamp = self.closed_at.entry(to.to_owned()).or_insert(at);
+            *stamp = (*stamp).max(at);
+        }
+        if let Some(paths) = self.projects.remove(from) {
+            let target = self.projects.entry(to.to_owned()).or_default();
+            for path in paths {
+                if !target.contains(&path) {
+                    target.push(path);
+                }
+            }
+            target.sort();
+        }
     }
     pub fn bookmarks(&self, hub: &str) -> &[String] {
         self.projects
@@ -661,6 +777,77 @@ mod sidebar_tests {
         let rows = session_tree(&sessions, &[0, 1, 2, 3]);
         assert_eq!(rows, vec![(2, 0), (3, 0), (0, 0), (1, 1)]);
     }
+    #[test]
+    fn saving_keeps_what_another_process_saved_for_other_hubs() {
+        let dir = std::env::temp_dir().join(format!("wks-settings-{}", std::process::id()));
+        let path = dir.join("native-settings.json");
+        let _ = std::fs::remove_dir_all(&dir);
+        // Another process (attached to `ws://other`) saved first.
+        let mut other = Settings::default();
+        other
+            .kept_open
+            .insert("ws://other".into(), [("o".to_string(), 1)].into());
+        other.names.insert(
+            "ws://other".into(),
+            [("o".to_string(), "Theirs".to_string())].into(),
+        );
+        other
+            .kept_open
+            .insert("hub:mine".into(), [("stale".to_string(), 1)].into());
+        other.save(&path).unwrap();
+        // This one (hub:mine) still holds a stale copy of theirs.
+        let mut mine = Settings::default();
+        mine.kept_open
+            .insert("hub:mine".into(), [("m".to_string(), 2)].into());
+        mine.kept_open.insert("ws://other".into(), BTreeMap::new());
+        mine.save_merged(&path, &["hub:mine"]).unwrap();
+        let saved = Settings::load(&path).unwrap();
+        assert_eq!(
+            saved.kept_open["ws://other"],
+            BTreeMap::from([("o".to_string(), 1)])
+        );
+        assert_eq!(saved.names["ws://other"]["o"], "Theirs");
+        assert_eq!(
+            saved.kept_open["hub:mine"],
+            BTreeMap::from([("m".to_string(), 2)])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn moving_to_a_hub_scope_merges_and_remembers_the_address() {
+        let mut settings = Settings::default();
+        let address = "ws://127.0.0.1:7777/bus";
+        settings.kept_open.insert(
+            address.into(),
+            [("a".to_string(), 5), ("b".to_string(), 9)].into(),
+        );
+        settings
+            .kept_open
+            .insert("hub:x".into(), [("a".to_string(), 7)].into());
+        settings.archived.insert(address.into(), vec!["z".into()]);
+        settings.names.insert(
+            address.into(),
+            [("a".to_string(), "Mine".to_string())].into(),
+        );
+        settings.names.insert(
+            "hub:x".into(),
+            [("a".to_string(), "Kept".to_string())].into(),
+        );
+        settings.projects.insert(address.into(), vec!["/p".into()]);
+        settings.move_scope(address, address, "hub:x");
+        assert_eq!(settings.scope_for(address), "hub:x");
+        assert_eq!(settings.scope_for("ws://elsewhere"), "ws://elsewhere");
+        assert!(!settings.kept_open.contains_key(address));
+        assert_eq!(
+            settings.kept_open["hub:x"],
+            BTreeMap::from([("a".to_string(), 7), ("b".to_string(), 9)])
+        );
+        assert_eq!(settings.archived["hub:x"], ["z"]);
+        assert_eq!(settings.names["hub:x"]["a"], "Kept");
+        assert_eq!(settings.projects["hub:x"], ["/p"]);
+    }
+
     #[test]
     fn width_defaults_and_limits_leave_room_for_content() {
         assert_eq!(Settings::default().sidebar_width, 304.);

@@ -15,6 +15,10 @@ pub struct Session {
     pub label: String,
     pub cwd: String,
     pub state: String,
+    /// Epoch ms of the session's last state change as the hub reports it
+    /// (`lastActivity`, a history row's `updatedAt`); 0 when unknown. For a
+    /// stopped session, about when it stopped.
+    pub last_activity: i64,
     pub transport: String,
     pub provider: String,
     pub parent_session_id: String,
@@ -430,6 +434,19 @@ impl Session {
             {
                 *target = s.to_owned();
             }
+        }
+        if let Some(at) = ["lastActivity", "updatedAt"]
+            .iter()
+            .find_map(|key| value.get(*key).and_then(Value::as_i64))
+            .or_else(|| {
+                value
+                    .get("updated_at")
+                    .and_then(Value::as_str)
+                    .and_then(crate::timing::parse_timestamp)
+            })
+            .filter(|&at| at > 0)
+        {
+            self.last_activity = at;
         }
         if let Some(model) = value
             .pointer("/requestedSelection/model")

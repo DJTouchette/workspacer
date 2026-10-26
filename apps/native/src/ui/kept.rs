@@ -28,6 +28,8 @@ impl Workspace {
             &mut seen_open,
             &view.kept_gone,
             |id| self.archived(id),
+            // Only a hub that outlives the app can stop a session after it.
+            self.last_closed.filter(|_| !self.extras.local_paths),
             timing::now_ms(),
         );
         self.seen_open = seen_open;

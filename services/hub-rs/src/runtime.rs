@@ -75,6 +75,10 @@ pub struct Options {
     pub(crate) upstream_layout: Option<Arc<std::sync::RwLock<Value>>>,
     pub scoped_tokens: Option<std::path::PathBuf>,
     pub data_dir: Option<std::path::PathBuf>,
+    /// This hub's persistent identity, sent in every hello so clients can
+    /// key device state by hub rather than by the address they dialed.
+    /// Read from (or first written to) `<data_dir>/hub-id.json`.
+    pub(crate) hub_id: String,
     pub config_dir: Option<std::path::PathBuf>,
     pub home_dir: Option<std::path::PathBuf>,
     pub jobs_file: Option<std::path::PathBuf>,
@@ -158,6 +162,7 @@ impl Default for Options {
             upstream_layout: None,
             scoped_tokens: None,
             data_dir: None,
+            hub_id: String::new(),
             config_dir: None,
             home_dir: None,
             jobs_file: None,
@@ -282,6 +287,39 @@ pub(crate) struct PeerReplacementReservation {
 impl PeerReplacementReservation {
     pub(crate) fn publish(self, peers: Vec<crate::federation::Peer>) {
         self.permit.send(Command::ReplacePeers(peers, self.reply));
+    }
+}
+
+/// The hub's persistent id under `directory`, created on first use. A hub
+/// that cannot read or write it has no id (clients fall back to the address
+/// they dialed) rather than a new one every start.
+fn hub_identity(directory: &std::path::Path) -> String {
+    let path = directory.join("hub-id.json");
+    let valid = |id: &str| {
+        !id.is_empty()
+            && id.len() <= 64
+            && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
+            .ok()
+            .and_then(|v| v["id"].as_str().map(str::to_owned))
+            .filter(|id| valid(id))
+            .unwrap_or_default(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let id = uuid::Uuid::new_v4().to_string();
+            match crate::services::atomic_json(&path, &serde_json::json!({"id": id}), false) {
+                Ok(()) => id,
+                Err(error) => {
+                    eprintln!("hub identity was not saved: {error}");
+                    String::new()
+                }
+            }
+        }
+        Err(error) => {
+            eprintln!("hub identity could not be read: {error}");
+            String::new()
+        }
     }
 }
 
@@ -2253,6 +2291,7 @@ async fn run(
     );
     options = crate::services::uploads::install_front(options, handle.clone());
     if let Some(directory) = options.data_dir.clone() {
+        options.hub_id = hub_identity(&directory);
         options = crate::services::install(options, handle.clone(), directory)?;
     }
     if let Some(directory) = options.config_dir.clone() {
@@ -2693,7 +2732,7 @@ async fn run(
                     let (closed, closing) = watch::channel(false);
                     let close_code=Arc::new(AtomicU16::new(0));let network=Arc::new(AtomicBool::new(false));let (close_done,done)=watch::channel(false);
                     let desynced = Arc::new(Mutex::new(BTreeSet::new()));
-                    let hello = Frame { provider_caller:hello_identity.then(||identity.provider_caller(id)),caller_context_version:if hello_identity{1}else{0},scope:identity.scope().into(), methods:identity.methods(), spawn_full_access:identity.may_call("agents.spawn"), ..Frame::op("hello") };
+                    let hello = Frame { provider_caller:hello_identity.then(||identity.provider_caller(id)),caller_context_version:if hello_identity{1}else{0},scope:identity.scope().into(), methods:identity.methods(), spawn_full_access:identity.may_call("agents.spawn"), hub_id:core.options.hub_id.clone(), ..Frame::op("hello") };
                     core.peers.insert(id, Peer { facade_access,identity, credential, local_facade,delegated,wants_caller_context:false, close_code:close_code.clone(),network:network.clone(),close_done:done,internal, activity_seq:1, last_active_ms:now, last_interaction_ms:now, reports_interaction:false, reliable, events, closed, topics: vec![], demand: vec![], held_demand:BTreeSet::new(), desynced: desynced.clone() });
                     core.send(id, hello);
                     let _ = reply.send(Ok(Connection { close_code,network,close_done,id, handle: handle.clone(), reliable: rx, events: erx, desynced,
@@ -3080,6 +3119,34 @@ mod launch_proof_tests {
         assert!(core.check_launch(&permit, false).is_err());
         assert!(!core.pending.contains_key(&7));
         assert!(core.pending.contains_key(&8));
+    }
+}
+
+#[cfg(test)]
+mod hub_identity_tests {
+    use super::*;
+    #[tokio::test]
+    async fn the_hub_id_persists_and_rides_every_hello() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = hub_identity(dir.path());
+        assert!(!id.is_empty());
+        assert_eq!(hub_identity(dir.path()), id, "read back, not regenerated");
+        std::fs::write(dir.path().join("hub-id.json"), b"{\"id\":\"../bad\"}").unwrap();
+        assert_eq!(hub_identity(dir.path()), "", "an invalid id is no id");
+
+        let mut options = Options::default();
+        options.hub_id = "hub-1".into();
+        let hub = Hub::start(options).unwrap();
+        hub.ready().await.unwrap();
+        let client = crate::client::Client::connect(&hub.handle()).await.unwrap();
+        // A call's reply follows the hello on the same connection.
+        let _ = client.call("hub.ping", serde_json::json!({})).await;
+        assert_eq!(client.hub_id(), "hub-1");
+        client.close();
+        tokio::task::spawn_blocking(move || hub.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
 

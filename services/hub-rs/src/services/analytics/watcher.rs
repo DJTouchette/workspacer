@@ -115,11 +115,13 @@ impl Watcher {
             .engine
             .as_ref()
             .context("analytics session source unavailable")?;
+        // The closing pass must not hold up shutdown behind a stuck engine.
+        let budget = if matches!(pass, Pass::Final) { 2 } else { 15 };
         let raw = tokio::time::timeout(
-            Duration::from_secs(15),
+            Duration::from_secs(budget),
             engine.request(Command::Request {
                 method: "GET".into(),
-                path: if matches!(pass, Pass::Background { archived: false }) {
+                path: if matches!(pass, Pass::Background { archived: false } | Pass::Final) {
                     "/sessions?include_empty=true".into()
                 } else {
                     "/sessions?include_archived=true&include_empty=true".into()
@@ -190,7 +192,14 @@ impl Watcher {
         let mut wait = ACTIVE_PASS;
         loop {
             tokio::select! {
-             _=cancelled.changed()=>return Ok(()),
+             _=cancelled.changed()=>{
+                // Unconditional: an update and the close can arrive together,
+                // and an unchanged row costs a read, not a write.
+                if let Err(error) = self.timed("analytics.recent", json!({"limit":1}), Pass::Final).await {
+                    eprintln!("Analytics closing observation was not recorded: {error:#}");
+                }
+                return Ok(());
+             },
              update=updates.recv()=>{match update{Ok(_)|Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>dirty=true,Err(tokio::sync::broadcast::error::RecvError::Closed)=>{if *cancelled.borrow(){return Ok(());}bail!("analytics engine update stream closed");}}},
              _=ticker.tick()=>{
                 let since = last.map_or(Duration::MAX, |at| at.elapsed());
@@ -241,5 +250,77 @@ pub fn install(
 #[derive(Clone, Copy)]
 enum Pass {
     Query,
-    Background { archived: bool },
+    Background {
+        archived: bool,
+    },
+    /// One last background pass as the hub closes, so a session that started
+    /// or ended since the previous pass is still recorded.
+    Final,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    /// A session that starts moments before the hub closes, inside the
+    /// background pass interval, still reaches the durable record history
+    /// falls back on.
+    #[tokio::test]
+    async fn a_session_started_just_before_shutdown_is_recorded() -> Result<()> {
+        use claudemon::daemon::{
+            ServeConfig,
+            embedded::{EmbeddedDaemon, Options as EngineOptions},
+        };
+        let _single_engine = crate::backend::ENGINE_TEST_LOCK.lock().await;
+        let dir = tempfile::tempdir()?;
+        let mut engine = EmbeddedDaemon::start_with_options(
+            ServeConfig {
+                host: "127.0.0.1".into(),
+                hook_port: 0,
+                api_port: 0,
+                db_path: dir.path().join("state.db"),
+            },
+            EngineOptions {
+                usage_poll_on_boot: Some(false),
+            },
+        )?;
+        let ready = engine.ready().await?;
+        let data = dir.path().join("data");
+        let mut options = crate::Options::default();
+        options.engine = Some(engine.client());
+        options.config_dir = Some(data.clone());
+        options.home_dir = Some(dir.path().join("home"));
+        let hub = crate::Hub::start(options)?;
+        hub.ready().await?;
+        let record = data.join("headless-analytics.sqlite");
+        let recorded = |id: &str| -> bool {
+            Analytics::open(
+                record.clone(),
+                Arc::new(super::super::super::pricing::Pricing::new(
+                    dir.path().into(),
+                )),
+            )
+            .and_then(|a| a.sessions(100))
+            .is_ok_and(|rows| rows.iter().any(|r| r["sessionId"] == id))
+        };
+        let http = reqwest::Client::new();
+        let hook = |id: &'static str| {
+            http.post(format!("http://{}/hook", ready.hook_addr))
+                .json(&json!({"hook_event_name":"SessionStart","session_id":id,"cwd":dir.path()}))
+                .send()
+        };
+        // Once `first` is recorded a pass has just run; the next regular one
+        // is at least five seconds away.
+        hook("first").await?.error_for_status()?;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !recorded("first") {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await?;
+        hook("short").await?.error_for_status()?;
+        tokio::task::spawn_blocking(move || hub.shutdown()).await??;
+        engine.shutdown().await?;
+        assert!(recorded("short"));
+        Ok(())
+    }
 }
