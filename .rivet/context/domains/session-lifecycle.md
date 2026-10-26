@@ -169,6 +169,9 @@ rows from memory and prunes old SQLite session/event rows beyond the newest-100
 retention floor. Database pruning uses last-event age, not the in-memory mode.
 Provider transcript retention is a separate concern. See
 [SQLite persistence](../modules/claudemon-sqlite-store.md).
+Only Claude hook events reach that database, so stream and Codex sessions
+are forgotten on restart; the Rust hub's `sessions.recent` fills them back in
+from its analytics record. See [native sidebar and history](native-session-list.md).
 
 The History pane merges per-project Claude transcript listings with daemon
 resumable rows through `sessionHistoryGroups.ts`. A transcript-only session can

@@ -28,6 +28,10 @@ impl Watcher {
             replacements: None,
         })
     }
+    /// The durable store this watcher feeds.
+    pub fn store(&self) -> Arc<Analytics> {
+        self.service.clone()
+    }
     pub fn close(&self) {
         self.cancelled.send_replace(true);
     }

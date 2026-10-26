@@ -79,10 +79,11 @@ fn open_sessions_are_kept_and_only_ones_ended_while_running_are_let_go(cx: &mut 
     let mut later = fleet(vec![session("c", "input")], "c");
     Arc::make_mut(&mut later.sessions)[0].state = "input".into();
     show(later, &mut visual);
-    assert_eq!(
-        keeps(&mut commands),
-        [vec!["a".to_string(), "c".to_string()]]
-    );
+    // Most recently seen open first; both were seen within the same moment.
+    let mut sent = keeps(&mut commands);
+    assert_eq!(sent.len(), 1);
+    sent[0].sort();
+    assert_eq!(sent[0], ["a".to_string(), "c".to_string()]);
 }
 
 #[gpui::test]
@@ -90,9 +91,10 @@ fn archiving_a_paused_session_lets_it_go(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
-            this.settings
-                .kept_open
-                .insert(this.project_scope.clone(), [("a".to_string(), 1)].into());
+            this.settings.kept_open.insert(
+                this.project_scope.clone(),
+                [("a".to_string(), wks_native::timing::now_ms())].into(),
+            );
             this.settings
                 .archived
                 .insert(this.project_scope.clone(), vec!["a".into()]);
@@ -108,13 +110,33 @@ fn archiving_a_paused_session_lets_it_go(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_kept_session_the_hub_cannot_produce_is_let_go(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let now = wks_native::timing::now_ms();
+            this.settings.kept_open.insert(
+                this.project_scope.clone(),
+                [("gone".to_string(), now), ("a".to_string(), now)].into(),
+            );
+            let mut view = fleet(vec![session("a", "stopped")], "a");
+            view.kept_gone = Arc::new(vec!["gone".into()]);
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    assert_eq!(kept(&workspace, &mut visual), ["a"]);
+}
+
+#[gpui::test]
 fn sending_from_a_paused_session_resumes_it_with_the_message(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
-            this.settings
-                .kept_open
-                .insert(this.project_scope.clone(), [("a".to_string(), 1)].into());
+            this.settings.kept_open.insert(
+                this.project_scope.clone(),
+                [("a".to_string(), wks_native::timing::now_ms())].into(),
+            );
             this.update_view(
                 Arc::new(fleet(vec![session("a", "stopped")], "a")),
                 window,
@@ -174,9 +196,10 @@ fn a_failed_resume_keeps_the_draft_and_says_why(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
-            this.settings
-                .kept_open
-                .insert(this.project_scope.clone(), [("a".to_string(), 1)].into());
+            this.settings.kept_open.insert(
+                this.project_scope.clone(),
+                [("a".to_string(), wks_native::timing::now_ms())].into(),
+            );
             this.update_view(
                 Arc::new(fleet(vec![session("a", "stopped")], "a")),
                 window,

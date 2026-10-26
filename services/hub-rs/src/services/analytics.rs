@@ -87,6 +87,23 @@ impl Analytics {
             chrono::Utc::now().timestamp_millis(),
         )
     }
+    /// The newest `limit` sessions this hub ever recorded, any provider or
+    /// transport, without folding anything. Unlike claudemon's own store
+    /// (Claude hook events only, newest 100, archived rows evicted from
+    /// memory) this table is never pruned, so it is what history falls back
+    /// on once the engine has forgotten a session.
+    pub fn sessions(&self, limit: usize) -> Result<Vec<Value>> {
+        store::query(
+            &self.db.lock().unwrap(),
+            "SELECT session_id AS sessionId,cwd,agent_name AS agentName,provider,model,\
+             started_at AS startedAt,ended_at AS endedAt,updated_at AS updatedAt,status,\
+             message_count AS messageCount,tool_calls AS toolCalls,\
+             input_tokens AS inputTokens,output_tokens AS outputTokens \
+             FROM session_history \
+             ORDER BY COALESCE(NULLIF(ended_at,''),NULLIF(updated_at,''),started_at) DESC LIMIT ?",
+            vec![(limit as i64).into()],
+        )
+    }
     /// Record `snapshots`, then answer `method` from the store: every
     /// transcript whose files changed is folded again.
     pub fn observe_and_read(

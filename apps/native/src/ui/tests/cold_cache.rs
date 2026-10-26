@@ -60,9 +60,10 @@ fn paused(tokens: u64) -> Session {
 fn show(workspace: &Entity<Workspace>, visual: &mut VisualTestContext, session: Session) {
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
-            this.settings
-                .kept_open
-                .insert(this.project_scope.clone(), [("a".to_string(), 1)].into());
+            this.settings.kept_open.insert(
+                this.project_scope.clone(),
+                [("a".to_string(), wks_native::timing::now_ms())].into(),
+            );
             this.update_view(
                 Arc::new(View {
                     connected: true,

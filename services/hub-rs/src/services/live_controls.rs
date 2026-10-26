@@ -47,6 +47,8 @@ struct Controls {
     home: PathBuf,
     config: PathBuf,
     utilities: Option<Arc<super::provider_utilities::Service>>,
+    /// The hub's durable session record; see [`with_history`].
+    analytics: Option<Arc<super::analytics::Analytics>>,
 }
 impl Controls {
     async fn request(&self, method: &str, path: String, payload: Option<Value>) -> Result<Value> {
@@ -138,10 +140,31 @@ impl Controls {
     }
     async fn call(&self, method: &str, p: Value) -> Result<Value> {
         if method == "sessions.recent" {
-            let raw = self
+            let daemon = self
                 .request("GET", "/sessions?include_archived=true".into(), None)
-                .await
-                .unwrap_or(json!([]));
+                .await;
+            // The engine only remembers what it can rehydrate (Claude hook
+            // sessions, newest 100, archived rows evicted from memory), so a
+            // stream or Codex session leaves its history on every restart.
+            // The hub's own record keeps every session it ever observed.
+            let durable = match &self.analytics {
+                Some(analytics) => {
+                    let analytics = analytics.clone();
+                    tokio::task::spawn_blocking(move || analytics.sessions(HISTORY_LIMIT))
+                        .await
+                        .map_err(anyhow::Error::from)
+                        .and_then(|rows| rows)
+                        .map_err(|error| eprintln!("session history read failed: {error}"))
+                        .ok()
+                }
+                None => None,
+            };
+            // A failed read is reported, never shown as an empty history.
+            let raw = match (daemon, &durable) {
+                (Ok(raw), _) => raw,
+                (Err(_), Some(_)) => json!([]),
+                (Err(error), None) => return Err(error),
+            };
             let names = if self.config.is_absolute() {
                 super::profile_accounts::read(&self.config.join("tui-names.json"))
             } else {
@@ -154,7 +177,7 @@ impl Controls {
                 .unwrap_or_default();
             // Same precedence as live snapshots: launch label, then the user's
             // cwd rename, then the hub's automatic title.
-            return Ok(recent(&raw, |id, cwd| {
+            let name = |id: &str, cwd: &str| {
                 let named = |value: &Value| {
                     value
                         .as_str()
@@ -167,7 +190,23 @@ impl Controls {
                     .or_else(|| named(&names[cwd]))
                     .or_else(|| record.and_then(|r| named(&r.metadata["autoTitle"]["title"])))
                     .unwrap_or_default()
-            }));
+            };
+            let rows = recent(&raw, name);
+            return Ok(match durable {
+                Some(durable) => with_history(
+                    rows,
+                    &durable,
+                    |id| {
+                        records
+                            .get(id)
+                            .and_then(|r| r.metadata["transport"].as_str())
+                            .map(str::to_owned)
+                    },
+                    name,
+                    chrono::Utc::now().timestamp_millis(),
+                ),
+                None => rows,
+            });
         }
         let id = text(&p, "sessionId");
         if method == "claude.setEffort" && (id.is_empty() || text(&p, "effort").trim().is_empty()) {
@@ -526,6 +565,66 @@ fn recent(raw: &Value, name: impl Fn(&str, &str) -> String) -> Value {
     rows.sort_by_key(|r| std::cmp::Reverse(r["updatedAt"].as_i64().unwrap_or(0)));
     json!(rows)
 }
+/// Durable rows read for one history answer.
+const HISTORY_LIMIT: usize = 2000;
+/// Stopped this long ago, a row reads as archived (claudemon's own window).
+const ARCHIVED_AFTER_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+/// Add the sessions the engine no longer holds from the hub's durable record
+/// to [`recent`]'s rows, in the same shape and order. An engine row always
+/// wins: it carries live mode and transport. A Claude row with no prompt,
+/// tool call or token on record was spawned and never used, the same rows
+/// the engine hides from history (`is_empty_stopped`).
+fn with_history(
+    rows: Value,
+    durable: &[Value],
+    transport: impl Fn(&str) -> Option<String>,
+    name: impl Fn(&str, &str) -> String,
+    now_ms: i64,
+) -> Value {
+    let Value::Array(mut rows) = rows else {
+        return rows;
+    };
+    let known: std::collections::BTreeSet<String> = rows
+        .iter()
+        .filter_map(|r| r["sessionId"].as_str().map(str::to_owned))
+        .collect();
+    let millis = |value: &Value| {
+        value
+            .as_str()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.timestamp_millis())
+            .unwrap_or(0)
+    };
+    let count = |r: &Value, key: &str| r[key].as_f64().unwrap_or(0.);
+    for r in durable {
+        let id = text(r, "sessionId");
+        if id.is_empty() || id.starts_with("agent-") || known.contains(id) {
+            continue;
+        }
+        let provider = Some(text(r, "provider"))
+            .filter(|p| !p.is_empty())
+            .unwrap_or("claude");
+        if provider == "claude"
+            && ["messageCount", "toolCalls", "inputTokens", "outputTokens"]
+                .iter()
+                .all(|key| count(r, key) == 0.)
+        {
+            continue;
+        }
+        let started = millis(&r["startedAt"]);
+        let updated = [millis(&r["endedAt"]), millis(&r["updatedAt"]), started]
+            .into_iter()
+            .find(|&at| at > 0)
+            .unwrap_or(0);
+        let transport = transport(id)
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "pty".into());
+        // Not in the engine means no process: whatever the record last saw.
+        rows.push(json!({"sessionId":id,"provider":provider,"cwd":text(r,"cwd"),"mode":"stopped","transport":transport,"archived":updated > 0 && now_ms - updated > ARCHIVED_AFTER_MS,"updatedAt":updated,"startedAt":started,"name":name(id,text(r,"cwd")),"title":"","model":text(r,"model")}));
+    }
+    rows.sort_by_key(|r| std::cmp::Reverse(r["updatedAt"].as_i64().unwrap_or(0)));
+    Value::Array(rows)
+}
 pub(crate) fn install(mut options: Options, hub: Handle) -> Options {
     let Some(engine) = options.engine.clone() else {
         return options;
@@ -539,6 +638,7 @@ pub(crate) fn install(mut options: Options, hub: Handle) -> Options {
         home: options.home_dir.clone().unwrap_or_default(),
         config: options.config_dir.clone().unwrap_or_default(),
         utilities: options.provider_utilities.clone(),
+        analytics: options.analytics_watcher.as_ref().map(|w| w.store()),
     });
     for method in [
         "claude.setModel",
@@ -646,6 +746,47 @@ mod tests {
         );
     }
     #[test]
+    fn history_keeps_sessions_the_engine_forgot() {
+        let now = 1_800_000_000_000i64;
+        let engine = recent(
+            &json!([{"session_id":"live","cwd":"/p","mode":"input","provider":"claude","transport":"stream","updated_at":"2027-01-15T08:00:00Z"}]),
+            |_, _| String::new(),
+        );
+        let durable = [
+            // Still in the engine: its row wins.
+            json!({"sessionId":"live","provider":"claude","cwd":"/old","model":"m","messageCount":3}),
+            // A stream session a restart dropped.
+            json!({"sessionId":"stream","provider":"claude","cwd":"/p","model":"opus","endedAt":"2027-01-15T07:00:00.000Z","messageCount":4}),
+            // Codex, never persisted by the engine.
+            json!({"sessionId":"codex","provider":"codex","cwd":"/q","model":"gpt","endedAt":"2026-01-01T00:00:00.000Z"}),
+            // Spawned and never used.
+            json!({"sessionId":"empty","provider":"claude","cwd":"/p","updatedAt":"2027-01-15T07:30:00.000Z"}),
+            json!({"sessionId":"agent-x","provider":"claude","cwd":"/p","messageCount":1}),
+        ];
+        let rows = with_history(
+            engine,
+            &durable,
+            |id| (id == "stream").then(|| "stream".to_owned()),
+            |id, _| format!("name {id}"),
+            now,
+        );
+        let rows = rows.as_array().unwrap();
+        let ids: Vec<_> = rows
+            .iter()
+            .map(|r| r["sessionId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["live", "stream", "codex"]);
+        assert_eq!(rows[0]["cwd"], "/p");
+        assert_eq!(rows[1]["mode"], "stopped");
+        assert_eq!(rows[1]["transport"], "stream");
+        assert_eq!(rows[1]["model"], "opus");
+        assert_eq!(rows[1]["name"], "name stream");
+        assert_eq!(rows[1]["archived"], false);
+        assert_eq!(rows[2]["provider"], "codex");
+        assert_eq!(rows[2]["transport"], "pty");
+        assert_eq!(rows[2]["archived"], true);
+    }
+    #[test]
     fn recents_preserve_archived_history_and_unknown_cost() {
         let rows = recent(
             &json!([{"session_id":"old","archived":true},{"session_id":"new","updated_at":"2026-09-28T12:00:00Z","cwd":"/repo"},{"session_id":"agent-pending"}]),
@@ -750,6 +891,7 @@ mod tests {
             home: dir.path().into(),
             config: dir.path().into(),
             utilities: None,
+            analytics: None,
         };
         for invalid in ["../../outside".to_owned(), String::new(), "a".repeat(129)] {
             for method in ["claude.handoffAgentBrief", "claude.handoffSummaryBrief"] {

@@ -40,7 +40,7 @@ impl Workspace {
             .settings
             .kept_open
             .get(&self.project_scope)
-            .map(|kept| kept.keys().cloned().collect())
+            .map(wks_native::kept::read_order)
             .unwrap_or_default();
         if !kept.is_empty() && kept != self.kept_sent {
             self.kept_sent = kept.clone();

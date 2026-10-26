@@ -14,6 +14,7 @@ pub mod harness;
 pub mod history;
 pub mod host;
 pub mod jobs;
+pub mod kept;
 pub mod launch;
 pub mod links;
 pub mod live;

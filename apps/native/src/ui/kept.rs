@@ -1,23 +1,18 @@
 //! Sessions that were open when the app closed stay in the sidebar, with their
 //! last content, until they are picked back up, archived, or end while the app
-//! is running. The hub's fleet list ages stopped sessions out after a day; this
-//! device remembers which ones it was in the middle of (`Settings::kept_open`)
-//! and has the controller read those by id.
+//! is running. The policy lives in `wks_native::kept`; this applies it to the
+//! window's settings and hands the controller the ids to read.
 use super::*;
 
 /// Prefix of the notice a failed resume leaves on the conversation.
 pub(super) const RESUME_FAILED: &str = "Could not resume this session: ";
 
 impl Workspace {
-    /// Fold one view into the kept set. A session seen open is kept; one that
-    /// ends while this run watched it was ended on purpose (by you or by its
-    /// agent) and is let go; one that is already stopped when first seen this
-    /// run was stopped by the app closing, and stays.
+    /// Fold one view into the kept set (see [`wks_native::kept::fold`]).
     pub(super) fn sync_kept_open(&mut self, view: &View, cx: &mut Context<Self>) {
         if !view.connected || view.sessions_loading && view.sessions.is_empty() {
             return;
         }
-        let now = timing::now_ms();
         let scope = self.project_scope.clone();
         let mut kept = self
             .settings
@@ -26,17 +21,16 @@ impl Workspace {
             .cloned()
             .unwrap_or_default();
         let before = kept.clone();
-        for session in view.sessions.iter() {
-            if session.stopped() {
-                if self.seen_open.contains(&session.id) {
-                    kept.remove(&session.id);
-                }
-            } else {
-                self.seen_open.insert(session.id.clone());
-                kept.entry(session.id.clone()).or_insert(now);
-            }
-        }
-        kept.retain(|id, _| !self.archived(id));
+        let mut seen_open = std::mem::take(&mut self.seen_open);
+        wks_native::kept::fold(
+            &mut kept,
+            &view.sessions,
+            &mut seen_open,
+            &view.kept_gone,
+            |id| self.archived(id),
+            timing::now_ms(),
+        );
+        self.seen_open = seen_open;
         if kept != before {
             if kept.is_empty() {
                 self.settings.kept_open.remove(&scope);
@@ -48,7 +42,7 @@ impl Workspace {
         // The controller only needs the list once the fleet read leaves one
         // out; after that it follows every change so it never reads a session
         // this device has let go.
-        let ids: Vec<String> = kept.into_keys().collect();
+        let ids = wks_native::kept::read_order(&kept);
         // Only a session carried over from an earlier run can need reading by
         // id; one seen open in this run that leaves the list is the hub's call.
         let missing = ids

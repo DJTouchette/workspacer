@@ -23,7 +23,7 @@ use crate::{
 
 const MAX_SESSIONS: usize = 10_000;
 /// Bound on sessions read one by one per fleet refresh to keep them listed.
-pub const MAX_KEPT_SESSIONS: usize = 64;
+pub const MAX_KEPT_SESSIONS: usize = crate::kept::MAX_READ;
 /// How often a changed view is published to the UI (20 a second): each
 /// publish clones the view and re-renders the window.
 const FRAME_INTERVAL: Duration = Duration::from_millis(50);
@@ -454,6 +454,9 @@ pub struct View {
     pub power_pause_generation: u64,
     pub can_resume_power_pause: bool,
     pub sessions: Arc<Vec<Session>>,
+    /// Kept ids (see [`Command::KeepSessions`]) the last fleet read found in
+    /// neither the hub's session rows nor its history: nothing can show them.
+    pub kept_gone: Arc<Vec<String>>,
     pub selected: Option<String>,
     pub transcript: Transcript,
     pub pending_messages: Vec<PendingMessage>,
@@ -673,7 +676,8 @@ enum Completion {
     Models(u64, u64, Result<Vec<crate::launch::ModelChoice>>),
     Spawn(u64, NewSession, Option<HandoffSpawn>, Result<Value>),
     HandoffBrief(u64, crate::handoff::Request, Result<Value>),
-    Fleet(u64, Result<Value>),
+    /// The fleet read, plus the kept ids no source could produce.
+    Fleet(u64, Result<Value>, Vec<String>),
     Usage(u64, Result<Value>),
     Installed(u64, Result<Value>),
     Child(u64, u64, Result<Value>),
@@ -1271,6 +1275,7 @@ impl Worker {
         let keep = self.keep.clone();
         self.push_job(Box::pin(async move {
             let mut result = backend.snapshots().await;
+            let mut gone = Vec::new();
             // The fleet list ages stopped sessions out after a day; a kept one
             // is read by id so it stays listed with the rest, in one answer.
             if let Ok(Value::Array(rows)) = &mut result {
@@ -1284,15 +1289,32 @@ impl Worker {
                     .iter()
                     .filter(|id| !listed.contains(*id))
                     .map(|id| async move { (id, backend.snapshot(id).await) });
+                let mut unread = Vec::new();
                 for (id, read) in futures_util::future::join_all(reads).await {
-                    if let Ok(row) = read
-                        && Session::id_of(&row) == Some(id.as_str())
-                    {
-                        rows.push(row);
+                    match read {
+                        Ok(row) if Session::id_of(&row) == Some(id.as_str()) => rows.push(row),
+                        _ => unread.push(id.clone()),
+                    }
+                }
+                // The engine forgets sessions it cannot rehydrate (stream and
+                // Codex sessions, on every restart); the hub's history still
+                // has them, stopped. Only an id history also lacks is gone.
+                if !unread.is_empty()
+                    && let Ok(Value::Array(history)) =
+                        backend.call("sessions.recent", json!({})).await
+                {
+                    for id in unread {
+                        match history
+                            .iter()
+                            .find(|row| Session::id_of(row) == Some(id.as_str()))
+                        {
+                            Some(row) => rows.push(row.clone()),
+                            None => gone.push(id),
+                        }
                     }
                 }
             }
-            Completion::Fleet(epoch, result)
+            Completion::Fleet(epoch, result, gone)
         }));
     }
 
@@ -2407,7 +2429,7 @@ impl Worker {
                     self.dirty = true;
                 }
             }
-            Completion::Fleet(epoch, result) if epoch == self.epoch => {
+            Completion::Fleet(epoch, result, gone) if epoch == self.epoch => {
                 self.fleet_pending = false;
                 self.log_first_reply("fleet", self.last_fleet);
                 if std::mem::take(&mut self.refetch_fleet) {
@@ -2419,6 +2441,9 @@ impl Worker {
                 self.view.sessions_loading = false;
                 match result {
                     Ok(Value::Array(rows)) => {
+                        if *self.view.kept_gone != gone {
+                            self.view.kept_gone = Arc::new(gone);
+                        }
                         if self.view.notice.starts_with("Sessions unavailable:") {
                             self.view.notice.clear();
                         }
