@@ -222,6 +222,10 @@ impl Workspace {
     }
 
     fn normal_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.links.menu.take().is_some() {
+            cx.notify();
+            return;
+        }
         if self.close_peek(window, cx) {
             return;
         }
@@ -414,6 +418,7 @@ impl Workspace {
             .children(self.render_usage_modal(cx))
             .children(self.render_file_viewer(window, cx))
             .children(self.render_tasks_sheet(window, cx))
+            .children(self.render_link_menu(cx))
             .key_context(if viewer {
                 "FileViewer"
             } else if self.settings.vim_navigation && self.focus.is_focused(window) {

@@ -17,6 +17,7 @@ mod island;
 mod jobs;
 mod kept;
 mod launch;
+mod link_menu;
 mod markdown;
 mod memo;
 mod motion;
@@ -604,6 +605,7 @@ pub struct Workspace {
     terminal: terminal::TerminalUi,
     remote: remote::RemoteUi,
     chat: transcript::ChatUi,
+    links: link_menu::LinkUi,
     child_ui: children::ChildUi,
     tasks: tasks::TasksUi,
     queue: queue::QueueUi,
@@ -933,6 +935,7 @@ impl Workspace {
             terminal: Default::default(),
             remote: Default::default(),
             chat: transcript::ChatUi::default(),
+            links: Default::default(),
             child_ui: children::ChildUi::default(),
             tasks: tasks::TasksUi::default(),
             queue,
@@ -1169,6 +1172,7 @@ impl Workspace {
         self.local_notice.clear();
         if self.view.selected != view.selected || self.view.child != view.child {
             self.tool_expansion.clear();
+            self.links = Default::default();
             if let Some(id) = &self.view.selected {
                 self.drafts
                     .insert(id.clone(), self.composer.read(cx).value().to_string());

@@ -1,9 +1,19 @@
 use std::sync::Arc;
 
-use gpui::{App, Hsla, Pixels, Rems, SharedString, StyleRefinement, Window, px, rems};
+use gpui::{App, Hsla, Pixels, Point, Rems, SharedString, StyleRefinement, Window, px, rems};
 
 /// Application-owned link routing, invoked for clicks rather than selections.
 pub type LinkClickFn = dyn Fn(&str, &mut Window, &mut App) + Send + Sync + 'static;
+
+/// Application hover reporting (Workspacer patch): `Some(url)` when the
+/// pointer enters a link, `None` when it leaves. The first argument identifies
+/// the reporting text run, so a late `None` from the run the pointer left
+/// cannot clear a link another run just reported.
+pub type LinkHoverFn = dyn Fn(usize, Option<&str>, &mut Window, &mut App) + Send + Sync + 'static;
+
+/// Application context menu for a right-clicked link (Workspacer patch), at
+/// the window position of the click. Without it right-clicks fall through.
+pub type LinkMenuFn = dyn Fn(&str, Point<Pixels>, &mut Window, &mut App) + Send + Sync + 'static;
 
 /// Where text handed to [`LinkifyFn`] came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +60,8 @@ pub struct TextViewStyle {
     pub on_link_click: Option<Arc<LinkClickFn>>,
     /// Turns detected spans of plain text and inline code into links.
     pub linkify: Option<Arc<LinkifyFn>>,
+    pub on_link_hover: Option<Arc<LinkHoverFn>>,
+    pub on_link_menu: Option<Arc<LinkMenuFn>>,
     pub unordered_list_marker: Option<SharedString>,
     pub prose: Option<ProseColors>,
     /// Gap of each paragraphs, default is 1 rem.
@@ -91,6 +103,8 @@ impl Default for TextViewStyle {
         Self {
             on_link_click: None,
             linkify: None,
+            on_link_hover: None,
+            on_link_menu: None,
             unordered_list_marker: None,
             prose: None,
             paragraph_gap: rems(1.),

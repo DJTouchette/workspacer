@@ -7,7 +7,7 @@ use std::{
 use gpui::{
     App, BorderStyle, Bounds, CursorStyle, Edges, Element, ElementId, GlobalElementId, Half,
     HighlightStyle, Hsla, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, StyledText, TextLayout, Window,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, StyledText, TextLayout, Window,
     point, px, quad,
 };
 
@@ -18,6 +18,8 @@ use crate::{ActiveTheme, global_state::GlobalState, input::Selection, text::node
 /// All text in TextView (including the CodeBlock) used this for text rendering.
 pub(super) struct Inline {
     on_link_click: Option<Arc<super::LinkClickFn>>,
+    on_link_hover: Option<Arc<super::LinkHoverFn>>,
+    on_link_menu: Option<Arc<super::LinkMenuFn>>,
     id: ElementId,
     text: SharedString,
     links: Rc<Vec<(Range<usize>, LinkMark)>>,
@@ -37,6 +39,8 @@ pub(super) struct Inline {
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct InlineState {
     hovered_index: Option<usize>,
+    /// The link last reported to `on_link_hover`.
+    hovered_link: Option<SharedString>,
     /// The text that actually rendering, matched with selection.
     pub(super) text: SharedString,
     pub(super) selection: Option<Selection>,
@@ -55,11 +59,13 @@ impl Inline {
         state: Arc<Mutex<InlineState>>,
         links: Vec<(Range<usize>, LinkMark)>,
         highlights: Vec<(Range<usize>, HighlightStyle)>,
-        on_link_click: Option<Arc<super::LinkClickFn>>,
+        style: &super::TextViewStyle,
     ) -> Self {
         let text = state.lock().unwrap().text.clone();
         Self {
-            on_link_click,
+            on_link_click: style.on_link_click.clone(),
+            on_link_hover: style.on_link_hover.clone(),
+            on_link_menu: style.on_link_menu.clone(),
             id: id.into(),
             links: Rc::new(links),
             highlights,
@@ -454,6 +460,51 @@ impl Element for Inline {
             }
         });
 
+        // Workspacer: report the hovered link, and `None` on leaving it.
+        if let Some(on_link_hover) = self.on_link_hover.clone() {
+            let hitbox = hitbox.clone();
+            let text_layout = text_layout.clone();
+            let links = self.links.clone();
+            let state = self.state.clone();
+            let source = Arc::as_ptr(&self.state) as usize;
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if !phase.bubble() {
+                    return;
+                }
+                let link = hitbox
+                    .is_hovered(window)
+                    .then(|| Self::link_for_position(&text_layout, &links, event.position))
+                    .flatten()
+                    .map(|link| link.url);
+                let mut state = state.lock().unwrap();
+                if state.hovered_link != link {
+                    state.hovered_link = link.clone();
+                    drop(state);
+                    on_link_hover(source, link.as_ref().map(|l| l.as_ref()), window, cx);
+                }
+            });
+        }
+
+        // Workspacer: right-clicking a link asks the application for a menu.
+        if let Some(on_link_menu) = self.on_link_menu.clone() {
+            let hitbox = hitbox.clone();
+            let text_layout = text_layout.clone();
+            let links = self.links.clone();
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                if event.button != MouseButton::Right
+                    || !phase.bubble()
+                    || !hitbox.is_hovered(window)
+                {
+                    return;
+                }
+                if let Some(link) = Self::link_for_position(&text_layout, &links, event.position)
+                {
+                    cx.stop_propagation();
+                    on_link_menu(&link.url, event.position, window, cx);
+                }
+            });
+        }
+
         if !is_selection {
             // click to open link
             window.on_mouse_event({
@@ -462,7 +513,12 @@ impl Element for Inline {
                 let on_link_click = self.on_link_click.clone();
 
                 move |event: &MouseUpEvent, phase, window, cx| {
-                    if !bounds.contains(&event.position) || !phase.bubble() {
+                    // Workspacer: only a left click opens; a right click's
+                    // release belongs to the link menu.
+                    if event.button != MouseButton::Left
+                        || !bounds.contains(&event.position)
+                        || !phase.bubble()
+                    {
                         return;
                     }
 

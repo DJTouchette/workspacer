@@ -55,6 +55,7 @@ impl Workspace {
     pub(super) fn pause_follow(&mut self) {
         self.scroll_anchor();
         self.follow = false;
+        self.clear_link_hover();
     }
 }
 

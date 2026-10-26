@@ -14,7 +14,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = self.appearance.palette();
-        let style = self.markdown_style(self.link_handler(cx), false, cx);
+        let mut style = self.markdown_style(self.link_handler(cx), false, cx);
+        let (hover, menu) = super::link_menu::link_events(cx.entity().downgrade(), None);
+        style.on_link_hover = Some(hover);
+        style.on_link_menu = Some(menu);
         let key = key.to_owned();
         let debug_key = key.clone();
         div()
@@ -69,6 +72,9 @@ impl Workspace {
             // Chat paths resolve against the session's cwd on click. A
             // previewed document's own relative paths mean something else.
             linkify: (!document).then(linkify),
+            // Set by the caller that knows how its links resolve.
+            on_link_hover: None,
+            on_link_menu: None,
             unordered_list_marker: Some("• ".into()),
             // Desktop chat parity (components/markdown.tsx): bright emphasis,
             // accent inline code, accent bullets, labeled bordered fences.

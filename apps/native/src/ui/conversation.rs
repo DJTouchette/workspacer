@@ -201,6 +201,7 @@ impl Workspace {
                 |d| d.child(self.render_tool_rail(enabled, cx)),
             )
             .when(!self.follow, |d| d.child(self.render_jump_latest(cx)))
+            .children(self.render_link_status())
             .child(self.render_dock(layout, selected.as_ref(), window, cx));
         div()
             .flex_1()

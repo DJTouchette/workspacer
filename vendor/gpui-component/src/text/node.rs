@@ -480,7 +480,7 @@ impl CodeBlock {
                             self.state.clone(),
                             self.links.clone(),
                             self.highlights(cx),
-                            style.on_link_click.clone(),
+                            style,
                         )))
                         .when_some(node_cx.code_block_actions.clone(), |this, actions| {
                             this.child(
@@ -512,7 +512,7 @@ impl CodeBlock {
                         self.state.clone(),
                         self.links.clone(),
                         self.highlights(cx),
-                        style.on_link_click.clone(),
+                        style,
                     ))
                     .when_some(node_cx.code_block_actions.clone(), |this, actions| {
                         this.child(
@@ -736,7 +736,7 @@ impl Paragraph {
                             inline_node.state.clone(),
                             links.clone(),
                             highlights.clone(),
-                            node_cx.style.on_link_click.clone(),
+                            &node_cx.style,
                         )
                         .mono(mono.clone(), code_background, code_ranges.clone())
                         .into_any_element(),
@@ -882,7 +882,7 @@ impl Paragraph {
                     self.state.clone(),
                     links,
                     highlights,
-                    node_cx.style.on_link_click.clone(),
+                    &node_cx.style,
                 )
                 .mono(mono, code_background, code_ranges)
                 .into_any_element(),

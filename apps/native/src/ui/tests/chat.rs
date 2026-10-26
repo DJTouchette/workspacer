@@ -313,6 +313,151 @@ fn locations_in_tool_output_open_in_the_tool_working_directory(cx: &mut TestAppC
 }
 
 #[gpui::test]
+fn hovering_a_path_names_it_and_right_click_offers_a_menu(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = state("a");
+            Arc::make_mut(&mut view.sessions)[0].cwd = "/fixture/repo".into();
+            view.transcript.snapshot(ConversationSnapshot {
+                seq: 1,
+                first_seq: 1,
+                items: vec![Item {
+                    kind: "assistant_text".into(),
+                    text: "src/ui/chat.rs:42 changed".into(),
+                    ..Default::default()
+                }],
+            });
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    let message = visual.debug_bounds("markdown-inline-live:a:0-0").unwrap();
+    let on_path = message.origin + gpui::point(px(12.), message.size.height / 2.);
+    // GPUI never clears a frame's debug bounds, so "gone" is read from state.
+    let menu_open = |visual: &mut VisualTestContext| {
+        workspace.read_with(visual, |this, _| this.links.menu.is_some())
+    };
+    let hovered = |visual: &mut VisualTestContext| {
+        workspace.read_with(visual, |this, _| {
+            this.links
+                .hovered
+                .as_ref()
+                .and_then(|(_, link)| wks_native::links::describe(link))
+        })
+    };
+    // Hover: the status names the resolved location.
+    visual.simulate_mouse_move(on_path, None, gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert_eq!(
+        hovered(&mut visual).as_deref(),
+        Some("/fixture/repo/src/ui/chat.rs:42")
+    );
+    assert!(visual.debug_bounds("link-status").is_some());
+    // Leaving the text clears it.
+    visual.simulate_mouse_move(
+        message.origin + gpui::point(message.size.width + px(40.), -px(40.)),
+        None,
+        gpui::Modifiers::default(),
+    );
+    visual.run_until_parked();
+    assert_eq!(hovered(&mut visual), None);
+    // Right-click: a menu, and no file opened.
+    visual.simulate_mouse_down(
+        on_path,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    visual.simulate_mouse_up(
+        on_path,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    visual.run_until_parked();
+    assert!(menu_open(&mut visual), "right-click opens the menu");
+    assert!(visual.debug_bounds("link-menu").is_some());
+    assert!(
+        !std::iter::from_fn(|| commands.try_recv().ok()).any(|c| matches!(
+            c,
+            Command::Request(wks_native::features::Request::FilePreview { .. })
+        )),
+        "a right-click never opens the file"
+    );
+    // The fixture path is not on this computer: no system actions.
+    assert!(visual.debug_bounds("link-menu-open-default").is_none());
+    let copy = visual.debug_bounds("link-menu-copy-location").unwrap();
+    visual.simulate_click(copy.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert_eq!(
+        visual
+            .read_from_clipboard()
+            .and_then(|c| c.text())
+            .as_deref(),
+        Some("/fixture/repo/src/ui/chat.rs:42")
+    );
+    assert!(!menu_open(&mut visual), "an action closes the menu");
+    // Open from the menu requests the preview; clicking away just closes.
+    visual.simulate_mouse_down(
+        on_path,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    visual.simulate_mouse_up(
+        on_path,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    visual.run_until_parked();
+    let open = visual.debug_bounds("link-menu-open").unwrap();
+    visual.simulate_click(open.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert!(
+        std::iter::from_fn(|| commands.try_recv().ok()).any(|c| matches!(
+            c,
+            Command::Request(wks_native::features::Request::FilePreview { .. })
+        ))
+    );
+    visual.simulate_mouse_down(
+        on_path,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    visual.simulate_mouse_up(
+        on_path,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    visual.run_until_parked();
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(!menu_open(&mut visual), "Esc closes it");
+    visual.simulate_mouse_down(
+        on_path,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    visual.simulate_mouse_up(
+        on_path,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    visual.run_until_parked();
+    visual.simulate_click(
+        message.origin + gpui::point(message.size.width / 2., message.size.height + px(80.)),
+        gpui::Modifiers::default(),
+    );
+    visual.run_until_parked();
+    assert!(!menu_open(&mut visual), "clicking away closes it");
+    assert!(
+        !std::iter::from_fn(|| commands.try_recv().ok()).any(|c| matches!(
+            c,
+            Command::Request(wks_native::features::Request::FilePreview { .. })
+        )),
+        "the click that closes the menu opens nothing"
+    );
+}
+
+#[gpui::test]
 fn markdown_file_link_requests_preview_and_shows_the_result(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.update(|window, cx| {

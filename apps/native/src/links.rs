@@ -65,6 +65,29 @@ impl FileTarget {
     }
 }
 
+impl FileTarget {
+    /// `path`, `path:12` or `path:12:4`: what a copied location or an
+    /// editor's command line expects.
+    pub fn location(&self) -> String {
+        match (self.line, self.column) {
+            (Some(line), Some(column)) => format!("{}:{line}:{column}", self.path),
+            (Some(line), None) => format!("{}:{line}", self.path),
+            _ => self.path.clone(),
+        }
+    }
+}
+
+/// One line saying where a link goes, for a hover status: the resolved file
+/// location, the web address, or why it will not open.
+pub fn describe(link: &Link) -> Option<String> {
+    match link {
+        Link::File(target) => Some(target.location()),
+        Link::Web(url) => Some(url.clone()),
+        Link::Refused(message) => Some(message.clone()),
+        Link::Anchor => None,
+    }
+}
+
 /// Markdown documents open rendered: `.md` and `.markdown`, any case.
 pub fn markdown(path: &str) -> bool {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
@@ -582,6 +605,23 @@ mod tests {
             column,
             kind,
         })
+    }
+
+    #[test]
+    fn hover_text_names_the_resolved_location() {
+        assert_eq!(
+            describe(&classify("/repo", "src/a.rs:3:5")).as_deref(),
+            Some("/repo/src/a.rs:3:5")
+        );
+        assert_eq!(
+            describe(&classify("/repo", "Program.cs(7)")).as_deref(),
+            Some("/repo/Program.cs:7")
+        );
+        assert_eq!(
+            describe(&classify("/repo", "https://example.com/x")).as_deref(),
+            Some("https://example.com/x")
+        );
+        assert_eq!(describe(&classify("/repo", "#top")), None);
     }
 
     #[test]

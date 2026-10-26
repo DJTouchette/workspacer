@@ -313,8 +313,9 @@ pub(super) fn details(
     cx: &mut App,
 ) -> Div {
     let (p, twelve_hour) = appearance;
-    let on_link =
-        super::file_viewer::output_link_handler(workspace, preview.working_directory.to_string());
+    let cwd = preview.working_directory.to_string();
+    let (on_hover, on_menu) = super::link_menu::link_events(workspace.clone(), Some(cwd.clone()));
+    let on_link = super::file_viewer::output_link_handler(workspace, cwd);
     let mut body = div()
         .id(SharedString::from(format!("{element_key}-details")))
         .debug_selector(|| "tool-details".into())
@@ -381,6 +382,8 @@ pub(super) fn details(
                         .style(gpui_component::text::TextViewStyle {
                             on_link_click: Some(on_link.clone()),
                             linkify: Some(super::markdown::linkify()),
+                            on_link_hover: Some(on_hover.clone()),
+                            on_link_menu: Some(on_menu.clone()),
                             highlight_theme: gpui_component::Theme::global(cx)
                                 .highlight_theme
                                 .clone(),
