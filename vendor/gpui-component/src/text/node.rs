@@ -342,12 +342,15 @@ impl Paragraph {
 pub struct CodeBlock {
     lang: Option<SharedString>,
     styles: Vec<(Range<usize>, HighlightStyle)>,
+    /// Spans `TextViewStyle::linkify` found (Workspacer patch), sorted and
+    /// disjoint; drawn over the syntax colors and routed like any link.
+    links: Vec<(Range<usize>, LinkMark)>,
     state: Arc<Mutex<InlineState>>,
 }
 
 impl PartialEq for CodeBlock {
     fn eq(&self, other: &Self) -> bool {
-        self.lang == other.lang && self.styles == other.styles
+        self.lang == other.lang && self.styles == other.styles && self.links == other.links
     }
 }
 
@@ -365,7 +368,7 @@ impl CodeBlock {
     pub(crate) fn new(
         code: SharedString,
         lang: Option<SharedString>,
-        _: &TextViewStyle,
+        style: &TextViewStyle,
         highlight_theme: &HighlightTheme,
     ) -> Self {
         let mut styles = vec![];
@@ -374,6 +377,24 @@ impl CodeBlock {
             highlighter.update(None, &Rope::from_str(code.as_str()));
             styles = highlighter.styles(&(0..code.len()), highlight_theme);
         };
+        let mut links: Vec<(Range<usize>, LinkMark)> = vec![];
+        if let Some(linkify) = &style.linkify {
+            for range in linkify(&code, super::LinkifySource::CodeBlock) {
+                let start = links.last().map_or(0, |(r, _)| r.end);
+                if range.start < start || range.start >= range.end {
+                    continue;
+                }
+                if let Some(url) = code.get(range.clone()) {
+                    links.push((
+                        range,
+                        LinkMark {
+                            url: url.to_owned().into(),
+                            ..Default::default()
+                        },
+                    ));
+                }
+            }
+        }
 
         let state = Arc::new(Mutex::new(InlineState::default()));
         state.lock().unwrap().set_text(code);
@@ -381,8 +402,29 @@ impl CodeBlock {
         Self {
             lang,
             styles,
+            links,
             state,
         }
+    }
+
+    /// Syntax colors with the link color and underline over linked spans.
+    fn highlights(&self, cx: &App) -> Vec<(Range<usize>, HighlightStyle)> {
+        if self.links.is_empty() {
+            return self.styles.clone();
+        }
+        let link = HighlightStyle {
+            color: Some(cx.theme().link),
+            underline: Some(gpui::UnderlineStyle {
+                thickness: gpui::px(1.),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        gpui::combine_highlights(
+            self.styles.clone(),
+            self.links.iter().map(|(range, _)| (range.clone(), link)),
+        )
+        .collect()
     }
 
     pub(super) fn selected_text(&self) -> String {
@@ -436,8 +478,8 @@ impl CodeBlock {
                         .child(div().p_3().child(Inline::new(
                             "code",
                             self.state.clone(),
-                            vec![],
-                            self.styles.clone(),
+                            self.links.clone(),
+                            self.highlights(cx),
                             style.on_link_click.clone(),
                         )))
                         .when_some(node_cx.code_block_actions.clone(), |this, actions| {
@@ -468,8 +510,8 @@ impl CodeBlock {
                     .child(Inline::new(
                         "code",
                         self.state.clone(),
-                        vec![],
-                        self.styles.clone(),
+                        self.links.clone(),
+                        self.highlights(cx),
                         style.on_link_click.clone(),
                     ))
                     .when_some(node_cx.code_block_actions.clone(), |this, actions| {

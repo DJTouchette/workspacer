@@ -5,10 +5,22 @@ use gpui::{App, Hsla, Pixels, Rems, SharedString, StyleRefinement, Window, px, r
 /// Application-owned link routing, invoked for clicks rather than selections.
 pub type LinkClickFn = dyn Fn(&str, &mut Window, &mut App) + Send + Sync + 'static;
 
+/// Where text handed to [`LinkifyFn`] came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkifySource {
+    /// A run of paragraph, heading, list or table text outside a link.
+    Text,
+    /// One whole inline code span.
+    InlineCode,
+    /// The full text of a fenced or indented code block.
+    CodeBlock,
+}
+
 /// Application-owned link detection for Markdown text outside links: byte
-/// ranges of `text` that become links targeting the covered text. The flag is
-/// true for an inline code span. Runs during the (background) parse.
-pub type LinkifyFn = dyn Fn(&str, bool) -> Vec<std::ops::Range<usize>> + Send + Sync + 'static;
+/// ranges of `text` that become links targeting the covered text. Runs
+/// during the (background) parse.
+pub type LinkifyFn =
+    dyn Fn(&str, LinkifySource) -> Vec<std::ops::Range<usize>> + Send + Sync + 'static;
 
 use crate::highlighter::HighlightTheme;
 

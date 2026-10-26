@@ -2522,6 +2522,31 @@ fn reveal(editor: WeakEntity<InputState>, position: Position, frames: u8, window
     });
 }
 
+/// Link routing for tool output: relative paths resolve against `cwd` (the
+/// tool's own working directory) when it is absolute, else the selected
+/// session's. Ownership is read on click, like [`Workspace::link_handler`]
+/// reads it on render.
+pub(super) fn output_link_handler(
+    workspace: WeakEntity<Workspace>,
+    cwd: String,
+) -> Arc<LinkClickFn> {
+    Arc::new(move |url, _, cx| {
+        let _ = workspace.update(cx, |this, cx| {
+            let Some(owner) = this.view.selected.clone() else {
+                return;
+            };
+            let cwd = if wks_native::transcript::absolute(&cwd) {
+                cwd.clone()
+            } else {
+                this.selected_session()
+                    .map(|s| s.cwd.clone())
+                    .unwrap_or_default()
+            };
+            this.open_link(&owner, links::classify(&cwd, url), cx);
+        });
+    })
+}
+
 pub(super) fn tool_link(cwd: &str, input: &serde_json::Value, path: &str) -> Link {
     // A Read tool's `offset` is the first line it read.
     let line = input["offset"].as_u64().and_then(|l| u32::try_from(l).ok());

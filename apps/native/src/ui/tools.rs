@@ -128,6 +128,17 @@ pub(super) fn card(
     let mono = gpui_component::Theme::global(cx).mono_font_family.clone();
     let radius = px((p.panel_radius - 1.).max(0.));
     let has_body = !extras.is_empty() || row.truncated || expanded;
+    let details = expanded.then(|| {
+        details(
+            &preview,
+            tool,
+            &element_key,
+            appearance,
+            workspace.clone(),
+            window,
+            cx,
+        )
+    });
     let header = div()
         .id(SharedString::from(format!("{element_key}-toggle")))
         .debug_selector(move || format!("tool-toggle-{key}"))
@@ -248,7 +259,7 @@ pub(super) fn card(
                 cx.notify();
             });
         });
-    let details = expanded.then(|| details(&preview, tool, &element_key, appearance, window, cx));
+
     div()
         .id(SharedString::from(format!("{element_key}-card")))
         .debug_selector(|| "orchestration-card".into())
@@ -290,15 +301,20 @@ pub(super) fn card(
 }
 
 /// Expanded tool input/output, shared by standalone cards and work-card steps.
+/// File locations in the output open in the viewer, relative to the tool's
+/// own working directory when it reported one.
 pub(super) fn details(
     preview: &tool_preview::ToolPreview,
     tool: &wks_native::transcript::Tool,
     element_key: &str,
     appearance: (Palette, bool),
+    workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
     let (p, twelve_hour) = appearance;
+    let on_link =
+        super::file_viewer::output_link_handler(workspace, preview.working_directory.to_string());
     let mut body = div()
         .id(SharedString::from(format!("{element_key}-details")))
         .debug_selector(|| "tool-details".into())
@@ -355,18 +371,24 @@ pub(super) fn details(
                         .when(block.language != "text", |d| d.child(block.language)),
                 )
                 .child(
-                    TextView::markdown(
-                        SharedString::from(format!("{element_key}-{index}")),
-                        tool_preview::fenced(block.language, &text),
-                        window,
-                        cx,
-                    )
-                    .style(gpui_component::text::TextViewStyle {
-                        highlight_theme: gpui_component::Theme::global(cx).highlight_theme.clone(),
-                        is_dark: gpui_component::Theme::global(cx).mode.is_dark(),
-                        ..Default::default()
-                    })
-                    .selectable(true),
+                    div().debug_selector(|| "tool-block-text".into()).child(
+                        TextView::markdown(
+                            SharedString::from(format!("{element_key}-{index}")),
+                            tool_preview::fenced(block.language, &text),
+                            window,
+                            cx,
+                        )
+                        .style(gpui_component::text::TextViewStyle {
+                            on_link_click: Some(on_link.clone()),
+                            linkify: Some(super::markdown::linkify()),
+                            highlight_theme: gpui_component::Theme::global(cx)
+                                .highlight_theme
+                                .clone(),
+                            is_dark: gpui_component::Theme::global(cx).mode.is_dark(),
+                            ..Default::default()
+                        })
+                        .selectable(true),
+                    ),
                 )
                 .when(
                     block.label == "Output" && tool.completed_at_ms.is_some(),

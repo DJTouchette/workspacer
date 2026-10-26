@@ -296,13 +296,28 @@ fn file_url(cwd: &str, raw: &str) -> Link {
     local(cwd, &path, line, column.flatten())
 }
 
-/// `path:12`, `path:12:4` and `path:12-20` (ranges open at their first line).
+/// `path:12`, `path:12:4` and `path:12-20` (ranges open at their first line),
+/// and the `path(12)` / `path(12,4)` that tsc, MSBuild and csc print.
 fn strip_location(path: &str) -> (&str, Option<u32>, Option<u32>) {
     let number = |s: &str| {
         (!s.is_empty() && s.len() <= 9 && s.bytes().all(|b| b.is_ascii_digit()))
             .then(|| s.parse::<u32>().ok())
             .flatten()
     };
+    if let Some((file, inner)) = path.strip_suffix(')').and_then(|p| p.rsplit_once('('))
+        && !file.is_empty()
+    {
+        let (line, column) = inner.split_once(',').unwrap_or((inner, ""));
+        if let Some(line) = number(line)
+            && (column.is_empty() || number(column).is_some())
+        {
+            return (
+                file,
+                Some(line).filter(|l| *l > 0),
+                number(column).filter(|c| *c > 0),
+            );
+        }
+    }
     let range = |s: &str| match s.split_once('-') {
         Some((a, b)) if number(b).is_some() => number(a),
         _ => number(s),
@@ -567,6 +582,31 @@ mod tests {
             column,
             kind,
         })
+    }
+
+    #[test]
+    fn compiler_parenthesized_locations_open_at_their_line() {
+        let Link::File(target) = classify("/repo", "src/a.ts(12,5)") else {
+            panic!("a tsc location is a file");
+        };
+        assert_eq!(
+            (target.path.as_str(), target.line, target.column),
+            ("/repo/src/a.ts", Some(12), Some(5))
+        );
+        let Link::File(target) = classify("/repo", "Program.cs(7)") else {
+            panic!("a csc location is a file");
+        };
+        assert_eq!(
+            (target.path.as_str(), target.line),
+            ("/repo/Program.cs", Some(7))
+        );
+        let Link::File(target) = classify("/repo", "src/(app)/page.tsx") else {
+            panic!("a route group is a folder, not a location");
+        };
+        assert_eq!(
+            (target.path.as_str(), target.line),
+            ("/repo/src/(app)/page.tsx", None)
+        );
     }
 
     #[test]

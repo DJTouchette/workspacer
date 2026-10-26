@@ -202,6 +202,7 @@ impl Workspace {
                 tool,
                 &element_key,
                 (p, self.settings.twelve_hour_clock),
+                cx.entity().downgrade(),
                 window,
                 cx,
             ));

@@ -213,6 +213,106 @@ fn bare_paths_in_chat_text_and_code_open_as_files(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_streaming_message_links_its_latest_text(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    let show = |text: &'static str| {
+        let workspace = workspace.clone();
+        move |window: &mut Window, cx: &mut App| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                Arc::make_mut(&mut view.sessions)[0].cwd = "/fixture/repo".into();
+                view.transcript.snapshot(ConversationSnapshot {
+                    seq: 1,
+                    first_seq: 1,
+                    items: vec![Item {
+                        kind: "assistant_text".into(),
+                        text: text.into(),
+                        ..Default::default()
+                    }],
+                });
+                this.update_view(Arc::new(view), window, cx);
+            })
+        }
+    };
+    visual.update(show("src/old.rs is first"));
+    visual.run_until_parked();
+    // The same message grows in place (a streaming reply). Its text view
+    // reparses on a wall-clock throttle that the test clock cannot advance.
+    visual.update(show("src/new.rs replaced it"));
+    visual.run_until_parked();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    visual.run_until_parked();
+    let bounds = visual.debug_bounds("markdown-inline-live:a:0-0").unwrap();
+    visual.simulate_click(
+        bounds.origin + gpui::point(px(12.), bounds.size.height / 2.),
+        gpui::Modifiers::default(),
+    );
+    visual.run_until_parked();
+    let previews: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+        .filter_map(|command| match command {
+            Command::Request(wks_native::features::Request::FilePreview { target, .. }) => {
+                Some(target.path)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(previews, ["/fixture/repo/src/new.rs"]);
+}
+
+#[gpui::test]
+fn locations_in_tool_output_open_in_the_tool_working_directory(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    let items = vec![
+        Item {
+            kind: "tool_use".into(),
+            id: "fail-1".into(),
+            name: "Bash".into(),
+            input: serde_json::json!({"command":"cargo build", "cwd":"/fixture/crate"}),
+            ..Default::default()
+        },
+        Item {
+            kind: "tool_result".into(),
+            tool_use_id: "fail-1".into(),
+            is_error: true,
+            content: "src/main.rs:3:5 mismatched types\n".into(),
+            ..Default::default()
+        },
+    ];
+    let mut view = state("a");
+    Arc::make_mut(&mut view.sessions)[0].cwd = "/fixture/repo".into();
+    view.transcript.snapshot(ConversationSnapshot {
+        seq: 2,
+        first_seq: 1,
+        items,
+    });
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+    });
+    visual.run_until_parked();
+    // Failed calls open their details; the output's first line is the location.
+    let output = visual
+        .debug_bounds("tool-block-text")
+        .expect("expanded tool output");
+    visual.simulate_click(
+        output.origin + gpui::point(px(24.), px(20.)),
+        gpui::Modifiers::default(),
+    );
+    visual.run_until_parked();
+    let previews: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+        .filter_map(|command| match command {
+            Command::Request(wks_native::features::Request::FilePreview { target, .. }) => {
+                Some((target.path, target.line, target.column))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        previews,
+        [("/fixture/crate/src/main.rs".to_owned(), Some(3), Some(5))]
+    );
+}
+
+#[gpui::test]
 fn markdown_file_link_requests_preview_and_shows_the_result(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.update(|window, cx| {

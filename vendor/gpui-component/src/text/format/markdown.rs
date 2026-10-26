@@ -11,7 +11,7 @@ use crate::{
             self, CodeBlock, ImageNode, InlineNode, LinkMark, NodeContext, Paragraph, Span, Table,
             TableRow, TextMark,
         },
-        TextViewStyle,
+        LinkifySource, TextViewStyle,
     },
 };
 
@@ -57,7 +57,14 @@ fn parse_table_cell(row: &mut node::TableRow, node: &mdast::TableCell, cx: &mut 
 /// own node with whole-node marks, like a written Markdown link.
 fn push_linkified(paragraph: &mut Paragraph, text: &str, mark: TextMark, cx: &NodeContext) {
     let ranges = match &cx.style.linkify {
-        Some(linkify) if !cx.in_link => linkify(text, mark.code),
+        Some(linkify) if !cx.in_link => linkify(
+            text,
+            if mark.code {
+                LinkifySource::InlineCode
+            } else {
+                LinkifySource::Text
+            },
+        ),
         _ => Vec::new(),
     };
     let mut push = |piece: &str, link: Option<LinkMark>| {

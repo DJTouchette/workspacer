@@ -68,9 +68,7 @@ impl Workspace {
             on_link_click: Some(on_link_click),
             // Chat paths resolve against the session's cwd on click. A
             // previewed document's own relative paths mean something else.
-            linkify: (!document).then(|| {
-                Arc::new(wks_native::path_detect::spans) as Arc<gpui_component::text::LinkifyFn>
-            }),
+            linkify: (!document).then(linkify),
             unordered_list_marker: Some("• ".into()),
             // Desktop chat parity (components/markdown.tsx): bright emphasis,
             // accent inline code, accent bullets, labeled bordered fences.
@@ -282,4 +280,20 @@ fn result_value(value: &serde_json::Value) -> String {
         serde_json::Value::Object(_) => serde_json::to_string_pretty(value).unwrap_or_default(),
         _ => value.to_string(),
     }
+}
+
+/// File-path detection for chat and tool output Markdown.
+pub(super) fn linkify() -> Arc<gpui_component::text::LinkifyFn> {
+    use gpui_component::text::LinkifySource;
+    use wks_native::path_detect::{Source, spans};
+    Arc::new(|text, source| {
+        spans(
+            text,
+            match source {
+                LinkifySource::Text => Source::Text,
+                LinkifySource::InlineCode => Source::InlineCode,
+                LinkifySource::CodeBlock => Source::Block,
+            },
+        )
+    })
 }

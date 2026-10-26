@@ -1,6 +1,7 @@
-//! File paths written in plain chat text (`see src/lib.rs:12`) and inline code
-//! (`` `package.json` ``), so they open like a written Markdown link. A port of
-//! the desktop's `lib/filePathDetect.ts`; keep the two in step.
+//! File paths written in plain chat text (`see src/lib.rs:12`), inline code
+//! (`` `package.json` ``) and code blocks such as tool output, so they open
+//! like a written Markdown link. Text and inline code port the desktop's
+//! `lib/filePathDetect.ts`; keep the two in step.
 //!
 //! Precision beats recall: a false positive turns prose into a dead link, so
 //! prose needs a separator (absolute, `./`-relative, or several segments
@@ -15,6 +16,8 @@ use std::ops::Range;
 const MAX_TOKEN: usize = 512;
 /// Prose longer than this is not scanned at all.
 const MAX_TEXT: usize = 50_000;
+/// Code blocks (tool output) longer than this are not scanned at all.
+const MAX_BLOCK: usize = 256 * 1024;
 /// Clause punctuation peeled off a token's end ("(see src/a.rs).").
 const MAX_TRAILING: usize = 8;
 
@@ -50,17 +53,34 @@ const DOMAIN_TLDS: &[&str] = &[
     "de", "fr", "edu", "gov",
 ];
 
-/// Byte ranges of `text` that are file paths. `code` is a whole inline code
-/// span: it links only if all of it (trimmed) is one path.
-pub fn spans(text: &str, code: bool) -> Vec<Range<usize>> {
-    if code {
+/// Where scanned text came from; each has its own strictness.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// Chat prose: a path needs a separator.
+    Text,
+    /// One whole inline code span: it links only if all of it is one path,
+    /// which may be a well-known single file name.
+    InlineCode,
+    /// A code block, usually tool output. Prose rules, plus the locations
+    /// compilers, test runners and search tools print: a single file name
+    /// with a line (`main_test.go:42:`) and `file(12,5)` (tsc, MSBuild).
+    Block,
+}
+
+/// Byte ranges of `text` that are file paths, each with any line suffix.
+pub fn spans(text: &str, source: Source) -> Vec<Range<usize>> {
+    if source == Source::InlineCode {
         let start = text.len() - text.trim_start().len();
         let token = text.trim();
         return std::iter::once(start..start + token.len())
-            .filter(|_| path_like(token, true))
+            .filter(|_| path_like(token, Rule::Code))
             .collect();
     }
-    if text.len() > MAX_TEXT || !text.contains(['/', '\\']) {
+    let (limit, rule) = match source {
+        Source::Block => (MAX_BLOCK, Rule::Output),
+        _ => (MAX_TEXT, Rule::Prose),
+    };
+    if text.len() > limit || (rule == Rule::Prose && !text.contains(['/', '\\'])) {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -74,8 +94,8 @@ pub fn spans(text: &str, code: bool) -> Vec<Range<usize>> {
             .find(char::is_whitespace)
             .unwrap_or(rest.len() - run_start);
         let run = &rest[run_start..run_start + run_len];
-        if run.contains(['/', '\\'])
-            && let Some(range) = token_in(run)
+        if (rule == Rule::Output || run.contains(['/', '\\']))
+            && let Some(range) = token_in(run, rule)
         {
             let base = offset + run_start;
             out.push(base + range.start..base + range.end);
@@ -88,7 +108,7 @@ pub fn spans(text: &str, code: bool) -> Vec<Range<usize>> {
 
 /// The path inside one whitespace-free run, after leading brackets/quotes and
 /// (only if needed) trailing clause punctuation.
-fn token_in(run: &str) -> Option<Range<usize>> {
+fn token_in(run: &str, rule: Rule) -> Option<Range<usize>> {
     let start = run.len()
         - run
             .trim_start_matches(['(', '[', '\'', '"', '`', '{'])
@@ -98,7 +118,7 @@ fn token_in(run: &str) -> Option<Range<usize>> {
         return None;
     }
     for _ in 0..=MAX_TRAILING {
-        if path_like(token, false) {
+        if path_like(token, rule) {
             return Some(start..start + token.len());
         }
         token =
@@ -107,9 +127,18 @@ fn token_in(run: &str) -> Option<Range<usize>> {
     None
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Rule {
+    Prose,
+    /// A whole inline code span: well-known single names allowed.
+    Code,
+    /// Tool output: well-known single names allowed only with a line.
+    Output,
+}
+
 /// Whether a whole whitespace-free token is a file path, with an optional
-/// `:line[:col]` suffix. `code` allows `package.json`-style single names.
-fn path_like(token: &str, code: bool) -> bool {
+/// `:line[:col]` (or, in output, `(line[,col])`) suffix.
+fn path_like(token: &str, rule: Rule) -> bool {
     if token.is_empty()
         || token.len() > MAX_TOKEN
         || token.contains(char::is_whitespace)
@@ -121,7 +150,14 @@ fn path_like(token: &str, code: bool) -> bool {
     {
         return false;
     }
-    let path = strip_line(token);
+    let (path, located) = match strip_line(token) {
+        stripped if stripped.len() < token.len() => (stripped, true),
+        _ if rule == Rule::Output => match strip_parens(token) {
+            Some(stripped) => (stripped, true),
+            None => (token, false),
+        },
+        _ => (token, false),
+    };
     if path.is_empty() || path.ends_with(['/', '\\']) {
         return false;
     }
@@ -144,8 +180,10 @@ fn path_like(token: &str, code: bool) -> bool {
             && !domain(first)
             && file_like(base);
     }
-    if !code {
-        return false;
+    match rule {
+        Rule::Prose => return false,
+        Rule::Output if !located => return false,
+        _ => {}
     }
     BARE_NAMES.contains(&path)
         || extension(path).is_some_and(|ext| {
@@ -169,6 +207,18 @@ fn strip_line(token: &str) -> &str {
         Some((path, line)) if digits(line) => path,
         _ => head,
     }
+}
+
+/// `token` without a trailing `(line)` or `(line,col)`, as tsc, MSBuild and
+/// the C# compiler print a location; `None` when it has neither.
+fn strip_parens(token: &str) -> Option<&str> {
+    let (path, inner) = token.strip_suffix(')')?.rsplit_once('(')?;
+    let digits = |s: &str| !s.is_empty() && s.len() <= 6 && s.bytes().all(|b| b.is_ascii_digit());
+    let ok = match inner.split_once(',') {
+        Some((line, column)) => digits(line) && digits(column),
+        None => digits(inner),
+    };
+    ok.then_some(path)
 }
 
 fn drive_prefix(path: &str) -> bool {
@@ -206,10 +256,15 @@ mod tests {
     use super::*;
 
     fn prose(text: &str) -> Vec<&str> {
-        spans(text, false).into_iter().map(|r| &text[r]).collect()
+        spans(text, Source::Text)
+            .into_iter()
+            .map(|r| &text[r])
+            .collect()
     }
     fn code(text: &str) -> Option<&str> {
-        spans(text, true).first().map(|r| &text[r.clone()])
+        spans(text, Source::InlineCode)
+            .first()
+            .map(|r| &text[r.clone()])
     }
 
     #[test]
@@ -268,10 +323,53 @@ mod tests {
         }
     }
 
+    fn output(text: &str) -> Vec<&str> {
+        spans(text, Source::Block)
+            .into_iter()
+            .map(|r| &text[r])
+            .collect()
+    }
+
+    #[test]
+    fn output_links_the_locations_tools_print() {
+        let text = "error[E0308]: mismatched types
+  --> src/main.rs:3:5
+src/a.ts(12,5): error TS2322: nope
+Program.cs(7): warning CS0168
+main_test.go:42: expected 1
+    at Object.<anonymous> (src/a.test.ts:9:3)
+  File \"/srv/app/x.py\", line 4, in run
+src/lib.rs:12:    let x = 1;
+ M apps/native/README.md
+running 3 tests in lib.rs and main.go";
+        assert_eq!(
+            output(text),
+            [
+                "src/main.rs:3:5",
+                "src/a.ts(12,5)",
+                "Program.cs(7)",
+                "main_test.go:42",
+                "src/a.test.ts:9:3",
+                "/srv/app/x.py",
+                "src/lib.rs:12",
+                "apps/native/README.md",
+            ]
+        );
+        assert!(output("cargo::rustc-env=A=1 Vec<u8> 1/2 v1.2.3 (12,5)").is_empty());
+        assert!(
+            prose("Program.cs(7) and main.go:42").is_empty(),
+            "prose stays strict"
+        );
+    }
+
     #[test]
     fn hostile_input_stays_bounded() {
         let long = "a/".repeat(40_000);
         assert!(prose(&long).is_empty());
+        assert!(
+            output(&"a.rs:1 ".repeat(60_000)).is_empty(),
+            "too long to scan"
+        );
         let run = format!("{}.rs", "x/".repeat(400));
         assert!(prose(&run).is_empty(), "longer than a path can be");
         assert!(prose("é/ü.rs and ü/a.rs").len() == 2);
