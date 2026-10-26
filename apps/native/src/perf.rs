@@ -74,7 +74,7 @@ impl Stat {
         let max = self.max_us.swap(0, Relaxed);
         json!({
             "n": count,
-            "avg_ms": if count == 0 { 0. } else { ms(total / count) },
+            "avg_ms": total.checked_div(count).map_or(0., ms),
             "max_ms": ms(max),
             "total_ms": ms(total),
         })
@@ -144,7 +144,7 @@ fn take_calls() -> Value {
         .unwrap_or_default();
     let mut out = Map::new();
     let mut sorted: Vec<_> = calls.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.total_us.cmp(&a.1.total_us));
+    sorted.sort_by_key(|(_, c)| std::cmp::Reverse(c.total_us));
     for (method, c) in sorted {
         out.insert(
             method,
@@ -389,7 +389,7 @@ mod proc {
             }
             self.threads = seen;
             let mut threads: Vec<_> = by_thread.into_iter().filter(|(_, t)| *t > 0).collect();
-            threads.sort_by(|a, b| b.1.cmp(&a.1));
+            threads.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
             let cpu_by_thread: Map<String, Value> = threads
                 .into_iter()
                 .map(|(n, t)| (n, json!(pct(t))))
