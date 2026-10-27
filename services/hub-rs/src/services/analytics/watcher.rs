@@ -111,15 +111,15 @@ impl Watcher {
             .engine
             .as_ref()
             .context("analytics session source unavailable")?;
+        let mut path = "/sessions?include_archived=true&include_empty=true";
+        if matches!(pass, Pass::Background { archived: false }) {
+            path = "/sessions?include_empty=true";
+        }
         let raw = tokio::time::timeout(
             Duration::from_secs(15),
             engine.request(Command::Request {
                 method: "GET".into(),
-                path: if matches!(pass, Pass::Background { archived: false }) {
-                    "/sessions?include_empty=true".into()
-                } else {
-                    "/sessions?include_archived=true&include_empty=true".into()
-                },
+                path: path.into(),
                 payload: None,
             }),
         )
@@ -140,19 +140,16 @@ impl Watcher {
         sessions.store(rows.len(), std::sync::atomic::Ordering::Relaxed);
         let watcher = self.clone();
         tokio::task::spawn_blocking(move || {
-            let observe = if matches!(pass, Pass::Query) {
-                Analytics::observe_and_read
+            let now = chrono::Utc::now().timestamp_millis();
+            if matches!(pass, Pass::Query) {
+                watcher
+                    .service
+                    .observe_and_read(method, &params, &rows, &watcher.roots(), now)
             } else {
-                Analytics::observe_in_background
-            };
-            observe(
-                &watcher.service,
-                method,
-                &params,
-                &rows,
-                &watcher.roots(),
-                chrono::Utc::now().timestamp_millis(),
-            )
+                watcher
+                    .service
+                    .observe_in_background(method, &params, &rows, &watcher.roots(), now)
+            }
         })
         .await?
     }
