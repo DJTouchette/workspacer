@@ -1354,14 +1354,17 @@ mod tests {
     #[test]
     fn reads_refuse_symlinks_and_directories() {
         let dir = Scratch::new("bg-task-link");
-        let secret = dir.join("secret");
-        std::fs::write(&secret, "no").unwrap();
-        let link = dir.join("t1.output");
-        std::os::unix::fs::symlink(&secret, &link).unwrap();
-        assert!(matches!(
-            read_output(&link, None, 10),
-            Err(OutputError::Unavailable(_))
-        ));
+        #[cfg(unix)]
+        {
+            let secret = dir.join("secret");
+            std::fs::write(&secret, "no").unwrap();
+            let link = dir.join("t1.output");
+            std::os::unix::fs::symlink(&secret, &link).unwrap();
+            assert!(matches!(
+                read_output(&link, None, 10),
+                Err(OutputError::Unavailable(_))
+            ));
+        }
         assert!(matches!(
             read_output(&dir.0, None, 10),
             Err(OutputError::Unavailable(_))

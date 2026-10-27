@@ -176,10 +176,18 @@ test.describe('/m-next', () => {
     expect(await fromBottom()).toBeLessThan(4);
 
     // A live update patches in place: the blocks you are reading are not rebuilt.
-    await page.locator('.thread > .you').first().evaluate((el: any) => (el.__probe = 1));
+    await page
+      .locator('.thread > .you')
+      .first()
+      .evaluate((el: any) => (el.__probe = 1));
     hub.pushSnapshot({ ...hub.snapshots.get('ended'), lastActivity: Date.now() });
     await page.waitForTimeout(300);
-    expect(await page.locator('.thread > .you').first().evaluate((el: any) => el.__probe)).toBe(1);
+    expect(
+      await page
+        .locator('.thread > .you')
+        .first()
+        .evaluate((el: any) => el.__probe),
+    ).toBe(1);
 
     // Reaching the top backfills above you without moving what you were reading.
     const held = await scroller.evaluate(async (el) => {
@@ -200,11 +208,17 @@ test.describe('/m-next', () => {
     // Keep scrolling up: older pages arrive a page at a time until the first.
     await expect(async () => {
       await scroller.evaluate((el) => (el.scrollTop = 0));
-      await expect(page.locator('.you .tx', { hasText: 'Question 1 of the long run' })).toBeAttached({
+      await expect(
+        page.locator('.you .tx', { hasText: 'Question 1 of the long run' }),
+      ).toBeAttached({
         timeout: 500,
       });
     }).toPass({ timeout: 20_000 });
-    expect(reads().filter((c) => c.params.limit).map((c) => c.params.limit)).toEqual([200, 400, 600]);
+    expect(
+      reads()
+        .filter((c) => c.params.limit)
+        .map((c) => c.params.limit),
+    ).toEqual([200, 400, 600]);
     await expect(page.locator('.thread > .earlier')).toHaveCount(0);
   });
 
