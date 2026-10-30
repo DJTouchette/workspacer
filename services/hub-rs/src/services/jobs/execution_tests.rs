@@ -13,6 +13,8 @@ struct Fixture {
     exit_ok: bool,
     call_output: Value,
     failure: Failure,
+    spawn_reply: Value,
+    wrapper_misses: Mutex<usize>,
 }
 impl Fixture {
     fn new(output: &str) -> Self {
@@ -22,6 +24,8 @@ impl Fixture {
             exit_ok: true,
             call_output: json!({"ok":true}),
             failure: Failure::None,
+            spawn_reply: json!({"sessionId":"child"}),
+            wrapper_misses: Mutex::new(0),
         }
     }
 }
@@ -34,11 +38,18 @@ impl Runner for Fixture {
             {
                 bail!("fixture call failed");
             }
+            if method == "agents.sendMessage" {
+                let mut misses = self.wrapper_misses.lock().unwrap();
+                if *misses > 0 {
+                    *misses -= 1;
+                    bail!("daemon returned 404 Not Found: no wrapper attached to that session");
+                }
+            }
             Ok(if method == "agents.spawn" {
                 if self.failure == Failure::MissingSession {
                     json!({})
                 } else {
-                    json!({"sessionId":"child"})
+                    self.spawn_reply.clone()
                 }
             } else {
                 self.call_output.clone()
@@ -247,4 +258,52 @@ async fn skipped_runs_are_quiet_failed_runs_notify_and_history_survives_its_cap(
             .is_empty()
     );
     hub.shutdown().unwrap();
+}
+#[tokio::test]
+async fn prompt_rides_the_spawn_and_only_older_hosts_get_a_separate_send() {
+    let job = spawn(json!({"kind":"shell","shell":{"command":"fixture"}}));
+    let sends = |runner: &Fixture| {
+        runner
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "agents.sendMessage")
+            .count()
+    };
+    let mut queued = Fixture::new("diff");
+    queued.spawn_reply = json!({"sessionId":"child","messageQueued":true});
+    assert_eq!(perform(&job, &queued).await.unwrap(), "spawned child");
+    assert_eq!(sends(&queued), 0);
+    let spawned = queued
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(m, _)| m == "agents.spawn")
+        .unwrap()
+        .1
+        .clone();
+    assert_eq!(spawned["message"], "Task: diff");
+
+    let mut unconfirmed = Fixture::new("diff");
+    unconfirmed.spawn_reply = json!({"sessionId":"child","messageQueued":false});
+    let error = perform(&job, &unconfirmed).await.unwrap_err().to_string();
+    assert!(error.contains("did not confirm"), "{error}");
+    assert_eq!(sends(&unconfirmed), 0);
+}
+#[tokio::test]
+async fn fallback_send_waits_out_wrapper_registration() {
+    let job = spawn(json!({"kind":"shell","shell":{"command":"fixture"}}));
+    let runner = Fixture::new("diff");
+    *runner.wrapper_misses.lock().unwrap() = 2;
+    assert_eq!(perform(&job, &runner).await.unwrap(), "spawned child");
+    let sends = runner
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(method, _)| method == "agents.sendMessage")
+        .count();
+    assert_eq!(sends, 3);
 }

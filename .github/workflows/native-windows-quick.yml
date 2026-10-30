@@ -1,0 +1,71 @@
+name: Native Windows quick build
+
+# Throwaway installer for hands-on testing of a branch on a real machine.
+# Build and package only: no test suites, no install smoke test, no release,
+# tag or feed is touched. Use rust-native-preview.yml for the validated build.
+# Push to a native-quick/** branch (or dispatch on any ref) to get an artifact.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['native-quick/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: '0'
+      NATIVE_BACKEND: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/native
+            services/hub-rs
+          # Shares the preview workflow's cache so the first quick build is warm.
+          key: rust-native-preview
+      - name: Install packaging compiler tooling
+        working-directory: apps/desktop
+        run: npm ci --ignore-scripts
+      - name: Build native Rust app, owned-backend harness and standalone CLI
+        shell: pwsh
+        run: |
+          cargo build --locked --release --manifest-path apps/native/Cargo.toml --features rust-hub --bin wks-native --bin native-harness
+          if ($LASTEXITCODE -ne 0) { throw 'Rust native build failed' }
+          cargo build --locked --release --manifest-path services/hub-rs/Cargo.toml --bin workspacer-rust
+          if ($LASTEXITCODE -ne 0) { throw 'Rust standalone build failed' }
+      - name: Resolve installer compiler
+        run: node apps/native/scripts/resolve-nsis.mjs
+      - name: Create unsigned installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw 'Visual Studio C++ tools not found' }
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$crt) { throw 'Redistributable x64 CRT not found' }
+          $env:NATIVE_CRT_DIR = $crt.FullName
+          node apps/native/scripts/package-windows.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Native packaging failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspacer-native-windows-quick-${{ github.sha }}
+          compression-level: 0
+          if-no-files-found: error
+          path: apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-*-x64.exe

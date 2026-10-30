@@ -970,18 +970,54 @@ async fn perform(job: &Job, client: &impl Runner) -> Result<String> {
                     params[key] = spawn[key].clone();
                 }
             }
+            // The prompt rides the spawn itself, like spawn_agent: the host
+            // queues it and drains it when the wrapper registers. A separate
+            // send right after the spawn races that registration and claudemon
+            // answers 404 "no wrapper attached" until it lands.
+            if !prompt.trim().is_empty() {
+                params["message"] = json!(prompt);
+            }
             let result = client.invoke("agents.spawn", params).await?;
             let id = result["sessionId"]
                 .as_str()
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow!("agents.spawn returned no sessionId"))?;
-            client
-                .invoke("agents.sendMessage", json!({"sessionId":id,"text":prompt}))
+            if prompt.trim().is_empty() || result["messageQueued"] == true {
+                return Ok(format!("spawned {id}"));
+            }
+            if result.get("messageQueued").is_some() {
+                // The host tried and could not confirm delivery; a blind
+                // resend could hand the agent its task twice.
+                bail!("spawned {id} but the host did not confirm the prompt was queued");
+            }
+            // An older host that ignores `message`: send it ourselves, waiting
+            // out the wrapper registration instead of losing the race.
+            send_first_prompt(client, id, &prompt)
                 .await
                 .map_err(|e| anyhow!("spawned {id} but prompt failed: {e}"))?;
             Ok(format!("spawned {id}"))
         }
         _ => bail!("unknown action kind"),
+    }
+}
+async fn send_first_prompt(client: &impl Runner, id: &str, prompt: &str) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut delay = Duration::from_millis(250);
+    loop {
+        match client
+            .invoke("agents.sendMessage", json!({"sessionId":id,"text":prompt}))
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(e)
+                if e.to_string().contains("no wrapper attached")
+                    && tokio::time::Instant::now() + delay < deadline =>
+            {
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(Duration::from_secs(4));
+            }
+            Err(e) => return Err(e),
+        }
     }
 }
 async fn shell(action: &Value) -> Result<(String, bool)> {
@@ -1101,7 +1137,7 @@ mod tests {
         );
         assert_eq!(
             calls[3].1,
-            json!({"cwd":"/project","label":"review","jobId":"","provider":"codex","model":"chosen-model"})
+            json!({"cwd":"/project","label":"review","jobId":"","provider":"codex","model":"chosen-model","message":"Build diff / {\"count\":1}"})
         );
         assert_eq!(
             calls[4].1,
@@ -1114,11 +1150,11 @@ mod tests {
         for (enabled, expected) in [
             (
                 false,
-                json!({"cwd":"/project","label":"nightly","jobId":"","permissionMode":"plan"}),
+                json!({"cwd":"/project","label":"nightly","jobId":"","permissionMode":"plan","message":"go"}),
             ),
             (
                 true,
-                json!({"cwd":"/project","label":"nightly","jobId":"","skipPermissions":true}),
+                json!({"cwd":"/project","label":"nightly","jobId":"","skipPermissions":true,"message":"go"}),
             ),
         ] {
             let runner = Recording {
