@@ -3750,3 +3750,133 @@ async fn history_pages_fall_back_append_and_forget() {
     assert_eq!(ids("recent"), ["h1", "h2"]);
     assert!(ids("recent-search").is_empty());
 }
+
+/// Scratch (docs/features/scratch.md): the page's calls carry their params;
+/// `scratch.changed` is watched only once the page has listed, and refreshes
+/// the list and the open file for the project shown, not another; a mark
+/// re-lists and is answered with the refreshed list.
+#[tokio::test]
+async fn scratch_lists_watches_its_topic_and_marks_then_relists() {
+    use wks_native::features::Request;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    fleet.result(json!([])).await;
+    view(&controller, |v| v.connected).await;
+    let request = |r: Request| controller.command(Command::Request(r)).unwrap();
+    let listing = |status: &str| {
+        json!({"project":{"root":"/w/shop","key":"shop-1","files":"/h/s/files","exists":true},
+               "items":[{"path":"a.sql","indexed":true,"purpose":"backfill","status":status}],
+               "truncated":false})
+    };
+    async fn next(hub: &mut Hub) -> Frame {
+        timeout(DEADLINE, hub.frames.recv()).await.unwrap().unwrap()
+    }
+
+    // The first list subscribes the topic; the call and the subscription
+    // may reach the hub in either order.
+    request(Request::ScratchList {
+        cwd: "/w/shop/wt".into(),
+    });
+    let (mut list, mut watched) = (None, false);
+    while list.is_none() || !watched {
+        let frame = next(&mut hub).await;
+        if frame.value["op"] == "call" && frame.value["method"] == "scratch.list" {
+            list = Some(frame);
+        } else if frame.value["op"] == "subscribe" {
+            watched |= frame.value["topics"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("scratch.changed"));
+        }
+    }
+    let list = list.unwrap();
+    assert_eq!(list.value["params"], json!({"cwd":"/w/shop/wt"}));
+    list.result(listing("pending")).await;
+    view(&controller, |v| {
+        v.requests.get("scratch").is_some_and(|s| !s.loading)
+    })
+    .await;
+
+    request(Request::ScratchRead {
+        cwd: "/w/shop/wt".into(),
+        path: "a.sql".into(),
+    });
+    let read = hub.frame("call", Some("scratch.read")).await;
+    assert_eq!(
+        read.value["params"],
+        json!({"cwd":"/w/shop/wt","path":"a.sql"})
+    );
+    read.result(json!({"path":"a.sql","content":"SELECT 1;"}))
+        .await;
+    view(&controller, |v| {
+        v.requests.get("scratch-read").is_some_and(|s| !s.loading)
+    })
+    .await;
+
+    // Another project's change is not this page's: the next call the hub
+    // sees is the probe, not a re-list.
+    read.event("scratch.changed", json!({"key":"other-2"}))
+        .await;
+    request(Request::ScratchRead {
+        cwd: "/w/shop/wt".into(),
+        path: "a.sql".into(),
+    });
+    let probe = loop {
+        let frame = next(&mut hub).await;
+        if frame.value["op"] == "call" {
+            break frame;
+        }
+    };
+    assert_eq!(probe.value["method"], "scratch.read");
+    probe
+        .result(json!({"path":"a.sql","content":"SELECT 1;"}))
+        .await;
+    view(&controller, |v| {
+        v.requests.get("scratch-read").is_some_and(|s| !s.loading)
+    })
+    .await;
+
+    // This project's change re-reads the list and the open file.
+    probe
+        .event("scratch.changed", json!({"key":"shop-1"}))
+        .await;
+    let mut methods = Vec::new();
+    while methods.len() < 2 {
+        let frame = next(&mut hub).await;
+        if frame.value["op"] == "call" {
+            methods.push(frame.value["method"].as_str().unwrap().to_owned());
+            let reply = if frame.value["method"] == "scratch.list" {
+                listing("pending")
+            } else {
+                json!({"path":"a.sql","content":"SELECT 2;"})
+            };
+            frame.result(reply).await;
+        }
+    }
+    methods.sort();
+    assert_eq!(methods, ["scratch.list", "scratch.read"]);
+
+    // A mark sends its patch with the file's folder and path, then re-lists.
+    request(Request::ScratchMark {
+        cwd: "/w/shop/wt".into(),
+        path: "a.sql".into(),
+        patch: json!({"status":"done","note":"ran on prod"}),
+    });
+    let mark = hub.frame("call", Some("scratch.mark")).await;
+    assert_eq!(
+        mark.value["params"],
+        json!({"cwd":"/w/shop/wt","path":"a.sql","status":"done","note":"ran on prod"})
+    );
+    mark.result(json!({"path":"a.sql","status":"done"})).await;
+    let relist = hub.frame("call", Some("scratch.list")).await;
+    relist.result(listing("done")).await;
+    let v = view(&controller, |v| {
+        v.requests.get("scratch-mark").is_some_and(|s| !s.loading)
+    })
+    .await;
+    assert_eq!(
+        v.requests["scratch-mark"].value["items"][0]["status"],
+        "done"
+    );
+}

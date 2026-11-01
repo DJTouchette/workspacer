@@ -65,6 +65,14 @@ pub(super) struct Extras {
     pub job_failed_only: bool,
     /// The run open in the history, by (job id, start time).
     pub job_run_open: Option<(String, i64)>,
+    /// The folder the Scratch page shows (any folder of the project; the hub
+    /// resolves a worktree to its main checkout). Fixed while the page is open.
+    pub scratch_cwd: Option<String>,
+    pub scratch_filter: wks_native::scratch::Filter,
+    /// The scratch file open in the list, by its relative path.
+    pub scratch_open: Option<String>,
+    pub scratch_purpose: Entity<InputState>,
+    pub scratch_note: Entity<InputState>,
     pub confirm_end: Option<String>,
     pub resume: Option<String>,
     pub local_paths: bool,
@@ -223,6 +231,16 @@ impl Extras {
             job_runs_tab: false,
             job_failed_only: false,
             job_run_open: None,
+            scratch_cwd: None,
+            scratch_filter: Default::default(),
+            scratch_open: None,
+            scratch_purpose: cx
+                .new(|cx| InputState::new(window, cx).placeholder("What this file is for")),
+            scratch_note: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .auto_grow(1, 4)
+                    .placeholder("e.g. ran on prod 2026-11-01, 4,210 rows")
+            }),
             confirm_end: None,
             resume: None,
             local_paths: false,
@@ -433,6 +451,7 @@ impl Workspace {
                 self.request(Request::Jobs, cx);
                 self.request(Request::JobRuns, cx);
             }
+            Screen::Scratch => self.open_scratch(cx),
             Screen::Changes => {
                 if let Some(s) = self.selected_session() {
                     self.request(Request::Changes { cwd: s.cwd.clone() }, cx);
@@ -683,6 +702,7 @@ impl Workspace {
                 Some("Every session this connection knows about, including ended ones.".into()),
             ),
             Screen::Jobs => ("Jobs", Some(super::jobs::JOBS_DESCRIPTION.into())),
+            Screen::Scratch => ("Scratch", Some(super::scratch::SCRATCH_DESCRIPTION.into())),
             Screen::History => ("Conversation history", Some(HISTORY_DESCRIPTION.into())),
             Screen::Session => ("Session details", session_cwd.map(Into::into)),
             Screen::Setup => (
@@ -725,11 +745,24 @@ impl Workspace {
                 })
                 .into_any_element(),
             ),
+            Screen::Scratch => Some(
+                self.quiet_button(
+                    "scratch-refresh",
+                    "Refresh",
+                    IconName::Redo,
+                    self.view.connected,
+                )
+                .when(self.view.connected, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| this.refresh_scratch(cx)))
+                })
+                .into_any_element(),
+            ),
             Screen::Handoff => self.handoff_continue(cx).map(IntoElement::into_any_element),
             _ => None,
         };
         let body = match self.screen {
             Screen::Jobs => self.render_jobs(cx),
+            Screen::Scratch => self.render_scratch(window, cx),
             Screen::History => self.render_history(window, cx),
             Screen::Session => self.render_session(cx),
             Screen::Setup => self.render_setup(cx),

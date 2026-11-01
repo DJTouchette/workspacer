@@ -91,10 +91,30 @@ Mutations publish `scratch.changed` `{key}` (not forwarded to federated peers).
 - **There is no execute method, by design.** The hub records that a script ran;
   running SQL against a database stays a human step.
 
-## Not in v1
+## Native client
+
+The native app has a **Scratch** page (sidebar inbox icon, `g n`):
+
+- Opens on where you are looking — the filtered project, else the selected
+  agent's folder, else the last project chosen, else the first project the hub
+  knows — and stays on it while open; chips switch between known projects.
+- Open / Pending / All filters; pending files sort first, with a warning border
+  and a "N files are waiting for you to run them" line.
+- A row opens to its actions (Mark done is primary on a pending file, Archive,
+  Back to draft, Keep, Copy path, and Open / Show in folder when the hub is on
+  this computer), an editable purpose and note, and the file's text read-only
+  and highlighted by extension (first 256 KB). Sensitive content the hub
+  withholds says so instead.
+- `scratch.changed` is subscribed only once the page has opened, and refreshes
+  the list and open file for the project shown.
+
+Code: `apps/native/src/scratch.rs` (model), `apps/native/src/ui/scratch.rs`
+(page); tests in `src/ui/tests/scratch_store.rs` and `tests/protocol.rs`.
+
+## Not yet
 
 - No automatic expiry: nothing in scratch is deleted by workspacer. (`keep`
   exists so a later "ephemeral" sweep has a fence to respect.)
 - No delete method; delete files from disk.
-- No desktop/TUI pane or History integration yet; no live watcher (list is on
-  demand, so files agents write directly are always current).
+- No desktop (Electron), TUI or mobile page yet; no sidebar badge for pending
+  files before the page has been opened.

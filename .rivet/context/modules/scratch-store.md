@@ -8,6 +8,8 @@ related_paths:
   - "services/hub-rs/src/services/launch_instructions.rs"
   - "services/hub-rs/tests/scratch.rs"
   - "docs/features/scratch.md"
+  - "apps/native/src/scratch.rs"
+  - "apps/native/src/ui/scratch.rs"
 owner: Damien Touchette
 last_reviewed: 2026-11-01
 ---
@@ -49,3 +51,19 @@ sweep, not a current behavior.
   `sensitive` and the file is written 0600. There is intentionally no execute
   method.
 - OpenCode and Pi receive no spawn env, so they never see the variable.
+
+## Native page
+
+- The page's cwd is fixed when it opens (`extras.scratch_cwd`): a selection
+  change neither re-lists nor leaves the page (Scratch is deliberately not in
+  `sync_features`' fall-back-to-Conversation screen list).
+- `scratch-mark` is in the controller's never-superseded write keys; a mark
+  answers with the refreshed list and the page reads the newest of the
+  `scratch`/`scratch-mark` slots, like Jobs.
+- The controller subscribes `scratch.changed` lazily (`scratch_watch`) so the
+  protocol tests' exact subscribe-topic assertions stay unchanged.
+- The full sidebar's footer entry is icon-only: a third labelled button pushes
+  the connection status out of the sidebar at the default width
+  (`connection::sidebar_footer_omits_a_healthy_connection…` catches it).
+- GPUI test `debug_bounds` keeps an element's bounds after it stops rendering;
+  assert disappearance on the model, not with `debug_bounds(..).is_none()`.

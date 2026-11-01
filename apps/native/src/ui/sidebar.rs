@@ -912,6 +912,15 @@ impl Workspace {
                     })),
             )
             .child(
+                self.icon_button("scratch-rail", "Scratch", IconName::Inbox, true)
+                    .when(!self.new_session && self.screen == Screen::Scratch, |d| {
+                        d.bg(rgb(p.selected)).text_color(rgb(p.text))
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_feature(Screen::Scratch, window, cx)
+                    })),
+            )
+            .child(
                 self.icon_button("settings-rail", "Settings", IconName::Settings, true)
                     .when(!self.new_session && self.screen == Screen::Settings, |d| {
                         d.bg(rgb(p.selected)).text_color(rgb(p.text))
@@ -1521,6 +1530,18 @@ impl Workspace {
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_feature(Screen::Jobs, window, cx)
+                            })),
+                    )
+                    .child(
+                        // Icon-only: the footer row also carries the connection
+                        // status, and a third label pushes it out of the sidebar.
+                        self.icon_button("nav-scratch", "Scratch", IconName::Inbox, true)
+                            .debug_selector(|| "nav-scratch".into())
+                            .when(!self.new_session && self.screen == Screen::Scratch, |d| {
+                                d.bg(rgb(p.selected)).text_color(rgb(p.text))
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_feature(Screen::Scratch, window, cx)
                             })),
                     )
                     .child(div().flex_1())

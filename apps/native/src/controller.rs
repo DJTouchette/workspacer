@@ -759,6 +759,8 @@ struct Worker {
     dirty: bool,
     fleet_dirty: bool,
     action_number: u64,
+    /// The Scratch page has opened: `scratch.changed` is subscribed.
+    scratch_watch: bool,
     catalog_number: u64,
     catalog_abort: Option<AbortHandle>,
     /// The last loaded catalog per provider. The view shows one at a time, and
@@ -818,6 +820,7 @@ impl Worker {
             dirty: false,
             fleet_dirty: false,
             action_number: 0,
+            scratch_watch: false,
             catalog_number: 0,
             catalog_abort: None,
             catalogs: BTreeMap::new(),
@@ -919,7 +922,18 @@ impl Worker {
                 self.view.ui_requests.retain(|r| r.number != number);
                 self.dirty = true;
             }
-            Command::Request(request) => self.request(request),
+            Command::Request(request) => {
+                // The Scratch page refreshes when an agent saves or marks a
+                // file; the topic is only watched once the page has opened.
+                let watch = !self.scratch_watch
+                    && matches!(request, crate::features::Request::ScratchList { .. })
+                    && self.view.may_call("scratch.list");
+                self.request(request);
+                if watch {
+                    self.scratch_watch = true;
+                    self.subscribe().await;
+                }
+            }
             Command::Act { session, action } => self.act(session, action),
             Command::Create(request) => self.create(request),
             Command::Handoff(request) => self.handoff(request),
@@ -1097,6 +1111,7 @@ impl Worker {
                 | "project-save"
                 | "file-save"
                 | "job-action"
+                | "scratch-mark"
                 | "task-stop"
                 | "git-action"
                 | "fork"
@@ -1719,6 +1734,8 @@ impl Worker {
                     self.queue_ui_request(&topic, &data);
                 } else if topic == "sessionArchive.changed" {
                     self.apply_archive(&data);
+                } else if topic == "scratch.changed" {
+                    self.scratch_changed(&data);
                 } else if topic == "sessionOpen.changed" {
                     self.apply_open(&data);
                 } else if self.view.child.is_none()
@@ -2791,6 +2808,32 @@ impl Worker {
         )
     }
 
+    /// `scratch.changed {key}`: re-read the open Scratch page (and the file
+    /// shown in it) when the change is to the project it shows. A list still
+    /// loading answers with the change already in it.
+    fn scratch_changed(&mut self, data: &Value) {
+        let Some(key) = data["key"].as_str() else {
+            return;
+        };
+        let Some(list) = self.view.requests.get("scratch") else {
+            return;
+        };
+        if list.loading || list.value["project"]["key"].as_str() != Some(key) {
+            return;
+        }
+        let list = list.request.clone();
+        let read = self
+            .view
+            .requests
+            .get("scratch-read")
+            .filter(|s| !s.loading)
+            .map(|s| s.request.clone());
+        self.request(list);
+        if let Some(read) = read {
+            self.request(read);
+        }
+    }
+
     /// Selected conversation, UI commands, and every shell being streamed.
     async fn subscribe(&mut self) {
         let mut topics = BTreeSet::from([
@@ -2799,6 +2842,9 @@ impl Worker {
             "sessionOpen.changed".into(),
         ]);
         topics.extend(crate::ui_requests::TOPICS.iter().map(|s| s.to_string()));
+        if self.scratch_watch {
+            topics.insert("scratch.changed".into());
+        }
         if let Some(id) = &self.view.selected {
             topics.insert(format!("agent.conversation.{id}"));
         }

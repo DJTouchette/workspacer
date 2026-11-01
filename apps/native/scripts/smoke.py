@@ -82,10 +82,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=Path("target/debug/wks-native"))
     parser.add_argument("--bus", help="Use a separately running fixture instead of --demo")
+    parser.add_argument("--rust-local-dir", help="Own an isolated embedded Rust backend in this directory instead of --demo (real hub services, e.g. scratch; set HOME to isolate home-derived state)")
     parser.add_argument("--output", type=Path, default=Path("native-smoke.png"))
     parser.add_argument("--settle-seconds", type=float, default=3)
     parser.add_argument("--sample-seconds", type=float, default=3)
-    parser.add_argument("--screen", choices=("conversation", "projects", "settings", "history", "jobs", "changes", "setup", "session", "model"), default="conversation")
+    parser.add_argument("--screen", choices=("conversation", "projects", "settings", "history", "jobs", "scratch", "changes", "setup", "session", "model"), default="conversation")
     parser.add_argument("--theme", choices=("dark", "light", "nord", "tokyo-night", "catppuccin", "gruvbox",
                                             "everforest", "catppuccin-latte"), default="dark")
     parser.add_argument("--width", type=int, default=1000)
@@ -164,7 +165,10 @@ def main():
         except ValueError:
             parser.error("--paint-region requires x,y,width,height inside the window")
     command = [str(args.binary.resolve())]
-    command += ["--bus", args.bus] if args.bus else ["--demo"]
+    if args.rust_local_dir:
+        command += ["--rust-local-dir", args.rust_local_dir, "--no-claude-hooks"]
+    else:
+        command += ["--bus", args.bus] if args.bus else ["--demo"]
     command += ["--session", args.session] if args.session else []
     started = time.monotonic()
     # Isolate appearance from the user's real preference and credentials.
@@ -198,7 +202,7 @@ def main():
             drive("key", "ctrl+Return")
         if args.screen != "conversation":
             drive("key", "Escape")
-            drive("key", "--delay", "80", "g", {"projects": "p", "settings": "s", "history": "h", "jobs": "j", "changes": "d", "setup": "a", "session": "e", "model": "m"}[args.screen])
+            drive("key", "--delay", "80", "g", {"projects": "p", "settings": "s", "history": "h", "jobs": "j", "scratch": "n", "changes": "d", "setup": "a", "session": "e", "model": "m"}[args.screen])
         if args.scroll_pages:
             drive("key", "Escape")
             drive("key", "--delay", "80", *(["ctrl+u"] * min(50, max(0, args.scroll_pages))))
@@ -248,7 +252,7 @@ def main():
                           "width": args.width, "height": args.height,
                           "distinct_animation_frames": animation_frames,
                           "paint_region_colors": region_colors,
-                          "workload": "external bus" if args.bus else "in-process demo",
+                          "workload": "external bus" if args.bus else ("embedded local backend" if args.rust_local_dir else "in-process demo"),
                           "scope": "window appearance is not first usable frame; host/build/GPU affect all values"}, indent=2))
         if process.poll() is not None:
             raise RuntimeError("Native process exited during smoke test")

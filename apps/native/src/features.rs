@@ -291,6 +291,23 @@ pub enum Request {
     /// One owner write to a job, answered with the refreshed `jobs.list`.
     /// Never superseded: a second click while one is in flight is dropped.
     JobAction(JobAction),
+    /// A project's scratch files (`scratch.list`): personal files kept
+    /// outside git, shared by every worktree (docs/features/scratch.md).
+    ScratchList {
+        cwd: String,
+    },
+    /// One scratch file's text (`scratch.read`), shown read-only.
+    ScratchRead {
+        cwd: String,
+        path: String,
+    },
+    /// One metadata write (`scratch.mark`: status, keep, purpose, note),
+    /// answered with the refreshed `scratch.list`. Never superseded.
+    ScratchMark {
+        cwd: String,
+        path: String,
+        patch: Value,
+    },
     /// The hub's shared archived-session document (`sessionArchive.get`):
     /// which sessions every client of this hub hides from its normal list.
     Archive,
@@ -523,6 +540,9 @@ impl Request {
             Self::JobHistory { .. } => "job-history",
             Self::JobRuns => "job-runs",
             Self::JobAction(_) => "job-action",
+            Self::ScratchList { .. } => "scratch",
+            Self::ScratchRead { .. } => "scratch-read",
+            Self::ScratchMark { .. } => "scratch-mark",
             Self::Archive => "archive",
             Self::OpenSessions => "session-open",
             Self::CleanupSessions { .. } => "session-cleanup",
@@ -557,6 +577,9 @@ impl Request {
             Self::PrProviders => Some("pr.providers"),
             Self::HistoryPage { .. } => Some("sessions.history"),
             Self::ForgetSession { .. } => Some("sessions.forget"),
+            Self::ScratchList { .. } => Some("scratch.list"),
+            Self::ScratchRead { .. } => Some("scratch.read"),
+            Self::ScratchMark { .. } => Some("scratch.mark"),
             _ => None,
         }
     }
@@ -674,6 +697,20 @@ impl Request {
                 backend
                     .call("sessions.forget", json!({"sessionId": session}))
                     .await
+            }
+            Self::ScratchList { cwd } => backend.call("scratch.list", json!({"cwd":cwd})).await,
+            Self::ScratchRead { cwd, path } => {
+                backend
+                    .call("scratch.read", json!({"cwd":cwd,"path":path}))
+                    .await
+            }
+            Self::ScratchMark { cwd, path, patch } => {
+                let mut params = patch.clone();
+                ensure!(params.is_object(), "A scratch change must be an object.");
+                params["cwd"] = json!(cwd);
+                params["path"] = json!(path);
+                backend.call("scratch.mark", params).await?;
+                backend.call("scratch.list", json!({"cwd":cwd})).await
             }
             Self::Jobs => backend.call("jobs.list", json!({})).await,
             Self::JobHistory { id } => backend.call("jobs.history", json!({"id":id})).await,
