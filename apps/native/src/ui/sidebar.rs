@@ -1046,6 +1046,7 @@ impl Workspace {
                         .child(Input::new(&self.search).appearance(false)),
                 ),
             )
+            .children(self.render_cleanup_banner(cx))
             .when(self.view.power_paused, |d| {
                 d.child(
                     div()

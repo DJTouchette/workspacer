@@ -968,6 +968,8 @@ async fn live_harness_targets_and_cleans_up_only_its_disposable_session() {
                         "providers.checkAll" => json!([]),
                         // Read on every connect; archiving is never a mutation here.
                         "sessionArchive.get" => json!({"version":0,"archived":{}}),
+                        // So is the shared open set (what reads as Paused).
+                        "sessionOpen.get" => json!({"version":0,"open":{},"ended":{}}),
                         other => panic!("unexpected live harness method {other}"),
                     };
                     if ws
@@ -3395,37 +3397,251 @@ async fn background_task_logs_and_stops_name_ids_never_paths() {
     .await;
 }
 
+/// The hub's roster is the whole list (docs/session-roster.md): a fleet read
+/// replaces it, but never takes away the open session or moves selection,
+/// whatever that session's state. A launch the hub has not listed yet must
+/// not snap the window to the first session.
 #[tokio::test]
-async fn kept_sessions_missing_from_the_fleet_list_are_read_by_id_and_listed() {
+async fn a_fleet_read_omitting_the_selected_session_never_moves_selection() {
     let mut hub = Hub::new().await;
     let controller = Controller::start(hub.config.clone());
-    let first = hub.frame("call", Some("sessions.snapshots")).await;
-    // Kept ids arrive while the first fleet read is still in flight.
-    controller
-        .command(Command::KeepSessions(vec!["paused".into(), "a".into()]))
-        .unwrap();
-    first.result(json!([session("a")])).await;
-    // A second read follows at once instead of waiting for the next refresh.
-    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
-    fleet.result(json!([session("a")])).await;
-    let read = hub.frame("call", Some("sessions.snapshot")).await;
-    assert_eq!(read.value["params"]["sessionId"], "paused");
-    read.result(
-        json!({"sessionId":"paused","mode":"stopped","status":"ended",
-        "transport":"stream","cwd":"/test","provider":"claude"}),
+    let answer = |fleet: Value| {
+        move |f: &Value| match f["method"].as_str().unwrap_or("") {
+            "sessions.snapshots" => Some(fleet.clone()),
+            "sessions.conversation" => Some(snapshot(1, "hello")),
+            _ => Some(json!({})),
+        }
+    };
+    let (_, sender) = serve_until(
+        &mut hub,
+        answer(json!([session("a"), session("b")])),
+        |seen| called(seen, "sessions.snapshots") && called(seen, "sessions.conversation"),
     )
     .await;
-    let listed = view(&controller, |v| {
-        v.sessions.iter().any(|s| s.id == "paused") && !v.sessions_loading
+    view(&controller, |v| {
+        v.sessions.len() == 2 && v.selected.as_deref() == Some("a")
     })
     .await;
-    assert!(listed.sessions.iter().any(|s| s.id == "a"));
+    for row in [
+        // Live, and absent from the next read.
+        json!({"sessionId":"b","mode":"input","transport":"stream"}),
+        // Resuming: the hub marks it starting, and the read omits it.
+        json!({"sessionId":"b","mode":"unknown","starting":true,"transport":"stream"}),
+    ] {
+        let starting = row["mode"] == "unknown";
+        controller.command(Command::Select("b".into())).unwrap();
+        sender.send(event("agent.snapshot", row)).await.unwrap();
+        view(&controller, |v| {
+            v.selected.as_deref() == Some("b")
+                && v.sessions
+                    .iter()
+                    .any(|s| s.id == "b" && s.starting() == starting)
+        })
+        .await;
+        controller.command(Command::Refresh).unwrap();
+        // `c` is new in this read, so its arrival proves the read landed.
+        serve_until(
+            &mut hub,
+            answer(json!([session("a"), session("c")])),
+            |seen| called(seen, "sessions.snapshots"),
+        )
+        .await;
+        let after = view(&controller, |v| v.sessions.iter().any(|s| s.id == "c")).await;
+        assert_eq!(after.selected.as_deref(), Some("b"), "selection moved");
+        let held = after.sessions.iter().find(|s| s.id == "b");
+        assert!(held.is_some(), "the open session left the list");
+        assert_eq!(held.unwrap().starting(), starting);
+        // Reset for the next round: `b` back in the roster, `c` gone.
+        controller.command(Command::Refresh).unwrap();
+        serve_until(
+            &mut hub,
+            answer(json!([session("a"), session("b")])),
+            |seen| called(seen, "sessions.snapshots"),
+        )
+        .await;
+        view(&controller, |v| !v.sessions.iter().any(|s| s.id == "c")).await;
+    }
+}
+
+/// Paused comes from the hub's shared open set: read on every connect,
+/// followed live, version-fenced, re-adopted after a reconnect even at a
+/// lower version, and never replaced by a reply that is not the document.
+#[tokio::test]
+async fn shared_open_set_is_read_on_connect_followed_live_and_resynced() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let stopped = |id: &str| {
+        json!({"sessionId":id,"mode":"stopped","status":"ended","transport":"stream",
+            "provider":"claude","cwd":"/test"})
+    };
+    let fleet = json!([stopped("a"), stopped("b")]);
+    let (_, sender) = serve_until(
+        &mut hub,
+        |f| match f["method"].as_str().unwrap_or("") {
+            "sessions.snapshots" => Some(fleet.clone()),
+            "sessionOpen.get" => Some(json!({"version":4,"open":{"a":1,"b":1},"ended":{"b":2}})),
+            _ => Some(json!({})),
+        },
+        |seen| {
+            called(seen, "sessionOpen.get")
+                && seen.iter().any(|f| {
+                    f["op"] == "subscribe"
+                        && f["topics"]
+                            .as_array()
+                            .is_some_and(|t| t.iter().any(|t| t == "sessionOpen.changed"))
+                })
+        },
+    )
+    .await;
+    let open = |v: &View| v.session_open.as_ref().map(|d| d["version"].clone());
+    let v = view(&controller, |v| open(v) == Some(json!(4))).await;
+    let doc = v.session_open.clone().unwrap();
+    assert!(wks_native::features::open_paused(&doc, "a"));
     assert!(
-        listed
-            .sessions
-            .iter()
-            .find(|s| s.id == "paused")
-            .unwrap()
-            .stopped()
+        !wks_native::features::open_paused(&doc, "b"),
+        "ended on purpose"
+    );
+
+    // An older document is ignored; a newer one (no `ended` map) replaces it.
+    sender
+        .send(event(
+            "sessionOpen.changed",
+            json!({"version":3,"open":{},"ended":{}}),
+        ))
+        .await
+        .unwrap();
+    sender
+        .send(event(
+            "sessionOpen.changed",
+            json!({"version":5,"open":{"a":1}}),
+        ))
+        .await
+        .unwrap();
+    let v = view(&controller, |v| open(v) == Some(json!(5))).await;
+    assert!(wks_native::features::open_paused(
+        v.session_open.as_ref().unwrap(),
+        "a"
+    ));
+
+    // After a reconnect, an error-shaped reply is not an empty open set, and
+    // the next real document is adopted even though its version restarted.
+    sender.send(Message::Close(None)).await.unwrap();
+    view(&controller, |v| !v.connected).await;
+    let (_, sender) = serve_until(
+        &mut hub,
+        |f| match f["method"].as_str().unwrap_or("") {
+            "sessions.snapshots" => Some(fleet.clone()),
+            "sessionOpen.get" => Some(json!({"ok":false,"error":"unknown method"})),
+            _ => Some(json!({})),
+        },
+        |seen| called(seen, "sessionOpen.get"),
+    )
+    .await;
+    let v = view(&controller, |v| {
+        v.connected
+            && v.requests
+                .get("session-open")
+                .is_some_and(|s| !s.loading && s.error.is_some())
+    })
+    .await;
+    assert_eq!(open(&v), Some(json!(5)), "an error never empties the set");
+    sender
+        .send(event(
+            "sessionOpen.changed",
+            json!({"version":1,"open":{"b":1},"ended":{}}),
+        ))
+        .await
+        .unwrap();
+    let v = view(&controller, |v| open(v) == Some(json!(1))).await;
+    assert!(wks_native::features::open_paused(
+        v.session_open.as_ref().unwrap(),
+        "b"
+    ));
+}
+
+/// The cleanup prompt's three hub calls carry the documented parameters; a
+/// snooze adopts the open document it answers, an undo the archive document,
+/// and a cleanup reply that does not name what it hid is an error.
+#[tokio::test]
+async fn cleanup_prompt_calls_carry_their_parameters_and_adopt_replies() {
+    use wks_native::features::Request;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    serve_until(
+        &mut hub,
+        |f| match f["method"].as_str().unwrap_or("") {
+            "sessions.snapshots" => Some(json!([session("a")])),
+            "sessionOpen.get" => Some(json!({"version":1,"open":{},"ended":{}})),
+            "sessionArchive.get" => Some(json!({"version":1,"archived":{}})),
+            _ => Some(json!({})),
+        },
+        |seen| called(seen, "sessionOpen.get") && called(seen, "sessionArchive.get"),
+    )
+    .await;
+    view(&controller, |v| {
+        v.session_open.is_some() && v.session_archive.is_some()
+    })
+    .await;
+
+    let request = |r: Request| controller.command(Command::Request(r)).unwrap();
+    request(Request::CleanupSessions {
+        older_than_ms: Some(86_400_000),
+    });
+    let call = hub.frame("call", Some("sessionOpen.cleanup")).await;
+    assert_eq!(call.value["params"], json!({"olderThanMs":86_400_000}));
+    call.result(json!({"hidden":["x","y"]})).await;
+    let v = view(&controller, |v| {
+        v.requests
+            .get("session-cleanup")
+            .is_some_and(|s| !s.loading)
+    })
+    .await;
+    assert_eq!(
+        v.requests["session-cleanup"].value["hidden"],
+        json!(["x", "y"])
+    );
+
+    request(Request::CleanupSessions {
+        older_than_ms: None,
+    });
+    let call = hub.frame("call", Some("sessionOpen.cleanup")).await;
+    assert_eq!(call.value["params"], json!({}));
+    call.result(json!({"ok":true})).await;
+    view(&controller, |v| {
+        v.requests
+            .get("session-cleanup")
+            .is_some_and(|s| !s.loading && s.error.is_some())
+    })
+    .await;
+
+    request(Request::UndoCleanup {
+        sessions: vec!["x".into(), "y".into()],
+    });
+    let call = hub.frame("call", Some("sessionArchive.setMany")).await;
+    assert_eq!(
+        call.value["params"],
+        json!({"sessionIds":["x","y"],"archived":false})
+    );
+    call.result(json!({"version":7,"archived":{}})).await;
+    view(&controller, |v| {
+        v.session_archive
+            .as_ref()
+            .is_some_and(|d| d["version"] == 7)
+    })
+    .await;
+
+    request(Request::SnoozeCleanup);
+    let call = hub.frame("call", Some("sessionOpen.snoozeCleanup")).await;
+    assert_eq!(call.value["params"], json!({}));
+    call.result(json!({"version":9,"open":{},"ended":{},
+        "cleanup":{"ended":30,"threshold":20,"suggested":false,"snoozedAt":30}}))
+        .await;
+    let v = view(&controller, |v| {
+        v.session_open.as_ref().is_some_and(|d| d["version"] == 9)
+    })
+    .await;
+    assert_eq!(
+        wks_native::features::cleanup_suggested(v.session_open.as_ref().unwrap()),
+        None
     );
 }

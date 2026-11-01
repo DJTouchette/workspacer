@@ -22,8 +22,6 @@ use crate::{
 };
 
 const MAX_SESSIONS: usize = 10_000;
-/// Bound on sessions read one by one per fleet refresh to keep them listed.
-pub const MAX_KEPT_SESSIONS: usize = 64;
 /// How often a changed view is published to the UI (20 a second): each
 /// publish clones the view and re-renders the window.
 const FRAME_INTERVAL: Duration = Duration::from_millis(50);
@@ -375,9 +373,6 @@ pub enum Command {
     },
     /// An agent's interactive shell; see [`crate::terminal`].
     Terminal(crate::terminal::Command),
-    /// Sessions this device keeps listed even where the hub's fleet list has
-    /// aged them out: ones that were open when the app last closed.
-    KeepSessions(Vec<String>),
 }
 
 /// A provider-native subagent of a session (Claude's Task/Agent children).
@@ -449,6 +444,11 @@ pub struct View {
     pub session_archive: Option<Arc<Value>>,
     /// Last 128 completed archive/restore requests.
     pub archive_receipts: VecDeque<ArchiveReceipt>,
+    /// The hub's shared open-session document (`sessionOpen.get`, newest
+    /// version seen): `{version, open: {sessionId: sinceMs}}`. A stopped
+    /// session listed here is Paused. `None` until a read succeeds, and for
+    /// hubs that predate the shared open set (then nothing reads as Paused).
+    pub session_open: Option<Arc<Value>>,
     pub connected: bool,
     pub power_paused: bool,
     pub power_pause_generation: u64,
@@ -740,13 +740,12 @@ struct Worker {
     jobs: FuturesUnordered<BoxFuture<'static, Completion>>,
     epoch: u64,
     archive_resync: bool,
+    /// The next `sessionOpen` document is adopted whatever its version: set
+    /// on connect, since a restarted hub may count versions from zero again.
+    open_resync: bool,
     selection: u64,
     fleet_pending: bool,
     fleet_overlay: BTreeMap<String, Value>,
-    /// See [`Command::KeepSessions`].
-    keep: Vec<String>,
-    /// Kept ids arrived while a fleet read was in flight; read again after it.
-    refetch_fleet: bool,
     conversation_pending: bool,
     /// Items requested for the selected conversation (newest first).
     conversation_limit: usize,
@@ -805,11 +804,10 @@ impl Worker {
             jobs: FuturesUnordered::new(),
             epoch: 0,
             archive_resync: true,
+            open_resync: true,
             selection: 0,
             fleet_pending: false,
             fleet_overlay: BTreeMap::new(),
-            keep: Vec::new(),
-            refetch_fleet: false,
             conversation_pending: false,
             conversation_limit: CONVERSATION_PAGE,
             buffered: Vec::new(),
@@ -940,17 +938,6 @@ impl Worker {
             }
             Command::RefreshUsage => self.fetch_usage(),
             Command::Terminal(command) => self.terminal(command).await,
-            Command::KeepSessions(ids) => {
-                let ids: Vec<String> = ids.into_iter().take(MAX_KEPT_SESSIONS).collect();
-                if ids != self.keep {
-                    let added = ids.iter().any(|id| !self.sessions.contains_key(id));
-                    self.keep = ids;
-                    if added {
-                        self.refetch_fleet = self.fleet_pending;
-                        self.fetch_fleet();
-                    }
-                }
-            }
             Command::ViewChild(target) => self.view_child(target).await,
             Command::LoadOlder => {
                 if self.view.transcript.has_older && !self.conversation_pending {
@@ -1116,6 +1103,9 @@ impl Worker {
                 | "rewind-files"
                 | "pr-link"
                 | "pr-action"
+                | "session-cleanup"
+                | "session-snooze"
+                | "session-undo"
         ) && self.view.requests.get(key).is_some_and(|s| {
             // A rewind PREVIEW changes nothing: a newer one (another message,
             // or a retry) supersedes it. Only a real rewind is never recalled.
@@ -1268,31 +1258,10 @@ impl Worker {
         self.last_fleet = Instant::now();
         let backend = self.backend.clone();
         let epoch = self.epoch;
-        let keep = self.keep.clone();
+        // The hub's roster is the whole list: it keeps open (Paused) and
+        // recently ended sessions itself, so nothing is read back by id here.
         self.push_job(Box::pin(async move {
-            let mut result = backend.snapshots().await;
-            // The fleet list ages stopped sessions out after a day; a kept one
-            // is read by id so it stays listed with the rest, in one answer.
-            if let Ok(Value::Array(rows)) = &mut result {
-                let listed: BTreeSet<String> = rows
-                    .iter()
-                    .filter_map(|row| Session::id_of(row).map(str::to_owned))
-                    .collect();
-                // Read together, not one round trip after another.
-                let backend = &backend;
-                let reads = keep
-                    .iter()
-                    .filter(|id| !listed.contains(*id))
-                    .map(|id| async move { (id, backend.snapshot(id).await) });
-                for (id, read) in futures_util::future::join_all(reads).await {
-                    if let Ok(row) = read
-                        && Session::id_of(&row) == Some(id.as_str())
-                    {
-                        rows.push(row);
-                    }
-                }
-            }
-            Completion::Fleet(epoch, result)
+            Completion::Fleet(epoch, backend.snapshots().await)
         }));
     }
 
@@ -1547,6 +1516,28 @@ impl Worker {
         self.dirty = true;
     }
 
+    /// Adopt a `sessionOpen` document unless an equal or newer one is held,
+    /// like [`Self::apply_archive`]. Anything that is not the document shape
+    /// (an older hub's error object, say) is ignored.
+    fn apply_open(&mut self, data: &Value) {
+        let Ok(document) = crate::features::open_document(data.clone()) else {
+            return;
+        };
+        let version = document["version"].as_i64().unwrap_or(0);
+        if !self.open_resync
+            && self
+                .view
+                .session_open
+                .as_ref()
+                .is_some_and(|held| held["version"].as_i64().unwrap_or(0) >= version)
+        {
+            return;
+        }
+        self.open_resync = false;
+        self.view.session_open = Some(Arc::new(document));
+        self.dirty = true;
+    }
+
     fn upsert(&mut self, data: &Value) {
         let Some(id) = Session::id_of(data) else {
             return;
@@ -1607,6 +1598,7 @@ impl Worker {
                 self.connected_at = Instant::now();
                 self.first_replies.clear();
                 self.archive_resync = true;
+                self.open_resync = true;
                 self.view.connected = true;
                 self.view.methods = self.backend.methods().map(Arc::new);
                 self.view.power_paused = false;
@@ -1621,6 +1613,8 @@ impl Worker {
                 // Re-read the shared archive on every connect: changes made by
                 // another client while this one was away have no replay.
                 self.request(crate::features::Request::Archive);
+                // The same for the shared open set, which says what is Paused.
+                self.request(crate::features::Request::OpenSessions);
                 let child = self.view.child.clone();
                 self.select(self.view.selected.clone()).await;
                 if child.is_some() {
@@ -1661,6 +1655,8 @@ impl Worker {
                     self.queue_ui_request(&topic, &data);
                 } else if topic == "sessionArchive.changed" {
                     self.apply_archive(&data);
+                } else if topic == "sessionOpen.changed" {
+                    self.apply_open(&data);
                 } else if self.view.child.is_none()
                     && self
                         .view
@@ -1715,6 +1711,7 @@ impl Worker {
                 "cwd",
                 "mode",
                 "ambientState",
+                "starting",
                 "status",
                 "transport",
                 "provider",
@@ -2129,6 +2126,14 @@ impl Worker {
                 if matches!(key, "archive" | "archive-set") && error.is_none() {
                     self.apply_archive(&value);
                 }
+                // A snooze answers the open document, an undo the archive:
+                // adopt them now rather than waiting for their change events.
+                if matches!(key, "session-open" | "session-snooze") && error.is_none() {
+                    self.apply_open(&value);
+                }
+                if key == "session-undo" && error.is_none() {
+                    self.apply_archive(&value);
+                }
                 // A fork opens as soon as the hub has made it.
                 if let crate::features::Request::Fork { session, label, .. } = &request
                     && error.is_none()
@@ -2143,6 +2148,9 @@ impl Worker {
                         self.upsert(&row);
                         self.fleet_dirty = true;
                     }
+                    // Like a spawn: a fleet read served before the hub lists
+                    // the fork must not drop it.
+                    self.created_row = Some(row);
                     self.view.notice = format!("Forked from {}", source.title());
                     self.select(Some(id)).await;
                     self.fetch_fleet();
@@ -2281,6 +2289,11 @@ impl Worker {
                         // Preserve the acknowledged identity across an older fleet read.
                         if !self.sessions.contains_key(&id) {
                             self.upsert(&row);
+                        } else if self.sessions.get(&id).is_some_and(Session::stopped) {
+                            // A resume of the same id: the held row still
+                            // says it ended. The hub accepted the restart, so
+                            // it reads Starting until the next snapshot.
+                            self.upsert(&json!({"sessionId":id,"mode":"unknown","starting":true}));
                         }
                         self.created_row = Some(row);
                         self.select(Some(id.clone())).await;
@@ -2410,24 +2423,21 @@ impl Worker {
             Completion::Fleet(epoch, result) if epoch == self.epoch => {
                 self.fleet_pending = false;
                 self.log_first_reply("fleet", self.last_fleet);
-                if std::mem::take(&mut self.refetch_fleet) {
-                    self.fleet_dirty = true;
-                    if let Some(due) = Instant::now().checked_sub(Duration::from_secs(30)) {
-                        self.last_fleet = due;
-                    }
-                }
                 self.view.sessions_loading = false;
                 match result {
                     Ok(Value::Array(rows)) => {
                         if self.view.notice.starts_with("Sessions unavailable:") {
                             self.view.notice.clear();
                         }
+                        // The open session stays whatever its state: a read
+                        // that omits it (a launch the hub has not listed yet,
+                        // a history row, a session aged out while watched)
+                        // must not pull the conversation out from under you.
                         let retained = self
                             .view
                             .selected
                             .as_ref()
                             .and_then(|id| self.sessions.get(id))
-                            .filter(|s| s.stopped())
                             .cloned();
                         self.sessions.clear();
                         if let Some(s) = retained {
@@ -2453,6 +2463,9 @@ impl Worker {
                             }
                         }
                         self.fleet_dirty = true;
+                        // Pick a first session only when none is open, or
+                        // the selected id never had a row here. A held one
+                        // was retained above, so this never moves away from it.
                         if self
                             .view
                             .selected
@@ -2701,7 +2714,11 @@ impl Worker {
 
     /// Selected conversation, UI commands, and every shell being streamed.
     async fn subscribe(&mut self) {
-        let mut topics = BTreeSet::from(["agent.snapshot".into(), "sessionArchive.changed".into()]);
+        let mut topics = BTreeSet::from([
+            "agent.snapshot".into(),
+            "sessionArchive.changed".into(),
+            "sessionOpen.changed".into(),
+        ]);
         topics.extend(crate::ui_requests::TOPICS.iter().map(|s| s.to_string()));
         if let Some(id) = &self.view.selected {
             topics.insert(format!("agent.conversation.{id}"));

@@ -100,10 +100,11 @@ pub struct Settings {
     /// Finished children cleared from the sidebar, by hub identity. Separate
     /// from the shared archive: this device's child view only.
     pub cleared_children: BTreeMap<String, BTreeMap<String, crate::child_agents::ClearMark>>,
-    /// Sessions that were open, by hub identity, with when this device first
-    /// saw each open. One still listed here after the app restarts was open
-    /// when it closed, so it stays in the sidebar to pick back up until it is
-    /// resumed, archived, or ends while the app is running.
+    /// Legacy: sessions this device once tracked as open, by hub identity.
+    /// The hub's shared open set (`sessionOpen`) replaced it; native neither
+    /// reads nor changes it. It is still loaded and saved back untouched so
+    /// a hub can seed its open set from it once (see
+    /// `services/hub-rs/src/services/kept_sessions.rs`).
     pub kept_open: BTreeMap<String, BTreeMap<String, i64>>,
     pub default_provider: Provider,
     pub default_claude_access: crate::launch::Permission,

@@ -29,6 +29,7 @@ mod project_registry;
 mod pull_requests;
 mod question_sets;
 mod scrolling;
+mod session_cleanup;
 mod session_controls;
 mod session_list;
 mod switching;

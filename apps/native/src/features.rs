@@ -276,6 +276,24 @@ pub enum Request {
     /// The hub's shared archived-session document (`sessionArchive.get`):
     /// which sessions every client of this hub hides from its normal list.
     Archive,
+    /// The hub's shared open-session document (`sessionOpen.get`): which
+    /// sessions are open across every client; a stopped one reads as Paused.
+    OpenSessions,
+    /// Hide (archive) the sidebar's ended sessions on the hub
+    /// (`sessionOpen.cleanup`): every one, or those that ended at least
+    /// `older_than_ms` ago. Never touches Paused or live sessions. Answers
+    /// `{hidden: [ids]}`, which an undo restores.
+    CleanupSessions {
+        older_than_ms: Option<u64>,
+    },
+    /// "Not now" for the hub's cleanup prompt (`sessionOpen.snoozeCleanup`):
+    /// it returns after ten more sessions end. Answers the open document.
+    SnoozeCleanup,
+    /// Undo a cleanup: restore exactly the ids it hid, in one archive change
+    /// (`sessionArchive.setMany` with `archived: false`).
+    UndoCleanup {
+        sessions: Vec<String>,
+    },
     /// Archive or restore one session on the hub. View state only: it never
     /// stops, signals or forgets the session. Its own key, and never
     /// superseded, so archiving two sessions quickly keeps both.
@@ -483,6 +501,10 @@ impl Request {
             Self::JobRuns => "job-runs",
             Self::JobAction(_) => "job-action",
             Self::Archive => "archive",
+            Self::OpenSessions => "session-open",
+            Self::CleanupSessions { .. } => "session-cleanup",
+            Self::SnoozeCleanup => "session-snooze",
+            Self::UndoCleanup { .. } => "session-undo",
             Self::SetArchive { .. } => "archive-set",
             Self::RewindFiles { .. } => "rewind-files",
             Self::Fork { .. } => "fork",
@@ -702,6 +724,32 @@ impl Request {
                     .await
             }
             Self::Archive => archive_document(backend.call("sessionArchive.get", json!({})).await?),
+            Self::OpenSessions => open_document(backend.call("sessionOpen.get", json!({})).await?),
+            Self::CleanupSessions { older_than_ms } => {
+                let params = match older_than_ms {
+                    Some(ms) => json!({"olderThanMs": ms}),
+                    None => json!({}),
+                };
+                let value = backend.call("sessionOpen.cleanup", params).await?;
+                ensure!(
+                    value["hidden"]
+                        .as_array()
+                        .is_some_and(|ids| ids.iter().all(Value::is_string)),
+                    "The hub did not say which sessions it hid."
+                );
+                Ok(value)
+            }
+            Self::SnoozeCleanup => {
+                open_document(backend.call("sessionOpen.snoozeCleanup", json!({})).await?)
+            }
+            Self::UndoCleanup { sessions } => archive_document(
+                backend
+                    .call(
+                        "sessionArchive.setMany",
+                        json!({"sessionIds":sessions,"archived":false}),
+                    )
+                    .await?,
+            ),
             Self::SetArchive { session, archived } => {
                 let document = archive_document(
                     backend
@@ -1280,6 +1328,38 @@ pub fn archive_document(value: Value) -> Result<Value> {
         "The hub returned no session archive."
     );
     Ok(value)
+}
+
+/// A `sessionOpen` document: `{version, open: {sessionId: sinceMs},
+/// ended: {sessionId: endedAtMs}}`; `ended` may be absent (empty). Any other
+/// shape (an older hub's `{ok:false}` answer) is refused, so it never reads as
+/// an empty open set that would un-pause every session.
+pub fn open_document(value: Value) -> Result<Value> {
+    ensure!(
+        value["version"].as_i64().is_some()
+            && value["open"].is_object()
+            && (value["ended"].is_null() || value["ended"].is_object()),
+        "The hub returned no open-session set."
+    );
+    Ok(value)
+}
+
+/// Whether a `sessionOpen` document says `session` stopped while open without
+/// ending on purpose: it is open and not marked ended. Such a stopped session
+/// is Paused; an open one marked ended still sits on the sidebar as Ended.
+pub fn open_paused(document: &Value, session: &str) -> bool {
+    document["open"].get(session).is_some() && document["ended"].get(session).is_none()
+}
+
+/// The hub's cleanup prompt (`cleanup` in the open document): how many ended
+/// sessions sit on the sidebar, when the hub suggests tidying them. A missing
+/// block or field (an older hub) means no prompt.
+pub fn cleanup_suggested(document: &Value) -> Option<u64> {
+    let cleanup = &document["cleanup"];
+    if cleanup["suggested"] != true {
+        return None;
+    }
+    cleanup["ended"].as_u64().filter(|n| *n > 0)
 }
 
 /// Whether a `sessionArchive` document hides `session`.
