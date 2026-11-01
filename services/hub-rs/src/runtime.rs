@@ -2268,6 +2268,11 @@ async fn run(
     if let Some(home) = options.home_dir.clone() {
         options = crate::services::scratch::install(options, home, handle.clone());
     }
+    // Project groups are hub-owned for the same reason: desktop never writes
+    // project-groups.json, so the `--hub-only` control plane serves them too.
+    if let Some(directory) = options.config_dir.clone() {
+        options = crate::services::project_groups::install(options, directory, handle.clone());
+    }
     if let Some(home) = options
         .home_dir
         .clone()

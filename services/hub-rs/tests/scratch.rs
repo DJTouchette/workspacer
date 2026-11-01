@@ -39,6 +39,12 @@ async fn scratch_is_served_on_a_hub_only_host_and_mutations_publish_changes() {
         .unwrap();
     assert_eq!(event.topic, "scratch.changed");
     assert_eq!(event.data.as_ref().unwrap()["key"], saved["project"]["key"]);
+    assert_eq!(event.data.as_ref().unwrap()["pending"], 1);
+    let pending = client.call("scratch.pending", json!({})).await.unwrap();
+    assert_eq!(
+        pending["projects"],
+        json!([{"key": saved["project"]["key"], "root": saved["project"]["root"], "pending": 1}])
+    );
 
     // The same directory an agent spawned in this project receives.
     let mut env = std::collections::HashMap::new();
@@ -48,7 +54,10 @@ async fn scratch_is_served_on_a_hub_only_host_and_mutations_publish_changes() {
         saved["project"]["files"].as_str().unwrap()
     );
 
-    let list = client.call("scratch.list", json!({"cwd": cwd})).await.unwrap();
+    let list = client
+        .call("scratch.list", json!({"cwd": cwd}))
+        .await
+        .unwrap();
     assert_eq!(list["items"][0]["purpose"], "check orders");
     let read = client
         .call("scratch.read", json!({"cwd": cwd, "path": "orders.sql"}))
@@ -67,9 +76,18 @@ async fn scratch_is_served_on_a_hub_only_host_and_mutations_publish_changes() {
         .unwrap()
         .unwrap();
     assert_eq!(event.topic, "scratch.changed");
+    assert_eq!(
+        event.data.unwrap(),
+        json!({"key": saved["project"]["key"], "pending": 0})
+    );
+    let pending = client.call("scratch.pending", json!({})).await.unwrap();
+    assert_eq!(pending["projects"], json!([]));
     assert!(
         client
-            .call("scratch.save", json!({"cwd": cwd, "path": "../escape", "content": "x", "purpose": "p"}))
+            .call(
+                "scratch.save",
+                json!({"cwd": cwd, "path": "../escape", "content": "x", "purpose": "p"})
+            )
             .await
             .is_err()
     );

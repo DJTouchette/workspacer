@@ -35,9 +35,21 @@ const MAX_PATH: usize = 512;
 const MAX_PURPOSE: usize = 500;
 const MAX_NOTE: usize = 4000;
 const STATUSES: &[&str] = &["draft", "pending", "done", "archived"];
+/// `scratch.pending` reads at most this many project directories' indexes.
+const MAX_PROJECTS: usize = 1000;
+/// An index larger than this is skipped by `scratch.pending`, not parsed.
+const MAX_INDEX_BYTES: u64 = 8 * 1024 * 1024;
 
 pub struct Scratch {
     home: PathBuf,
+}
+
+/// What a mutation publishes on `scratch.changed`: the project's key and its
+/// pending count after the write, so a badge updates without a re-read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Changed {
+    pub key: String,
+    pub pending: usize,
 }
 
 struct Project {
@@ -124,25 +136,81 @@ impl Scratch {
         let mut result = item(&key, meta, stat(&target));
         if sensitive && caller_federated {
             result["content"] = Value::Null;
-            result["withheld"] = json!("sensitive scratch content is not served to federated callers");
+            result["withheld"] =
+                json!("sensitive scratch content is not served to federated callers");
             return Ok(result);
         }
         let bytes = super::files::bounded_bytes(&target, MAX_BYTES)?;
         if bytes.contains(&0) {
             bail!("{key} is binary; scratch.read returns text only");
         }
-        let text = String::from_utf8(bytes)
-            .map_err(|_| anyhow::anyhow!("{key} is not UTF-8 text; scratch.read returns text only"))?;
+        let text = String::from_utf8(bytes).map_err(|_| {
+            anyhow::anyhow!("{key} is not UTF-8 text; scratch.read returns text only")
+        })?;
         result["content"] = json!(text);
         Ok(result)
     }
 
-    pub fn save(&self, caller_federated: bool, params: &Value) -> Result<(Value, String)> {
+    /// Every project scratch with at least one `status:"pending"` file, read
+    /// from each `index.json` only (no file walks). Damaged or missing indexes
+    /// are skipped; symlinked project directories are never followed.
+    pub fn pending(&self, params: &Value) -> Result<Value> {
+        keys(params, &[])?;
+        let base = claudemon::scratch::base(&self.home);
+        let entries = match std::fs::read_dir(&base) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(json!({"projects": [], "truncated": false}));
+            }
+            Err(error) => return Err(error).with_context(|| format!("reading {}", base.display())),
+        };
+        let mut projects = Vec::new();
+        let mut truncated = false;
+        for (seen, entry) in entries.flatten().enumerate() {
+            if seen >= MAX_PROJECTS {
+                truncated = true;
+                break;
+            }
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let Ok(key) = entry.file_name().into_string() else {
+                continue;
+            };
+            let dir = entry.path();
+            let index = dir.join("index.json");
+            if !std::fs::symlink_metadata(&index)
+                .is_ok_and(|meta| meta.is_file() && meta.len() <= MAX_INDEX_BYTES)
+            {
+                continue;
+            }
+            let Ok(items) = read_index(&index) else {
+                continue;
+            };
+            let pending = pending_count(&items);
+            if pending == 0 {
+                continue;
+            }
+            projects.push(json!({"key": key, "root": project_root(&dir), "pending": pending}));
+        }
+        projects.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
+        Ok(json!({"projects": projects, "truncated": truncated}))
+    }
+
+    pub fn save(&self, caller_federated: bool, params: &Value) -> Result<(Value, Changed)> {
         keys(
             params,
             &[
-                "cwd", "path", "content", "purpose", "sessionId", "keep", "sensitive", "status",
-                "note", "overwrite",
+                "cwd",
+                "path",
+                "content",
+                "purpose",
+                "sessionId",
+                "keep",
+                "sensitive",
+                "status",
+                "note",
+                "overwrite",
             ],
         )?;
         let project = self.project(params)?;
@@ -190,7 +258,13 @@ impl Scratch {
             json!(keep.unwrap_or(previous["keep"] == true)),
         );
         meta.insert("sensitive".into(), json!(sensitive));
-        set_status(&mut meta, status.or_else(|| previous["status"].as_str().map(str::to_owned)).unwrap_or_else(|| "draft".into()), &now);
+        set_status(
+            &mut meta,
+            status
+                .or_else(|| previous["status"].as_str().map(str::to_owned))
+                .unwrap_or_else(|| "draft".into()),
+            &now,
+        );
         if let Some(note) = note {
             meta.insert("note".into(), json!(note));
         }
@@ -209,13 +283,25 @@ impl Scratch {
         let mut result = item(&key, index.get(&key), stat(&target));
         result["project"] = project.describe();
         result["warnings"] = json!(warnings);
-        Ok((result, project.key))
+        let changed = Changed {
+            pending: pending_count(&index),
+            key: project.key,
+        };
+        Ok((result, changed))
     }
 
-    pub fn mark(&self, caller_federated: bool, params: &Value) -> Result<(Value, String)> {
+    pub fn mark(&self, caller_federated: bool, params: &Value) -> Result<(Value, Changed)> {
         keys(
             params,
-            &["cwd", "path", "purpose", "keep", "sensitive", "status", "note"],
+            &[
+                "cwd",
+                "path",
+                "purpose",
+                "keep",
+                "sensitive",
+                "status",
+                "note",
+            ],
         )?;
         let project = self.project(params)?;
         let rel = relative(params)?;
@@ -227,7 +313,12 @@ impl Scratch {
         let sensitive = boolean(params, "sensitive")?;
         let status = status(params)?;
         let note = text(params, "note", MAX_NOTE)?;
-        if purpose.is_none() && keep.is_none() && sensitive.is_none() && status.is_none() && note.is_none() {
+        if purpose.is_none()
+            && keep.is_none()
+            && sensitive.is_none()
+            && status.is_none()
+            && note.is_none()
+        {
             bail!("nothing to mark: pass purpose, keep, sensitive, status or note");
         }
         let target = existing_file(&project, &rel)?;
@@ -264,7 +355,11 @@ impl Scratch {
         meta.insert("updatedAt".into(), json!(now));
         index.insert(key.clone(), Value::Object(meta));
         write_index(&project.index(), &index)?;
-        Ok((item(&key, index.get(&key), stat(&target)), project.key))
+        let changed = Changed {
+            pending: pending_count(&index),
+            key: project.key,
+        };
+        Ok((item(&key, index.get(&key), stat(&target)), changed))
     }
 }
 
@@ -312,7 +407,10 @@ fn text(params: &Value, key: &str, max: usize) -> Result<Option<String>> {
     if value.chars().count() > max {
         bail!("{key} exceeds {max} characters");
     }
-    if value.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
+    if value
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
         bail!("{key} contains control characters");
     }
     Ok(Some(value.to_owned()))
@@ -428,7 +526,11 @@ fn write_file(target: &Path, bytes: &[u8], private: bool) -> Result<()> {
     {
         use std::os::unix::fs::PermissionsExt;
         file.as_file()
-            .set_permissions(std::fs::Permissions::from_mode(if private { 0o600 } else { 0o644 }))?;
+            .set_permissions(std::fs::Permissions::from_mode(if private {
+                0o600
+            } else {
+                0o644
+            }))?;
     }
     #[cfg(not(unix))]
     let _ = private;
@@ -458,7 +560,8 @@ fn stat(path: &Path) -> Option<(u64, Option<String>)> {
 }
 fn modified(meta: &std::fs::Metadata) -> Option<String> {
     let time: time::OffsetDateTime = meta.modified().ok()?.into();
-    time.format(&time::format_description::well_known::Rfc3339).ok()
+    time.format(&time::format_description::well_known::Rfc3339)
+        .ok()
 }
 
 /// Regular files under `files/`, depth- and count-bounded; symlinks are listed
@@ -508,6 +611,26 @@ fn read_index(path: &Path) -> Result<Map<String, Value>> {
         Some(Value::Object(items)) => Ok(items.clone()),
         _ => bail!("scratch index {} has no items object", path.display()),
     }
+}
+fn pending_count(items: &Map<String, Value>) -> usize {
+    items
+        .values()
+        .filter(|meta| meta["status"] == "pending")
+        .count()
+}
+/// The root recorded in a project's `project.json`, or null when unreadable.
+fn project_root(dir: &Path) -> Value {
+    let record = dir.join("project.json");
+    if !std::fs::symlink_metadata(&record)
+        .is_ok_and(|meta| meta.is_file() && meta.len() <= 64 * 1024)
+    {
+        return Value::Null;
+    }
+    std::fs::read(&record)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|record| record.get("root").filter(|root| root.is_string()).cloned())
+        .unwrap_or(Value::Null)
 }
 fn write_index(path: &Path, items: &Map<String, Value>) -> Result<()> {
     super::atomic_json(path, &json!({"version": 1, "items": items}), true)
@@ -569,7 +692,13 @@ pub(crate) fn install(
     hub: crate::Handle,
 ) -> crate::Options {
     let service = Arc::new(Scratch::new(home));
-    for method in ["scratch.list", "scratch.read", "scratch.save", "scratch.mark"] {
+    for method in [
+        "scratch.list",
+        "scratch.read",
+        "scratch.save",
+        "scratch.mark",
+        "scratch.pending",
+    ] {
         let service = service.clone();
         let hub = hub.clone();
         options = options.handler(method, move |caller, params| {
@@ -580,21 +709,21 @@ pub(crate) fn install(
                 let (result, changed) = tokio::task::spawn_blocking(move || match method {
                     "scratch.list" => service.list(&params).map(|r| (r, None)),
                     "scratch.read" => service.read(federated, &params).map(|r| (r, None)),
-                    "scratch.save" => service.save(federated, &params).map(|(r, k)| (r, Some(k))),
-                    _ => service.mark(federated, &params).map(|(r, k)| (r, Some(k))),
+                    "scratch.pending" => service.pending(&params).map(|r| (r, None)),
+                    "scratch.save" => service.save(federated, &params).map(|(r, c)| (r, Some(c))),
+                    _ => service.mark(federated, &params).map(|(r, c)| (r, Some(c))),
                 })
                 .await??;
-                if let Some(key) = changed {
-                    if let Err(error) = hub
+                if let Some(Changed { key, pending }) = changed
+                    && let Err(error) = hub
                         .publish_wait(crate::protocol::Event::new(
                             "scratch.changed",
                             "brain",
-                            json!({"key": key}),
+                            json!({"key": key, "pending": pending}),
                         ))
                         .await
-                    {
-                        eprintln!("scratch mutation committed but change notification failed: {error}");
-                    }
+                {
+                    eprintln!("scratch mutation committed but change notification failed: {error}");
                 }
                 Ok(result)
             }
@@ -683,15 +812,19 @@ mod tests {
         assert_eq!(list["items"][0]["indexed"], false);
         assert_eq!(list["items"][0]["purpose"], Value::Null);
 
-        let (marked, key) = f
+        let (marked, changed) = f
             .scratch
             .mark(false, &json!({"cwd": f.cwd(), "path": "repro.sh", "purpose": "cart repro", "status": "done", "note": "fixed in #12"}))
             .unwrap();
-        assert!(key.starts_with("shop-"));
+        assert!(changed.key.starts_with("shop-"));
+        assert_eq!(changed.pending, 0);
         assert_eq!(marked["indexed"], true);
         assert_eq!(marked["status"], "done");
         assert!(marked["statusAt"].is_string());
-        assert_eq!(std::fs::read_to_string(f.files().join("repro.sh")).unwrap(), "echo hi");
+        assert_eq!(
+            std::fs::read_to_string(f.files().join("repro.sh")).unwrap(),
+            "echo hi"
+        );
     }
 
     #[test]
@@ -709,10 +842,15 @@ mod tests {
         f.save(json!({"keep": true})).unwrap();
         let error = f.save(json!({"content": "v2"})).unwrap_err().to_string();
         assert!(error.contains("overwrite:true"), "{error}");
-        let again = f.save(json!({"content": "v2", "overwrite": true, "purpose": "load harness v2"})).unwrap();
+        let again = f
+            .save(json!({"content": "v2", "overwrite": true, "purpose": "load harness v2"}))
+            .unwrap();
         assert_eq!(again["keep"], true, "keep is not reset by a rewrite");
         assert_eq!(again["purpose"], "load harness v2");
-        assert_eq!(std::fs::read_to_string(f.files().join("load/harness.ts")).unwrap(), "v2");
+        assert_eq!(
+            std::fs::read_to_string(f.files().join("load/harness.ts")).unwrap(),
+            "v2"
+        );
     }
 
     #[test]
@@ -724,7 +862,10 @@ mod tests {
         assert!(unknown.contains("unknown parameter"), "{unknown}");
         let case = f.save(json!({"Path": "x"})).unwrap_err().to_string();
         assert!(case.contains("only by case"), "{case}");
-        let status = f.save(json!({"status": "ran-on-prod"})).unwrap_err().to_string();
+        let status = f
+            .save(json!({"status": "ran-on-prod"}))
+            .unwrap_err()
+            .to_string();
         assert!(status.contains("status must be one of"), "{status}");
         let nothing = f
             .scratch
@@ -743,7 +884,14 @@ mod tests {
     #[test]
     fn paths_cannot_escape_scratch() {
         let f = fixture();
-        for bad in ["../x", "/etc/passwd", "a/../../x", "a\\b", "", "a/b/c/d/e/f/g/h/i"] {
+        for bad in [
+            "../x",
+            "/etc/passwd",
+            "a/../../x",
+            "a\\b",
+            "",
+            "a/b/c/d/e/f/g/h/i",
+        ] {
             let error = f.save(json!({"path": bad})).unwrap_err().to_string();
             assert!(
                 error.contains("path"),
@@ -761,7 +909,8 @@ mod tests {
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("secret.txt"), "top secret").unwrap();
         std::os::unix::fs::symlink(&outside, f.files().join("linked")).unwrap();
-        std::os::unix::fs::symlink(outside.join("secret.txt"), f.files().join("file-link")).unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), f.files().join("file-link"))
+            .unwrap();
 
         let read_dir = f
             .scratch
@@ -806,7 +955,10 @@ mod tests {
         assert_eq!(saved["sensitive"], true);
         let warning = saved["warnings"][0].as_str().unwrap();
         assert!(warning.contains("URL with a password"), "{warning}");
-        assert!(!warning.contains("hunter22"), "the warning never echoes the secret");
+        assert!(
+            !warning.contains("hunter22"),
+            "the warning never echoes the secret"
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -823,7 +975,10 @@ mod tests {
         let remote = f.scratch.read(true, &params).unwrap();
         assert_eq!(remote["content"], Value::Null);
         assert!(remote["withheld"].is_string());
-        assert_eq!(remote["purpose"], "backfill to run on prod", "metadata stays visible");
+        assert_eq!(
+            remote["purpose"], "backfill to run on prod",
+            "metadata stays visible"
+        );
 
         let clear = json!({"cwd": f.cwd(), "path": "prod/backfill.sql", "sensitive": false});
         let refused = f.scratch.mark(true, &clear).unwrap_err().to_string();
@@ -835,14 +990,121 @@ mod tests {
     #[test]
     fn credential_shapes() {
         assert_eq!(credential_kinds("SELECT 1;"), Vec::<&str>::new());
-        assert_eq!(credential_kinds("see https://example.com/a@b"), Vec::<&str>::new());
-        assert_eq!(credential_kinds("Server=x;Password=s3cr3t!;"), vec!["password or key assignment"]);
-        assert_eq!(credential_kinds("export API_KEY='abcd1234'"), vec!["password or key assignment"]);
-        assert_eq!(credential_kinds("-----BEGIN OPENSSH PRIVATE KEY-----"), vec!["private key"]);
-        assert_eq!(credential_kinds("AKIAABCDEFGHIJKLMNOP"), vec!["AWS access key"]);
+        assert_eq!(
+            credential_kinds("see https://example.com/a@b"),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            credential_kinds("Server=x;Password=s3cr3t!;"),
+            vec!["password or key assignment"]
+        );
+        assert_eq!(
+            credential_kinds("export API_KEY='abcd1234'"),
+            vec!["password or key assignment"]
+        );
+        assert_eq!(
+            credential_kinds("-----BEGIN OPENSSH PRIVATE KEY-----"),
+            vec!["private key"]
+        );
+        assert_eq!(
+            credential_kinds("AKIAABCDEFGHIJKLMNOP"),
+            vec!["AWS access key"]
+        );
         assert_eq!(
             credential_kinds("Authorization: Bearer abcdefghijklmnopqrstuvwxyz"),
             vec!["bearer token"]
+        );
+    }
+
+    #[test]
+    fn pending_counts_come_from_each_index_and_mutations_report_them() {
+        let f = fixture();
+        assert_eq!(
+            f.scratch.pending(&json!({})).unwrap(),
+            json!({"projects": [], "truncated": false}),
+            "no scratch directory at all is an empty answer"
+        );
+        let (_, changed) = f
+            .scratch
+            .save(false, &json!({"cwd": f.cwd(), "path": "a.sql", "content": "SELECT 1;", "purpose": "a", "status": "pending"}))
+            .unwrap();
+        assert_eq!(changed.pending, 1);
+        let (_, changed) = f
+            .scratch
+            .save(false, &json!({"cwd": f.cwd(), "path": "b.sql", "content": "SELECT 2;", "purpose": "b", "status": "pending"}))
+            .unwrap();
+        assert_eq!(changed.pending, 2);
+        f.save(json!({"path": "notes.md"})).unwrap();
+
+        // A second project with nothing pending, one with a damaged index, and a
+        // stray file at the base are all left out.
+        let other = f._tmp.path().join("other");
+        std::fs::create_dir_all(other.join(".git")).unwrap();
+        f.scratch
+            .save(false, &json!({"cwd": other.to_string_lossy(), "path": "x.txt", "content": "x", "purpose": "x"}))
+            .unwrap();
+        let base = claudemon::scratch::base(&f.home);
+        std::fs::create_dir_all(base.join("broken-0")).unwrap();
+        std::fs::write(base.join("broken-0/index.json"), "{not json").unwrap();
+        std::fs::write(base.join("stray.txt"), "x").unwrap();
+
+        let pending = f.scratch.pending(&json!({})).unwrap();
+        let projects = pending["projects"].as_array().unwrap();
+        assert_eq!(projects.len(), 1, "{pending}");
+        let key = f
+            .files()
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(projects[0]["key"], key.as_str());
+        assert_eq!(projects[0]["pending"], 2);
+        assert_eq!(
+            projects[0]["root"],
+            json!(std::fs::canonicalize(&f.project).unwrap())
+        );
+
+        let (_, changed) = f
+            .scratch
+            .mark(
+                false,
+                &json!({"cwd": f.cwd(), "path": "a.sql", "status": "done"}),
+            )
+            .unwrap();
+        assert_eq!(
+            changed,
+            Changed {
+                key: key.clone(),
+                pending: 1
+            }
+        );
+        assert_eq!(
+            f.scratch.pending(&json!({})).unwrap()["projects"][0]["pending"],
+            1
+        );
+        let strict = f
+            .scratch
+            .pending(&json!({"cwd": f.cwd()}))
+            .unwrap_err()
+            .to_string();
+        assert!(strict.contains("unknown parameter"), "{strict}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pending_never_follows_a_symlinked_project_directory() {
+        let f = fixture();
+        f.save(json!({"status": "pending"})).unwrap();
+        let base = claudemon::scratch::base(&f.home);
+        let real = f.files().parent().unwrap().to_path_buf();
+        std::os::unix::fs::symlink(&real, base.join("linked-0")).unwrap();
+        let pending = f.scratch.pending(&json!({})).unwrap();
+        assert_eq!(
+            pending["projects"].as_array().unwrap().len(),
+            1,
+            "{pending}"
         );
     }
 
