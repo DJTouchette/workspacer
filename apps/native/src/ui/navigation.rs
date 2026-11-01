@@ -755,7 +755,7 @@ impl Workspace {
                         ))
                     })
                     .child(
-                        self.primary_button("save-project", "Pin project", can_write)
+                        self.primary_button("save-project", "Pin folder", can_write)
                             .flex_shrink_0()
                             .when(can_write, |d| {
                                 d.on_click(
@@ -770,7 +770,7 @@ impl Workspace {
                         .text_size(px(chrome::scale::CAPTION))
                         .text_color(rgb(p.muted))
                         .child(
-                            "Paths belong to the connected hub. Pinning shares the project with Workspacer on that hub; it does not create a folder or launch an agent.",
+                            "Paths belong to the connected hub. Pinning a folder shares it with Workspacer on that hub; it does not create the folder or launch an agent. To group folders, make a project below.",
                         ),
                 )
             })
@@ -991,11 +991,7 @@ impl Workspace {
             .child(
                 self.icon_button(
                     SharedString::from(format!("pin-project-{ix}")),
-                    if pinned {
-                        "Unpin project"
-                    } else {
-                        "Pin project"
-                    },
+                    if pinned { "Unpin folder" } else { "Pin folder" },
                     IconName::Star,
                     can_write,
                 )

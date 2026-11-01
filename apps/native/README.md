@@ -1193,6 +1193,8 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/ui/archive.rs` | Archive and restore, shared through the hub |
 | `src/jobs.rs` | Hub jobs as the Jobs view reads them, and the owner's approve/pause payloads |
 | `src/ui/jobs.rs` | Jobs screen: review, approve, pause, run and remove (agents author jobs) |
+| `src/project_groups.rs` | Projects as named groups of folders (`projectGroups.list`): membership by longest folder (worktrees and workers resolve to their repository's project), editor drafts, pending-scratch totals |
+| `src/ui/project_groups.rs` | Project cards and editor on Projects, the `group:<id>` sidebar filter and its helpers, pending counts |
 | `src/scratch.rs` | A project's `scratch.list` rows (pending first), filters, and the `scratch.mark` patches the Scratch page sends |
 | `src/ui/scratch.rs` | Scratch screen (`g n`, sidebar inbox): read a project's personal files kept outside git, mark them pending/done/archived, keep, edit purpose and note; never runs or writes a file |
 | `src/ui/tests.rs`, `src/ui/tests/` | Workspace UI tests, one file per area, with shared fixtures |

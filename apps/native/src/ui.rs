@@ -777,9 +777,8 @@ impl Workspace {
                 .rows(3)
                 .placeholder("What would you like to work on? (optional)")
         });
-        let project_path = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Absolute project directory on this hub")
-        });
+        let project_path = cx
+            .new(|cx| InputState::new(window, cx).placeholder("Absolute folder path on this hub"));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions…"));
         let settings_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search settings…"));

@@ -1132,11 +1132,7 @@ impl Workspace {
             .child(
                 self.icon_button(
                     "launch-project-pin",
-                    if pinned {
-                        "Unpin project"
-                    } else {
-                        "Pin project"
-                    },
+                    if pinned { "Unpin folder" } else { "Pin folder" },
                     IconName::Star,
                     can_pin,
                 )
@@ -1500,11 +1496,7 @@ impl Workspace {
                     .child(
                         self.icon_button(
                             SharedString::from(format!("launch-project-pin-{ix}")),
-                            if pinned {
-                                "Unpin project"
-                            } else {
-                                "Pin project"
-                            },
+                            if pinned { "Unpin folder" } else { "Pin folder" },
                             IconName::Star,
                             can_pin,
                         )

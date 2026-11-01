@@ -506,14 +506,33 @@ impl Workspace {
                     ),
             )
             .child(div().px_4().pb_3().flex().flex_col().gap(px(2.)).children(
+                // Each folder by name first; the path is detail, cut to fit.
                 group.folders.iter().map(|folder| {
                     div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
                         .min_w_0()
-                        .truncate()
-                        .font_family(mono_font())
-                        .text_size(px(chrome::scale::CAPTION))
-                        .text_color(rgb(p.muted))
-                        .child(folder.clone())
+                        .child(
+                            Icon::new(IconName::Folder)
+                                .size(px(11.))
+                                .text_color(rgb(p.muted)),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(chrome::scale::META))
+                                .child(self.project_name(folder)),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .font_family(mono_font())
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.muted))
+                                .child(folder.clone()),
+                        )
                 }),
             ))
     }

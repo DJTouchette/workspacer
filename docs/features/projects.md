@@ -37,8 +37,9 @@ a stale copy would silently resurrect a deleted group or undo a rename. Only the
 revision check; desktop never touches it.
 
 A folder that is in no group is still shown as a one-folder project (exactly
-today's behavior). A folder belongs to **at most one** group, so "which project
-is this session in" always has one answer.
+today's behavior). The same folder is in **at most one** group; nested folders
+may sit in different groups, and the deepest containing folder decides, so
+"which project is this session in" always has one answer.
 
 ## Membership
 
@@ -77,13 +78,32 @@ after the change), so clients can update a badge without a re-read.
 
 ## Native
 
-- **Projects screen**: projects (groups) first, each a card with its mark, name,
-  folders, live/ended session counts and a pending-scratch badge; then folders
-  that are in no project. New project / Edit opens an editor (name, icon,
-  colour, folders: add from known folders, typed path or the hub folder
-  browser; remove). Delete asks twice.
-- **Sidebar**: the project filter can be a whole project (every session in any
-  of its folders, worktrees included). The Scratch rail/footer icon carries the
-  total pending count; the filter header carries the filtered project's.
-- **Scratch page**: picks a project; a multi-folder project lists each folder's
-  scratch in its own section.
+- **Projects screen**: a PROJECTS section of cards — mark, name, each folder
+  by name and path, running/total sessions, and a "N pending" badge that opens
+  Scratch on the project; New agent starts in its first folder; Edit opens the
+  editor (name, icon, colour, folders by path or one-click suggestions from
+  known folders in no other project). A refused save keeps the draft and says
+  why (a stale revision reads "changed elsewhere"); Delete asks twice and
+  leaves the folders listed. Below, FOLDERS lists every folder the hub knows,
+  each tagged with its project and pending count; pinning applies to folders
+  ("Pin folder").
+- **Sidebar**: clicking a project filters the sidebar to it (`project_filter`
+  holds `group:<id>`): every session in any of its folders, worktree workers
+  included. The filter header shows the project's mark, name and pending
+  count; the collapsed rail shows the filtered project's mark, which clears
+  the filter. The Scratch icon (FolderClosed) carries the total pending count.
+- **Scratch page**: opens on the project you are in and lists a multi-folder
+  project's scratch a section per folder (`ScratchList {cwds}` →
+  `{lists:[…]}`; a mark re-lists them all).
+- Reads: `projectGroups.list` and `scratch.pending` are read with the folder
+  registry on every (re)connection; `projectGroups.changed` and
+  `scratch.changed` re-read them.
+
+Code: `apps/native/src/project_groups.rs` (model), `src/ui/project_groups.rs`
+(cards, editor, filter helpers); tests in `src/ui/tests/project_groups.rs` and
+`tests/protocol.rs`.
+
+## Not yet
+
+- Desktop (Electron), TUI and mobile list folders only; they ignore groups.
+- No MCP tool lists projects for agents yet.

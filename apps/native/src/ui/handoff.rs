@@ -611,6 +611,8 @@ mod tests {
                     | Command::Request(
                         Request::Setup { check: false, .. }
                             | Request::Projects
+                            | Request::ProjectGroups
+                            | Request::ScratchPending
                             | Request::InspectProject { .. }
                             | Request::BrowseFolders { .. }
                             | Request::ProjectIcons { .. }
