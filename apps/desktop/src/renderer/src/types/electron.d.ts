@@ -74,6 +74,27 @@ export interface SessionArchiveDoc {
   archived: Record<string, number>;
 }
 
+/** The hub-derived "too many sessions" prompt carried on the shared sidebar
+ *  document (docs/session-roster.md §6). `ended` counts sidebar sessions that
+ *  stopped on purpose and are not hidden; `suggested` is the hub's call. */
+export interface SessionOpenCleanup {
+  ended: number;
+  threshold: number;
+  suggested: boolean;
+  snoozedAt: number | null;
+}
+
+/** The hub's shared sidebar document (`sessionOpen.get`,
+ *  docs/session-roster.md): the sessions every client lists, with the epoch-ms
+ *  each became open, and `ended` marks for those that stopped on purpose.
+ *  Stopped ∧ open ∧ ¬ended = Paused; stopped ∧ open ∧ ended = Ended. */
+export interface SessionOpenDoc {
+  version: number;
+  open: Record<string, number>;
+  ended: Record<string, number>;
+  cleanup?: SessionOpenCleanup;
+}
+
 /** Git-repo detection for a directory (worktree spawn support). */
 export interface WorktreeInfo {
   /** Absent on old hosts: never infer directory validity from isRepo=false. */
@@ -498,6 +519,17 @@ export interface ElectronAPI extends RoutingAPI {
   sessionArchiveGet?: () => Promise<SessionArchiveDoc>;
   sessionArchiveSet?: (sessionId: string, archived: boolean) => Promise<SessionArchiveDoc>;
   onSessionArchiveChanged?: (callback: (doc: SessionArchiveDoc) => void) => () => void;
+  /** Bulk archive/restore (one version bump); the cleanup prompt's Undo. */
+  sessionArchiveSetMany?: (sessionIds: string[], archived: boolean) => Promise<SessionArchiveDoc>;
+  // Shared sidebar (hub-owned `sessionOpen`). Optional: an older hub has no
+  // provider, and the sidebar then shows no Paused/Ended labels or cleanup.
+  sessionOpenGet?: () => Promise<SessionOpenDoc>;
+  onSessionOpenChanged?: (callback: (doc: SessionOpenDoc) => void) => () => void;
+  /** Hide (archive) ended sidebar sessions, all or those ended at least
+   *  `olderThanMs` ago. Never touches Paused or live sessions. */
+  sessionOpenCleanup?: (opts?: { olderThanMs?: number }) => Promise<{ hidden: string[] }>;
+  /** "Not now": the prompt returns after 10 more sessions end. */
+  sessionOpenSnoozeCleanup?: () => Promise<SessionOpenDoc>;
   /** A facade agent asked to open a visible terminal (open_terminal →
    *  terminals.open); the renderer opens the pane, nested under parentSessionId. */
   onFacadeOpenTerminal: (

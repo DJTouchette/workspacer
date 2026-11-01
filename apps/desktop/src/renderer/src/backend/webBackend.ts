@@ -23,7 +23,12 @@ import type { UsagePacingScheduleWire, UsageReportWire } from '../../../main/sha
  * scripts/web-capability-audit.mjs inventories them against the complete type.
  */
 
-import type { ElectronAPI, SessionArchiveDoc, SessionListEntry } from '../types/electron';
+import type {
+  ElectronAPI,
+  SessionArchiveDoc,
+  SessionListEntry,
+  SessionOpenDoc,
+} from '../types/electron';
 import type { ConversationTurn } from '../types/claudeSession';
 import type {
   ClaudeSessionSnapshot,
@@ -1420,6 +1425,21 @@ export function createWebBackend(
         // Peer hubs never forward it; a stamped copy is not this hub's archive.
         if (!ev.hub) callback(ev.data as SessionArchiveDoc);
       }),
+    sessionArchiveSetMany: (sessionIds, archived) =>
+      client.call<SessionArchiveDoc>('sessionArchive.setMany', { sessionIds, archived }),
+    // Shared sidebar (`sessionOpen`, docs/session-roster.md): Paused/Ended
+    // labels and the hub-owned cleanup prompt, the same as every client.
+    sessionOpenGet: () => client.call<SessionOpenDoc>('sessionOpen.get', {}),
+    onSessionOpenChanged: (callback) =>
+      client.subscribe('sessionOpen.changed', (ev) => {
+        if (!ev.hub) callback(ev.data as SessionOpenDoc);
+      }),
+    sessionOpenCleanup: (opts) =>
+      client.call<{ hidden: string[] }>(
+        'sessionOpen.cleanup',
+        opts?.olderThanMs === undefined ? {} : { olderThanMs: opts.olderThanMs },
+      ),
+    sessionOpenSnoozeCleanup: () => client.call<SessionOpenDoc>('sessionOpen.snoozeCleanup', {}),
     // The brain (headless provider) has no renderer to push IPC.
     // FACADE_OPEN_TERMINAL to, so it publishes the identical payload as
     // facade.openTerminal on the bus instead (visibleterm.go). The topic is

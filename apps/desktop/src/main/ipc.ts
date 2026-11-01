@@ -560,6 +560,31 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       throw new Error('sessionArchive.set requires a session id and a boolean');
     return callHub('sessionArchive.set', { sessionId, archived });
   });
+  // Bulk archive/restore: one version bump (the cleanup prompt's Undo).
+  ipcMain.handle(
+    IPC.SESSION_ARCHIVE_SET_MANY,
+    (_event, sessionIds: unknown, archived: unknown) => {
+      if (
+        !Array.isArray(sessionIds) ||
+        sessionIds.length > 1000 ||
+        !sessionIds.every((id) => typeof id === 'string') ||
+        typeof archived !== 'boolean'
+      )
+        throw new Error('sessionArchive.setMany requires up to 1000 session ids and a boolean');
+      return callHub('sessionArchive.setMany', { sessionIds, archived });
+    },
+  );
+  // Shared sidebar (`sessionOpen`, docs/session-roster.md): the hub maintains
+  // it; the renderer reads it for Paused/Ended labels and the cleanup prompt.
+  // Cleanup hides (archives) ended sessions; it is never a lifecycle action.
+  ipcMain.handle(IPC.SESSION_OPEN_GET, () => callHub('sessionOpen.get', {}));
+  ipcMain.handle(IPC.SESSION_OPEN_CLEANUP, (_event, opts: unknown) => {
+    const olderThanMs = (opts as { olderThanMs?: unknown } | null)?.olderThanMs;
+    if (olderThanMs !== undefined && (typeof olderThanMs !== 'number' || !(olderThanMs >= 0)))
+      throw new Error('sessionOpen.cleanup olderThanMs must be a non-negative number');
+    return callHub('sessionOpen.cleanup', olderThanMs === undefined ? {} : { olderThanMs });
+  });
+  ipcMain.handle(IPC.SESSION_OPEN_SNOOZE_CLEANUP, () => callHub('sessionOpen.snoozeCleanup', {}));
   // Connection info for the remote-control client (URL + token for a QR/share).
   ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
   ipcMain.handle(IPC.HUB_SET_REMOTE_SHARE, (_event, enabled: boolean) => setRemoteShare(!!enabled));

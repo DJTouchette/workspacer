@@ -174,6 +174,12 @@ const BUS_BACKED = [
   'sessionArchiveGet',
   'sessionArchiveSet',
   'onSessionArchiveChanged',
+  'sessionArchiveSetMany',
+  // Shared sidebar (hub-owned `sessionOpen`): labels + cleanup prompt.
+  'sessionOpenGet',
+  'onSessionOpenChanged',
+  'sessionOpenCleanup',
+  'sessionOpenSnoozeCleanup',
   'hubPublish',
   // The brain has no renderer to push FACADE_OPEN_TERMINAL over IPC to, so it
   // publishes the identical payload as facade.openTerminal on the bus instead;
