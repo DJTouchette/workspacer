@@ -1,79 +1,32 @@
-//! Sessions that were open when the app closed stay in the sidebar, with their
-//! last content, until they are picked back up, archived, or end while the app
-//! is running. The hub's fleet list ages stopped sessions out after a day; this
-//! device remembers which ones it was in the middle of (`Settings::kept_open`)
-//! and has the controller read those by id.
+//! Paused sessions, from the hub's shared open set (`sessionOpen`). The hub
+//! keeps that set for every client: a session stays open (and in the roster,
+//! however long ago it stopped) until it is hidden, which here means
+//! archived. One the hub saw end on purpose (by you or by its agent) is also
+//! marked `ended` and reads Ended; one stopped by the app or host closing is
+//! not, and reads Paused. This device keeps no list of its own and reads
+//! nothing back by id. See docs/session-roster.md.
 use super::*;
 
 /// Prefix of the notice a failed resume leaves on the conversation.
 pub(super) const RESUME_FAILED: &str = "Could not resume this session: ";
 
 impl Workspace {
-    /// Fold one view into the kept set. A session seen open is kept; one that
-    /// ends while this run watched it was ended on purpose (by you or by its
-    /// agent) and is let go; one that is already stopped when first seen this
-    /// run was stopped by the app closing, and stays.
-    pub(super) fn sync_kept_open(&mut self, view: &View, cx: &mut Context<Self>) {
-        if !view.connected || view.sessions_loading && view.sessions.is_empty() {
-            return;
-        }
-        let now = timing::now_ms();
-        let scope = self.project_scope.clone();
-        let mut kept = self
-            .settings
-            .kept_open
-            .get(&scope)
-            .cloned()
-            .unwrap_or_default();
-        let before = kept.clone();
-        for session in view.sessions.iter() {
-            if session.stopped() {
-                if self.seen_open.contains(&session.id) {
-                    kept.remove(&session.id);
-                }
-            } else {
-                self.seen_open.insert(session.id.clone());
-                kept.entry(session.id.clone()).or_insert(now);
-            }
-        }
-        kept.retain(|id, _| !self.archived(id));
-        if kept != before {
-            if kept.is_empty() {
-                self.settings.kept_open.remove(&scope);
-            } else {
-                self.settings.kept_open.insert(scope, kept.clone());
-            }
-            self.save_settings(cx);
-        }
-        // The controller only needs the list once the fleet read leaves one
-        // out; after that it follows every change so it never reads a session
-        // this device has let go.
-        let ids: Vec<String> = kept.into_keys().collect();
-        // Only a session carried over from an earlier run can need reading by
-        // id; one seen open in this run that leaves the list is the hub's call.
-        let missing = ids
-            .iter()
-            .any(|id| !self.seen_open.contains(id) && !view.sessions.iter().any(|s| &s.id == id));
-        if ids != self.kept_sent && (missing || !self.kept_sent.is_empty()) {
-            self.kept_sent = ids.clone();
-            let _ = self.controller.command(Command::KeepSessions(ids));
-        }
-    }
-
-    /// Stopped by the app closing rather than ended: shown as paused and
-    /// resumable from its composer.
+    /// Stopped while open and not ended on purpose (the hub's open set lists
+    /// it without an `ended` mark): shown as paused and resumable from its
+    /// composer. A hub without the shared open set, or one whose set has not
+    /// been read yet, pauses nothing.
     pub(super) fn paused(&self, session: &Session) -> bool {
         session.stopped()
             && matches!(session.provider.as_str(), "claude" | "codex" | "")
             && self
-                .settings
-                .kept_open
-                .get(&self.project_scope)
-                .is_some_and(|kept| kept.contains_key(&session.id))
+                .view
+                .session_open
+                .as_ref()
+                .is_some_and(|open| wks_native::features::open_paused(open, &session.id))
     }
 
-    /// The session's status label, with a kept session that the app's closing
-    /// stopped reading as paused rather than ended.
+    /// The session's status label, with an open session that stopped (the
+    /// app's or host's closing) reading as paused rather than ended.
     pub(super) fn status_of<'a>(&self, session: &'a Session, p: Palette) -> (&'a str, u32) {
         if self.paused(session) {
             ("Paused", p.accent)

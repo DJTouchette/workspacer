@@ -15,6 +15,9 @@ pub struct Session {
     pub label: String,
     pub cwd: String,
     pub state: String,
+    /// The hub lists this row as launching or resuming (`starting: true`):
+    /// no runtime event yet. See [`Session::starting`].
+    pub starting_flag: bool,
     pub transport: String,
     pub provider: String,
     pub parent_session_id: String,
@@ -431,6 +434,13 @@ impl Session {
                 *target = s.to_owned();
             }
         }
+        // The hub marks only starting rows; a row that names a state without
+        // the mark has left that phase.
+        if let Some(starting) = value.get("starting").and_then(Value::as_bool) {
+            self.starting_flag = starting;
+        } else if value.get("mode").is_some() || value.get("ambientState").is_some() {
+            self.starting_flag = false;
+        }
         if let Some(model) = value
             .pointer("/requestedSelection/model")
             .and_then(Value::as_str)
@@ -792,6 +802,14 @@ impl Session {
 
     pub fn stopped(&self) -> bool {
         self.state == "stopped" || self.state == "ended"
+    }
+
+    /// Launching or resuming, before its first runtime event: the hub's
+    /// `starting` mark, or a row still in `unknown` (the hub lists those only
+    /// while they start; shells are filtered out before this). Never stopped.
+    pub fn starting(&self) -> bool {
+        !self.stopped()
+            && (self.starting_flag || matches!(self.state.as_str(), "unknown" | "starting"))
     }
 
     /// Mid-turn, or waiting on the user's decision: a message sent now is

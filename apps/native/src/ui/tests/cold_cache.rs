@@ -60,14 +60,15 @@ fn paused(tokens: u64) -> Session {
 fn show(workspace: &Entity<Workspace>, visual: &mut VisualTestContext, session: Session) {
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
-            this.settings
-                .kept_open
-                .insert(this.project_scope.clone(), [("a".to_string(), 1)].into());
             this.update_view(
                 Arc::new(View {
                     connected: true,
                     selected: Some("a".into()),
                     sessions: Arc::new(vec![session]),
+                    // The hub's open set lists it, not ended: Paused.
+                    session_open: Some(Arc::new(
+                        serde_json::json!({"version":1,"open":{"a":1},"ended":{}}),
+                    )),
                     ..Default::default()
                 }),
                 window,

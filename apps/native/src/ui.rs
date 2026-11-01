@@ -353,6 +353,9 @@ fn session_status(session: &Session, p: Palette) -> (&str, u32) {
     if session.questions.is_some() {
         return ("Needs your input", p.warning);
     }
+    if session.starting() {
+        return ("Starting", p.muted);
+    }
     match session.state.as_str() {
         "responding" | "working" | "thinking" | "streaming" | "running" => ("Working", p.busy),
         "approval" | "waiting_approval" => ("Needs approval", p.warning),
@@ -720,10 +723,6 @@ pub struct Workspace {
     drafts: HashMap<String, String>,
     last_receipt: u64,
     local_notice: String,
-    /// Sessions seen open in this run (see `kept.rs`).
-    seen_open: std::collections::BTreeSet<String>,
-    /// The kept ids last handed to the controller.
-    kept_sent: Vec<String>,
     /// A paused session resumed from its composer, awaiting its receipt.
     resuming: Option<String>,
     follow: bool,
@@ -1020,8 +1019,6 @@ impl Workspace {
             drafts: HashMap::new(),
             last_receipt: 0,
             local_notice: String::new(),
-            seen_open: Default::default(),
-            kept_sent: Vec::new(),
             resuming: None,
             follow: true,
             demo,
@@ -1075,7 +1072,6 @@ impl Workspace {
         self.sync_message_action(&view, cx);
         self.sync_tasks(&view, cx);
         self.sync_explorer(&view, cx);
-        self.sync_kept_open(&view, cx);
         self.arm_cache_clock(&view, cx);
         if let Some(receipt) = &view.spawn_receipt
             && receipt.number > self.last_spawn_receipt

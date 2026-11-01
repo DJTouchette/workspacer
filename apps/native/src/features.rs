@@ -276,6 +276,9 @@ pub enum Request {
     /// The hub's shared archived-session document (`sessionArchive.get`):
     /// which sessions every client of this hub hides from its normal list.
     Archive,
+    /// The hub's shared open-session document (`sessionOpen.get`): which
+    /// sessions are open across every client; a stopped one reads as Paused.
+    OpenSessions,
     /// Archive or restore one session on the hub. View state only: it never
     /// stops, signals or forgets the session. Its own key, and never
     /// superseded, so archiving two sessions quickly keeps both.
@@ -483,6 +486,7 @@ impl Request {
             Self::JobRuns => "job-runs",
             Self::JobAction(_) => "job-action",
             Self::Archive => "archive",
+            Self::OpenSessions => "session-open",
             Self::SetArchive { .. } => "archive-set",
             Self::RewindFiles { .. } => "rewind-files",
             Self::Fork { .. } => "fork",
@@ -702,6 +706,7 @@ impl Request {
                     .await
             }
             Self::Archive => archive_document(backend.call("sessionArchive.get", json!({})).await?),
+            Self::OpenSessions => open_document(backend.call("sessionOpen.get", json!({})).await?),
             Self::SetArchive { session, archived } => {
                 let document = archive_document(
                     backend
@@ -1280,6 +1285,27 @@ pub fn archive_document(value: Value) -> Result<Value> {
         "The hub returned no session archive."
     );
     Ok(value)
+}
+
+/// A `sessionOpen` document: `{version, open: {sessionId: sinceMs},
+/// ended: {sessionId: endedAtMs}}`; `ended` may be absent (empty). Any other
+/// shape (an older hub's `{ok:false}` answer) is refused, so it never reads as
+/// an empty open set that would un-pause every session.
+pub fn open_document(value: Value) -> Result<Value> {
+    ensure!(
+        value["version"].as_i64().is_some()
+            && value["open"].is_object()
+            && (value["ended"].is_null() || value["ended"].is_object()),
+        "The hub returned no open-session set."
+    );
+    Ok(value)
+}
+
+/// Whether a `sessionOpen` document says `session` stopped while open without
+/// ending on purpose: it is open and not marked ended. Such a stopped session
+/// is Paused; an open one marked ended still sits on the sidebar as Ended.
+pub fn open_paused(document: &Value, session: &str) -> bool {
+    document["open"].get(session).is_some() && document["ended"].get(session).is_none()
 }
 
 /// Whether a `sessionArchive` document hides `session`.
