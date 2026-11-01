@@ -97,7 +97,6 @@ test.describe('/m-next', () => {
     await expect(row(page, 'Migrate settings schema').locator('.st')).toHaveText('Paused');
     await expect(row(page, 'Migrate settings schema').locator('.cold')).toBeVisible();
     await expect(row(page, 'Fix the VAT export').locator('.st')).toHaveText('Ended');
-    expect(hub.callsTo('sessions.snapshot').map((c) => c.params.sessionId)).toContain('paused');
     await expect(page.locator('.usage .u')).toHaveCount(2);
 
     await page.getByRole('tab', { name: /Needs you/ }).click();
@@ -467,11 +466,11 @@ test.describe('/m-next', () => {
     await expect.poll(() => hub.callsTo('sessionArchive.set').length).toBe(0); // hub-owned, not the provider
     await expect(row(page, 'Fix the VAT export')).toHaveCount(0);
     await page.getByRole('button', { name: 'History', exact: true }).click();
-    await page.getByRole('tab', { name: 'Archived' }).click();
+    await page.getByRole('tab', { name: 'Hidden' }).click();
     await expect(page.locator('.hrow .n')).toContainText(['Fix the VAT export']);
     await page
       .locator('.hrow', { hasText: 'Fix the VAT export' })
-      .getByRole('button', { name: 'Restore' })
+      .getByRole('button', { name: 'Unhide' })
       .click();
     await page.locator('[data-back]').click();
     await expect(row(page, 'Fix the VAT export')).toHaveCount(1);

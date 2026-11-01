@@ -200,11 +200,9 @@ export async function startNextHub(): Promise<NextHub> {
     calls.push({ method: f.method, params: p });
     switch (f.method) {
       case 'sessions.snapshots':
-        // The fleet list ages stopped sessions out; `paused` is only kept.
-        return reply(
-          f.id,
-          [...snapshots.values()].filter((s) => s.sessionId !== 'paused'),
-        );
+        // Providers list sidebar (open) sessions: the hub imported the host's
+        // kept-open `paused` into its shared sidebar set, so it is listed.
+        return reply(f.id, [...snapshots.values()]);
       case 'sessions.snapshot':
         return reply(f.id, snapshots.get(p.sessionId) ?? null);
       case 'sessions.conversation': {
