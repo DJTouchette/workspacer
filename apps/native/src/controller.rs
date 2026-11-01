@@ -1106,6 +1106,7 @@ impl Worker {
                 | "session-cleanup"
                 | "session-snooze"
                 | "session-undo"
+                | "session-forget"
         ) && self.view.requests.get(key).is_some_and(|s| {
             // A rewind PREVIEW changes nothing: a newer one (another message,
             // or a retry) supersedes it. Only a real rewind is never recalled.
@@ -1535,6 +1536,69 @@ impl Worker {
         }
         self.open_resync = false;
         self.view.session_open = Some(Arc::new(document));
+        self.dirty = true;
+    }
+
+    /// Fold one older `sessions.history` page into the `recent` list, if
+    /// that list still ends where the page was asked to continue from.
+    fn append_history(&mut self, cursor: &str, page: &Value) {
+        let Some(state) = self.view.requests.get_mut("recent") else {
+            return;
+        };
+        if state.value["history"] != true || state.value["next"].as_str() != Some(cursor) {
+            return;
+        }
+        let mut list = Value::clone(&state.value);
+        let known: BTreeSet<String> = list["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row["sessionId"].as_str().map(str::to_owned))
+            .collect();
+        if let Some(rows) = list["sessions"].as_array_mut() {
+            rows.extend(
+                page["sessions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|row| {
+                        row["sessionId"]
+                            .as_str()
+                            .is_some_and(|id| !known.contains(id))
+                    })
+                    .cloned(),
+            );
+        }
+        list["next"] = page["next"].clone();
+        state.value = Arc::new(list);
+        self.dirty = true;
+    }
+
+    /// A session deleted from history leaves every history list on screen,
+    /// and its stopped sidebar row: the hub has forgotten it too.
+    fn forget_history_row(&mut self, id: &str) {
+        for key in ["recent", "recent-search"] {
+            let Some(state) = self.view.requests.get_mut(key) else {
+                continue;
+            };
+            let mut value = Value::clone(&state.value);
+            let rows = if value.is_array() {
+                value.as_array_mut()
+            } else {
+                value["sessions"].as_array_mut()
+            };
+            if let Some(rows) = rows {
+                let before = rows.len();
+                rows.retain(|row| row["sessionId"].as_str() != Some(id));
+                if rows.len() != before {
+                    state.value = Arc::new(value);
+                }
+            }
+        }
+        if self.sessions.get(id).is_some_and(Session::stopped) {
+            self.sessions.remove(id);
+            self.fleet_dirty = true;
+        }
         self.dirty = true;
     }
 
@@ -2133,6 +2197,21 @@ impl Worker {
                 }
                 if key == "session-undo" && error.is_none() {
                     self.apply_archive(&value);
+                }
+                // An older page joins the list it was asked for; one asked
+                // for a list since replaced (a refresh) is dropped.
+                if let crate::features::Request::HistoryPage {
+                    cursor: Some(cursor),
+                    ..
+                } = &request
+                    && error.is_none()
+                {
+                    self.append_history(cursor, &value);
+                }
+                if let crate::features::Request::ForgetSession { session } = &request
+                    && error.is_none()
+                {
+                    self.forget_history_row(session);
                 }
                 // A fork opens as soon as the hub has made it.
                 if let crate::features::Request::Fork { session, label, .. } = &request

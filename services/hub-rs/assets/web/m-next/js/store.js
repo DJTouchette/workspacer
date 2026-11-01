@@ -402,10 +402,71 @@ export async function loadConfig() {
   if (!can('config.get')) return;
   try { cfg = await call('config.get', {}); changed(); } catch { /* derived marks stand */ }
 }
+// History (docs/session-roster.md §5). sessions.history pages every session
+// the hub has ever seen; an older hub only has the in-memory sessions.recent.
+export let historyAvailable = false;  // the first page came from sessions.history
+export let historyNext = null;        // cursor for older rows, or null
+export let historySearch = null;      // {query, rows}: the hub's own matches
+const HISTORY_PAGE = 200;
+const historyRows = (page) => (page && Array.isArray(page.sessions) ? page.sessions : null);
 export async function loadRecents() {
-  if (!can('sessions.recent')) { recents = []; return; }
+  if (can('sessions.history')) {
+    try {
+      const page = await call('sessions.history', { limit: HISTORY_PAGE });
+      const rows = historyRows(page);
+      if (rows) {
+        recents = rows;
+        historyNext = (page && typeof page.next === 'string' && page.next) || null;
+        historyAvailable = true;
+        changed();
+        return;
+      }
+    } catch { /* an older hub: fall back below */ }
+  }
+  historyAvailable = false;
+  historyNext = null;
+  if (!can('sessions.recent')) { recents = []; changed(); return; }
   try { recents = (await call('sessions.recent', {})) || []; } catch { recents = []; }
   changed();
+}
+// One more page of the unfiltered list; dropped if a refresh replaced it.
+export async function loadOlderHistory() {
+  const cursor = historyNext;
+  if (!historyAvailable || !cursor) return null;
+  try {
+    const page = await call('sessions.history', { limit: HISTORY_PAGE, cursor });
+    const rows = historyRows(page);
+    if (!rows) return 'invalid history page';
+    if (historyNext !== cursor) return null;
+    const known = new Set(recents.map((r) => r && r.sessionId));
+    recents = recents.concat(rows.filter((r) => r && r.sessionId && !known.has(r.sessionId)));
+    historyNext = (typeof page.next === 'string' && page.next) || null;
+    changed();
+    return null;
+  } catch (err) { return errText(err); }
+}
+// The hub's own search: it also matches fields the page does not have (a
+// first prompt) and rows older than the pages loaded so far.
+export async function searchHistory(query) {
+  const q = String(query || '').trim();
+  if (!historyAvailable || !q) return;
+  try {
+    const rows = historyRows(await call('sessions.history', { limit: HISTORY_PAGE, query: q }));
+    if (rows) { historySearch = { query: q, rows }; changed(); }
+  } catch { /* the page's own search still applies */ }
+}
+// Delete a stopped session from history for good (row, events, transcript
+// copy). The hub refuses a live one. Returns an error string, or null.
+export async function forgetSession(id) {
+  try {
+    await call('sessions.forget', { sessionId: id });
+  } catch (err) { return errText(err); }
+  recents = recents.filter((r) => r && r.sessionId !== id);
+  if (historySearch) historySearch = { ...historySearch, rows: historySearch.rows.filter((r) => r && r.sessionId !== id) };
+  const s = sessions.get(id);
+  if (s && !isLive(s)) sessions.delete(id);
+  changed();
+  return null;
 }
 async function loadNodes() {
   // can('nodes.list') is true even on a hub with no registry; the call's
