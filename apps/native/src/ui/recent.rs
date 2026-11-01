@@ -5,13 +5,17 @@
 use super::*;
 use gpui::AnyElement;
 use gpui_component::input::{InputEvent, MoveDown, MoveUp};
+use serde_json::Value;
 use std::collections::HashSet;
+use wks_native::features::Request;
 use wks_native::history::{self, Entry, Group, GroupKind};
 use wks_native::projects;
 
 const CLEARED_TOOLTIP: &str =
     "Cleared from the sidebar on this device · show it under its parent again";
-const RECENT_FOOTER: &str = "Names are saved on this device. Archives are shared with every client of this hub, web included. Archiving keeps the conversation and does not stop an agent.";
+const RECENT_FOOTER: &str = "History keeps every session. Hide takes a session off every sidebar on this hub, web included, and keeps it here; it never stops an agent. Delete removes a stopped session from history for good. Names are saved on this device.";
+/// How long typing pauses before the hub is asked to search too.
+const SEARCH_DEBOUNCE_MS: u64 = 300;
 const SEARCH_PLACEHOLDER: &str = "Search by name, project, folder, provider or model";
 /// Rows a group shows before its "Show more".
 pub(super) const GROUP_ROWS: usize = 6;
@@ -30,6 +34,10 @@ pub(super) struct RecentUi {
     pub scroll: gpui::ScrollHandle,
     /// The cursor moved by keyboard: scroll its row into view once.
     pub reveal: std::cell::Cell<bool>,
+    /// The debounced hub search waiting for typing to pause.
+    pub search_task: Option<gpui::Task<()>>,
+    /// The row whose "Delete…" was pressed: it asks to confirm first.
+    pub confirm_delete: Option<String>,
     _watch: gpui::Subscription,
 }
 
@@ -43,6 +51,7 @@ impl RecentUi {
                 InputEvent::Change => {
                     this.extras.recent.cursor = 0;
                     this.extras.recent.scroll.set_offset(gpui::Point::default());
+                    this.schedule_history_search(cx);
                     cx.notify();
                 }
                 InputEvent::PressEnter { secondary: false } => this.open_recent_cursor(window, cx),
@@ -56,6 +65,8 @@ impl RecentUi {
             cursor: 0,
             scroll: gpui::ScrollHandle::new(),
             reveal: Default::default(),
+            search_task: None,
+            confirm_delete: None,
             _watch,
         }
     }
@@ -81,32 +92,91 @@ impl RecentPage {
 }
 
 impl Workspace {
-    /// The history rows under the All / Archived toggle, as `history` entries.
-    pub(super) fn recent_entries(&self) -> Vec<Entry> {
-        let Some(rows) = self
+    /// Whether the hub answered with `sessions.history`, which pages, searches
+    /// server-side and can delete. An older hub's `sessions.recent` cannot.
+    pub(super) fn history_available(&self) -> bool {
+        self.view
+            .requests
+            .get("recent")
+            .is_some_and(|s| s.value["history"] == true)
+    }
+
+    /// Whether `id` is hidden: the shared archive once it is known (with any
+    /// click still on its way), else what the history row itself said.
+    fn history_hidden(&self, id: &str, row: Option<&Value>) -> bool {
+        if self.archived(id) {
+            return true;
+        }
+        if self.view.session_archive.is_some() {
+            return false;
+        }
+        let row = row.or_else(|| {
+            self.view
+                .requests
+                .get("recent")
+                .and_then(|s| history_rows(&s.value))
+                .and_then(|rows| rows.iter().find(|r| r["sessionId"].as_str() == Some(id)))
+        });
+        row.is_some_and(|row| row["hidden"] == true)
+    }
+
+    /// The history rows under the All / Hidden toggle, as `history` entries,
+    /// plus the ids the hub's own search matched for `query` that the loaded
+    /// list does not hold.
+    pub(super) fn recent_entries(&self, query: &str) -> (Vec<Entry>, HashSet<String>) {
+        let mut rows: Vec<&Value> = self
             .view
             .requests
             .get("recent")
-            .and_then(|s| s.value.as_array())
-        else {
-            return Vec::new();
-        };
+            .and_then(|s| history_rows(&s.value))
+            .map(|rows| rows.iter().collect())
+            .unwrap_or_default();
+        // A hub search for exactly this query adds what it found, even rows
+        // the loaded pages do not reach and fields this page cannot match.
+        let mut matched = HashSet::new();
+        if !query.trim().is_empty()
+            && let Some(found) = self
+                .view
+                .requests
+                .get("recent-search")
+                .filter(|s| s.value["query"].as_str() == Some(query.trim()))
+                .and_then(|s| history_rows(&s.value))
+        {
+            let known: HashSet<&str> = rows
+                .iter()
+                .filter_map(|row| row["sessionId"].as_str())
+                .collect();
+            for row in found {
+                if let Some(id) = row["sessionId"].as_str() {
+                    matched.insert(id.to_owned());
+                    if !known.contains(id) {
+                        rows.push(row);
+                    }
+                }
+            }
+        }
         let live = &self.view.sessions;
         let root = self.worktree_root();
-        rows.iter()
+        let entries = rows
+            .into_iter()
             .filter_map(|row| {
                 let mut session = Session::default();
                 session.merge(row);
-                if session.id.is_empty() || self.archived(&session.id) != self.extras.show_archived
+                if session.id.is_empty()
+                    || self.extras.show_archived && !self.history_hidden(&session.id, Some(row))
                 {
                     return None;
                 }
                 let at = live.iter().position(|l| l.id == session.id);
-                // `sessions.recent` carries no model or lineage; the live fleet
-                // knows both for the sessions it still holds.
+                // History rows come from the hub's store and read as stopped;
+                // the live fleet knows the state, model and lineage of the
+                // sessions it still holds.
                 let mut home = None;
                 if let Some(ix) = at {
                     let known = &live[ix];
+                    if !known.state.is_empty() {
+                        session.state = known.state.clone();
+                    }
                     if session.model.is_empty() {
                         session.model = known.model.clone();
                     }
@@ -132,7 +202,72 @@ impl Workspace {
                     session,
                 })
             })
-            .collect()
+            .collect();
+        (entries, matched)
+    }
+
+    /// Ask the hub to search too once typing pauses. Only `sessions.history`
+    /// can; on an older hub the page's own search is all there is.
+    fn schedule_history_search(&mut self, cx: &mut Context<Self>) {
+        self.extras.recent.search_task = None;
+        if !self.history_available() {
+            return;
+        }
+        self.extras.recent.search_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(SEARCH_DEBOUNCE_MS))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let query = this.extras.recent.query.read(cx).value().trim().to_owned();
+                if !query.is_empty() {
+                    this.request(
+                        Request::HistoryPage {
+                            query,
+                            cursor: None,
+                        },
+                        cx,
+                    );
+                }
+            });
+        }));
+    }
+
+    /// The next page of the unfiltered list, when the hub has more.
+    pub(super) fn history_next(&self) -> Option<String> {
+        self.view
+            .requests
+            .get("recent")
+            .filter(|s| s.value["history"] == true)
+            .and_then(|s| s.value["next"].as_str())
+            .map(str::to_owned)
+    }
+
+    fn load_older_history(&mut self, cx: &mut Context<Self>) {
+        if let Some(cursor) = self.history_next() {
+            self.request(
+                Request::HistoryPage {
+                    query: String::new(),
+                    cursor: Some(cursor),
+                },
+                cx,
+            );
+        }
+    }
+
+    /// "Delete…" asks first; the second press deletes for good.
+    fn delete_from_history(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.extras.recent.confirm_delete.as_deref() == Some(id) {
+            self.extras.recent.confirm_delete = None;
+            self.request(
+                Request::ForgetSession {
+                    session: id.to_owned(),
+                },
+                cx,
+            );
+        } else {
+            self.extras.recent.confirm_delete = Some(id.to_owned());
+        }
+        cx.notify();
     }
 
     fn worktree_root(&self) -> &str {
@@ -144,13 +279,14 @@ impl Workspace {
     }
 
     pub(super) fn recent_page(&self, cx: &App) -> RecentPage {
-        let entries = self.recent_entries();
-        let total = entries.len();
         let query = self.extras.recent.query.read(cx).value().to_string();
+        let (entries, matched) = self.recent_entries(&query);
+        let total = entries.len();
         let searching = !query.trim().is_empty();
-        let groups = history::search(
+        let groups = history::search_with(
             history::group(entries, &self.known_projects(), self.worktree_root()),
             &query,
+            |entry| matched.contains(&entry.session.id),
         );
         let ui = &self.extras.recent;
         let mut rows = Vec::new();
@@ -315,7 +451,7 @@ impl Workspace {
                 "history-filter",
                 vec![
                     (false, "All sessions".to_owned()),
-                    (true, "Archived".to_owned()),
+                    (true, "Hidden".to_owned()),
                 ],
                 self.extras.show_archived,
                 |this, archived, _, cx| {
@@ -328,13 +464,14 @@ impl Workspace {
         items.push(toolbar.into_any_element());
         items.push(self.render_recent_summary(&page, cx).into_any_element());
         items.push(self.feature_message("recent").into_any_element());
+        items.push(self.feature_message("session-forget").into_any_element());
         if page.groups.is_empty() && !loading {
             items.push(
                 super::features::empty_note(
                     match (page.searching, self.extras.show_archived) {
                         (true, _) => "No sessions match this search. Esc clears it.",
                         (false, true) => {
-                            "No archived sessions. Archive a session to tuck it away without stopping it."
+                            "Nothing hidden. Hide a session to take it off every sidebar; it stays in history."
                         }
                         (false, false) => "No sessions yet. Refresh if you expected some.",
                     },
@@ -417,6 +554,37 @@ impl Workspace {
                         .into_any_element(),
                 );
             }
+        }
+        if !page.searching && self.history_next().is_some() {
+            let loading_more = self
+                .view
+                .requests
+                .get("recent-more")
+                .is_some_and(|s| s.loading);
+            let enabled = self.view.connected && !loading_more;
+            items.push(
+                div()
+                    .pt_2()
+                    .flex()
+                    .justify_center()
+                    .child(
+                        self.button(
+                            "history-load-more",
+                            if loading_more {
+                                "Loading older sessions…"
+                            } else {
+                                "Load older sessions"
+                            },
+                            enabled,
+                        )
+                        .debug_selector(|| "history-load-more".into())
+                        .when(enabled, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| this.load_older_history(cx)))
+                        }),
+                    )
+                    .into_any_element(),
+            );
+            items.push(self.feature_message("recent-more").into_any_element());
         }
         items.push(
             div()
@@ -617,6 +785,8 @@ impl Workspace {
         let place = recent_place(&s.cwd, group, self.worktree_root());
         let age = history::age(entry.updated_at, now);
         let dot = || div().flex_shrink_0().text_color(rgb(p.disabled)).child("·");
+        let hidden = self.history_hidden(&s.id, None);
+        let confirming = self.extras.recent.confirm_delete.as_deref() == Some(s.id.as_str());
         chrome::card(p)
             .id(("recent-row", ix))
             .debug_selector(move || format!("recent-row-{ix}"))
@@ -658,7 +828,20 @@ impl Workspace {
                                 s,
                                 p,
                                 self.view.connected,
-                            ))),
+                            )))
+                            .when(hidden, |d| {
+                                d.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .px_2()
+                                        .rounded_full()
+                                        .bg(rgb(p.selected))
+                                        .text_size(px(chrome::scale::CAPTION))
+                                        .text_color(rgb(p.muted))
+                                        .debug_selector(move || format!("recent-hidden-{ix}"))
+                                        .child("Hidden"),
+                                )
+                            }),
                     )
                     .child(
                         div()
@@ -709,15 +892,15 @@ impl Workspace {
                     .child(
                         self.button(
                             "archive-recent",
-                            if self.archived(&s.id) {
-                                "Restore"
-                            } else {
-                                "Archive"
-                            },
+                            if hidden { "Unhide" } else { "Hide" },
                             true,
                         )
+                        .debug_selector(move || format!("recent-hide-{ix}"))
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&id, cx))),
                     )
+                    .when(self.history_available(), |d| {
+                        d.children(self.render_forget_controls(ix, s, confirming, cx))
+                    })
                     .when(
                         s.stopped() && matches!(s.provider.as_str(), "claude" | "codex"),
                         |d| {
@@ -739,6 +922,73 @@ impl Workspace {
                     ),
             )
     }
+}
+
+impl Workspace {
+    /// "Delete…" on a history row, or its confirmation. A live session cannot
+    /// be deleted; the hub refuses it too.
+    fn render_forget_controls(
+        &self,
+        ix: usize,
+        s: &Session,
+        confirming: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<Stateful<Div>> {
+        let stopped = s.stopped();
+        let forgetting = self
+            .view
+            .requests
+            .get("session-forget")
+            .is_some_and(|state| state.loading);
+        let enabled = stopped && self.view.connected && !forgetting;
+        let id = s.id.clone();
+        if confirming {
+            let cancel = s.id.clone();
+            vec![
+                self.danger_button("forget-recent", "Delete for good", enabled)
+                    .debug_selector(move || format!("recent-delete-confirm-{ix}"))
+                    .when(enabled, |d| {
+                        d.on_click(
+                            cx.listener(move |this, _, _, cx| this.delete_from_history(&id, cx)),
+                        )
+                    }),
+                self.button("forget-cancel", "Cancel", true)
+                    .debug_selector(move || format!("recent-delete-cancel-{ix}"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.extras.recent.confirm_delete.as_deref() == Some(cancel.as_str()) {
+                            this.extras.recent.confirm_delete = None;
+                        }
+                        cx.notify();
+                    })),
+            ]
+        } else {
+            vec![
+                self.danger_button("forget-recent", "Delete…", enabled)
+                    .debug_selector(move || format!("recent-delete-{ix}"))
+                    .when(!stopped, |d| {
+                        d.tooltip(|window, cx| {
+                            gpui_component::tooltip::Tooltip::new(
+                                "Stop the session before deleting it from history",
+                            )
+                            .build(window, cx)
+                        })
+                    })
+                    .when(enabled, |d| {
+                        d.on_click(
+                            cx.listener(move |this, _, _, cx| this.delete_from_history(&id, cx)),
+                        )
+                    }),
+            ]
+        }
+    }
+}
+
+/// The rows of a `recent` reply: `sessions.history`'s `{sessions}` page or
+/// an older hub's bare `sessions.recent` array.
+fn history_rows(value: &Value) -> Option<&Vec<Value>> {
+    value
+        .as_array()
+        .or_else(|| value.get("sessions").and_then(Value::as_array))
 }
 
 /// Where a row's folder sits relative to its group: empty when it is the

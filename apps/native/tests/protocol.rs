@@ -3645,3 +3645,108 @@ async fn cleanup_prompt_calls_carry_their_parameters_and_adopt_replies() {
         None
     );
 }
+
+/// History (docs/session-roster.md §5): the first page prefers
+/// `sessions.history` and falls back to `sessions.recent`; an older page joins
+/// the list it continues; a delete drops the row everywhere it is shown.
+#[tokio::test]
+async fn history_pages_fall_back_append_and_forget() {
+    use wks_native::features::Request;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    serve_until(
+        &mut hub,
+        |f| match f["method"].as_str().unwrap_or("") {
+            "sessions.snapshots" => Some(json!([session("a")])),
+            _ => Some(json!({"version":1,"open":{},"ended":{},"archived":{}})),
+        },
+        |seen| called(seen, "sessions.snapshots"),
+    )
+    .await;
+    view(&controller, |v| v.connected && !v.sessions.is_empty()).await;
+    let request = |r: Request| controller.command(Command::Request(r)).unwrap();
+
+    // An older hub: sessions.history is refused, sessions.recent answers.
+    request(Request::Recent);
+    let call = hub.frame("call", Some("sessions.history")).await;
+    assert_eq!(call.value["params"], json!({"limit":200}));
+    call.send
+        .send(Message::Text(
+            json!({"op":"error","id":call.value["id"],"error":"unknown method"}).to_string(),
+        ))
+        .await
+        .unwrap();
+    let call = hub.frame("call", Some("sessions.recent")).await;
+    call.result(json!([{"sessionId":"r1","mode":"stopped"}]))
+        .await;
+    let v = view(&controller, |v| {
+        v.requests.get("recent").is_some_and(|s| !s.loading)
+    })
+    .await;
+    assert_eq!(v.requests["recent"].value[0]["sessionId"], "r1");
+
+    // A hub with history: the page carries its cursor.
+    request(Request::Recent);
+    let call = hub.frame("call", Some("sessions.history")).await;
+    call.result(json!({"sessions":[{"sessionId":"h1"},{"sessionId":"h2"}],"next":"800:h2"}))
+        .await;
+    let v = view(&controller, |v| {
+        v.requests
+            .get("recent")
+            .is_some_and(|s| !s.loading && s.value["history"] == true)
+    })
+    .await;
+    assert_eq!(v.requests["recent"].value["next"], "800:h2");
+
+    request(Request::HistoryPage {
+        query: String::new(),
+        cursor: Some("800:h2".into()),
+    });
+    let call = hub.frame("call", Some("sessions.history")).await;
+    assert_eq!(call.value["params"], json!({"limit":200,"cursor":"800:h2"}));
+    // A repeated row (written while paging) is not listed twice.
+    call.result(json!({"sessions":[{"sessionId":"h2"},{"sessionId":"h3"}]}))
+        .await;
+    let v = view(&controller, |v| {
+        v.requests["recent"].value["sessions"]
+            .as_array()
+            .is_some_and(|rows| rows.len() == 3)
+    })
+    .await;
+    assert!(v.requests["recent"].value["next"].is_null(), "last page");
+
+    // A server search keeps its own slot and says which query it answers.
+    request(Request::HistoryPage {
+        query: " deploy ".into(),
+        cursor: None,
+    });
+    let call = hub.frame("call", Some("sessions.history")).await;
+    assert_eq!(call.value["params"], json!({"limit":200,"query":"deploy"}));
+    call.result(json!({"sessions":[{"sessionId":"h3"}]})).await;
+    let v = view(&controller, |v| {
+        v.requests.get("recent-search").is_some_and(|s| !s.loading)
+    })
+    .await;
+    assert_eq!(v.requests["recent-search"].value["query"], "deploy");
+
+    request(Request::ForgetSession {
+        session: "h3".into(),
+    });
+    let call = hub.frame("call", Some("sessions.forget")).await;
+    assert_eq!(call.value["params"], json!({"sessionId":"h3"}));
+    call.result(json!({"ok":true,"session_id":"h3"})).await;
+    let v = view(&controller, |v| {
+        v.requests.get("session-forget").is_some_and(|s| !s.loading)
+    })
+    .await;
+    let ids = |key: &str| -> Vec<String> {
+        v.requests[key].value["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["sessionId"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(ids("recent"), ["h1", "h2"]);
+    assert!(ids("recent-search").is_empty());
+}

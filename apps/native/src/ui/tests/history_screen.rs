@@ -219,8 +219,9 @@ fn history_archived_toggle_and_search_work_together(cx: &mut TestAppContext) {
         })
     });
     visual.run_until_parked();
-    // The archived Payments API is not under All sessions.
-    assert!(page(&workspace, &visual).is_empty());
+    // History keeps hidden sessions: the hidden Payments API is still under
+    // All sessions (badged), and the Hidden filter narrows to them.
+    assert_eq!(page(&workspace, &visual), names(&[("Shop", &["s2"])]));
     visual.update(|_, cx| {
         workspace.update(cx, |this, cx| {
             this.extras.show_archived = true;

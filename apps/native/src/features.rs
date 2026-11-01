@@ -140,7 +140,25 @@ pub enum Request {
         turn: String,
         cwd: String,
     },
+    /// Session history, first page. Prefers `sessions.history` (every
+    /// session the hub has ever seen, paged) and answers
+    /// `{history: true, sessions, next}`; a hub without it answers the bare
+    /// `sessions.recent` array instead.
     Recent,
+    /// One more page of `sessions.history`: `cursor` set loads older rows for
+    /// the list already shown (its own `recent-more` slot); `None` is a
+    /// server-side search for `query` (the `recent-search` slot), kept apart
+    /// from the unfiltered list so clearing a search costs no reload.
+    HistoryPage {
+        query: String,
+        cursor: Option<String>,
+    },
+    /// Delete one stopped session from history for good
+    /// (`sessions.forget`): its row, events and transcript copy. The only
+    /// way anything leaves history. Never superseded while in flight.
+    ForgetSession {
+        session: String,
+    },
     Changes {
         cwd: String,
     },
@@ -471,6 +489,11 @@ impl Request {
             Self::CardDiff { .. } => "card-diff",
             Self::TurnChanges { .. } => "turn-changes",
             Self::Recent => "recent",
+            Self::HistoryPage {
+                cursor: Some(_), ..
+            } => "recent-more",
+            Self::HistoryPage { cursor: None, .. } => "recent-search",
+            Self::ForgetSession { .. } => "session-forget",
             Self::Changes { .. } => "changes",
             Self::Diff { .. } | Self::CommitDiff { .. } => "diff",
             Self::Log { .. } => "git-log",
@@ -532,6 +555,8 @@ impl Request {
             Self::PrAction(PrAction::Resolve { .. }) => Some("pr.resolve"),
             Self::PrDetect { .. } => Some("pr.detect"),
             Self::PrProviders => Some("pr.providers"),
+            Self::HistoryPage { .. } => Some("sessions.history"),
+            Self::ForgetSession { .. } => Some("sessions.forget"),
             _ => None,
         }
     }
@@ -620,7 +645,36 @@ impl Request {
                 );
                 Ok(json!({"status":status?,"staged":staged?,"unstaged":unstaged?}))
             }
-            Self::Recent => backend.call("sessions.recent", json!({})).await,
+            Self::Recent => {
+                match backend
+                    .call("sessions.history", json!({"limit": HISTORY_PAGE}))
+                    .await
+                    .ok()
+                    .and_then(|page| history_page(page, "", None))
+                {
+                    Some(page) => Ok(page),
+                    // An older hub (or one that refuses this connection the
+                    // method) still has the in-memory recent list.
+                    None => backend.call("sessions.recent", json!({})).await,
+                }
+            }
+            Self::HistoryPage { query, cursor } => {
+                let mut params = json!({"limit": HISTORY_PAGE});
+                if !query.trim().is_empty() {
+                    params["query"] = json!(query.trim());
+                }
+                if let Some(cursor) = cursor {
+                    params["cursor"] = json!(cursor);
+                }
+                let page = backend.call("sessions.history", params).await?;
+                history_page(page, query.trim(), cursor.as_deref())
+                    .ok_or_else(|| anyhow::anyhow!("The hub returned an invalid history page."))
+            }
+            Self::ForgetSession { session } => {
+                backend
+                    .call("sessions.forget", json!({"sessionId": session}))
+                    .await
+            }
             Self::Jobs => backend.call("jobs.list", json!({})).await,
             Self::JobHistory { id } => backend.call("jobs.history", json!({"id":id})).await,
             Self::JobRuns => backend.call("jobs.history", json!({})).await,
@@ -1319,6 +1373,27 @@ pub struct RequestState {
     pub loading: bool,
     pub value: Arc<Value>,
     pub error: Option<String>,
+}
+
+/// Rows one `sessions.history` read asks for.
+pub const HISTORY_PAGE: u32 = 200;
+
+/// A `sessions.history` reply as the page holds it:
+/// `{history: true, query, cursor, sessions, next}`. `None` for anything
+/// that is not one (an `{ok:false}` result, a missing `sessions` array).
+pub fn history_page(page: Value, query: &str, cursor: Option<&str>) -> Option<Value> {
+    let sessions = page.get("sessions")?.as_array()?.clone();
+    let next = page
+        .get("next")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    Some(json!({
+        "history": true,
+        "query": query,
+        "cursor": cursor,
+        "sessions": sessions,
+        "next": next,
+    }))
 }
 
 /// A `sessionArchive` document: `{version, archived: {sessionId: archivedAtMs}}`.

@@ -203,6 +203,16 @@ pub fn matches(entry: &Entry, group: &Group, query: &str) -> bool {
 /// Keeps the rows that answer `query` and drops groups left empty. Each
 /// group's `total` still counts all of its rows, for "3 of 12".
 pub fn search(groups: Vec<Group>, query: &str) -> Vec<Group> {
+    search_with(groups, query, |_| false)
+}
+
+/// [`search`], also keeping every entry `matched` says the hub's own search
+/// found (it reads fields this page does not have, such as a first prompt).
+pub fn search_with(
+    groups: Vec<Group>,
+    query: &str,
+    matched: impl Fn(&Entry) -> bool,
+) -> Vec<Group> {
     if query.trim().is_empty() {
         return groups;
     }
@@ -212,7 +222,7 @@ pub fn search(groups: Vec<Group>, query: &str) -> Vec<Group> {
             let entries = std::mem::take(&mut group.entries);
             group.entries = entries
                 .into_iter()
-                .filter(|e| matches(e, &group, query))
+                .filter(|e| matched(e) || matches(e, &group, query))
                 .collect();
             (!group.entries.is_empty()).then_some(group)
         })
