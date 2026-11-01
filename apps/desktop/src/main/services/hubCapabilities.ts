@@ -74,6 +74,7 @@ import {
 } from './recentSessions';
 import { listed, starting, layoutSessionIds, type RosterContext } from './sessionRoster';
 import { openSessionIds } from './sessionOpenCache';
+import { fillEvictedOpenRows, forgetSession, listSessionHistory } from './sessionHistoryProvider';
 import { timelineReplay, type ReplayOp } from './timelineReplayService';
 import { readTextFile, writeTextFile, listDir } from './fileService';
 import { readImagePreview } from './imagePreview';
@@ -1776,7 +1777,21 @@ export function registerHubCapabilities(): void {
       openSessionIds(),
       listDaemonSessionRows(),
     ]);
-    return buildSessionRoster({ live, layoutDoc, open, daemonRows });
+    // Sidebar sessions idle more than 7 days are no longer in claudemon's
+    // memory; fill them from permanent history so they never vanish. Skipped
+    // when the daemon is unreachable (its rows are unknown, not empty).
+    const filled = daemonRows
+      ? await fillEvictedOpenRows(
+          open,
+          new Set([...live.map((s) => s.sessionId), ...daemonRows.map((r) => r.session_id)]),
+        )
+      : [];
+    return buildSessionRoster({
+      live,
+      layoutDoc,
+      open,
+      daemonRows: daemonRows ? [...daemonRows, ...filled] : null,
+    });
   });
   registerCapability('sessions.snapshot', async (params: unknown) => {
     const { sessionId } = (params ?? {}) as { sessionId?: string };
@@ -1802,6 +1817,13 @@ export function registerHubCapabilities(): void {
   // SQLite and reads local transcripts for titles, so a headless brain can't
   // serve an equivalent — main must own this method on both delegation paths.
   registerCapability('sessions.recent', () => listRecentSessions());
+
+  // Permanent history (docs/session-roster.md §5): every session claudemon
+  // ever saw, paged from its SQLite store, with the shared Hide/sidebar facts.
+  // `sessions.forget` is the only way anything leaves it. Main owns both for
+  // the same reason as sessions.recent: the enrichment joins its history DB.
+  registerCapability('sessions.history', (params: unknown) => listSessionHistory(params));
+  registerCapability('sessions.forget', (params: unknown) => forgetSession(params));
 
   // ── Config (web parity) ────────────────────────────────────────────────
   // Mirror the CONFIG_* IPC handlers so the web renderer loads the real config

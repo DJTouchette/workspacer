@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mergeRecentSessions, listLiveSessionIds } from './recentSessions';
+import {
+  mergeRecentSessions,
+  listLiveSessionIds,
+  fetchDaemonHistory,
+  forgetDaemonSession,
+} from './recentSessions';
 
 const row = (over: Record<string, unknown> = {}) => ({
   session_id: 's1',
@@ -125,5 +130,61 @@ describe('listLiveSessionIds', () => {
     await expect(listLiveSessionIds()).resolves.toBeNull();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
     await expect(listLiveSessionIds()).resolves.toBeNull();
+  });
+});
+
+describe('permanent history readers (docs/session-roster.md §5)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('maps cursor/limit/query/cwd onto GET /history and keeps the next cursor', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        sessions: [{ session_id: 'a', mode: 'stopped' }, { bogus: true }, null],
+        next: '100:a',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const page = await fetchDaemonHistory({
+      cursor: '200:b',
+      limit: 25,
+      query: 'api fix',
+      cwd: '/p',
+    });
+    expect(page).toEqual({ sessions: [{ session_id: 'a', mode: 'stopped' }], next: '100:a' });
+    const url = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(url.pathname).toBe('/history');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      before: '200:b',
+      limit: '25',
+      q: 'api fix',
+      cwd: '/p',
+    });
+  });
+
+  it('rejects rather than answering an empty page when history cannot be read', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 400, text: async () => 'bad cursor' }),
+    );
+    await expect(fetchDaemonHistory({ cursor: 'x' })).rejects.toThrow(/400: bad cursor/);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    await expect(fetchDaemonHistory({})).rejects.toThrow(/malformed/);
+  });
+
+  it('forgets through POST /sessions/:id/forget and names live and unknown refusals', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, transcript_copy_removed: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(forgetDaemonSession('a b')).resolves.toEqual({ transcriptCopyRemoved: true });
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/sessions\/a%20b\/forget$/);
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 409 }));
+    await expect(forgetDaemonSession('a')).rejects.toThrow(/live/);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+    await expect(forgetDaemonSession('a')).rejects.toThrow(/not found/);
   });
 });

@@ -68,7 +68,9 @@ it('a stopped session in the shared open set is visible; spawning and unknown mo
     ),
   ).toBe(false);
   expect(
-    summarySessionVisible('s', { session_id: 's', mode: 'unknown', transport: 'stream' }, null, ['s']),
+    summarySessionVisible('s', { session_id: 's', mode: 'unknown', transport: 'stream' }, null, [
+      's',
+    ]),
   ).toBe(false);
   expect(summarySessionVisible('s', { session_id: 's', mode: 'compacting' }, null, ['s'])).toBe(
     false,

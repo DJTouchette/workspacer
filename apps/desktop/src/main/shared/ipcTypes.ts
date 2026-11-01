@@ -690,6 +690,39 @@ export interface RecentAgentSession {
   billedTokens?: number;
 }
 
+/**
+ * One History row (`sessions.history`, docs/session-roster.md §5): the
+ * `sessions.recent` row plus what permanent history knows. `archived` keeps its
+ * legacy meaning (claudemon's 7-day idle flag); `hidden` is the user's Hide
+ * (the shared archive).
+ */
+export interface HistoryAgentSession extends RecentAgentSession {
+  /** In the shared archive: hidden from every sidebar, still in History. */
+  hidden: boolean;
+  /** In the shared sidebar set (`sessionOpen.open`). */
+  onSidebar: boolean;
+  /** Unix ms the session last stopped; absent while live or unknown. */
+  endedAt?: number;
+  firstPrompt?: string;
+  userPrompts?: number;
+  toolCalls?: number;
+  /** claudemon holds its own transcript copy, so a resume survives provider cleanup. */
+  transcriptCopy: boolean;
+}
+
+export interface SessionHistoryPage {
+  sessions: HistoryAgentSession[];
+  /** Opaque cursor for the next (older) page; absent on the last page. */
+  next?: string;
+}
+
+export interface SessionHistoryQuery {
+  cursor?: string;
+  limit?: number;
+  query?: string;
+  cwd?: string;
+}
+
 // ── Session persistence (session:save) ──
 
 export interface SessionPaneData {

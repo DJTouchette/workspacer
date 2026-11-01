@@ -114,6 +114,43 @@ describe('buildHistoryGroups', () => {
     expect(groups[0].rows.map((r) => r.sessionId)).toEqual(['s2']);
   });
 
+  // Permanent history (docs/session-roster.md §5) shows EVERY session: rows
+  // the layout holds or that are live stay listed, marked not resumable.
+  it('keeps excluded rows blocked instead of dropping them when asked', () => {
+    const groups = buildHistoryGroups(
+      ['/w/app'],
+      { '/w/app': [transcript('s1', 'x'), transcript('s2', 'y', 1)] },
+      [daemon({ sessionId: 's3', cwd: '/tmp/other' })],
+      ['s1', 's3'],
+      { keepExcluded: true },
+    );
+    const rows = groups.flatMap((g) => g.rows.map((r) => [r.sessionId, !!r.blocked]));
+    expect(rows).toEqual([
+      ['s1', true],
+      ['s2', false],
+      ['s3', true],
+    ]);
+  });
+
+  it('carries hidden/onSidebar from history rows and marks them as in history', () => {
+    const hist = {
+      ...daemon({ sessionId: 's1', cwd: '/w/app' }),
+      hidden: true,
+      onSidebar: false,
+      transcriptCopy: true,
+    };
+    const groups = buildHistoryGroups(
+      ['/w/app'],
+      { '/w/app': [transcript('s1', 'from transcript'), transcript('s2', 'transcript only', 1)] },
+      [hist, daemon({ sessionId: 'r1', cwd: '/w/app' })],
+    );
+    const byId = Object.fromEntries(groups[0].rows.map((r) => [r.sessionId, r]));
+    expect(byId.s1).toMatchObject({ label: 'from transcript', hidden: true, inHistory: true });
+    // A transcript-only row and a plain recent row are not history-backed.
+    expect(byId.s2.inHistory).toBeUndefined();
+    expect(byId.r1.inHistory).toBeUndefined();
+  });
+
   it('normalizes dir spellings when matching daemon rows to a project', () => {
     // Daemon rows carry the cwd as the agent saw it — a trailing slash must
     // still land in the project's group, not the catch-all.

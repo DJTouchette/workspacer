@@ -49,7 +49,10 @@ export type StoppedKind = 'paused' | 'ended' | null;
 
 /** Paused = stopped ∧ open ∧ ¬ended; Ended = stopped ∧ open ∧ ended. Null when
  *  the session is not on the shared sidebar (or there is no document). */
-export function stoppedKind(doc: SessionOpenDoc | null, sessionId: string | undefined): StoppedKind {
+export function stoppedKind(
+  doc: SessionOpenDoc | null,
+  sessionId: string | undefined,
+): StoppedKind {
   if (!doc || !sessionId || !(sessionId in doc.open)) return null;
   return sessionId in doc.ended ? 'ended' : 'paused';
 }

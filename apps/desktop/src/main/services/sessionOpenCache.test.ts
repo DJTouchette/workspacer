@@ -36,7 +36,11 @@ describe('sessionOpenCache', () => {
     expect(await ids()).toEqual(['a']);
     // Stale and federated events are ignored.
     eventListener!({ type: 'sessionOpen.changed', data: { version: 1, open: { z: 1 } } });
-    eventListener!({ type: 'sessionOpen.changed', hub: 'peer', data: { version: 9, open: { p: 1 } } });
+    eventListener!({
+      type: 'sessionOpen.changed',
+      hub: 'peer',
+      data: { version: 9, open: { p: 1 } },
+    });
     expect(await ids()).toEqual(['a']);
     expect(callHub).toHaveBeenCalledTimes(1);
   });

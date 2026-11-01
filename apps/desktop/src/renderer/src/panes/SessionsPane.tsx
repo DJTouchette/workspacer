@@ -14,6 +14,8 @@ import { ProjectMark } from '../components/ProjectMark';
 import { fuzzyScoreAny } from '../lib/fuzzy';
 import { fmtTokens, fmtUSD } from '../lib/sessionStats';
 import { useSessionAnalytics } from '../hooks/useSessionAnalytics';
+import { useSessionHistory } from '../hooks/useSessionHistory';
+import { SmallButton } from '../components/settings/primitives';
 import { History, X } from '../components/icons';
 
 /**
@@ -31,8 +33,15 @@ import { History, X } from '../components/icons';
  * as the label; the daemon contributes model/archived).
  *
  * Reached from the sidebar's History footer row or the command palette.
- * Clicking a row respawns the session as an agent (`--resume`); the row then
- * leaves this list because the layout now represents it.
+ * Clicking a row respawns the session as an agent (`--resume`).
+ *
+ * With permanent history (`sessions.history`, docs/session-roster.md §5) the
+ * daemon side is every session claudemon ever saw, paged ("Load older
+ * sessions") and searched on the server. Sessions the layout holds or that are
+ * live stay listed but are not resumable from here; hidden ones carry a Hidden
+ * badge and Unhide; Delete removes a stopped session from History for good
+ * after an inline confirmation. Without a history method this pane uses the
+ * bounded `sessions.recent` list as before.
  */
 
 /** Same provider hues the sidebar cards use. */
@@ -104,36 +113,86 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
   const projectDirs = useMemo(() => projects.map((p) => p.dir), [projects]);
   const { byDir: transcriptsByDir, loading } = useProjectSessions(projectDirs);
 
+  // Permanent history (docs/session-roster.md §5), paged and searched on the
+  // server. Falls back to the bounded `sessions.recent` list when this backend
+  // has no history method, or its first page could not be read.
+  const history = useSessionHistory(query);
+  const usingHistory = history.available && !(history.unavailable && history.rows.length === 0);
+  const daemonSessions: RecentAgentSession[] = usingHistory ? history.rows : sessions;
+
   const groups = useMemo(
-    () => buildHistoryGroups(projectDirs, transcriptsByDir, sessions, excludeSessionIds),
-    [projectDirs, transcriptsByDir, sessions, excludeSessionIds],
+    () =>
+      buildHistoryGroups(projectDirs, transcriptsByDir, daemonSessions, excludeSessionIds, {
+        keepExcluded: usingHistory,
+      }),
+    [projectDirs, transcriptsByDir, daemonSessions, excludeSessionIds, usingHistory],
   );
 
   /** Groups after search: rows filtered by score (best first), empty groups
    *  dropped. Without a query, groups keep their registry order (pinned
-   *  first, then recency) and rows stay newest-first. */
+   *  first, then recency) and rows stay newest-first. Rows the server's
+   *  history search already matched (it also reads first prompts) are kept
+   *  even when the label alone does not match. */
   const visible = useMemo(() => {
     const q = query.trim();
     if (!q) return groups;
+    const serverMatched = usingHistory && history.answeredQuery === q;
     return groups
       .map((g) => {
         const projectLabel = g.dir ? (resolveProject(g.dir, config.projects)?.label ?? '') : '';
         const rows = g.rows
-          .map((r) => ({
-            r,
-            score: fuzzyScoreAny(q, [r.label, r.cwd, r.provider, r.model, projectLabel]),
-          }))
+          .map((r) => {
+            const score = fuzzyScoreAny(q, [r.label, r.cwd, r.provider, r.model, projectLabel]);
+            return { r, score: score === -Infinity && serverMatched && r.inHistory ? -1e9 : score };
+          })
           .filter((x) => x.score > -Infinity)
           .sort((a, b) => b.score - a.score)
           .map((x) => x.r);
         return { ...g, rows };
       })
       .filter((g) => g.rows.length > 0);
-  }, [groups, query, config.projects]);
+  }, [groups, query, config.projects, usingHistory, history.answeredQuery]);
 
   const total = useMemo(() => groups.reduce((n, g) => n + g.rows.length, 0), [groups]);
 
-  const resume = (row: HistoryRow) => onResume?.(row.daemon ?? syntheticDaemonRow(row));
+  const resume = (row: HistoryRow) => {
+    if (row.blocked) return;
+    onResume?.(row.daemon ?? syntheticDaemonRow(row));
+  };
+
+  // Row actions: Unhide (shared archive) and Delete from history (forget).
+  // Delete arms an inline confirmation first, like TerminateAgentButton.
+  const [armedDelete, setArmedDelete] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
+  const api = window.electronAPI;
+  const unhide = async (row: HistoryRow) => {
+    if (!api.sessionArchiveSet || busyId) return;
+    setBusyId(row.sessionId);
+    setRowError(null);
+    try {
+      await api.sessionArchiveSet(row.sessionId, false);
+      history.patch(row.sessionId, { hidden: false });
+    } catch (e) {
+      setRowError({ id: row.sessionId, message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusyId(null);
+    }
+  };
+  const forget = async (row: HistoryRow) => {
+    if (!api.forgetSession || busyId) return;
+    setBusyId(row.sessionId);
+    setRowError(null);
+    try {
+      await api.forgetSession(row.sessionId);
+      setArmedDelete(null);
+      history.remove(row.sessionId);
+    } catch (e) {
+      setRowError({ id: row.sessionId, message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return (
     <div
@@ -295,8 +354,8 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
               color: 'var(--wks-text-faint)',
             }}
           >
-            {loading
-              ? 'Reading session transcripts…'
+            {loading || (usingHistory && history.loading)
+              ? 'Reading session history…'
               : query
                 ? `No sessions match “${query.trim()}”`
                 : unavailable
@@ -369,26 +428,39 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
               const fromHistory = analytics.bySessionId[s.sessionId];
               const cost = s.costUSD ?? fromHistory?.costUSD;
               const billed = s.billedTokens ?? fromHistory?.billedTokens;
+              const live = !!s.daemon && s.daemon.mode !== 'stopped';
+              const blockedWhy = s.blocked
+                ? live
+                  ? 'Live — open it from the sidebar'
+                  : 'Already in your workspace'
+                : '';
               return (
                 <div
                   key={s.sessionId}
                   role="button"
                   tabIndex={0}
+                  data-history-row={s.sessionId}
+                  aria-disabled={s.blocked || undefined}
                   onClick={() => resume(s)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') resume(s);
                   }}
-                  title={`Resume as an agent\n${s.cwd}${s.model ? `\n${s.model}` : ''}`}
+                  title={
+                    blockedWhy
+                      ? `${blockedWhy}\n${s.cwd}`
+                      : `Resume as an agent\n${s.cwd}${s.model ? `\n${s.model}` : ''}`
+                  }
                   style={{
                     display: 'flex',
+                    flexWrap: 'wrap',
                     alignItems: 'center',
                     gap: 10,
                     padding: subline ? '10px 12px' : '8px 12px',
                     marginBottom: 6,
                     borderRadius: 'var(--wks-radius-md)',
                     border: '1px solid var(--wks-border-subtle)',
-                    cursor: onResume ? 'pointer' : 'default',
-                    opacity: s.archived ? 0.6 : 1,
+                    cursor: onResume && !s.blocked ? 'pointer' : 'default',
+                    opacity: s.hidden || (s.archived && !s.blocked) ? 0.6 : 1,
                     transition: 'background 0.12s, border-color 0.12s',
                   }}
                   onMouseEnter={(e) => {
@@ -467,21 +539,67 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
                         .join(' · ')}
                     </span>
                   )}
-                  {s.archived && (
+                  {s.hidden ? (
+                    <span style={BADGE} title="Hidden from every sidebar; still in History">
+                      Hidden
+                    </span>
+                  ) : s.blocked ? (
+                    <span style={BADGE}>{live ? 'Live' : 'On sidebar'}</span>
+                  ) : (
+                    s.archived && <span style={BADGE}>Archived</span>
+                  )}
+                  {(s.hidden || s.inHistory) && (
                     <span
+                      data-history-actions
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
                       style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
                         flexShrink: 0,
-                        fontSize: '0.6rem',
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.06em',
-                        padding: '2px 8px',
-                        borderRadius: 'var(--wks-radius-pill)',
-                        color: 'var(--wks-text-faint)',
-                        border: '1px solid var(--wks-border-subtle)',
                       }}
                     >
-                      Archived
+                      {armedDelete === s.sessionId ? (
+                        <>
+                          <span style={{ fontSize: '0.72rem' }}>Delete permanently?</span>
+                          <SmallButton
+                            danger
+                            disabled={busyId === s.sessionId}
+                            onClick={() => void forget(s)}
+                            label={busyId === s.sessionId ? 'Deleting…' : 'Confirm delete'}
+                          />
+                          <SmallButton
+                            disabled={busyId === s.sessionId}
+                            onClick={() => {
+                              setArmedDelete(null);
+                              setRowError(null);
+                            }}
+                            label="Cancel"
+                          />
+                        </>
+                      ) : (
+                        <>
+                          {s.hidden && api.sessionArchiveSet && (
+                            <SmallButton
+                              disabled={busyId === s.sessionId}
+                              onClick={() => void unhide(s)}
+                              label="Unhide"
+                            />
+                          )}
+                          {s.inHistory && api.forgetSession && (
+                            <SmallButton
+                              danger
+                              disabled={live || busyId === s.sessionId}
+                              onClick={() => {
+                                setRowError(null);
+                                setArmedDelete(s.sessionId);
+                              }}
+                              label="Delete"
+                            />
+                          )}
+                        </>
+                      )}
                     </span>
                   )}
                   {age && (
@@ -496,14 +614,57 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
                       {age}
                     </span>
                   )}
+                  {rowError?.id === s.sessionId && (
+                    <span
+                      role="alert"
+                      style={{ flexBasis: '100%', fontSize: '0.7rem', color: 'var(--wks-error)' }}
+                    >
+                      {rowError.message}
+                    </span>
+                  )}
                 </div>
               );
             })}
           </div>
         ))}
+        {usingHistory && (history.hasMore || history.loading) && (
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 18 }}>
+            <SmallButton
+              disabled={history.loading}
+              onClick={history.loadMore}
+              label={history.loading ? 'Loading…' : 'Load older sessions'}
+            />
+          </div>
+        )}
+        {usingHistory && history.unavailable && history.rows.length > 0 && (
+          <div
+            role="alert"
+            style={{
+              marginTop: 12,
+              textAlign: 'center',
+              fontSize: '0.72rem',
+              color: 'var(--wks-text-faint)',
+            }}
+          >
+            Could not load more history ({history.unavailable}).
+          </div>
+        )}
       </div>
     </div>
   );
+};
+
+/** Small uppercase state pill (Hidden / Live / On sidebar / Archived). */
+const BADGE: React.CSSProperties = {
+  flexShrink: 0,
+  fontSize: '0.6rem',
+  fontWeight: 600,
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
+  padding: '2px 8px',
+  borderRadius: 'var(--wks-radius-pill)',
+  color: 'var(--wks-text-faint)',
+  border: '1px solid var(--wks-border-subtle)',
 };
 
 export default SessionsPane;
