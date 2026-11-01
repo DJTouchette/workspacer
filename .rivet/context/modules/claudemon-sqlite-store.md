@@ -8,7 +8,7 @@ related_paths:
   - "services/claudemon/src/session/store.rs"
   - "services/claudemon/src/session/state.rs"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-11-01
 ---
 
 # Claudemon SQLite persistence and boot hydration
@@ -79,8 +79,8 @@ permanently stale total-cost column in sessions (that column was removed in v7).
 
 At startup the daemon loads up to 100 most-recent session rows and hydrates
 Stopped/resumable state, restoring timestamps, tool/user-prompt counts,
-transcript path, requested selection and account facts. RestoredSession does
-not carry a provider field, and hydrate deliberately does not install its reported
+transcript path, requested selection, account facts, and provider/transport
+(so Codex and stream rows no longer come back as Claude PTY rows). Hydrate deliberately does not install its reported
 model as fresh live telemetry; this is not full cross-provider snapshot serialization. Existing in-memory rows win over
 hydration. Loading history can fail with a warning while the daemon continues;
 that differs from a failure to open/migrate the database itself.
@@ -90,12 +90,34 @@ capacity, and retained history is not proof of current liveness. Resume may
 recreate state and replay provider history under the appropriate launch path.
 
 Archive display and retention are separate. Stopped rows older than seven days
-are hidden by the archive predicate and evicted from memory by maintenance.
-`Db::prune_archived` selects by last-event age and preserves the newest 100 rows
-regardless of age. It freezes the prune IDs, then deletes matching events and
-sessions in one transaction; deterministic tie-breaking keeps both deletes on
-the same set. It does not select using the in-memory mode, and it does not delete
-the provider’s transcript files.
+are hidden by the archive predicate and evicted from **memory** by maintenance,
+but **session rows are never deleted**: History is permanent (see
+`docs/session-roster.md` §5). `Db::trim_archived_events` only trims old
+non-`UserPromptSubmit` event rows for sessions past seven days and outside the
+newest 100, because the prompt count is the event log's only reader and tool
+payloads are the bulk of the table. The only way a row leaves SQLite is
+`POST /sessions/:id/forget` (refused for a live session), which also deletes the
+transcript copy.
+
+Rows are written by two paths: Claude hook events (`record_event_with_spawn_facts`)
+and the session-update recorder (`daemon/history.rs`), which every provider
+drives, so stream and managed sessions are persisted too. The recorder writes on
+mode changes and at most every 30s otherwise, creates rows only for sessions
+seen in an agent mode (terminal shells stay out), and re-sweeps after broadcast
+lag. Extra nullable columns (`provider, transport, title, first_prompt,
+user_prompt_count, transcript_copy, ended_at`) were added without bumping
+`user_version`, so the v8 rollback promise still holds. An index on
+`(last_event_at, id)` serves `GET /history`, which pages newest-first with a
+`"<last_event_at>:<id>"` cursor. `GET /sessions/:id` answers an evicted id from
+its history row.
+
+Transcript copies live in `<db dir>/transcripts/<provider>/<id>.<ext>` (Claude
+and Codex). They are taken on stop and every 5 minutes while resident if size
+or mtime changed, with temp-file plus rename, skipping files over 1 GiB. Before
+a resume, a missing provider original is restored from the copy, never
+overwriting (`create_new`), and only into Claude's projects roots or Codex's
+`sessions` directory. Conversation, transcript and handoff reads fall back to
+the copy.
 
 ## Migration and rollback contract
 

@@ -10,8 +10,12 @@ related_paths:
   - "apps/desktop/src/main/services/sessionStore/pendingSlot.ts"
   - "apps/desktop/src/main/services/managerReplacementState.ts"
   - "apps/desktop/src/renderer/src/lib/sessionHistoryGroups.ts"
+  - "services/hub-rs/src/services/roster.rs"
+  - "services/hub-rs/src/services/session_open.rs"
+  - "apps/desktop/src/main/services/sessionRoster.ts"
+  - "services/claudemon/src/daemon/history.rs"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-11-01
 ---
 
 # Session Lifecycle
@@ -161,22 +165,54 @@ lost terminal event may never have a later update to repair it. Other clients
 must implement that reconciliation explicitly; receiving SSE is not itself a
 replay guarantee.
 
-## Retention and resumable history
+## Sidebar roster, History and retention
 
-Desktop ended rows normally have a 30-second eviction grace period. Daemon
-`is_archived` hides stopped rows older than seven days; maintenance evicts those
-rows from memory and prunes old SQLite session/event rows beyond the newest-100
-retention floor. Database pruning uses last-event age, not the in-memory mode.
+Design and contract: `docs/session-roster.md`.
+
+**Sidebar membership has one rule.** `roster::listed`/`starting` in hub-rs and
+its twin `sessionRoster.ts` in desktop main both run the shared vectors in
+`contracts/session-roster-cases.json`. A row is listed if it is live, or
+*starting* (mode `unknown` on the stream transport or a non-Claude provider,
+and not a known shell), or stopped and in the shared `sessionOpen` set or the
+desktop layout. There is no time window. Every former `visible()` gate (list,
+`agent.snapshot` publish, queue/PR republish, live streams) uses `listed`. A
+stop is therefore always published for a sidebar session, and the hub also
+publishes the stop for any session it held live this run. Do not reintroduce a
+per-client retention rule: clients render the hub's list.
+
+**`sessionOpen` is the shared sidebar**: `{version, open, ended, cleanup}` in
+`<data>/session-open.json`. The hub maintains it from the `agent.snapshot` stream:
+
+- live/starting adds a session and clears its `ended` mark;
+- a stop it saw happen records `ended` before publishing the stop;
+- shutdown fences `ended` marks, so a session stopped by quitting reads
+  **Paused** (stopped ∧ open ∧ ¬ended);
+- archive (the user's Hide, everywhere) removes the id; unarchive re-adds it.
+
+Nothing leaves the sidebar on its own. The `cleanup` block (threshold
+`sessions.cleanupThreshold`, default 20) drives the shared "N ended sessions"
+prompt. `sessionOpen.cleanup` is one archive bump, and `sessionArchive.setMany`
+undoes it. The one-time migration imports native's legacy `kept_open`.
+`sessions.kept` is a compatibility view of open, unended ids.
+
+Desktop main's `agents.list` deliberately stays live-only: managers read a missing
+parent row as a dead parent.
+
+**History is permanent and separate from the sidebar.** claudemon never deletes
+session rows. It only trims bulky old events. It persists every provider's
+sessions through the update recorder and keeps transcript copies, restored
+before a resume if the provider deleted the original. `GET /history` pages
+SQLite, and `sessions.history` exposes it with `hidden`/`onSidebar`
+enrichment. `sessions.forget` is the only removal. Desktop ended rows still
+leave the in-memory store after 30 seconds, and claudemon still evicts stopped
+rows from memory after seven days. Those are memory bounds, not visibility or
+retention rules, because the roster fills evicted sidebar ids from history rows.
 Provider transcript retention is a separate concern. See
 [SQLite persistence](../modules/claudemon-sqlite-store.md).
 
-The History pane merges per-project Claude transcript listings with daemon
-resumable rows through `sessionHistoryGroups.ts`. A transcript-only session can
-appear after the daemon has forgotten it; analytics `session_history` is not the
-source of resumability. A matching daemon row preserves recorded provider,
-transport, and model. Open/live IDs are excluded to avoid offering a second
-launch of an already-running session. Daemon-row title enrichment is capped at
-40; the pane’s list is not capped by that title lookup limit.
+The desktop History pane still merges per-project Claude transcript listings
+with daemon rows through `sessionHistoryGroups.ts`. Open/live IDs are excluded
+there, to avoid offering a second launch of an already-running session.
 
 ## Manager lineage and restart recovery
 
