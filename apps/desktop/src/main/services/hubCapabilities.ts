@@ -19,6 +19,7 @@ import * as path from 'path';
 import {
   claudeSessionStore,
   contextTokensFromStatusLine,
+  type ClaudeSessionSnapshot,
   type SessionRouting,
 } from './claudeSessionStore';
 import { DRIFT_TOLERANCE } from '../shared/modelContextWindows';
@@ -65,7 +66,14 @@ import { sessionService } from './sessionService';
 import { sessionHistory } from './sessionHistory';
 import { layoutService } from './layoutService';
 import { listClaudeSessionsForDir } from './claudeSessionList';
-import { listRecentSessions } from './recentSessions';
+import {
+  listRecentSessions,
+  listDaemonSessionRows,
+  getDaemonSessionRow,
+  type DaemonSessionRow,
+} from './recentSessions';
+import { listed, starting, layoutSessionIds, type RosterContext } from './sessionRoster';
+import { openSessionIds } from './sessionOpenCache';
 import { timelineReplay, type ReplayOp } from './timelineReplayService';
 import { readTextFile, writeTextFile, listDir } from './fileService';
 import { readImagePreview } from './imagePreview';
@@ -315,6 +323,112 @@ export function busContextLimit(s: WindowBearingSnapshot): number {
   return (
     (disproved ? undefined : reported) ?? s.resolvedContextWindow ?? s.usage?.contextLimit ?? 0
   );
+}
+
+/** Name/cwd the layout carries for each session id it curates (non-global
+ *  agents' `sessionId`/`lastSessionId`), for labelling sparse roster rows. */
+function layoutAgentMeta(doc: unknown): Map<string, { name?: string; cwd?: string }> {
+  const meta = new Map<string, { name?: string; cwd?: string }>();
+  const agents = (doc as { data?: { agents?: unknown } } | null)?.data?.agents;
+  if (!Array.isArray(agents)) return meta;
+  for (const agent of agents) {
+    const a = agent as {
+      global?: boolean;
+      sessionId?: unknown;
+      lastSessionId?: unknown;
+      name?: unknown;
+      cwd?: unknown;
+    } | null;
+    if (!a || typeof a !== 'object' || a.global === true) continue;
+    const entry = {
+      name: typeof a.name === 'string' ? a.name : undefined,
+      cwd: typeof a.cwd === 'string' ? a.cwd : undefined,
+    };
+    // The old ghost rule used `sessionId || lastSessionId`; keep that id first.
+    for (const id of [a.sessionId, a.lastSessionId]) {
+      if (typeof id === 'string' && id) {
+        if (!meta.has(id)) meta.set(id, entry);
+        break;
+      }
+    }
+  }
+  return meta;
+}
+
+/** The minimal row a provider serves for a session the store does not hold. */
+function sparseRosterRow(
+  row: DaemonSessionRow & { label?: unknown },
+  ctx: RosterContext,
+  meta?: { name?: string; cwd?: string },
+): Record<string, unknown> {
+  const mode = typeof row.mode === 'string' ? row.mode : '';
+  const isStarting = starting(row, ctx);
+  const updatedAt = Date.parse(row.updated_at ?? '');
+  return {
+    sessionId: row.session_id,
+    cwd: row.cwd || meta?.cwd || '',
+    label: (typeof row.label === 'string' && row.label) || meta?.name,
+    status: mode === 'stopped' ? 'ended' : isStarting ? 'starting' : 'active',
+    ambientState: 'idle',
+    provider: row.provider || 'claude',
+    transport: row.transport ?? 'pty',
+    ...(Number.isFinite(updatedAt) ? { lastActivity: updatedAt } : {}),
+    ...(isStarting ? { starting: true } : {}),
+    pendingApproval: null,
+    pendingQuestions: null,
+    sparse: true,
+  };
+}
+
+/**
+ * The desktop's `sessions.snapshots` answer: listed store rows (compacted),
+ * then listed daemon rows the store does not hold (newest first), then layout
+ * agents whose session the daemon no longer has. Stopped rows appear only
+ * while on the sidebar (`sessionOpen`) or curated in the layout — there is no
+ * time window. Exported for tests.
+ */
+export function buildSessionRoster(input: {
+  live: ClaudeSessionSnapshot[];
+  layoutDoc: unknown;
+  open: Set<string>;
+  daemonRows: DaemonSessionRow[] | null;
+}): unknown[] {
+  const layout = layoutSessionIds(input.layoutDoc);
+  const meta = layoutAgentMeta(input.layoutDoc);
+  const ctx: RosterContext = { open: input.open, layout };
+  const seen = new Set<string>();
+  const out: unknown[] = [];
+  for (const s of input.live) {
+    // Seen even when not listed: an ended store row the user hid must not come
+    // back as a daemon sparse row either.
+    seen.add(s.sessionId);
+    if (!listed(s, ctx)) continue;
+    const row = compactClaudeSnapshotForBackground(s);
+    out.push(s.status === 'starting' ? { ...row, starting: true } : row);
+  }
+  const daemon = [...(input.daemonRows ?? [])].sort(
+    (a, b) => (Date.parse(b.updated_at ?? '') || 0) - (Date.parse(a.updated_at ?? '') || 0),
+  );
+  for (const row of daemon) {
+    if (seen.has(row.session_id) || !listed(row, ctx)) continue;
+    seen.add(row.session_id);
+    out.push(sparseRosterRow(row, ctx, meta.get(row.session_id)));
+  }
+  for (const [sessionId, m] of meta) {
+    if (seen.has(sessionId)) continue;
+    seen.add(sessionId);
+    out.push({
+      sessionId,
+      cwd: m.cwd ?? '',
+      label: m.name,
+      status: 'ended',
+      ambientState: 'idle',
+      pendingApproval: null,
+      pendingQuestions: null,
+      sparse: true,
+    });
+  }
+  return out;
 }
 
 export function registerHubCapabilities(): void {
@@ -1636,13 +1750,15 @@ export function registerHubCapabilities(): void {
   // mirror the CLAUDE_SESSION_GET / GET_ALL handlers; live updates arrive as
   // `agent.snapshot` bus events (published from claudeSessionStore.pushUpdate).
   //
-  // Shared fleet-visibility rule (services/hub cmd/brain/visibility.go): the
-  // desktop sidebar also shows a *stopped* agent's card while it's curated in
-  // the shared layout ("Stopped — respawn"), but the store only holds live
-  // sessions (an ended one is evicted ~30s after SessionEnd). So the snapshot
-  // list a bus client renders (/m fleet) appends minimal `sparse` stopped rows
-  // synthesized from the hub's layout document — the same rows the brain
-  // serves when it owns this method, keeping the two providers interchangeable.
+  // Roster membership is the SHARED rule in sessionRoster.ts (twin of hub-rs
+  // roster.rs, pinned by contracts/session-roster-cases.json; see
+  // docs/session-roster.md), so this provider and an engine hub list the same
+  // sessions. The store only holds live sessions (an ended one is evicted ~30s
+  // after SessionEnd), so stopped rows come from claudemon's retained rows and
+  // are served as minimal `sparse` rows: listed only while on the shared
+  // sidebar (`sessionOpen`) or curated in the layout — no time window. A layout
+  // agent the daemon has forgotten still gets its sparse row (the sidebar's
+  // "Stopped — respawn" card). See buildSessionRoster.
   //
   // Compacted before it leaves the process. Every consumer of the PLURAL call
   // already treats these as background rows — promoteSessionSnapshots and
@@ -1654,44 +1770,26 @@ export function registerHubCapabilities(): void {
   // refresh (up to 1/s while streaming). The ACTIVE pane is unaffected: it
   // reads `sessions.snapshot`, singular, which stays full.
   registerCapability('sessions.snapshots', async () => {
-    const live = claudeSessionStore.getAllSnapshots().map(compactClaudeSnapshotForBackground);
-    const liveIds = new Set(live.map((s) => s.sessionId));
-    type LayoutAgentRef = {
-      global?: boolean;
-      sessionId?: string;
-      lastSessionId?: string;
-      cwd?: string;
-      name?: string;
-    };
-    const stopped: unknown[] = [];
-    try {
-      const doc = await callHub<{ data?: { agents?: LayoutAgentRef[] } }>('layout.get');
-      const seen = new Set<string>();
-      for (const a of doc?.data?.agents ?? []) {
-        if (!a || a.global) continue;
-        const sid = a.sessionId || a.lastSessionId;
-        if (!sid || liveIds.has(sid) || seen.has(sid)) continue;
-        seen.add(sid);
-        stopped.push({
-          sessionId: sid,
-          cwd: a.cwd ?? '',
-          label: a.name,
-          status: 'ended',
-          ambientState: 'idle',
-          pendingApproval: null,
-          pendingQuestions: null,
-          sparse: true,
-        });
-      }
-    } catch {
-      // No hub / no layout document — serve the live sessions only.
-    }
-    return [...live, ...stopped];
+    const live = claudeSessionStore.getAllSnapshots();
+    const [layoutDoc, open, daemonRows] = await Promise.all([
+      callHub<unknown>('layout.get').catch(() => null),
+      openSessionIds(),
+      listDaemonSessionRows(),
+    ]);
+    return buildSessionRoster({ live, layoutDoc, open, daemonRows });
   });
-  registerCapability('sessions.snapshot', (params: unknown) => {
+  registerCapability('sessions.snapshot', async (params: unknown) => {
     const { sessionId } = (params ?? {}) as { sessionId?: string };
     if (!sessionId) throw new Error('sessions.snapshot requires { sessionId }');
-    return claudeSessionStore.getSnapshot(sessionId);
+    const held = claudeSessionStore.getSnapshot(sessionId);
+    if (held) return held;
+    // Evicted from the store (ended more than ~30s ago) but still held by the
+    // daemon: answer with the same sparse row the roster lists, so a by-id read
+    // of a stopped session agrees with the list instead of reading as gone.
+    const row = await getDaemonSessionRow(sessionId);
+    if (!row) return null;
+    const open = await openSessionIds();
+    return sparseRosterRow(row, { open });
   });
 
   // The daemon's full session list — every resumable row (all providers,

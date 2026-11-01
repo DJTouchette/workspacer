@@ -14,7 +14,7 @@ import { titleForSession } from './sessionTitles';
 import type { RecentAgentSession } from '../shared/ipcTypes';
 
 /** Wire shape of one `GET /sessions` row (serialized SessionState + extras). */
-interface DaemonSessionRow {
+export interface DaemonSessionRow {
   session_id: string;
   cwd?: string | null;
   mode?: string;
@@ -98,6 +98,43 @@ export async function listLiveSessionIds(): Promise<string[] | null> {
     const rows = (await res.json()) as DaemonSessionRow[];
     if (!Array.isArray(rows)) return null;
     return rows.filter((r) => r.session_id && r.mode !== 'stopped').map((r) => r.session_id);
+  } catch {
+    return null;
+  }
+}
+
+/** Raw daemon rows for the session roster: every row claudemon still holds,
+ *  including stopped, archived and never-used ones, so the roster policy (not
+ *  the daemon's default listing filter) decides what is listed. Null — not [] —
+ *  when the daemon cannot be read, so callers can tell "no sessions" from
+ *  "unknown". */
+export async function listDaemonSessionRows(): Promise<DaemonSessionRow[] | null> {
+  try {
+    const res = await fetch(`${CLAUDEMON_API_URL}/sessions?include_archived=true&include_empty=true&state_only=true`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const rows = (await res.json()) as unknown;
+    if (!Array.isArray(rows)) return null;
+    return rows.filter(
+      (r): r is DaemonSessionRow =>
+        !!r && typeof r === 'object' && typeof (r as DaemonSessionRow).session_id === 'string',
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** One daemon row, by id: null when the daemon has no such session or cannot
+ *  be read. */
+export async function getDaemonSessionRow(sessionId: string): Promise<DaemonSessionRow | null> {
+  try {
+    const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${encodeURIComponent(sessionId)}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const row = (await res.json()) as DaemonSessionRow | null;
+    return row && typeof row === 'object' && row.session_id === sessionId ? row : null;
   } catch {
     return null;
   }

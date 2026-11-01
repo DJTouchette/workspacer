@@ -188,6 +188,12 @@ export const IPC = {
   // Shared session archive (hub-owned); changes ride the generic HUB_EVENT feed.
   SESSION_ARCHIVE_GET: 'session-archive:get',
   SESSION_ARCHIVE_SET: 'session-archive:set',
+  SESSION_ARCHIVE_SET_MANY: 'session-archive:set-many',
+  // Shared sidebar (hub-owned `sessionOpen`, docs/session-roster.md); changes
+  // ride the generic HUB_EVENT feed like the archive's.
+  SESSION_OPEN_GET: 'session-open:get',
+  SESSION_OPEN_CLEANUP: 'session-open:cleanup',
+  SESSION_OPEN_SNOOZE_CLEANUP: 'session-open:snooze-cleanup',
 
   // ── Config ──
   CONFIG_GET: 'config:get',

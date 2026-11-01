@@ -91,6 +91,7 @@ import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { useRecentSessions } from './hooks/useRecentSessions';
 import { useSessionArchive } from './hooks/useSessionArchive';
+import { useSessionOpen } from './hooks/useSessionOpen';
 import {
   filterResumableSessions,
   layoutSessionIds,
@@ -597,6 +598,9 @@ function App() {
   // Read from boot, so restored archived cards never flash into the list.
   const sessionArchive = useSessionArchive();
   const { setArchived: setSessionArchived } = sessionArchive;
+  // The hub's shared sidebar (`sessionOpen`): Paused/Ended labels on stopped
+  // cards and the hub-owned cleanup prompt (docs/session-roster.md).
+  const sessionOpen = useSessionOpen();
   const handleSetArchived = useCallback(
     (sessionId: string, archived: boolean) => {
       setSessionArchived(sessionId, archived).catch((error: unknown) =>
@@ -2876,6 +2880,8 @@ function App() {
                     archivedSessionIds={sessionArchive.archived}
                     archiveLoading={!sessionArchive.ready}
                     onSetArchived={sessionArchive.available ? handleSetArchived : undefined}
+                    sessionOpenDoc={sessionOpen.doc}
+                    onSessionOpenDocument={sessionOpen.adopt}
                   />
                 </ErrorBoundary>
               )}

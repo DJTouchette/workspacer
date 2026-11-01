@@ -669,6 +669,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
     archived: boolean,
   ): Promise<{ version: number; archived: Record<string, number> }> =>
     ipcRenderer.invoke(IPC.SESSION_ARCHIVE_SET, sessionId, archived),
+  sessionArchiveSetMany: (
+    sessionIds: string[],
+    archived: boolean,
+  ): Promise<{ version: number; archived: Record<string, number> }> =>
+    ipcRenderer.invoke(IPC.SESSION_ARCHIVE_SET_MANY, sessionIds, archived),
+  // Shared sidebar (hub-owned `sessionOpen`; docs/session-roster.md).
+  sessionOpenGet: (): Promise<unknown> => ipcRenderer.invoke(IPC.SESSION_OPEN_GET),
+  onSessionOpenChanged: (callback: (doc: unknown) => void): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      ev: { type: string; hub?: string; data?: unknown },
+    ) => {
+      if (ev.type === 'sessionOpen.changed' && !ev.hub) callback(ev.data);
+    };
+    ipcRenderer.on(IPC.HUB_EVENT, handler);
+    return () => ipcRenderer.removeListener(IPC.HUB_EVENT, handler);
+  },
+  sessionOpenCleanup: (opts?: { olderThanMs?: number }): Promise<{ hidden: string[] }> =>
+    ipcRenderer.invoke(IPC.SESSION_OPEN_CLEANUP, opts ?? {}),
+  sessionOpenSnoozeCleanup: (): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.SESSION_OPEN_SNOOZE_CLEANUP),
   onSessionArchiveChanged: (
     callback: (doc: { version: number; archived: Record<string, number> }) => void,
   ): (() => void) => {

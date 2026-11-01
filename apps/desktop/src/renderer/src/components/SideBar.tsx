@@ -40,6 +40,9 @@ import { useUiMode } from '../hooks/useUiMode';
 import NotificationCenter from './notifications/NotificationCenter';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 import { SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH } from '../lib/sidebarWidth';
+import { SessionCleanupBanner } from './SessionCleanupBanner';
+import { stoppedKind } from '../hooks/useSessionOpen';
+import type { SessionOpenDoc } from '../types/electron';
 import {
   isCreditBalanceFailureText,
   CREDIT_BALANCE_REMEDY,
@@ -305,6 +308,28 @@ interface SideBarProps {
   /** Archive or restore a card's session — visibility only, never a stop.
    *  Absent when this hub has no shared archive: no menu item is offered. */
   onSetArchived?: (sessionId: string, archived: boolean) => void;
+  /** The hub's shared sidebar document (`sessionOpen`): Paused/Ended labels on
+   *  stopped cards and the cleanup prompt. Null/absent on an older hub. */
+  sessionOpenDoc?: SessionOpenDoc | null;
+  /** Adopt a document a cleanup call returned (version-fenced). */
+  onSessionOpenDocument?: (doc: unknown) => void;
+}
+
+/** A stopped card's label: Paused (stopped by the app closing, resumable from
+ *  where it was) or Ended (stopped on purpose, still on the sidebar), per the
+ *  hub's shared document; the plain Stopped label otherwise. */
+export function stoppedCardLabel(
+  doc: SessionOpenDoc | null | undefined,
+  sessionId: string | undefined,
+  remote: boolean,
+): string {
+  const kind = stoppedKind(doc ?? null, sessionId);
+  if (remote) return kind === 'paused' ? 'Paused' : kind === 'ended' ? 'Ended' : 'Stopped';
+  return kind === 'paused'
+    ? 'Paused — click to resume'
+    : kind === 'ended'
+      ? 'Ended — click to respawn'
+      : 'Stopped — click to respawn';
 }
 
 /** The session id an agent card archives under: its live session, or the one
@@ -338,6 +363,8 @@ const SideBar: React.FC<SideBarProps> = ({
   archivedSessionIds,
   archiveLoading = false,
   onSetArchived,
+  sessionOpenDoc,
+  onSessionOpenDocument,
 }) => {
   // Attention comes from the single feed (the spine), so a card's waiting state
   // and the rail tile's amber dot can never disagree.
@@ -879,6 +906,10 @@ const SideBar: React.FC<SideBarProps> = ({
             Loading sessions…
           </div>
         )}
+        {/* Hub-owned "too many sessions" prompt (docs/session-roster.md §6). */}
+        {!showArchived && (
+          <SessionCleanupBanner doc={sessionOpenDoc ?? null} onDocument={onSessionOpenDocument} />
+        )}
         {/* The pinned Overview doesn't count — with no real agents the feed is
             empty (the app shows the Overview workspace) and this hint explains. */}
         {showArchived && (
@@ -1085,8 +1116,9 @@ const SideBar: React.FC<SideBarProps> = ({
               log.push({ text: `Waiting: ${what}`, color: 'var(--wks-warning)' });
             } else if (!agent.sessionId) {
               // Remote agents can't be respawned locally — no click affordance.
+              // Paused/Ended come from the hub's shared sidebar document.
               log.push({
-                text: hub ? 'Stopped' : 'Stopped — click to respawn',
+                text: stoppedCardLabel(sessionOpenDoc, agent.lastSessionId, !!hub),
                 color: 'var(--wks-text-faint)',
               });
             } else if (cardState === 'working') {
@@ -1127,9 +1159,7 @@ const SideBar: React.FC<SideBarProps> = ({
                   ? 'In flight'
                   : agent.sessionId
                     ? 'Standing by'
-                    : hub
-                      ? 'Stopped'
-                      : 'Stopped — click to respawn';
+                    : stoppedCardLabel(sessionOpenDoc, agent.lastSessionId, !!hub);
             // The tooltip is the roomy surface, so it carries BOTH figures and
             // names each: occupancy (what the bar draws) and the cumulative
             // billed total (the cost side, which is not an occupancy at all).

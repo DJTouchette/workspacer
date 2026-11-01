@@ -712,6 +712,26 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'sessionArchive.setMany': {
+    reason:
+      "adds or removes a capped list (1,000) of opaque `sessionIds` in the hub's own session-archive.json in one version bump, exactly what sessionArchive.set does for one id. WRITE-THEN-INTERPRET: nothing reads that file as config, code, argv, path or policy; each id is validated as bounded text and never joined into a path or matched against a live process. WIDEN-THEN-USE: it changes no grant, no root, no permission mode, no approval gate, and it is deliberately not a lifecycle action — no stop, signal, close or delete is reachable from it",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['sessionIds'],
+      },
+    ],
+  },
+  'sessionOpen.set': {
+    reason:
+      "adds or removes one opaque `sessionId` in the hub's own session-open.json, which every client and session-list provider reads only to decide which session rows to LIST (stopped members read as Paused). WRITE-THEN-INTERPRET: nothing reads that file as config, code, argv, path or policy; the id is validated as bounded text and never joined into a path or matched against a live process. WIDEN-THEN-USE: it changes no grant, no root, no permission mode, no approval gate, and it is deliberately not a lifecycle action — no start, stop, signal, close or delete is reachable from it. The hub maintains the set itself; a client only lets a session go (open:false) or pins one",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['sessionId'],
+      },
+    ],
+  },
   'sessionArchive.set': {
     reason:
       "adds or removes one opaque `sessionId` in the hub's own session-archive.json, which every client reads only to decide which sidebar rows to LIST. WRITE-THEN-INTERPRET: nothing reads that file as config, code, argv, path or policy; the id is validated as bounded text and never joined into a path or matched against a live process. WIDEN-THEN-USE: it changes no grant, no root, no permission mode, no approval gate, and it is deliberately not a lifecycle action — no stop, signal, close or delete is reachable from it, and an archived session keeps running. Restoring is the same call with archived:false",
@@ -1576,6 +1596,20 @@ export const parameterDecisions: Record<
         'selects one background task the daemon already lists on that session; one plain id segment, never a path, and never resolved to a process by the caller',
     },
   },
+  'sessionArchive.setMany': {
+    sessionIds: {
+      kind: 'id',
+      reason:
+        'a capped list of opaque ids the archive document lists or drops; each bounded text, never a path, and never resolved to a process',
+    },
+  },
+  'sessionOpen.set': {
+    sessionId: {
+      kind: 'id',
+      reason:
+        'selects which opaque id the open-session document lists; bounded text, never a path, and never resolved to a process',
+    },
+  },
   'sessionArchive.set': {
     sessionId: {
       kind: 'id',
@@ -2035,6 +2069,8 @@ export const actors: string[] = [
   'routing.select',
   'search.project',
   'sessionArchive.set',
+  'sessionArchive.setMany',
+  'sessionOpen.set',
   'sessions.attachTerminal',
   'sessions.delete',
   'sessions.load',
