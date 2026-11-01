@@ -332,6 +332,8 @@
   .pushrow { display:flex; align-items:center; gap:10px; padding:11px 13px; border-radius:12px;
     border:1px solid var(--line3); background:var(--raised); }
   .pushrow .t { flex:1; font-size:13px; color:var(--text3); line-height:1.4; }
+  .pushrow.cleanup { flex-wrap:wrap; }
+  .pushrow.cleanup .t { flex-basis:100%; }
   .pushrow button { flex:none; padding:8px 13px; border-radius:9px; font-size:12.5px; font-weight:600;
     background:var(--blue-bg); border:1px solid var(--blue-line); color:var(--blue-text); }
 
@@ -1099,6 +1101,9 @@
   function fold(snap) {
     const prev = sessions.get(snap.sessionId);
     const next = snap.sparse && prev ? Object.assign({}, prev, snap) : snap;
+    // `starting` rides only while the hub calls the row Starting; a later
+    // sparse row without it must not inherit the stale flag.
+    if (next !== snap && !('starting' in snap)) delete next.starting;
     sessions.set(snap.sessionId, next);
     trackDone(next);
     trackProgress(next);
@@ -1233,12 +1238,99 @@
     if (mins < 60) return `${Math.max(1, mins)}m`;
     return `${Math.floor(mins / 60)}h ${mins % 60}m`;
   }
+  // ══ sidebar set (Paused) ══════════════════════════════════════════════════
+  // The hub's shared sidebar set (sessionOpen, docs/session-roster.md): a
+  // stopped session that is open and not marked ended was stopped by its app
+  // closing, and reads as Paused here like in every other client. One marked
+  // ended stays listed as Stopped. Hide is the archive; this page never
+  // writes the set. Older hubs fall back to sessions.kept (open, not ended).
+  let openDoc = null;                 // {version, open: {id: ms}, ended: {id: ms}}
+  let openIds = new Set();
+  let endedIds = new Set();
+  let openReadSeq = 0, openEventSinceRead = false;
+  function applyOpen(doc, force) {
+    if (!doc || typeof doc.version !== 'number' || !doc.open || typeof doc.open !== 'object') return false;
+    if (!force && openDoc && openDoc.version >= doc.version) return false;
+    openDoc = doc;
+    openIds = new Set(Object.keys(doc.open));
+    // Tolerant: an absent or malformed `ended` is no marks.
+    endedIds = new Set(doc.ended && typeof doc.ended === 'object' && !Array.isArray(doc.ended) ? Object.keys(doc.ended) : []);
+    return true;
+  }
+  async function loadOpen() {
+    if (can('sessionOpen.get')) {
+      const seq = ++openReadSeq;
+      openEventSinceRead = false;
+      try {
+        const doc = await call('sessionOpen.get', {});
+        if (seq === openReadSeq) applyOpen(doc, !openEventSinceRead);
+        if (openDoc) return;
+      } catch { /* fall back to the legacy kept set */ }
+    }
+    openDoc = null;
+    endedIds = new Set();
+    if (!can('sessions.kept')) { openIds = new Set(); return; }
+    try {
+      const r = await call('sessions.kept', {});
+      openIds = new Set(((r && Array.isArray(r.sessions)) ? r.sessions : []).map((k) => k && k.sessionId).filter(Boolean));
+    } catch { openIds = new Set(); }
+  }
+  const isPaused = (s) => !!s && !isLive(s) && !hubOf(s) && openIds.has(s.sessionId) && !endedIds.has(s.sessionId);
+
+  // ══ sidebar cleanup prompt ════════════════════════════════════════════════
+  // Nothing leaves the sidebar on its own, so the hub says when it needs a
+  // cleanup (sessionOpen `cleanup.suggested`) and every client shows the same
+  // prompt. A cleanup archives (the sessions stay in History) and returns the
+  // ids it hid; Undo restores them in one archive change.
+  const CLEANUP_UNDO_MS = 8000, DAY_MS = 86400000;
+  let cleanupUndo = null;             // {ids}
+  function cleanupBannerHtml() {
+    if (cleanupUndo) {
+      const n = cleanupUndo.ids.length;
+      return `<div class="pushrow"><span class="t">Hid ${n} ended session${n === 1 ? '' : 's'} — still in History.</span><button data-cleanup-undo>Undo</button></div>`;
+    }
+    const c = openDoc && openDoc.cleanup;
+    if (!c || c.suggested !== true || !can('sessionOpen.cleanup') || !can('sessionOpen.snoozeCleanup')) return '';
+    const n = Math.max(0, Number(c.ended) || 0);
+    return `<div class="pushrow cleanup"><span class="t">${n} ended session${n === 1 ? '' : 's'} on your sidebar</span>
+      <button data-cleanup="all">Hide all ended</button><button data-cleanup="old">Hide ended older than a day</button><button data-cleanup-snooze>Not now</button></div>`;
+  }
+  async function runCleanup(olderThanMs) {
+    try {
+      const r = await call('sessionOpen.cleanup', olderThanMs ? { olderThanMs } : {});
+      const ids = (r && Array.isArray(r.hidden)) ? r.hidden.filter((id) => typeof id === 'string' && id) : [];
+      clearTimeout(runCleanup._t);
+      cleanupUndo = ids.length && can('sessionArchive.setMany') ? { ids } : null;
+      if (cleanupUndo) runCleanup._t = setTimeout(() => { cleanupUndo = null; render(); }, CLEANUP_UNDO_MS);
+      toast(ids.length ? `Hid ${ids.length} ended session${ids.length === 1 ? '' : 's'}` : 'Nothing to hide');
+    } catch (e) { toast('Cleanup failed: ' + (e && e.message || e)); }
+    render();
+  }
+  async function snoozeCleanup() {
+    try { const doc = await call('sessionOpen.snoozeCleanup', {}); applyOpen(doc, false); }
+    catch (e) { toast('Could not snooze: ' + (e && e.message || e)); }
+    render();
+  }
+  async function undoCleanup() {
+    const undo = cleanupUndo;
+    clearTimeout(runCleanup._t);
+    cleanupUndo = null;
+    render();
+    if (!undo) return;
+    try {
+      const doc = await call('sessionArchive.setMany', { sessionIds: undo.ids, archived: false });
+      if (applyArchive(doc, false)) afterArchive();
+      toast(`Restored ${undo.ids.length} session${undo.ids.length === 1 ? '' : 's'}`);
+    } catch (e) { toast('Undo failed: ' + (e && e.message || e)); }
+  }
+
   async function seed() {
     try {
       const list = await call('sessions.snapshots', {});
       const seen = new Set();
       for (const s of (list || [])) if (s && s.sessionId) { seen.add(s.sessionId); sessionHub.delete(s.sessionId); fold(s); }
       await seedPeers(seen);
+      await loadOpen();
       // The providers' lists ARE the visible fleet — drop what they no longer
       // show. A hub whose LINK is down answered nothing at all: its sessions
       // are tombstones to keep on screen, not rows to drop.
@@ -2452,7 +2544,7 @@
     // tab you had no reason to open until you already had a notification.
     // The node strip sits ABOVE the fleet: a machine you can't reach is the
     // reason dispatches are missing from the list under it.
-    const parts = [nodesHtml(), pushBannerHtml()];
+    const parts = [nodesHtml(), cleanupBannerHtml(), pushBannerHtml()];
     if (archivedView) {
       parts.push(`<div class="foot">Archived sessions are hidden from the fleet on every device and keep running.${can('sessionArchive.set') ? ' Open one and use ⋯ › Restore' + (archivedRecents().length ? ', or tap Restore below.' : '.') : ''}</div>`);
     }
@@ -2483,6 +2575,11 @@
     for (const b of main.querySelectorAll('[data-sleep]')) b.onclick = () => sleepNode(b.dataset.sleep);
     for (const b of main.querySelectorAll('[data-resume]')) b.onclick = () => resume(b.dataset.resume);
     for (const b of main.querySelectorAll('[data-unarchive]')) b.onclick = (e) => { e.stopPropagation(); setArchived(b.dataset.unarchive, false); };
+    for (const b of main.querySelectorAll('[data-cleanup]')) b.onclick = () => runCleanup(b.dataset.cleanup === 'old' ? DAY_MS : 0);
+    const cs = main.querySelector('[data-cleanup-snooze]');
+    if (cs) cs.onclick = snoozeCleanup;
+    const cu = main.querySelector('[data-cleanup-undo]');
+    if (cu) cu.onclick = undoCleanup;
   }
 
   /** One manager and everything it dispatched, as a single scannable block.
@@ -2515,7 +2612,11 @@
     // A tombstoned card keeps rendering (muted, chip greyed, no inline
     // actions) — the fleet you can't currently reach is still your fleet.
     const down = hubDown(s);
-    const st = agentState(s), meta = down ? STATES.stopped : STATES[st];
+    const st = agentState(s);
+    let meta = down ? STATES.stopped : STATES[st];
+    // Same state keys (ranking and filters are unchanged); only the words move.
+    if (!down && st === 'stopped' && isPaused(s)) meta = Object.assign({}, meta, { label: 'Paused' });
+    else if (!down && st === 'idle' && s.starting) meta = Object.assign({}, meta, { label: 'Starting' });
     const sid = esc(s.sessionId);
     const t = stats(s);
     const ask = down ? null : askFor(s);
@@ -4650,7 +4751,7 @@
       clearTimeout(watchdog);
       backoff = 500; attempt = 0; lastActivity = Date.now(); connected = true;
       reportInteraction(true);
-      sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot', 'workflow.*', 'hub.peer.*', 'node.state_changed', 'sessionArchive.changed'] }));
+      sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot', 'workflow.*', 'hub.peer.*', 'node.state_changed', 'sessionArchive.changed', 'sessionOpen.changed'] }));
       // Everything else waits for `hello` — see onDiscover. Firing the optional
       // lookups here would run their can() guards before we know our scope,
       // when can() answers true for everything, so a view/triage token would
@@ -4725,6 +4826,10 @@
         // on a real change, so this never needs a poll behind it.
         else if (t === 'node.state_changed') applyNodeState((f.event.data || {}).node);
         // Another client archived or restored; a peer's stamped copy is not ours.
+        else if (t === 'sessionOpen.changed' && !peer) {
+          openEventSinceRead = true;
+          if (applyOpen(f.event.data, false)) afterData();
+        }
         else if (t === 'sessionArchive.changed' && !peer) {
           archiveEventSinceRead = true;
           if (applyArchive(f.event.data, false)) afterArchive();

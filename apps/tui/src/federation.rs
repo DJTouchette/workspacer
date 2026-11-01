@@ -301,6 +301,10 @@ pub fn agent_from_snapshot(hub: &str, row: &Value) -> Option<Agent> {
         // The harness spells the label `name`; the real snapshot says `label`.
         label: str_of("label").or_else(|| str_of("name")),
         sparse,
+        // Per row on purpose (not folded by presence): the hub sends the flag
+        // only while the row is Starting, so a later row without it ends it.
+        starting: row.get("starting").and_then(Value::as_bool) == Some(true),
+        paused: false,
     })
 }
 
@@ -510,6 +514,31 @@ mod tests {
         assert!(a.sparse);
         assert!(a.is_stopped());
         assert_eq!(a.label.as_deref(), Some("old run"));
+    }
+
+    #[test]
+    fn starting_rows_read_as_starting_until_a_row_without_the_flag() {
+        let starting =
+            json!({"sessionId": "s", "mode": "unknown", "starting": true, "sparse": true});
+        let a = agent_from_snapshot("peer", &starting).unwrap();
+        assert!(a.starting);
+        assert_eq!(a.display_state(), "starting");
+        let mut store = RemoteFleet::default();
+        store.seed("peer", vec![a]);
+        let live = json!({"sessionId": "s", "ambientState": "idle", "sparse": true});
+        store.upsert("peer", agent_from_snapshot("peer", &live).unwrap());
+        let folded = store.agents();
+        assert!(
+            !folded[0].starting,
+            "a sparse row without the flag ends Starting"
+        );
+        assert_eq!(folded[0].display_state(), "input");
+        // A stopped row is never Starting, even if a stale flag rode along.
+        let ended = json!({"sessionId": "s", "status": "ended", "starting": true});
+        assert_eq!(
+            agent_from_snapshot("peer", &ended).unwrap().display_state(),
+            "stopped"
+        );
     }
 
     #[test]

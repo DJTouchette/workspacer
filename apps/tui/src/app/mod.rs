@@ -31,6 +31,7 @@ pub use state::*;
 use state::{fuzzy_match, TOAST_TTL};
 
 mod agents;
+mod cleanup;
 mod nodes;
 mod providers;
 mod runs;
@@ -105,6 +106,10 @@ pub struct App {
     pub nodes: Option<crate::nodes::NodeRegistry>,
     /// The remote-nodes overlay, when open.
     pub nodes_view: Option<NodesState>,
+    /// The sidebar-cleanup chooser (`<leader> C`), when open.
+    pub cleanup_chooser: bool,
+    /// What the last cleanup hid, and when — for its short-lived Undo.
+    pub cleanup_undo: Option<(Vec<String>, Instant)>,
     /// Provider ids whose CLI the HOST has installed, from
     /// `providers.checkAll`. `None` = no answer yet (or a hub/transport that
     /// can't answer), which means every harness is offered — see
@@ -173,6 +178,9 @@ pub struct App {
     /// "orphan" sessions (stopped history claudemon replays on restart) while
     /// keeping sessions that stopped while we watched them.
     pub seen_live: HashSet<String>,
+    /// The local hub's shared open set (`sessionOpen`). A stopped local
+    /// session in it is Paused and stays listed. `None` off-bus or until read.
+    pub open_sessions: Option<crate::open_sessions::OpenSessions>,
     /// When true, the sidebar shows every session including stopped history.
     pub show_all_sessions: bool,
     /// How many stopped orphans the last [`set_agents`] hid (for the title).
@@ -291,6 +299,8 @@ impl App {
             notes: crate::notes::load(),
             nodes: None,
             nodes_view: None,
+            cleanup_chooser: false,
+            cleanup_undo: None,
             installed_providers: None,
             bus_scope: None,
             connected: false,
@@ -312,6 +322,7 @@ impl App {
             jumplist: Vec::new(),
             jump_idx: 0,
             seen_live: HashSet::new(),
+            open_sessions: None,
             show_all_sessions: false,
             hidden_count: 0,
             all_agents: Vec::new(),
@@ -519,6 +530,8 @@ impl App {
             }
             AppMsg::Projects(projects) => self.projects = projects,
             AppMsg::PinnedCwds(shared) => self.adopt_shared_pins(shared),
+            AppMsg::OpenSessions(set) => self.adopt_open_sessions(set, false),
+            AppMsg::CleanupDone(hidden) => self.cleanup_done(hidden),
             AppMsg::RemoteSeed { hub, agents } => {
                 self.remote.seed(&hub, agents);
                 self.fold_fleet();
@@ -656,6 +669,8 @@ impl App {
             // against a hub without federation.
             crate::bus::TOPIC_BUS_CONNECTED => {
                 self.seed_federation();
+                // Changes made while we were away have no replay: re-read.
+                self.seed_open_sessions();
                 // The hub keeps no node state across a restart, so a reconnect
                 // is exactly when our copy is most likely wrong. Quiet no-op
                 // against a hub with no node registry.
@@ -684,6 +699,11 @@ impl App {
             // snapshot is just a nudge that something changed, so re-pull.
             "agent.snapshot" => self.refresh(),
             "agent.statusline" => self.apply_bus_status_line(ev),
+            crate::open_sessions::TOPIC_CHANGED => {
+                if let Some(set) = crate::open_sessions::OpenSessions::from_document(&ev.data) {
+                    self.adopt_open_sessions(set, true);
+                }
+            }
             "hub.peer.connected" => {
                 if let Some(peer) = ev.data.get("peer").and_then(|v| v.as_str()) {
                     self.remote.set_online(peer);
@@ -748,6 +768,43 @@ impl App {
     }
 
     /// Kick off the full federation seed (peers, then each peer's roster).
+    /// Read the hub's shared open set; an older hub without `sessionOpen`
+    /// answers with native's kept-open set instead. Quiet on every failure.
+    fn seed_open_sessions(&self) {
+        let Some(bus) = self.bus.clone() else { return };
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            use crate::open_sessions::OpenSessions;
+            let set = match bus.call("sessionOpen.get", serde_json::json!({})).await {
+                Ok(doc) => OpenSessions::from_document(&doc),
+                Err(_) => None,
+            };
+            let set = match set {
+                Some(set) => set,
+                None => match bus.call("sessions.kept", serde_json::json!({})).await {
+                    Ok(doc) => OpenSessions::from_kept(&doc),
+                    Err(_) => return,
+                },
+            };
+            let _ = tx.send(AppMsg::OpenSessions(set));
+        });
+    }
+
+    /// Adopt an open set unless the one held is newer, then re-fold so Paused
+    /// sessions appear (or go) without waiting for the next poll.
+    pub(in crate::app) fn adopt_open_sessions(
+        &mut self,
+        set: crate::open_sessions::OpenSessions,
+        from_event: bool,
+    ) {
+        if set.supersedes(self.open_sessions.as_ref(), from_event)
+            && self.open_sessions.as_ref() != Some(&set)
+        {
+            self.open_sessions = Some(set);
+            self.fold_fleet();
+        }
+    }
+
     fn seed_federation(&self) {
         let Some(bus) = self.bus.clone() else { return };
         let tx = self.tx.clone();

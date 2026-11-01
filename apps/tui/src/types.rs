@@ -436,6 +436,16 @@ pub struct Agent {
     /// for local sessions.
     #[serde(default)]
     pub sparse: bool,
+    /// The hub's roster marks this row Starting (`starting: true`, see
+    /// docs/session-roster.md): spawned or resuming, no first event yet. Read
+    /// off remote snapshot rows only; claudemon payloads never carry it.
+    #[serde(default)]
+    pub starting: bool,
+    /// Stopped, and its id is still in the hub's shared open set
+    /// (`sessionOpen`): its app closed rather than it being ended, so it is
+    /// Paused and resumable. Set by the fleet fold, never by the wire.
+    #[serde(skip)]
+    pub paused: bool,
 }
 
 /// Whatever Claude is waiting on, tagged by `kind` (matches claudemon's enum).
@@ -506,6 +516,19 @@ impl Agent {
             AgentMode::Question => "question",
             AgentMode::Stopped => "stopped",
             AgentMode::Other => "other",
+        }
+    }
+
+    /// The state as shown to the user: [`Agent::state`], except that a paused
+    /// session reads `paused` and a starting one `starting`. Logic compares
+    /// against `state()`; only renderers and the filter use this.
+    pub fn display_state(&self) -> &str {
+        if self.is_stopped() && self.paused {
+            "paused"
+        } else if !self.is_stopped() && self.starting {
+            "starting"
+        } else {
+            self.state()
         }
     }
 

@@ -1,5 +1,5 @@
 // Everything the screens render from: live session snapshots (local and
-// federated), the shared archive, the host's kept-open set, conversations,
+// federated), the shared archive, the hub's open set, conversations,
 // usage, jobs, nodes and config. Ported from /m's data layer — the fold,
 // federation routing, peer seeds/tombstones, archive ordering and the
 // conversation polling fallback behave exactly as they did there.
@@ -49,6 +49,9 @@ export let peers = [];
 function fold(snap) {
   const prev = sessions.get(snap.sessionId);
   const next = snap.sparse && prev ? Object.assign({}, prev, snap) : snap;
+  // `starting` is present only while the hub calls the row Starting; a later
+  // sparse row without it must not inherit the stale flag through the merge.
+  if (next !== snap && !('starting' in snap)) delete next.starting;
   sessions.set(snap.sessionId, next);
 }
 export function upsert(snap) {
@@ -127,15 +130,47 @@ async function reseedPeer(name) {
   changed();
 }
 
-// ── kept-open sessions (Paused) ───────────────────────────────────────────
-// The native host remembers which sessions it had open when it closed
-// (Settings::kept_open); the hub exposes that set as `sessions.kept`. The
-// phone keeps no list of its own. A kept session the fleet list has aged out
-// is read by id, as native does.
-export const kept = new Map();          // sessionId -> since (ms)
+// ── sidebar set (Paused / Ended) ──────────────────────────────────────────
+// The hub owns one shared sidebar set (`sessionOpen`, docs/session-roster.md):
+// `open` is every session the sidebar keeps, and `ended` marks the ones that
+// were ended on purpose. Stopped + open + not ended reads as Paused in every
+// client; stopped + open + ended reads as Ended and stays listed. The hub's
+// roster already lists open sessions, so nothing is read by id. Hide is the
+// archive; this client never writes the set. Hubs without `sessionOpen` fall
+// back to `sessions.kept` (open and not ended) and the by-id reads that older
+// roster needed.
+export const kept = new Map();          // sessionId -> since (ms), the open set
+export const ended = new Set();         // open ids ended on purpose
 export let keptSupported = false;
+let openDoc = null;                     // {version, open: {id: ms}, ended: {id: ms}}
+let openReadSeq = 0, openEventSinceRead = false;
+function applyOpen(doc, force) {
+  if (!doc || typeof doc.version !== 'number' || !doc.open || typeof doc.open !== 'object') return false;
+  if (!force && openDoc && openDoc.version >= doc.version) return false;
+  openDoc = doc;
+  kept.clear();
+  for (const [id, since] of Object.entries(doc.open)) if (id) kept.set(id, typeof since === 'number' ? since : 0);
+  // Tolerant: an absent or malformed `ended` is no marks, not a bad document.
+  ended.clear();
+  if (doc.ended && typeof doc.ended === 'object' && !Array.isArray(doc.ended)) {
+    for (const id of Object.keys(doc.ended)) if (id) ended.add(id);
+  }
+  keptSupported = true;
+  return true;
+}
 async function seedKept(seen) {
-  if (!can('sessions.kept')) { keptSupported = false; return; }
+  if (can('sessionOpen.get')) {
+    const seq = ++openReadSeq;
+    openEventSinceRead = false;
+    try {
+      const doc = await call('sessionOpen.get', {});
+      if (seq === openReadSeq) applyOpen(doc, !openEventSinceRead);
+      if (openDoc) return;
+    } catch { /* fall back to the legacy kept set below */ }
+  }
+  openDoc = null;
+  ended.clear();
+  if (!can('sessions.kept')) { keptSupported = false; kept.clear(); return; }
   let rows = [];
   try {
     const r = await call('sessions.kept', {});
@@ -144,12 +179,55 @@ async function seedKept(seen) {
   } catch { keptSupported = false; kept.clear(); return; }
   kept.clear();
   for (const k of rows) if (k && k.sessionId) kept.set(k.sessionId, k.since || 0);
+  // Legacy roster: a kept session it has aged out is read by id.
   await Promise.all([...kept.keys()].filter((id) => !seen.has(id)).map(async (id) => {
     try {
       const row = await call('sessions.snapshot', { sessionId: id });
       if (row && row.sessionId === id) { seen.add(id); fold(row); }
     } catch { /* gone from the hub too */ }
   }));
+}
+
+// ── sidebar cleanup prompt ────────────────────────────────────────────────
+// Nothing leaves the sidebar on its own, so the hub says when it needs a
+// cleanup (`cleanup.suggested` in the sessionOpen document) and every client
+// renders the same prompt. A cleanup archives (so the sessions stay in
+// History) and returns the ids it hid, which Undo restores in one change.
+const UNDO_MS = 8000;
+export let cleanupUndo = null;          // {ids, until}
+let undoTimer = null;
+/** The offer to show, or null: not suggested, or this hub lacks the methods. */
+export function cleanupOffer() {
+  const c = openDoc && openDoc.cleanup;
+  if (!c || c.suggested !== true || !can('sessionOpen.cleanup') || !can('sessionOpen.snoozeCleanup')) return null;
+  return { ended: Math.max(0, Number(c.ended) || 0) };
+}
+/** Hide every counted ended session, or only those ended `olderThanMs` ago. */
+export async function runCleanup(olderThanMs) {
+  const params = olderThanMs ? { olderThanMs } : {};
+  const r = await call('sessionOpen.cleanup', params);
+  const ids = (r && Array.isArray(r.hidden)) ? r.hidden.filter((id) => typeof id === 'string' && id) : [];
+  clearTimeout(undoTimer);
+  cleanupUndo = ids.length && can('sessionArchive.setMany') ? { ids, until: Date.now() + UNDO_MS } : null;
+  if (cleanupUndo) undoTimer = setTimeout(() => { cleanupUndo = null; changed(); }, UNDO_MS);
+  changed();
+  return ids;
+}
+/** Not now: the hub holds the prompt back until more sessions have ended. */
+export async function snoozeCleanup() {
+  const doc = await call('sessionOpen.snoozeCleanup', {});
+  if (applyOpen(doc, false)) changed();
+}
+/** Restore what the last cleanup hid. */
+export async function undoCleanup() {
+  const undo = cleanupUndo;
+  clearTimeout(undoTimer);
+  cleanupUndo = null;
+  changed();
+  if (!undo) return 0;
+  const doc = await call('sessionArchive.setMany', { sessionIds: undo.ids, archived: false });
+  if (applyArchive(doc, false)) changed();
+  return undo.ids.length;
 }
 
 // ── session state ─────────────────────────────────────────────────────────
@@ -163,7 +241,8 @@ export const isWorking = (s) => {
 };
 /** Stopped by the host closing rather than ended: resumable from the composer. */
 export const isPaused = (s) =>
-  !!s && !isLive(s) && kept.has(s.sessionId) && ['claude', 'codex', ''].includes(s.provider || '');
+  !!s && !isLive(s) && kept.has(s.sessionId) && !ended.has(s.sessionId) &&
+  ['claude', 'codex', ''].includes(s.provider || '');
 /** A Claude or Codex session that has stopped can be resumed by sending. */
 export const canResume = (s) => !!s && !isLive(s) && ['claude', 'codex', ''].includes(s.provider || '') && !!s.cwd;
 export const providerOf = (s) => (s && s.provider) || 'claude';
@@ -174,6 +253,7 @@ export function status(s) {
   if (!isLive(s)) return isPaused(s) ? { label: 'Paused', tone: 'accent', key: 'paused' } : { label: 'Ended', tone: 'muted', key: 'ended' };
   if (s.pendingApproval) return { label: 'Needs approval', tone: 'warning', key: 'approval' };
   if (s.pendingQuestions && s.pendingQuestions.length) return { label: 'Needs your input', tone: 'warning', key: 'question' };
+  if (s.starting) return { label: 'Starting', tone: 'muted', key: 'starting' };
   const a = s.ambientState || s.mode || '';
   if (WORKING.has(a)) return { label: 'Working', tone: 'busy', key: 'working' };
   if (a === 'waiting_approval' || a === 'approval') return { label: 'Needs approval', tone: 'warning', key: 'approval' };
@@ -613,6 +693,9 @@ onBus('event', (ev) => {
     if (d.peer) { offlineHubs.delete(d.peer); reseedPeer(d.peer); }
   } else if (t === 'node.state_changed') {
     applyNodeState((ev.data || {}).node);
+  } else if (t === 'sessionOpen.changed' && !peer) {
+    openEventSinceRead = true;
+    if (applyOpen(ev.data, false)) changed();
   } else if (t === 'sessionArchive.changed' && !peer) {
     archiveEventSinceRead = true;
     if (applyArchive(ev.data, false)) changed();

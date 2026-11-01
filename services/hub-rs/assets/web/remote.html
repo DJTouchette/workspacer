@@ -66,6 +66,11 @@
   .badge.thinking, .badge.running { background: rgba(110,168,254,.16); color: var(--accent); }
   .badge.error { background: rgba(224,108,117,.16); color: var(--bad); }
   .badge.done, .badge.idle { background: rgba(78,201,168,.14); color: var(--ok); }
+  .badge.paused { background: rgba(110,168,254,.10); color: var(--accent); }
+  .badge.ended, .badge.starting { background: var(--panel2); color: var(--dim); }
+  .card.ended { opacity: .62; }
+  .hide { flex: 0 0 auto; background: none; border: 1px solid var(--line); color: var(--dim);
+          border-radius: 8px; font-size: 12px; padding: 4px 9px; cursor: pointer; }
   .preview { padding: 0 14px 12px; color: var(--dim); font-size: 13px;
              display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
              overflow: hidden; }
@@ -220,6 +225,11 @@
   const STALE_MS = 30000;
   const sessions = new Map(); // sessionId -> {sessionId, cwd, state, pendingApproval, ...}
   let cfg = null;             // config.get — project labels/colours/emoji (optional)
+  // Shared view state every client agrees on (docs/session-roster.md): the
+  // archive hides sessions everywhere (Hide = archive), and the sidebar set
+  // says which stopped sessions are Paused (open, not ended) or Ended.
+  let archived = null;        // {version, archived: {id: ms}}
+  let openDoc = null;         // {version, open: {id: ms}, ended: {id: ms}}
 
   // View state: list of agents, or the chat for one of them.
   let view = { name: 'list' };       // | { name: 'chat', sessionId }
@@ -279,6 +289,46 @@
       for (const s of (list || [])) sessions.set(s.sessionId, s);
       render();
     } catch (e) { /* shown via connection state */ }
+  }
+
+  // Version-fenced like every other client: a reply never rolls back a newer
+  // change event. Missing methods (an older hub) leave the state null, which
+  // reads as "nothing archived" and "no Paused".
+  function adopt(held, doc, key) {
+    if (!doc || typeof doc.version !== 'number' || !doc[key] || typeof doc[key] !== 'object') return held;
+    return held && held.version > doc.version ? held : doc;
+  }
+  async function loadShared() {
+    const [a, o] = await Promise.all([
+      call('sessionArchive.get', {}).catch(() => null),
+      call('sessionOpen.get', {}).catch(() => null),
+    ]);
+    archived = adopt(archived, a, 'archived');
+    openDoc = adopt(openDoc, o, 'open');
+    render();
+  }
+  const has = (doc, key, id) => !!(doc && doc[key] && typeof doc[key] === 'object' && Object.prototype.hasOwnProperty.call(doc[key], id));
+  const isArchived = (id) => has(archived, 'archived', id);
+  function isStopped(s) {
+    const m = String(s.mode || '').toLowerCase(), st = String(s.status || '').toLowerCase(), a = String(s.state || '').toLowerCase();
+    return m === 'stopped' || st === 'ended' || a === 'ended' || a === 'stopped';
+  }
+  /** The row's badge as [class, label]: Paused/Ended/Starting, else the live state. */
+  function rowBadge(s) {
+    if (isStopped(s)) {
+      return has(openDoc, 'open', s.sessionId) && !has(openDoc, 'ended', s.sessionId) ? ['paused', 'paused'] : ['ended', 'ended'];
+    }
+    if (s.starting === true) return ['starting', 'starting'];
+    const state = s.state || s.ambientState;
+    return [badgeClass(state), stateLabel(state)];
+  }
+  async function hide(id) {
+    try {
+      const doc = await call('sessionArchive.set', { sessionId: id, archived: true });
+      archived = adopt(archived, doc, 'archived');
+      render();
+      toast('Hidden — it stays in History');
+    } catch (e) { toast('Hide failed: ' + (e && e.message || e)); }
   }
 
   // The hub reports claude's ambient state verbatim: idle | thinking | streaming
@@ -428,17 +478,20 @@
   function renderList() {
     document.body.classList.remove('chat-open');
     titleEl.textContent = 'workspacer remote';
-    if (sessions.size === 0) {
+    const items = [...sessions.values()].filter((s) => !isArchived(s.sessionId)).sort((a, b) =>
+      Number(isWaiting(b.state)) - Number(isWaiting(a.state)) ||
+      Number(isStopped(a)) - Number(isStopped(b)));
+    if (items.length === 0) {
       main.innerHTML = `<div class="empty">No active dispatches.</div>`;
       return;
     }
-    const items = [...sessions.values()].sort((a, b) =>
-      Number(isWaiting(b.state)) - Number(isWaiting(a.state)));
     main.innerHTML = '';
     for (const s of items) {
-      const waiting = isWaiting(s.state);
+      const stopped = isStopped(s);
+      const waiting = !stopped && isWaiting(s.state);
+      const [badgeCls, badgeText] = rowBadge(s);
       const card = document.createElement('div');
-      card.className = 'card' + (waiting ? ' waiting' : '');
+      card.className = 'card' + (waiting ? ' waiting' : '') + (badgeCls === 'ended' ? ' ended' : '');
       const ctx = s.contextLimit ? ` · ${Math.round((s.contextTokens / s.contextLimit) * 100)}% ctx` : '';
       const cost = s.costUSD ? ` · $${Number(s.costUSD).toFixed(2)}` : '';
       const preview = s.pendingApproval
@@ -456,10 +509,12 @@
             <div class="cwd">${esc(shortCwd(s.cwd))}</div>
             <div class="meta">${named}${esc(s.model || 'claude')}${ctx}${cost}</div>
           </div>
-          <span class="badge ${badgeClass(s.state)}">${esc(stateLabel(s.state))}</span>
+          <span class="badge ${badgeCls}">${esc(badgeText)}</span>
+          <button class="hide" data-hide title="Hide on every device (stays in History)">Hide</button>
         </div>
         ${preview ? `<div class="preview">${preview}</div>` : ''}`;
       card.onclick = () => openChat(s.sessionId);
+      card.querySelector('[data-hide]').onclick = (e) => { e.stopPropagation(); hide(s.sessionId); };
       main.appendChild(card);
     }
   }
@@ -942,8 +997,10 @@
       backoff = 500;
       lastActivity = Date.now();
       setConnected(true);
-      ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'workflow.*'] }));
+      ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'workflow.*', 'sessionArchive.changed', 'sessionOpen.changed'] }));
       refresh();
+      // Changes made while away have no replay: re-read the shared state.
+      loadShared();
       if (!cfg) loadConfig();
       if (view.name === 'chat' && !termMode) loadTranscript();
       // Re-establish the PTY stream after a reconnect, and re-assert our size
@@ -975,6 +1032,13 @@
         }
         // Any agent state change → re-pull the authoritative list, and the
         // transcript too if we're looking at a chat (but not the terminal).
+        if (evt.type === 'sessionArchive.changed' || evt.type === 'sessionOpen.changed') {
+          const key = evt.type === 'sessionArchive.changed' ? 'archived' : 'open';
+          if (key === 'archived') archived = adopt(archived, evt.data, key);
+          else openDoc = adopt(openDoc, evt.data, key);
+          if (view.name === 'list') render();
+          return;
+        }
         if (evt.type === 'agent.state_changed') {
           refresh();
           if (view.name === 'chat' && !termMode) loadTranscript();

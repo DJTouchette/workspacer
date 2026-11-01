@@ -69,6 +69,12 @@ pub enum AppMsg {
     /// is ABSENT (never written by any client), which gates the one-time
     /// migration off `tui-pins.json`; `Some(vec![])` is a real "all unpinned".
     PinnedCwds(Option<Vec<String>>),
+    /// The hub's shared open set, read on (re)connect (`sessionOpen.get`, or
+    /// the legacy `sessions.kept` on an older hub). Change events are applied
+    /// directly in `apply_bus_event`.
+    OpenSessions(crate::open_sessions::OpenSessions),
+    /// `sessionOpen.cleanup` answered with the ids it hid (archived).
+    CleanupDone(Vec<String>),
     /// One peer hub's authoritative session roster, pulled over the federation
     /// link (`hub:<peer>/sessions.snapshots`). Replaces that hub's remote
     /// sessions wholesale — see [`crate::federation`].

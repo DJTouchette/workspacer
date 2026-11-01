@@ -25,7 +25,7 @@ pub(super) fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::styled("state  ", Style::default().fg(t.dim)),
             Span::styled(
-                badge(a.state()),
+                badge(a.display_state()),
                 Style::default()
                     .fg(state_color(t, a.state()))
                     .add_modifier(Modifier::BOLD),

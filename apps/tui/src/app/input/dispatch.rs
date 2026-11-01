@@ -52,6 +52,11 @@ impl App {
             self.handle_nodes_key(key);
             return;
         }
+        // The sidebar-cleanup chooser owns every key while it is open.
+        if self.cleanup_chooser {
+            self.handle_cleanup_key(key);
+            return;
+        }
         // A docked pane owns the keys while it holds focus. Ctrl-w h/l moves focus
         // back to the chat, so the binding that got you here also gets you out.
         if self.side_focused() {
@@ -308,6 +313,8 @@ impl App {
             JumpBack => self.jump_history(-1),
             JumpForward => self.jump_history(1),
             ToggleStopped => self.toggle_stopped(),
+            CleanupSidebar => self.open_cleanup(),
+            UndoCleanup => self.undo_cleanup(),
             OpenFilter => self.open_filter(),
             OpenCmdline => self.cmdline = Some(String::new()),
             OpenSearch => self.open_search(),

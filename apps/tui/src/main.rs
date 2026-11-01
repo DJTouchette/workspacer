@@ -18,6 +18,7 @@ mod library;
 mod names;
 mod nodes;
 mod notes;
+mod open_sessions;
 mod pins;
 mod profiles;
 mod projects;
@@ -160,6 +161,8 @@ async fn main() -> Result<()> {
                 // Remote worker nodes: follow a wake without polling. The hub
                 // publishes only on a real change (see `crate::nodes`).
                 "node.state_changed".into(),
+                // The hub's shared open set: which stopped sessions are Paused.
+                open_sessions::TOPIC_CHANGED.into(),
             ]);
             (Some(client), Some(events))
         }

@@ -38,15 +38,27 @@ impl App {
         // session we never saw alive is history, not fleet. (Tombstones are
         // NOT stopped — an offline hub's rows keep their last-known mode, so
         // this filter never eats them.)
-        for a in &list {
+        //
+        // A stopped LOCAL session on the hub's shared sidebar (`sessionOpen`)
+        // stays listed whatever the toggle says, like in every other client:
+        // Paused when its app closed under it, stopped when it was ended on
+        // purpose. Only archiving takes it off. The set is the local hub's,
+        // so it never lists or marks a peer's row.
+        let open = self.open_sessions.as_ref();
+        let on_sidebar =
+            |a: &Agent| !a.is_remote() && open.is_some_and(|o| o.contains(&a.session_id));
+        for a in &mut list {
             if !a.is_stopped() {
                 self.seen_live.insert(a.session_id.clone());
             }
+            a.paused = a.is_stopped()
+                && !a.is_remote()
+                && open.is_some_and(|o| o.is_paused(&a.session_id));
         }
         let total = list.len();
         if !self.show_all_sessions {
             let seen = &self.seen_live;
-            list.retain(|a| !a.is_stopped() || seen.contains(&a.session_id));
+            list.retain(|a| !a.is_stopped() || on_sidebar(a) || seen.contains(&a.session_id));
         }
         self.hidden_count = total - list.len();
 
@@ -174,6 +186,7 @@ impl App {
         fuzzy_match(needle, &self.agent_name(a).to_lowercase())
             || fuzzy_match(needle, &a.cwd_str().to_lowercase())
             || fuzzy_match(needle, a.state())
+            || fuzzy_match(needle, a.display_state())
     }
 
     // ── daemon reactions ──────────────────────────────────────────────────

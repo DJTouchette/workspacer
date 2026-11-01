@@ -151,7 +151,10 @@ pub(super) fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         let (state_txt, state_style) = if a.hub_offline {
             ("hub offline", Style::default().fg(t.dim))
         } else {
-            (a.state(), Style::default().fg(state_color(t, a.state())))
+            (
+                a.display_state(),
+                Style::default().fg(state_color(t, a.state())),
+            )
         };
         let mut row = vec![
             marker,

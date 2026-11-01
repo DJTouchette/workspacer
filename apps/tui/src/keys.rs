@@ -81,6 +81,9 @@ pub enum Action {
     SwitchModel,
     CyclePermissionMode,
     Handoff,
+    // the hub's sidebar-cleanup prompt
+    CleanupSidebar,
+    UndoCleanup,
 }
 
 impl Action {
@@ -138,6 +141,8 @@ impl Action {
             SwitchModel => "switch_model",
             CyclePermissionMode => "cycle_permission_mode",
             Handoff => "handoff",
+            CleanupSidebar => "cleanup_sidebar",
+            UndoCleanup => "undo_cleanup",
         }
     }
 
@@ -194,6 +199,8 @@ impl Action {
             "switch_model" => SwitchModel,
             "cycle_permission_mode" => CyclePermissionMode,
             "handoff" => Handoff,
+            "cleanup_sidebar" => CleanupSidebar,
+            "undo_cleanup" => UndoCleanup,
             _ => return None,
         })
     }
@@ -494,6 +501,17 @@ impl Keymap {
         v
     }
 
+    /// How to press `action` from anywhere (a Global binding), as the user
+    /// types it — for hints that must follow a remapped key. The shortest
+    /// sequence wins; `None` when the user unbound it.
+    pub fn chord_for(&self, action: Action) -> Option<String> {
+        self.bindings(Context::Global)
+            .into_iter()
+            .filter(|(_, a)| *a == action)
+            .map(|(seq, _)| seq)
+            .min_by_key(|seq| (seq.len(), seq.clone()))
+    }
+
     /// Apply a single override. The chord string may be a multi-key sequence:
     /// whitespace-separated chords, with `<leader>` (or `leader`) standing in
     /// for the leader chord — e.g. `"<leader> f"` or `"g g"`. `action_name ==
@@ -702,6 +720,10 @@ impl Keymap {
             ("M", SwitchModel),
             ("P", CyclePermissionMode),
             ("H", Handoff),
+            // The hub's "too many sessions" prompt: hide ended sessions (they
+            // stay in History), or snooze; `u` undoes a cleanup for a moment.
+            ("C", CleanupSidebar),
+            ("u", UndoCleanup),
             ("?", Help),
             ("q", Quit),
         ];
