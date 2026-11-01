@@ -13,7 +13,7 @@
         ],
         "loaders": [
           "services/hub-rs/src/services/roster.rs::shared_roster_cases",
-          "apps/desktop/src/main/services/sessionRoster.test.ts"
+          "apps/desktop/src/main/services/sessionRoster.test.ts::session-roster-cases.json"
         ]
       }
     }
