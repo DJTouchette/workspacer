@@ -5,7 +5,7 @@ use super::super::pull_requests::{
     links::{Link, Source},
     remote::Kind,
 };
-use super::{Sessions, segment, snapshots};
+use super::{Sessions, segment};
 use crate::protocol::Event;
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
@@ -94,7 +94,7 @@ impl Sessions {
             return;
         };
         let row = self.enrich(row);
-        if snapshots::visible(&row, &self.layout(), time::OffsetDateTime::now_utc())
+        if self.listed(&row)
             && let Err(error) = self
                 .hub
                 .publish_wait(Event::new("agent.snapshot", "brain", row))

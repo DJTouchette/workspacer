@@ -126,6 +126,7 @@ pub struct Options {
         Option<Arc<crate::services::manager_replacements::ReplacementService>>,
     pub engine: Option<claudemon::daemon::embedded::EmbeddedClient>,
     pub(crate) layout: Option<Arc<crate::services::layout::Layout>>,
+    pub(crate) session_open: Option<Arc<crate::services::session_open::SessionOpen>>,
     pub call_timeout: Duration,
     pub event_buffer: usize,
     handlers: BTreeMap<String, Handler>,
@@ -203,6 +204,7 @@ impl Default for Options {
             replacement_service: None,
             engine: None,
             layout: None,
+            session_open: None,
             call_timeout: Duration::from_secs(30),
             event_buffer: 64,
             handlers: BTreeMap::new(),
@@ -2283,6 +2285,14 @@ async fn run(
         crate::services::filewatch::install(options, handle.clone());
     options = configured;
     options = crate::services::terminals::install(options, handle.clone());
+    let session_open = options.session_open.clone();
+    if let Some(open) = &session_open {
+        open.start(
+            handle.clone(),
+            options.terminals.clone(),
+            options.session_snapshots.clone(),
+        );
+    }
     options = crate::services::wakes::install(options);
     if options.spawn_coordinator.is_some() && options.scoped_tokens.is_some() {
         if let Some(wakes) = options.wakes.clone() {
@@ -2739,6 +2749,10 @@ async fn run(
     // The actor no longer pumps requests. Cancel queued replies before joining
     // observers: one may still be awaiting its startup Connect acknowledgement.
     // Plugin shutdown above deliberately retains the pumping actor until done.
+    // Sessions the closing hub/app takes down must stay open (Paused).
+    if let Some(open) = &session_open {
+        open.begin_close();
+    }
     close_command_channel(commands);
     if let Some(service) = &core.options.workflow_artifacts {
         service.close().await;
@@ -2806,6 +2820,9 @@ async fn run(
     if let Some(observer) = push_observer {
         observer.stop();
         let _ = observer.task.await;
+    }
+    if let Some(open) = session_open {
+        open.close().await;
     }
     if let Some(observer) = remote_observer {
         observer.stop();

@@ -45,10 +45,12 @@ pub(crate) mod push;
 pub mod quiescence;
 pub mod remote_admin;
 pub mod remote_dispatch;
+pub mod roster;
 pub mod routing;
 pub mod search;
 pub mod session_archive;
 pub mod session_facade;
+pub mod session_open;
 pub mod sessions;
 pub mod snapshots;
 pub mod spawn_plan;
@@ -143,6 +145,10 @@ pub(crate) fn install_config(
         options = profile_accounts::install(options, directory.clone(), home);
     }
     let config = Arc::new(config::Config::open(directory.join("config.yaml")));
+    // The sidebar cleanup prompt's threshold (`sessions.cleanupThreshold`).
+    if let Some(open) = &options.session_open {
+        open.set_config(config.clone());
+    }
     if let Some(home) = options.home_dir.clone() {
         options = provider_utilities::install(options, config.clone(), home);
     }
@@ -323,9 +329,19 @@ pub(crate) fn install(
     ));
     let archive = Arc::new(session_archive::SessionArchive::open(
         Some(directory.join("session-archive.json")),
+        Some(handle.clone()),
+    ));
+    // The shared open set (see `session_open`): every client's Paused
+    // sessions, and the roster always lists its members. Seeded once from
+    // native's legacy per-device `kept_open` settings.
+    let open = Arc::new(session_open::SessionOpen::open(
+        Some(directory.join("session-open.json")),
         Some(handle),
+        Some(archive.clone()),
+        kept_sessions::settings_path(),
     ));
     options.layout = Some(layout.clone());
+    options.session_open = Some(open.clone());
     let get = layout.clone();
     let options = options
         .handler("layout.get", move |_, _| {
@@ -338,23 +354,130 @@ pub(crate) fn install(
         });
     // Archive is shared view state, like the layout: every client of this hub
     // hides the same sessions. It never touches a session's lifecycle.
+    // Archiving also lets the session go from the open set.
     let get = archive.clone();
+    // Restore puts a session back on the sidebar, marked ended unless it is
+    // known to be live: in the embedded projection, or observed live on the
+    // bus (another provider's rows). A live one clears the mark on its next
+    // snapshot anyway.
+    let projection = options.session_snapshots.clone();
+    let live_check = {
+        let open = open.clone();
+        move |id: &str| {
+            open.observed_live(id)
+                || projection.read().unwrap().get(id).is_some_and(|row| {
+                    roster::live(row) || roster::starting(row, &roster::Ctx::default())
+                })
+        }
+    };
+    let set_archive = archive.clone();
+    let set_open = open.clone();
+    let set_live = live_check.clone();
+    let many_archive = archive.clone();
+    let many_open = open.clone();
+    let many_live = live_check.clone();
     let options = options
         .handler("sessionArchive.get", move |_, _| {
             let service = get.clone();
             async move { Ok(service.get()) }
         })
         .handler("sessionArchive.set", move |_, params| {
-            let service = archive.clone();
+            let service = set_archive.clone();
+            let open = set_open.clone();
+            let live = set_live.clone();
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let before = service.get()["version"].clone();
+                    let document = service.set(params.clone())?;
+                    // Only an accepted change moves the sidebar.
+                    if document["version"] != before
+                        && let Some(id) = params["sessionId"].as_str()
+                    {
+                        if params["archived"] == true {
+                            open.forget(id);
+                        } else {
+                            open.restore(id, live(id));
+                        }
+                    }
+                    Ok(document)
+                })
+                .await?
+            }
+        })
+        // Bulk Hide/Unhide as ONE archive change (a cleanup's Undo).
+        .handler("sessionArchive.setMany", move |_, params| {
+            let service = many_archive.clone();
+            let open = many_open.clone();
+            let live = many_live.clone();
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let (document, changed) = service.set_many(params.clone())?;
+                    if params["archived"] == true {
+                        open.forget_many(&changed);
+                    } else {
+                        open.restore_many(&changed, |id| live(id));
+                    }
+                    Ok(document)
+                })
+                .await?
+            }
+        });
+    let get = open.clone();
+    let kept = open.clone();
+    let snooze = open.clone();
+    let cleanup_open = open.clone();
+    let cleanup_archive = archive.clone();
+    let options = options
+        .handler("sessionOpen.get", move |_, _| {
+            let service = get.clone();
+            async move { Ok(service.get()) }
+        })
+        .handler("sessionOpen.set", move |_, params| {
+            let service = open.clone();
             async move { tokio::task::spawn_blocking(move || service.set(params)).await? }
         })
-        // What the native client kept open at close (its Paused sessions),
-        // read from the host's native-settings.json. Read-only view state.
-        .handler("sessions.kept", move |_, _| async move {
-            Ok(tokio::task::spawn_blocking(|| {
-                kept_sessions::read(kept_sessions::settings_path().as_deref())
-            })
-            .await?)
+        .handler("sessionOpen.snoozeCleanup", move |_, _| {
+            let service = snooze.clone();
+            async move { tokio::task::spawn_blocking(move || service.snooze_cleanup()).await? }
+        })
+        // Hide every counted ended session (optionally only those whose end
+        // is at least `olderThanMs` old) as ONE archive change; never Paused
+        // or live sessions. `dryRun` only reports.
+        .handler("sessionOpen.cleanup", move |_, params| {
+            let open = cleanup_open.clone();
+            let archive = cleanup_archive.clone();
+            async move {
+                let older = match &params["olderThanMs"] {
+                    serde_json::Value::Null => None,
+                    value => Some(value.as_i64().filter(|ms| *ms >= 0).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "sessionOpen.cleanup: olderThanMs must be a non-negative number"
+                        )
+                    })?),
+                };
+                let dry_run = match &params["dryRun"] {
+                    serde_json::Value::Null => false,
+                    value => value.as_bool().ok_or_else(|| {
+                        anyhow::anyhow!("sessionOpen.cleanup: dryRun must be a boolean")
+                    })?,
+                };
+                tokio::task::spawn_blocking(move || {
+                    let ids = open.cleanup_candidates(older);
+                    if dry_run {
+                        return Ok(serde_json::json!({"wouldHide": ids}));
+                    }
+                    let (_, hidden) = archive.set_ids(&ids, true)?;
+                    open.forget_many(&hidden);
+                    Ok(serde_json::json!({"hidden": hidden}))
+                })
+                .await?
+            }
+        })
+        // Historical shape (`{sessions:[{sessionId,since}]}`, newest first),
+        // now served from the hub's open set: open, unended ids.
+        .handler("sessions.kept", move |_, _| {
+            let service = kept.clone();
+            async move { Ok(service.kept()) }
         });
     let mut prefs = usage_prefs::UsagePrefs::open(Some(directory.join("usage-pacing.json")));
     if let Some(routing) = options.routing.clone() {

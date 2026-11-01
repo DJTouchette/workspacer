@@ -290,7 +290,7 @@ pub fn with_auto_title(mut row: Value) -> Value {
     row
 }
 
-fn parse_time(raw: &str) -> Option<time::OffsetDateTime> {
+pub(crate) fn parse_time(raw: &str) -> Option<time::OffsetDateTime> {
     time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339).ok()
 }
 
@@ -359,7 +359,7 @@ pub fn layout_ids(layout: &Value) -> (BTreeSet<String>, bool) {
         Err(()) => (BTreeSet::new(), false),
     }
 }
-fn state_fields_valid(snapshot: &Value, strings: &[&str]) -> bool {
+pub(crate) fn state_fields_valid(snapshot: &Value, strings: &[&str]) -> bool {
     snapshot.is_object()
         && strings
             .iter()
@@ -374,33 +374,8 @@ pub fn live(snapshot: &Value) -> bool {
     let mode = snapshot["mode"].as_str().unwrap_or("");
     !matches!(mode, "unknown" | "stopped") && !(mode.is_empty() && snapshot["status"] == "ended")
 }
-
-/// Whether `visible` can depend on the layout: only ended rows consult it.
-pub fn consults_layout(snapshot: &Value) -> bool {
-    let mode = snapshot["mode"].as_str().unwrap_or("");
-    mode == "stopped" || (mode.is_empty() && snapshot["status"] == "ended")
-}
-pub fn visible(snapshot: &Value, layout: &Value, now: time::OffsetDateTime) -> bool {
-    if !state_fields_valid(snapshot, &["session_id", "mode", "status", "updated_at"])
-        || snapshot["mode"] == "unknown"
-    {
-        return false;
-    }
-    if !consults_layout(snapshot) {
-        return true;
-    }
-    let (ids, has_layout) = layout_ids(layout);
-    if ids.contains(snapshot["session_id"].as_str().unwrap_or("")) {
-        return true;
-    }
-    if has_layout || snapshot["archived"] == true {
-        return false;
-    }
-    snapshot["updated_at"]
-        .as_str()
-        .and_then(parse_time)
-        .is_some_and(|updated| now - updated <= time::Duration::hours(24))
-}
+// Roster membership (which rows are listed and published) lives in
+// `super::roster`; `live` above is process liveness only.
 pub(crate) fn with_host_metadata(
     mut row: serde_json::Value,
     lifecycle: Option<&super::agent_lifecycle::Lifecycle>,
@@ -584,6 +559,20 @@ mod visibility_tests {
                 compat(json!({"session_id":id,"mode":mode,"updated_at":"2020-01-01T00:00:00Z"})),
             );
         }
+        // The roster: no time window, so a just-stopped session that is not on
+        // the sidebar (no open set here) and not curated is NOT listed; a stream
+        // session still starting is listed and marked.
+        let now = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        rows.write().unwrap().insert(
+            "stopped-recent".into(),
+            compat(json!({"session_id":"stopped-recent","mode":"stopped","updated_at":now})),
+        );
+        rows.write().unwrap().insert(
+            "starting".into(),
+            compat(json!({"session_id":"starting","mode":"unknown","transport":"stream"})),
+        );
         let client = crate::client::Client::connect(&hub.handle()).await.unwrap();
         for method in ["agents.list", "sessions.snapshots"] {
             let rows = client.call(method, json!({})).await.unwrap();
@@ -595,13 +584,21 @@ mod visibility_tests {
                 .collect();
             assert_eq!(
                 ids,
-                ["live-idle", "live-working", "stopped-curated"].into(),
+                ["live-idle", "live-working", "stopped-curated", "starting"].into(),
                 "{method}"
             );
+            let starting = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["sessionId"] == "starting")
+                .unwrap();
+            assert_eq!(starting["starting"], true, "{method}");
         }
+        // Curation only ever adds: dropping it hides just the old curated row.
         *layout.write().unwrap() = json!({"version":2,"data":{"agents":[]}});
         let rows = client.call("sessions.snapshots", json!({})).await.unwrap();
-        assert_eq!(rows.as_array().unwrap().len(), 2);
+        assert_eq!(rows.as_array().unwrap().len(), 3);
         client.close();
         tokio::task::spawn_blocking(move || hub.shutdown())
             .await

@@ -3,7 +3,7 @@
 //! same internal send path as `agents.sendMessage` (`send::send_message`),
 //! as a human's message: the queue only ever holds what a person typed.
 use super::super::message_queue::{Delivery, Entry, QueueConflict, valid_id};
-use super::{Sessions, segment, send::MessageOutcome, snapshots};
+use super::{Sessions, segment, send::MessageOutcome};
 use crate::protocol::Event;
 use anyhow::{Result, anyhow, bail};
 use claudemon::session::Delivery as SendDelivery;
@@ -173,7 +173,7 @@ impl Sessions {
             return;
         };
         let row = self.enrich(row);
-        if snapshots::visible(&row, &self.layout(), time::OffsetDateTime::now_utc())
+        if self.listed(&row)
             && let Err(error) = self
                 .hub
                 .publish_wait(Event::new("agent.snapshot", "brain", row))

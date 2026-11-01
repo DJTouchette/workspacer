@@ -24,6 +24,8 @@ use std::{path::PathBuf, sync::Mutex};
 /// without limit. Far above the daemon's retained history.
 pub const MAX_ARCHIVED: usize = 10_000;
 const MAX_ID_BYTES: usize = 256;
+/// `sessionArchive.setMany` accepts at most this many ids per call.
+pub const MAX_BULK: usize = 1_000;
 
 pub struct SessionArchive {
     document: Mutex<Value>,
@@ -79,6 +81,87 @@ impl SessionArchive {
 
     pub fn get(&self) -> Value {
         self.document.lock().unwrap().clone()
+    }
+
+    /// `{sessionIds: [..], archived}`: archive or restore many sessions as ONE
+    /// change (one version bump, one `sessionArchive.changed`), e.g. a sidebar
+    /// cleanup or its Undo. Every id is validated before anything changes; ids
+    /// already in the requested state are skipped. Returns the document and the
+    /// ids that actually changed.
+    pub fn set_many(&self, params: Value) -> Result<(Value, Vec<String>)> {
+        let Some(ids) = params["sessionIds"].as_array() else {
+            bail!("sessionArchive.setMany requires {{ sessionIds, archived }}");
+        };
+        let Some(archived) = params["archived"].as_bool() else {
+            bail!("sessionArchive.setMany requires a boolean archived");
+        };
+        if ids.len() > MAX_BULK {
+            bail!("sessionArchive.setMany: at most {MAX_BULK} sessions per call");
+        }
+        let mut wanted = Vec::with_capacity(ids.len());
+        for id in ids {
+            match id.as_str() {
+                Some(id) if valid_id(id) => wanted.push(id.to_owned()),
+                _ => bail!("sessionArchive.setMany: invalid sessionId"),
+            }
+        }
+        self.set_ids(&wanted, archived)
+    }
+
+    /// The bulk change behind `setMany` and the sidebar cleanup, without the
+    /// per-call cap (the cleanup may hide more than one call's worth, still as
+    /// one change). Invalid ids are refused before anything changes.
+    pub fn set_ids(&self, ids: &[String], archived: bool) -> Result<(Value, Vec<String>)> {
+        let mut wanted: Vec<String> = Vec::with_capacity(ids.len());
+        for id in ids {
+            if !valid_id(id) {
+                bail!("sessionArchive: invalid sessionId");
+            }
+            if !wanted.contains(id) {
+                wanted.push(id.clone());
+            }
+        }
+        let mut document = self.document.lock().unwrap();
+        let changed: Vec<String> = wanted
+            .into_iter()
+            .filter(|id| document["archived"].get(id).is_some() != archived)
+            .collect();
+        if changed.is_empty() {
+            return Ok((document.clone(), changed));
+        }
+        let mut next = document.clone();
+        let entries = next["archived"].as_object_mut().expect("archive map");
+        if archived {
+            if entries.len() + changed.len() > MAX_ARCHIVED {
+                bail!("sessionArchive.setMany: archive is full ({MAX_ARCHIVED} sessions)");
+            }
+            let at = json!(chrono::Utc::now().timestamp_millis());
+            for id in &changed {
+                entries.insert(id.clone(), at.clone());
+            }
+        } else {
+            for id in &changed {
+                entries.remove(id);
+            }
+        }
+        next["version"] = json!(document["version"].as_i64().unwrap_or(0) + 1);
+        if let Some(path) = &self.path {
+            super::atomic_json(path, &next, false)?;
+        }
+        *document = next;
+        if let Some(hub) = &self.hub
+            && let Err(error) = hub.publish(Event::new(
+                "sessionArchive.changed",
+                "hub",
+                document.clone(),
+            ))
+        {
+            eprintln!(
+                "session archive: version {} is committed but its change event could not be queued: {error}",
+                document["version"]
+            );
+        }
+        Ok((document.clone(), changed))
     }
 
     /// `{sessionId, archived}`: archive (true) or restore (false) one session.
@@ -217,5 +300,53 @@ mod tests {
             .unwrap();
         assert_eq!(doc["version"], 1);
         assert!(archive.get()["archived"].get("live").is_some());
+    }
+
+    #[test]
+    fn set_many_is_one_validated_change_and_undoable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-archive.json");
+        let archive = SessionArchive::open(Some(path.clone()), None);
+        archive
+            .set(json!({"sessionId":"a","archived":true}))
+            .unwrap();
+        for params in [
+            json!({"sessionIds":["b"]}),
+            json!({"sessionIds":"b","archived":true}),
+            json!({"sessionIds":["b", ""],"archived":true}),
+            json!({"sessionIds":["b", 7],"archived":true}),
+            json!({"sessionIds":vec!["x"; MAX_BULK + 1],"archived":true}),
+        ] {
+            assert!(archive.set_many(params).is_err());
+        }
+        assert_eq!(
+            archive.get()["version"],
+            1,
+            "a refused batch changes nothing"
+        );
+        let (doc, changed) = archive
+            .set_many(json!({"sessionIds":["a","b","c","b"],"archived":true}))
+            .unwrap();
+        assert_eq!(doc["version"], 2, "one bump for the whole batch");
+        assert_eq!(changed, vec!["b".to_owned(), "c".to_owned()]);
+        let (same, none) = archive
+            .set_many(json!({"sessionIds":["b","c"],"archived":true}))
+            .unwrap();
+        assert!(none.is_empty());
+        assert_eq!(same["version"], 2);
+        // Undo with the returned ids.
+        let (doc, _) = archive
+            .set_many(json!({"sessionIds":changed,"archived":false}))
+            .unwrap();
+        assert_eq!(doc["version"], 3);
+        assert_eq!(
+            doc["archived"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["a"]
+        );
+        assert_eq!(SessionArchive::open(Some(path), None).get(), doc);
     }
 }

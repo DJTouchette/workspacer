@@ -6,7 +6,7 @@ mod pull_requests;
 mod queue;
 mod send;
 mod titles;
-use super::{layout::Layout, snapshots};
+use super::snapshots;
 use crate::{Handle, Options, protocol::Event};
 use anyhow::{Result, anyhow, bail};
 use claudemon::{
@@ -29,8 +29,8 @@ struct Sessions {
     engine: EmbeddedClient,
     rows: Arc<RwLock<BTreeMap<String, Value>>>,
     remote_proxies: Arc<RwLock<BTreeMap<String, Value>>>,
-    layout: Option<Arc<Layout>>,
-    upstream_layout: Option<Arc<RwLock<Value>>>,
+    /// Roster membership inputs (open set, layout curation, shells).
+    roster: super::roster::Sources,
     hub: Handle,
     lifecycle: Option<Arc<super::agent_lifecycle::Lifecycle>>,
     review: Option<Arc<super::fleet_review::ReviewStore>>,
@@ -44,6 +44,10 @@ struct Sessions {
     titles: Option<tokio::sync::mpsc::Sender<String>>,
     /// Hub-owned outbound message queues (see `queue`).
     queue: Arc<super::message_queue::Queues>,
+    /// Ids this run's projection held live (seeded or published). A stop for
+    /// one of these is published once even if it is off the sidebar, so no
+    /// client that read it as live keeps a ghost row.
+    announced: std::sync::Mutex<std::collections::BTreeSet<String>>,
     /// Pull request links (see `pull_requests`).
     pull_requests: Option<Arc<super::pull_requests::Service>>,
 }
@@ -75,6 +79,7 @@ pub(crate) async fn install(
     let queue_kicks = queues.take_kicks();
     let service = Arc::new(Sessions {
         queue: queues,
+        announced: Default::default(),
         pull_requests: options.pull_requests.clone(),
         titles: title_offers,
         workflow_artifacts: options.workflow_artifacts.clone(),
@@ -86,8 +91,7 @@ pub(crate) async fn install(
         engine,
         rows: options.session_snapshots.clone(),
         remote_proxies: options.remote_proxy_snapshots.clone(),
-        layout: options.layout.clone(),
-        upstream_layout: options.upstream_layout.clone(),
+        roster: super::roster::Sources::from_options(&options),
         hub,
         lifecycle: options.launch_lifecycle.clone(),
         review: options.review_store.clone(),
@@ -330,11 +334,9 @@ impl Sessions {
             .and_then(|l| l.generation(id))
             .unwrap_or_default()
     }
-    fn layout(&self) -> Value {
-        if let Some(upstream) = &self.upstream_layout {
-            return upstream.read().unwrap().clone();
-        }
-        self.layout.as_ref().map(|l| l.get()).unwrap_or(Value::Null)
+    /// Whether the roster lists (and so publishes) this enriched row.
+    pub(super) fn listed(&self, row: &Value) -> bool {
+        self.roster.listed(row, time::OffsetDateTime::now_utc())
     }
     async fn seed(&self, publish: bool) -> Result<()> {
         let started = std::time::Instant::now();
@@ -399,6 +401,14 @@ impl Sessions {
         step("rows");
         self.dismissals.retain_inventory(&retained);
         self.confirmed.retain(&rows.keys().cloned().collect());
+        {
+            let mut announced = self.announced.lock().unwrap();
+            for (id, row) in &rows {
+                if super::roster::live(row) {
+                    announced.insert(id.clone());
+                }
+            }
+        }
         let old = std::mem::replace(&mut *self.rows.write().unwrap(), rows.clone());
         let mut observations: Vec<_> = rows.values().cloned().collect();
         for (id, row) in &old {
@@ -435,6 +445,9 @@ impl Sessions {
                             chrono::Utc::now().timestamp_millis(),
                         );
                     }
+                    if let Some(open) = &self.roster.open {
+                        open.observe(&row, &self.roster.shells());
+                    }
                     self.hub
                         .publish_wait(Event::new("agent.snapshot", "brain", self.enrich(row)))
                         .await?;
@@ -470,10 +483,11 @@ impl Sessions {
             Some(service) => service.links.enrich(row),
             None => row,
         };
-        match &self.workflow_artifacts {
+        let row = match &self.workflow_artifacts {
             Some(service) => service.enrich(row),
             None => row,
-        }
+        };
+        self.roster.mark(row)
     }
     fn sender_label(&self, id: &str) -> Option<String> {
         // Attribution names the recorded agent, never a cwd display rename.
@@ -544,7 +558,36 @@ impl Sessions {
         if let Some(wakes) = &self.wakes {
             wakes.observe(&row, chrono::Utc::now().timestamp_millis());
         }
-        if snapshots::visible(&row, &self.layout(), time::OffsetDateTime::now_utc()) {
+        // Record sidebar membership (and an ended mark) BEFORE the gate, so a
+        // session that goes live and stops quickly still publishes its stop,
+        // and clients see the mark no later than the stopped snapshot.
+        if let Some(open) = &self.roster.open {
+            let open = open.clone();
+            let shells = self.roster.shells();
+            let observed = row.clone();
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || open.observe(&observed, &shells)).await
+            {
+                eprintln!("session sidebar observation failed: {error}");
+            }
+        }
+        let id = row["sessionId"]
+            .as_str()
+            .or_else(|| row["session_id"].as_str())
+            .unwrap_or("")
+            .to_owned();
+        let announce_end = {
+            let mut announced = self.announced.lock().unwrap();
+            if super::roster::live(&row) || row["starting"] == true {
+                announced.insert(id);
+                false
+            } else if super::roster::ended(&row) {
+                announced.remove(&id)
+            } else {
+                false
+            }
+        };
+        if self.listed(&row) || announce_end {
             self.hub
                 .publish_wait(Event::new("agent.snapshot", "brain", row))
                 .await?;
@@ -854,14 +897,14 @@ impl Sessions {
         }
 
         if matches!(method, "agents.list" | "sessions.snapshots") {
-            let layout = self.layout();
+            let ctx = self.roster.ctx();
             let now = time::OffsetDateTime::now_utc();
             let mut rows: Vec<Value> = self
                 .rows
                 .read()
                 .unwrap()
                 .values()
-                .filter(|row| snapshots::visible(row, &layout, now))
+                .filter(|row| super::roster::listed(row, &ctx, now))
                 .cloned()
                 .map(|row| self.enrich(row))
                 .collect();
@@ -1306,8 +1349,7 @@ mod projection_tests {
             engine: client.clone(),
             rows: rows.clone(),
             remote_proxies: Default::default(),
-            layout: None,
-            upstream_layout: None,
+            roster: Default::default(),
             hub: hub.handle(),
             lifecycle: Some(lifecycle),
             review: None,
@@ -1319,6 +1361,7 @@ mod projection_tests {
             workflow_artifacts: None,
             titles: None,
             queue: Default::default(),
+            announced: Default::default(),
         });
         let http = reqwest::Client::new();
         for (id, event) in [("worker", "SessionStart"), ("worker", "UserPromptSubmit")] {
@@ -1430,8 +1473,7 @@ mod projection_tests {
             engine: client.clone(),
             rows: Default::default(),
             remote_proxies: Default::default(),
-            layout: None,
-            upstream_layout: None,
+            roster: Default::default(),
             hub: hub.handle(),
             lifecycle: None,
             review: None,
@@ -1443,6 +1485,7 @@ mod projection_tests {
             workflow_artifacts: None,
             titles: None,
             queue: Default::default(),
+            announced: Default::default(),
         });
         reqwest::Client::new()
             .post(format!("http://{}/hook", ready.hook_addr))
@@ -1468,6 +1511,134 @@ mod projection_tests {
         );
         observer.abort();
         let _ = observer.await;
+        hub.shutdown()?;
+        engine.shutdown().await?;
+        Ok(())
+    }
+
+    /// docs/session-roster.md: a layout that omits a session no longer
+    /// swallows its stopped transition (the session is on the sidebar, marked
+    /// ended before the stop is published), and a starting stream session is
+    /// published marked `starting`.
+    #[tokio::test]
+    async fn roster_publishes_uncurated_ends_and_starting_sessions() -> Result<()> {
+        use claudemon::daemon::{
+            ServeConfig,
+            embedded::{EmbeddedDaemon, Options as EngineOptions},
+        };
+        let _single_engine = crate::backend::ENGINE_TEST_LOCK.lock().await;
+        let dir = tempfile::tempdir()?;
+        let mut engine = EmbeddedDaemon::start_with_options(
+            ServeConfig {
+                host: "127.0.0.1".into(),
+                hook_port: 0,
+                api_port: 0,
+                db_path: dir.path().join("state.db"),
+            },
+            EngineOptions {
+                usage_poll_on_boot: Some(false),
+            },
+        )?;
+        engine.ready().await?;
+        let client = engine.client();
+        let hub = crate::Hub::start(Options::default())?;
+        hub.ready().await?;
+        let viewer = crate::client::Client::connect(&hub.handle()).await?;
+        let mut events = viewer.events();
+        viewer.topics(["agent.snapshot".into()].into()).await?;
+        let layout = Arc::new(RwLock::new(
+            json!({"version":1,"data":{"agents":[{"sessionId":"curated-other"}]}}),
+        ));
+        let open = Arc::new(super::super::session_open::SessionOpen::open(
+            None, None, None, None,
+        ));
+        let service = Arc::new(Sessions {
+            pull_requests: None,
+            dismissals: Default::default(),
+            confirmed: Default::default(),
+            tokens: None,
+            config_dir: None,
+            mutations: tokio::sync::Mutex::new(()),
+            engine: client.clone(),
+            rows: Default::default(),
+            remote_proxies: Default::default(),
+            roster: super::super::roster::Sources {
+                upstream_layout: Some(layout),
+                open: Some(open.clone()),
+                ..Default::default()
+            },
+            hub: hub.handle(),
+            lifecycle: None,
+            review: None,
+            history: None,
+            replacements: None,
+            message_tracker: None,
+            requests: None,
+            wakes: None,
+            workflow_artifacts: None,
+            titles: None,
+            queue: Default::default(),
+            announced: Default::default(),
+        });
+        let now = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)?;
+        service
+            .publish(snapshots::compat(json!({
+                "session_id":"ended-uncurated","mode":"input","updated_at":now
+            })))
+            .await?;
+        let live = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await??
+            .data
+            .unwrap();
+        assert_eq!(live["mode"], "input");
+        service
+            .publish(snapshots::compat(json!({
+                "session_id":"ended-uncurated","mode":"stopped","updated_at":now
+            })))
+            .await?;
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await??
+            .data
+            .unwrap();
+        assert_eq!(ended["sessionId"], "ended-uncurated");
+        assert_eq!(ended["mode"], "stopped");
+        let doc = open.get();
+        assert!(doc["open"].get("ended-uncurated").is_some());
+        assert!(doc["ended"].get("ended-uncurated").is_some());
+        // Never seen live and not on the sidebar: no event at all.
+        service
+            .publish(snapshots::compat(json!({
+                "session_id":"stranger","mode":"stopped","updated_at":now
+            })))
+            .await?;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), events.recv())
+                .await
+                .is_err()
+        );
+        service
+            .publish(snapshots::compat(json!({
+                "session_id":"starting","mode":"unknown","transport":"stream"
+            })))
+            .await?;
+        let starting = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await??
+            .data
+            .unwrap();
+        assert_eq!(starting["sessionId"], "starting");
+        assert_eq!(starting["starting"], true);
+        // A Claude PTY row in `unknown` may be a shell: still not published.
+        service
+            .publish(snapshots::compat(json!({
+                "session_id":"maybe-shell","mode":"unknown","transport":"pty"
+            })))
+            .await?;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), events.recv())
+                .await
+                .is_err()
+        );
         hub.shutdown()?;
         engine.shutdown().await?;
         Ok(())

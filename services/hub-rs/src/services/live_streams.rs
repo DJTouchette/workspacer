@@ -64,8 +64,7 @@ struct State {
 pub struct LiveStreams {
     source: Arc<dyn Source>,
     rows: Arc<RwLock<BTreeMap<String, Value>>>,
-    layout: Option<Arc<super::layout::Layout>>,
-    upstream_layout: Option<Arc<RwLock<Value>>>,
+    roster: super::roster::Sources,
     state: Mutex<State>,
     changed: Notify,
     closed: watch::Sender<bool>,
@@ -74,28 +73,20 @@ impl LiveStreams {
     pub fn new(
         engine: EmbeddedClient,
         rows: Arc<RwLock<BTreeMap<String, Value>>>,
-        layout: Option<Arc<super::layout::Layout>>,
-        upstream_layout: Option<Arc<RwLock<Value>>>,
+        roster: super::roster::Sources,
     ) -> Arc<Self> {
-        Self::from_source(
-            Arc::new(EngineSource(engine)),
-            rows,
-            layout,
-            upstream_layout,
-        )
+        Self::from_source(Arc::new(EngineSource(engine)), rows, roster)
     }
     fn from_source(
         source: Arc<dyn Source>,
         rows: Arc<RwLock<BTreeMap<String, Value>>>,
-        layout: Option<Arc<super::layout::Layout>>,
-        upstream_layout: Option<Arc<RwLock<Value>>>,
+        roster: super::roster::Sources,
     ) -> Arc<Self> {
         let (closed, _) = watch::channel(false);
         Arc::new(Self {
             source,
             rows,
-            layout,
-            upstream_layout,
+            roster,
             state: Mutex::new(State {
                 wanted: BTreeMap::new(),
                 next: 0,
@@ -162,9 +153,10 @@ impl LiveStreams {
     fn visible(&self, id: &str) -> bool {
         self.visible_with(id, &mut None)
     }
-    /// Live rows are judged in place; only ended rows need the layout, which
-    /// is read at most once per `layout` cache however many rows are checked.
-    fn visible_with(&self, id: &str, layout: &mut Option<Value>) -> bool {
+    /// The roster decides (see `roster::listed`). Live rows are judged in
+    /// place; only ended rows need the open set and layout, which are read at
+    /// most once per `ctx` cache however many rows are checked.
+    fn visible_with(&self, id: &str, ctx: &mut Option<super::roster::Ctx>) -> bool {
         let now = time::OffsetDateTime::now_utc();
         let row = {
             let rows = self.rows.read().unwrap();
@@ -174,19 +166,14 @@ impl LiveStreams {
             if row["hub"].as_str().is_some_and(|s| !s.is_empty()) {
                 return false;
             }
-            if !super::snapshots::consults_layout(row) {
-                return super::snapshots::visible(row, &Value::Null, now);
+            if !super::roster::ended(row) {
+                // Live rows need nothing; a starting row only the shells.
+                return self.roster.listed(row, now);
             }
             row.clone()
         };
-        let layout = layout.get_or_insert_with(|| {
-            self.upstream_layout
-                .as_ref()
-                .map(|l| l.read().unwrap().clone())
-                .or_else(|| self.layout.as_ref().map(|l| l.get()))
-                .unwrap_or(Value::Null)
-        });
-        super::snapshots::visible(&row, layout, now)
+        let ctx = ctx.get_or_insert_with(|| self.roster.ctx());
+        super::roster::listed(&row, ctx, now)
     }
     /// Must execute in Core immediately before Core.publish. This final check
     /// fences already-queued work after off/on, dismissal, hide, lag, or shutdown.
@@ -357,7 +344,7 @@ impl LiveStreams {
              _=visibility.tick(), if wanted =>{if !self.source.available(){bail!("embedded live stream producer stopped");}
               // A hidden interval ends the ready contract. Reappearance needs a new
               // handshake even without an unsubscribe from the consumer.
-              let mut layout=None;let mut state=self.state.lock().unwrap();for(id,demand)in &mut state.wanted{if !self.visible_with(id,&mut layout){demand.active=false;demand.ready_queued=false;}}
+              let mut ctx=None;let mut state=self.state.lock().unwrap();for(id,demand)in &mut state.wanted{if !self.visible_with(id,&mut ctx){demand.active=false;demand.ready_queued=false;}}
              },
              delta=async{match &mut conversation{Some((_,rx))=>rx.recv().await,None=>std::future::pending().await}},if conversation.is_some()=>match delta {
               Ok(delta)=>{
@@ -383,11 +370,11 @@ impl LiveStreams {
 }
 pub fn install(mut options: Options) -> Options {
     if let Some(engine) = options.engine.clone() {
+        let roster = super::roster::Sources::from_options(&options);
         options.live_streams = Some(LiveStreams::new(
             engine,
             options.session_snapshots.clone(),
-            options.layout.clone(),
-            options.upstream_layout.clone(),
+            roster,
         ));
     }
     options
@@ -469,7 +456,14 @@ mod tests {
         broadcast::Receiver<Event>,
     ) {
         let rows = Arc::new(RwLock::new(rows));
-        let service = LiveStreams::from_source(source.clone(), rows.clone(), None, upstream);
+        let service = LiveStreams::from_source(
+            source.clone(),
+            rows.clone(),
+            super::super::roster::Sources {
+                upstream_layout: upstream,
+                ..Default::default()
+            },
+        );
         let mut options = Options::default();
         options.session_snapshots = rows;
         options.live_streams = Some(service.clone());
@@ -503,11 +497,13 @@ mod tests {
         let service = LiveStreams::from_source(
             FixtureSource::new(8, vec![]),
             Arc::new(RwLock::new(rows)),
-            None,
-            Some(layout),
+            super::super::roster::Sources {
+                upstream_layout: Some(layout),
+                ..Default::default()
+            },
         );
         assert!(service.visible("s1"));
-        let mut cached = Some(json!({"data":{"panes":[]}}));
+        let mut cached = Some(super::super::roster::Ctx::default());
         assert!(!service.visible_with("ended", &mut cached));
     }
     #[test]
@@ -519,7 +515,7 @@ mod tests {
             "remote".into(),
             json!({"session_id":"remote","mode":"input","hub":"peer"}),
         );
-        let service = LiveStreams::from_source(source, rows.clone(), None, None);
+        let service = LiveStreams::from_source(source, rows.clone(), Default::default());
         let before = rows.read().unwrap().clone();
         for id in ["unknown", "null", "remote"] {
             assert!(
@@ -564,7 +560,8 @@ mod tests {
     #[test]
     fn stale_ready_cannot_activate_replacement_demand() {
         let source = FixtureSource::new(8, vec![]);
-        let service = LiveStreams::from_source(source, Arc::new(RwLock::new(shown())), None, None);
+        let service =
+            LiveStreams::from_source(source, Arc::new(RwLock::new(shown())), Default::default());
         service.set_demand("agent.conversation.s1", true);
         service.state.lock().unwrap().subscribed = true;
         let old = service.state.lock().unwrap().wanted["s1"].generation;

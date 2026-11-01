@@ -1,7 +1,17 @@
 #[path = "support/sweepguard.rs"]
 mod sweepguard;
 use serde_json::{Value, json};
-use workspacer_hub::services::snapshots::{compat, layout_ids, live, visible};
+use workspacer_hub::services::roster::{Ctx, listed};
+use workspacer_hub::services::snapshots::{compat, layout_ids, live};
+
+/// The roster with only a layout document's curation (no open set, shells).
+fn visible(row: &Value, layout: &Value, now: time::OffsetDateTime) -> bool {
+    let ctx = Ctx {
+        layout: layout_ids(layout).0,
+        ..Default::default()
+    };
+    listed(row, &ctx, now)
+}
 
 #[test]
 fn missing_layout_and_explicitly_empty_curation_are_distinct() {
@@ -37,8 +47,18 @@ fn missing_layout_and_explicitly_empty_curation_are_distinct() {
     .unwrap();
     let stopped =
         json!({"session_id":"recent","mode":"stopped","updated_at":"2026-07-10T11:00:00Z"});
-    assert!(visible(&stopped, &json!({"data":{}}), now));
+    // docs/session-roster.md: no time window. A stopped row is listed only
+    // when it is on the sidebar (open) or curated, whatever the layout says.
+    assert!(!visible(&stopped, &json!({"data":{}}), now));
     assert!(!visible(&stopped, &json!({"data":{"agents":[]}}), now));
+    assert!(listed(
+        &stopped,
+        &Ctx {
+            open: ["recent".into()].into(),
+            ..Default::default()
+        },
+        now
+    ));
 }
 
 #[test]
@@ -56,8 +76,9 @@ fn legacy_visibility_and_process_liveness_vectors_remain_separate() {
         ("unknown", "a", "2026-07-10T11:00:00Z", false, true, false),
         ("unknown", "a", "2026-07-10T11:00:00Z", false, false, false),
         ("stopped", "cur", "2026-07-08T12:00:00Z", false, true, true),
+        // Changed by the roster (no time window): only open/curated stopped rows list.
         ("stopped", "a", "2026-07-10T11:00:00Z", false, true, false),
-        ("stopped", "a", "2026-07-10T11:00:00Z", false, false, true),
+        ("stopped", "a", "2026-07-10T11:00:00Z", false, false, false),
         ("stopped", "a", "2026-07-08T12:00:00Z", false, false, false),
         ("stopped", "a", "2026-07-10T11:00:00Z", true, false, false),
         ("stopped", "a", "", false, false, false),
@@ -144,8 +165,20 @@ fn visibility_distinguishes_live_stopped_curated_and_unknown_sessions() {
     ));
     let recent =
         json!({"session_id":"recent","mode":"stopped","updated_at":"2026-09-27T23:00:00Z"});
-    assert!(visible(&recent, &Value::Null, now));
+    // Changed by the roster: no time window, so a recent uncurated stop is not
+    // listed unless it is on the sidebar.
+    assert!(!visible(&recent, &Value::Null, now));
     assert!(!visible(&recent, &layout, now));
+    let old = json!({"session_id":"old-stop","mode":"stopped","updated_at":"2026-09-20T00:00:00Z"});
+    assert!(!visible(&old, &layout, now));
+    assert!(listed(
+        &old,
+        &Ctx {
+            open: ["old-stop".into()].into(),
+            ..Default::default()
+        },
+        now
+    ));
     assert!(visible(
         &json!({"session_id":"curated","mode":"stopped","archived":true}),
         &layout,

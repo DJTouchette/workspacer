@@ -47,6 +47,11 @@
     "routing.select",
     "sessionArchive.get",
     "sessionArchive.set",
+    "sessionArchive.setMany",
+    "sessionOpen.cleanup",
+    "sessionOpen.get",
+    "sessionOpen.set",
+    "sessionOpen.snoozeCleanup",
     "usage.pacingSchedule",
     "usage.report",
     "usage.setPacingSchedule"
