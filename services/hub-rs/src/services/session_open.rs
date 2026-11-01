@@ -339,6 +339,40 @@ impl SessionOpen {
             .is_some_and(|archive| archive.get()["archived"].get(id).is_some())
     }
 
+    /// The document version, to notice sidebar changes without a full read.
+    pub fn version(&self) -> i64 {
+        self.document.lock().unwrap()["version"]
+            .as_i64()
+            .unwrap_or(0)
+    }
+
+    /// Every hidden (shared-archive) id, for labelling many history rows.
+    pub fn hidden_ids(&self) -> BTreeSet<String> {
+        self.archive
+            .as_ref()
+            .and_then(|archive| {
+                archive.get()["archived"]
+                    .as_object()
+                    .map(|ids| ids.keys().cloned().collect())
+            })
+            .unwrap_or_default()
+    }
+
+    /// After `sessions.forget` deleted a session from History: nothing on
+    /// the sidebar or in the archive may keep naming it. One change each.
+    pub fn forget_history(&self, id: &str) -> Result<()> {
+        if !valid_id(id) {
+            bail!("invalid sessionId");
+        }
+        self.forget(id);
+        if let Some(archive) = &self.archive
+            && self.archived(id)
+        {
+            archive.set(json!({"sessionId": id, "archived": false}))?;
+        }
+        Ok(())
+    }
+
     /// Apply `edit` to a copy; if it changed anything, bump, persist, commit,
     /// publish. `strict` (an explicit client request) refuses an unpersisted
     /// change; an observation commits in memory and only logs, because what
