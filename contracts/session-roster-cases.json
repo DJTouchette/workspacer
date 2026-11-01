@@ -1,38 +1,340 @@
 {
   "version": 1,
-  "vocabulary": {"blocks":{"cases":{
-    "why":"Every session-list provider (hub-rs, desktop main) must decide roster membership and Starting identically. See docs/session-roster.md.",
-    "required":["name","row","ctx","listed","starting"],
-    "loaders":[
-      "services/hub-rs/src/services/roster.rs::shared_roster_cases",
-      "apps/desktop/src/main/services/sessionRoster.test.ts"
-    ]
-  }}},
+  "vocabulary": {
+    "blocks": {
+      "cases": {
+        "why": "Every session-list provider (hub-rs, desktop main) must decide sidebar membership and Starting identically. Stopped rows are listed only when on the sidebar (open set) or in the desktop layout; there is no time window. See docs/session-roster.md.",
+        "required": [
+          "name",
+          "row",
+          "ctx",
+          "listed",
+          "starting"
+        ],
+        "loaders": [
+          "services/hub-rs/src/services/roster.rs::shared_roster_cases",
+          "apps/desktop/src/main/services/sessionRoster.test.ts"
+        ]
+      }
+    }
+  },
   "now": "2026-11-01T12:00:00Z",
   "cases": [
-    {"name":"live input row is listed","row":{"session_id":"a","mode":"input","updated_at":"2026-01-01T00:00:00Z"},"ctx":{},"listed":true,"starting":false},
-    {"name":"live responding row ignores layout curation","row":{"session_id":"a","mode":"responding","updated_at":"2026-11-01T11:59:00Z"},"ctx":{"layout":["other"]},"listed":true,"starting":false},
-    {"name":"live row that is also archived by claudemon stays listed","row":{"session_id":"a","mode":"approval","archived":true},"ctx":{},"listed":true,"starting":false},
-    {"name":"unknown stream row is starting","row":{"session_id":"a","mode":"unknown","transport":"stream","provider":"claude"},"ctx":{},"listed":true,"starting":true},
-    {"name":"unknown managed-provider row is starting","row":{"session_id":"a","mode":"unknown","transport":"pty","provider":"codex"},"ctx":{},"listed":true,"starting":true},
-    {"name":"unknown claude pty row stays hidden (indistinguishable from a shell)","row":{"session_id":"a","mode":"unknown","transport":"pty","provider":"claude"},"ctx":{},"listed":false,"starting":false},
-    {"name":"unknown row with no transport or provider stays hidden","row":{"session_id":"a","mode":"unknown"},"ctx":{},"listed":false,"starting":false},
-    {"name":"known shell is never starting even on stream","row":{"session_id":"sh","mode":"unknown","transport":"stream","provider":"codex"},"ctx":{"shells":["sh"]},"listed":false,"starting":false},
-    {"name":"recently stopped row is listed with no layout","row":{"session_id":"a","mode":"stopped","updated_at":"2026-11-01T06:00:00Z"},"ctx":{},"listed":true,"starting":false},
-    {"name":"recently stopped row is listed even when a layout omits it","row":{"session_id":"a","mode":"stopped","updated_at":"2026-11-01T11:59:30Z"},"ctx":{"layout":["other"]},"listed":true,"starting":false},
-    {"name":"recently stopped row is listed under an explicitly empty layout","row":{"session_id":"a","mode":"stopped","updated_at":"2026-11-01T11:00:00Z"},"ctx":{"layout":[]},"listed":true,"starting":false},
-    {"name":"stopped row older than 24h is hidden","row":{"session_id":"a","mode":"stopped","updated_at":"2026-10-31T11:59:59Z"},"ctx":{},"listed":false,"starting":false},
-    {"name":"stopped row exactly 24h old is listed","row":{"session_id":"a","mode":"stopped","updated_at":"2026-10-31T12:00:00Z"},"ctx":{},"listed":true,"starting":false},
-    {"name":"old stopped row in the open set is listed","row":{"session_id":"a","mode":"stopped","updated_at":"2026-09-01T00:00:00Z"},"ctx":{"open":["a"]},"listed":true,"starting":false},
-    {"name":"old stopped row in the layout is listed","row":{"session_id":"a","mode":"stopped","updated_at":"2026-09-01T00:00:00Z"},"ctx":{"layout":["a"]},"listed":true,"starting":false},
-    {"name":"claudemon-archived stopped row is hidden even if recent","row":{"session_id":"a","mode":"stopped","updated_at":"2026-11-01T11:00:00Z","archived":true},"ctx":{},"listed":false,"starting":false},
-    {"name":"claudemon-archived stopped row in the open set is listed","row":{"session_id":"a","mode":"stopped","updated_at":"2026-09-01T00:00:00Z","archived":true},"ctx":{"open":["a"]},"listed":true,"starting":false},
-    {"name":"legacy ended row with empty mode follows stopped rules","row":{"session_id":"a","mode":"","status":"ended","updated_at":"2026-11-01T11:00:00Z"},"ctx":{},"listed":true,"starting":false},
-    {"name":"legacy ended row with empty mode and no timestamp is hidden","row":{"session_id":"a","mode":"","status":"ended"},"ctx":{},"listed":false,"starting":false},
-    {"name":"stopped row with no timestamp is hidden unless open","row":{"session_id":"a","mode":"stopped"},"ctx":{"open":["b"]},"listed":false,"starting":false},
-    {"name":"stopped row with an unparseable timestamp is hidden","row":{"session_id":"a","mode":"stopped","updated_at":"yesterday"},"ctx":{},"listed":false,"starting":false},
-    {"name":"malformed mode type is hidden","row":{"session_id":"a","mode":7},"ctx":{"open":["a"]},"listed":false,"starting":false},
-    {"name":"malformed archived type is hidden","row":{"session_id":"a","mode":"input","archived":"yes"},"ctx":{},"listed":false,"starting":false},
-    {"name":"non-object row is hidden","row":"a","ctx":{},"listed":false,"starting":false}
+    {
+      "name": "live input row is listed",
+      "row": {
+        "session_id": "a",
+        "mode": "input",
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      "ctx": {},
+      "listed": true,
+      "starting": false
+    },
+    {
+      "name": "live responding row ignores layout curation",
+      "row": {
+        "session_id": "a",
+        "mode": "responding",
+        "updated_at": "2026-11-01T11:59:00Z"
+      },
+      "ctx": {
+        "layout": [
+          "other"
+        ]
+      },
+      "listed": true,
+      "starting": false
+    },
+    {
+      "name": "live row that is also archived by claudemon stays listed",
+      "row": {
+        "session_id": "a",
+        "mode": "approval",
+        "archived": true
+      },
+      "ctx": {},
+      "listed": true,
+      "starting": false
+    },
+    {
+      "name": "unknown stream row is starting",
+      "row": {
+        "session_id": "a",
+        "mode": "unknown",
+        "transport": "stream",
+        "provider": "claude"
+      },
+      "ctx": {},
+      "listed": true,
+      "starting": true
+    },
+    {
+      "name": "unknown managed-provider row is starting",
+      "row": {
+        "session_id": "a",
+        "mode": "unknown",
+        "transport": "pty",
+        "provider": "codex"
+      },
+      "ctx": {},
+      "listed": true,
+      "starting": true
+    },
+    {
+      "name": "unknown claude pty row stays hidden (indistinguishable from a shell)",
+      "row": {
+        "session_id": "a",
+        "mode": "unknown",
+        "transport": "pty",
+        "provider": "claude"
+      },
+      "ctx": {},
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "unknown row with no transport or provider stays hidden",
+      "row": {
+        "session_id": "a",
+        "mode": "unknown"
+      },
+      "ctx": {},
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "known shell is never starting even on stream",
+      "row": {
+        "session_id": "sh",
+        "mode": "unknown",
+        "transport": "stream",
+        "provider": "codex"
+      },
+      "ctx": {
+        "shells": [
+          "sh"
+        ]
+      },
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "recently stopped row not on the sidebar is hidden (no time window)",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped",
+        "updated_at": "2026-11-01T06:00:00Z"
+      },
+      "ctx": {},
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "stopped row omitted by the layout and not open is hidden",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped",
+        "updated_at": "2026-11-01T11:59:30Z"
+      },
+      "ctx": {
+        "layout": [
+          "other"
+        ]
+      },
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "stopped row under an explicitly empty layout and not open is hidden",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped",
+        "updated_at": "2026-11-01T11:00:00Z"
+      },
+      "ctx": {
+        "layout": []
+      },
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "old stopped row not open is hidden",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped",
+        "updated_at": "2026-10-31T11:59:59Z"
+      },
+      "ctx": {},
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "years-old stopped row in the open set is listed",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped",
+        "updated_at": "2020-01-01T00:00:00Z"
+      },
+      "ctx": {
+        "open": [
+          "a"
+        ]
+      },
+      "listed": true,
+      "starting": false
+    },
+    {
+      "name": "old stopped row in the layout is listed",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped",
+        "updated_at": "2026-09-01T00:00:00Z"
+      },
+      "ctx": {
+        "layout": [
+          "a"
+        ]
+      },
+      "listed": true,
+      "starting": false
+    },
+    {
+      "name": "claudemon-archived stopped row is hidden even if recent",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped",
+        "updated_at": "2026-11-01T11:00:00Z",
+        "archived": true
+      },
+      "ctx": {},
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "claudemon-archived stopped row in the open set is listed",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped",
+        "updated_at": "2026-09-01T00:00:00Z",
+        "archived": true
+      },
+      "ctx": {
+        "open": [
+          "a"
+        ]
+      },
+      "listed": true,
+      "starting": false
+    },
+    {
+      "name": "legacy ended row with empty mode follows stopped rules (not open)",
+      "row": {
+        "session_id": "a",
+        "mode": "",
+        "status": "ended",
+        "updated_at": "2026-11-01T11:00:00Z"
+      },
+      "ctx": {},
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "legacy ended row with empty mode in the open set is listed",
+      "row": {
+        "session_id": "a",
+        "mode": "",
+        "status": "ended"
+      },
+      "ctx": {
+        "open": [
+          "a"
+        ]
+      },
+      "listed": true,
+      "starting": false
+    },
+    {
+      "name": "legacy ended row with empty mode and no timestamp is hidden",
+      "row": {
+        "session_id": "a",
+        "mode": "",
+        "status": "ended"
+      },
+      "ctx": {},
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "stopped row with no timestamp is hidden unless open",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped"
+      },
+      "ctx": {
+        "open": [
+          "b"
+        ]
+      },
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "stopped row with no timestamp in the open set is listed",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped"
+      },
+      "ctx": {
+        "open": [
+          "a"
+        ]
+      },
+      "listed": true,
+      "starting": false
+    },
+    {
+      "name": "stopped row with an unparseable timestamp is hidden",
+      "row": {
+        "session_id": "a",
+        "mode": "stopped",
+        "updated_at": "yesterday"
+      },
+      "ctx": {},
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "malformed mode type is hidden",
+      "row": {
+        "session_id": "a",
+        "mode": 7
+      },
+      "ctx": {
+        "open": [
+          "a"
+        ]
+      },
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "malformed archived type is hidden",
+      "row": {
+        "session_id": "a",
+        "mode": "input",
+        "archived": "yes"
+      },
+      "ctx": {},
+      "listed": false,
+      "starting": false
+    },
+    {
+      "name": "non-object row is hidden",
+      "row": "a",
+      "ctx": {},
+      "listed": false,
+      "starting": false
+    }
   ]
 }
