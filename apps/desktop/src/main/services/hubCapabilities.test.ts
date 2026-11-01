@@ -53,6 +53,18 @@ vi.mock('./hubClient', () => ({
 // The shared open set (sessionOpen) the roster consults.
 const openSessionIds = vi.fn(async () => new Set<string>());
 vi.mock('./sessionOpenCache', () => ({ openSessionIds: () => openSessionIds() }));
+// Permanent history provider (docs/session-roster.md §5). Unit-tested in
+// sessionHistoryProvider.test.ts; here only its wiring into the bus methods.
+const fillEvictedOpenRows = vi.fn(
+  async (_open: Set<string>, _have: Set<string>) => [] as unknown[],
+);
+const listSessionHistory = vi.fn(async (_p: unknown) => ({ sessions: [] as unknown[] }));
+const forgetSession = vi.fn(async (_p: unknown) => ({ ok: true }));
+vi.mock('./sessionHistoryProvider', () => ({
+  fillEvictedOpenRows: (open: Set<string>, have: Set<string>) => fillEvictedOpenRows(open, have),
+  listSessionHistory: (p: unknown) => listSessionHistory(p),
+  forgetSession: (p: unknown) => forgetSession(p),
+}));
 
 // PRODUCTION MODE: the brain owns the catalog, so `cat(...)` registers nothing
 // and only main's own registerCapability handlers exist on the bus. Do not flip
@@ -725,7 +737,13 @@ describe('sessions.snapshots — shared session roster', () => {
       // Ended a minute ago but not on the sidebar: hidden (Hide = archive
       // already took it off `open`).
       { session_id: 'recent', mode: 'stopped', updated_at: ago(30_000) },
-      { session_id: 'kept', mode: 'stopped', cwd: '/k', provider: 'codex', updated_at: ago(60_000) },
+      {
+        session_id: 'kept',
+        mode: 'stopped',
+        cwd: '/k',
+        provider: 'codex',
+        updated_at: ago(60_000),
+      },
       { session_id: 'old', mode: 'stopped', updated_at: ago(48 * 3600_000) },
       { session_id: 'other', mode: 'stopped', updated_at: ago(48 * 3600_000) },
     ]);
@@ -741,6 +759,51 @@ describe('sessions.snapshots — shared session roster', () => {
     });
     // Curated rows keep the layout's name.
     expect(out[2]).toMatchObject({ sessionId: 'other', label: 'Other', status: 'ended' });
+  });
+
+  // claudemon evicts stopped sessions idle more than 7 days from memory; a
+  // sidebar session must not vanish because of that, so its row is filled from
+  // permanent history (GET /sessions/:id) by the provider.
+  it('fills sidebar ids claudemon evicted from memory, and skips it when the daemon is unreadable', async () => {
+    getAllSnapshots.mockReturnValue([{ sessionId: 'live', cwd: '/p', status: 'active' }] as never);
+    openSessionIds.mockResolvedValueOnce(new Set(['live', 'resident', 'evicted']));
+    listDaemonSessionRows.mockResolvedValueOnce([
+      { session_id: 'resident', mode: 'stopped', updated_at: ago(1000) },
+    ]);
+    fillEvictedOpenRows.mockResolvedValueOnce([
+      { session_id: 'evicted', mode: 'stopped', cwd: '/old', updated_at: ago(30 * 86400_000) },
+    ]);
+    const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
+    expect(ids(out)).toEqual(['live', 'resident', 'evicted']);
+    expect(out[2]).toMatchObject({
+      sessionId: 'evicted',
+      cwd: '/old',
+      status: 'ended',
+      sparse: true,
+    });
+    const [open, have] = fillEvictedOpenRows.mock.calls.at(-1)!;
+    expect([...open].sort()).toEqual(['evicted', 'live', 'resident']);
+    expect([...have].sort()).toEqual(['live', 'resident']);
+
+    fillEvictedOpenRows.mockClear();
+    openSessionIds.mockResolvedValueOnce(new Set(['evicted']));
+    listDaemonSessionRows.mockResolvedValueOnce(null);
+    await call('sessions.snapshots');
+    expect(fillEvictedOpenRows).not.toHaveBeenCalled();
+  });
+
+  it('serves sessions.history and sessions.forget from the history provider', async () => {
+    listSessionHistory.mockResolvedValueOnce({
+      sessions: [{ sessionId: 'h1' }],
+      next: 'c',
+    } as never);
+    expect(await call('sessions.history', { limit: 5 })).toEqual({
+      sessions: [{ sessionId: 'h1' }],
+      next: 'c',
+    });
+    expect(listSessionHistory).toHaveBeenLastCalledWith({ limit: 5 });
+    await call('sessions.forget', { sessionId: 'h1' });
+    expect(forgetSession).toHaveBeenLastCalledWith({ sessionId: 'h1' });
   });
 
   it('drops an ended store row that is off the sidebar, and keeps it while open', async () => {
@@ -760,7 +823,12 @@ describe('sessions.snapshots — shared session roster', () => {
   it('keeps an old stopped session listed while it is in the shared open set', async () => {
     openSessionIds.mockResolvedValueOnce(new Set(['paused']));
     listDaemonSessionRows.mockResolvedValueOnce([
-      { session_id: 'paused', mode: 'stopped', updated_at: ago(30 * 24 * 3600_000), archived: true },
+      {
+        session_id: 'paused',
+        mode: 'stopped',
+        updated_at: ago(30 * 24 * 3600_000),
+        archived: true,
+      },
     ]);
     const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
     expect(ids(out)).toEqual(['paused']);
@@ -785,7 +853,12 @@ describe('sessions.snapshots — shared session roster', () => {
   it('still serves layout ghosts when the daemon cannot be read', async () => {
     getAllSnapshots.mockReturnValue([] as never);
     callHub.mockResolvedValueOnce({
-      data: { agents: [{ global: true, sessionId: 'ov' }, { lastSessionId: 'g', cwd: '/g' }] },
+      data: {
+        agents: [
+          { global: true, sessionId: 'ov' },
+          { lastSessionId: 'g', cwd: '/g' },
+        ],
+      },
     });
     const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
     expect(out).toEqual([

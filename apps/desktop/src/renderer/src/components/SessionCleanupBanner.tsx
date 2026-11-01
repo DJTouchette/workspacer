@@ -152,7 +152,12 @@ export function SessionCleanupBanner({ doc, onDocument }: Props) {
             </button>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            <SmallButton label="Hide all ended" primary disabled={busy} onClick={() => void hide()} />
+            <SmallButton
+              label="Hide all ended"
+              primary
+              disabled={busy}
+              onClick={() => void hide()}
+            />
             <SmallButton
               label="Hide ended older than a day"
               disabled={busy}

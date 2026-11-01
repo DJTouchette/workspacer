@@ -132,7 +132,8 @@ export function layoutSessionIds(layout: unknown): Set<string> {
     for (const tab of a.tabs) {
       const panes = (tab as { panes?: unknown } | null)?.panes;
       if (!Array.isArray(panes)) continue;
-      for (const pane of panes) add((pane as { attachSessionId?: unknown } | null)?.attachSessionId);
+      for (const pane of panes)
+        add((pane as { attachSessionId?: unknown } | null)?.attachSessionId);
     }
   }
   return ids;

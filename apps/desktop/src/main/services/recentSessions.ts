@@ -110,9 +110,12 @@ export async function listLiveSessionIds(): Promise<string[] | null> {
  *  "unknown". */
 export async function listDaemonSessionRows(): Promise<DaemonSessionRow[] | null> {
   try {
-    const res = await fetch(`${CLAUDEMON_API_URL}/sessions?include_archived=true&include_empty=true&state_only=true`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetch(
+      `${CLAUDEMON_API_URL}/sessions?include_archived=true&include_empty=true&state_only=true`,
+      {
+        signal: AbortSignal.timeout(5000),
+      },
+    );
     if (!res.ok) return null;
     const rows = (await res.json()) as unknown;
     if (!Array.isArray(rows)) return null;
@@ -174,4 +177,79 @@ export async function listRecentSessions(): Promise<RecentAgentSession[]> {
   } catch {
     return [];
   }
+}
+
+/** One `GET /history` row: the permanent SQLite history claudemon keeps for
+ *  every session it ever saw (docs/session-roster.md §5). Always
+ *  `mode: "stopped"`: history carries no liveness, so callers merge live state.
+ *  `created_at`/`last_event_at`/`ended_at` are epoch SECONDS. */
+export interface HistoryDaemonRow extends DaemonSessionRow {
+  name?: string | null;
+  title?: string | null;
+  model?: string | null;
+  requested_model?: string | null;
+  created_at?: number | null;
+  last_event_at?: number | null;
+  ended_at?: number | null;
+  tool_calls?: number | null;
+  user_prompts?: number | null;
+  first_prompt?: string | null;
+  transcript_copy?: boolean;
+  history?: boolean;
+}
+
+export interface DaemonHistoryQuery {
+  cursor?: string;
+  limit?: number;
+  query?: string;
+  cwd?: string;
+}
+
+/** One page of claudemon's permanent history, newest first. Throws (with the
+ *  daemon's reason) instead of answering an empty page: "cannot read history"
+ *  and "no history" must stay distinguishable to the caller. */
+export async function fetchDaemonHistory(
+  q: DaemonHistoryQuery,
+): Promise<{ sessions: HistoryDaemonRow[]; next?: string }> {
+  const params = new URLSearchParams();
+  if (q.cursor) params.set('before', q.cursor);
+  if (q.limit !== undefined) params.set('limit', String(q.limit));
+  if (q.query) params.set('q', q.query);
+  if (q.cwd) params.set('cwd', q.cwd);
+  const qs = params.toString();
+  const res = await fetch(`${CLAUDEMON_API_URL}/history${qs ? `?${qs}` : ''}`, {
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const reason = (await res.text().catch(() => '')).trim();
+    throw new Error(`session history unavailable (${res.status}${reason ? `: ${reason}` : ''})`);
+  }
+  const page = (await res.json()) as { sessions?: unknown; next?: unknown } | null;
+  if (!page || !Array.isArray(page.sessions)) throw new Error('session history: malformed page');
+  const sessions = page.sessions.filter(
+    (r): r is HistoryDaemonRow =>
+      !!r && typeof r === 'object' && typeof (r as HistoryDaemonRow).session_id === 'string',
+  );
+  return typeof page.next === 'string' && page.next ? { sessions, next: page.next } : { sessions };
+}
+
+/** Delete one STOPPED session from claudemon's history for good (row, events
+ *  and transcript copy; never the provider's own transcript). Throws with a
+ *  user-facing reason: live (409), unknown (404) or anything else. */
+export async function forgetDaemonSession(
+  sessionId: string,
+): Promise<{ transcriptCopyRemoved: boolean }> {
+  const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${encodeURIComponent(sessionId)}/forget`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (res.status === 409)
+    throw new Error('session is live; stop it before deleting it from history');
+  if (res.status === 404) throw new Error('session not found in history');
+  if (!res.ok) {
+    const reason = (await res.text().catch(() => '')).trim();
+    throw new Error(`could not delete from history (${res.status}${reason ? `: ${reason}` : ''})`);
+  }
+  const body = (await res.json().catch(() => null)) as { transcript_copy_removed?: unknown } | null;
+  return { transcriptCopyRemoved: body?.transcript_copy_removed === true };
 }

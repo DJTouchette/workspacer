@@ -30,6 +30,8 @@ import type {
   RemoteTokenRecord,
   RemoteTokenScope,
   RecentAgentSession,
+  SessionHistoryPage,
+  SessionHistoryQuery,
   InAppNotification,
   HubJob,
   HubJobView,
@@ -444,6 +446,16 @@ export interface ElectronAPI extends RoutingAPI {
   /** All sessions the daemon still holds (all providers, incl. archived),
    *  enriched with names from the local history DB. Newest first. */
   listRecentAgentSessions: () => Promise<RecentAgentSession[]>;
+  /** Permanent history, one page at a time (docs/session-roster.md §5).
+   *  Optional: an older hub has no `sessions.history`; the History pane then
+   *  falls back to `listRecentAgentSessions`. Rejects when history cannot be
+   *  read, never answers an empty page for that. */
+  listSessionHistory?: (query?: SessionHistoryQuery) => Promise<SessionHistoryPage>;
+  /** Delete a stopped session from History for good (the only way anything
+   *  leaves it). Rejects for a live session. */
+  forgetSession?: (
+    sessionId: string,
+  ) => Promise<{ ok: true; sessionId: string; transcriptCopyRemoved: boolean }>;
   /** Session ids the daemon considers alive (mode != 'stopped'). Null when the
    *  daemon is unreachable — callers should retry, not treat it as "none". */
   listLiveClaudeSessionIds: () => Promise<string[] | null>;

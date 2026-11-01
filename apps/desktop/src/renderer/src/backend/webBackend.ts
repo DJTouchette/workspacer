@@ -37,6 +37,7 @@ import type {
   ClaudeProfile,
   InAppNotification,
   RecentAgentSession,
+  SessionHistoryPage,
 } from '../../../main/shared/ipcTypes';
 import { installMachinePower } from './machinePower';
 import { createWebPluginAdmin } from './webPluginAdmin';
@@ -1259,6 +1260,15 @@ export function createWebBackend(
     // someone's history rather than an admission that we cannot see it.
     // useRecentSessions turns the rejection into an honest empty state.
     listRecentAgentSessions: () => client.call<RecentAgentSession[]>('sessions.recent', {}),
+    // Permanent history (docs/session-roster.md §5): the same bus methods the
+    // desktop provider and an engine hub both serve.
+    listSessionHistory: (query) =>
+      client.call<SessionHistoryPage>('sessions.history', { ...(query ?? {}) }),
+    forgetSession: (sessionId) =>
+      client.call<{ ok: true; sessionId: string; transcriptCopyRemoved: boolean }>(
+        'sessions.forget',
+        { sessionId },
+      ),
     // Null = "can't tell" — the web client never reconciles/auto-respawns
     // agents against the daemon; the desktop owns that.
     listLiveClaudeSessionIds: () => Promise.resolve(null),

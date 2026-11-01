@@ -16,6 +16,8 @@ import type {
   RemoteTokenRecord,
   RemoteTokenScope,
   RecentAgentSession,
+  SessionHistoryPage,
+  SessionHistoryQuery,
 } from './shared/ipcTypes';
 import type { BoardData, BoardLane, BoardMoveRequest } from './services/briefBoardService';
 import type {
@@ -463,6 +465,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   listRecentAgentSessions: (): Promise<RecentAgentSession[]> =>
     ipcRenderer.invoke(IPC.CLAUDE_SESSIONS_RECENT),
+  // Permanent history (docs/session-roster.md §5).
+  listSessionHistory: (query?: SessionHistoryQuery): Promise<SessionHistoryPage> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SESSIONS_HISTORY, query ?? {}),
+  forgetSession: (
+    sessionId: string,
+  ): Promise<{ ok: true; sessionId: string; transcriptCopyRemoved: boolean }> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SESSIONS_FORGET, sessionId),
 
   listLiveClaudeSessionIds: (): Promise<string[] | null> =>
     ipcRenderer.invoke(IPC.CLAUDE_SESSIONS_LIVE_IDS),

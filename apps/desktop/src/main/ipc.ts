@@ -65,6 +65,7 @@ import { profileAccount, profileSignedIn, type ProfileAccount } from './lib/prof
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { instrumentIpcHandlers, startEventLoopLagMonitor } from './lib/stallDiagnostics';
 import { listRecentSessions, listLiveSessionIds } from './services/recentSessions';
+import { forgetSession, listSessionHistory } from './services/sessionHistoryProvider';
 import { readTextFile, writeTextFile, listDir } from './services/fileService';
 import { checkPreviewFileUrl } from './lib/webviewGuard';
 import { webviewFileRoots } from './lib/webviewRoots';
@@ -561,19 +562,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return callHub('sessionArchive.set', { sessionId, archived });
   });
   // Bulk archive/restore: one version bump (the cleanup prompt's Undo).
-  ipcMain.handle(
-    IPC.SESSION_ARCHIVE_SET_MANY,
-    (_event, sessionIds: unknown, archived: unknown) => {
-      if (
-        !Array.isArray(sessionIds) ||
-        sessionIds.length > 1000 ||
-        !sessionIds.every((id) => typeof id === 'string') ||
-        typeof archived !== 'boolean'
-      )
-        throw new Error('sessionArchive.setMany requires up to 1000 session ids and a boolean');
-      return callHub('sessionArchive.setMany', { sessionIds, archived });
-    },
-  );
+  ipcMain.handle(IPC.SESSION_ARCHIVE_SET_MANY, (_event, sessionIds: unknown, archived: unknown) => {
+    if (
+      !Array.isArray(sessionIds) ||
+      sessionIds.length > 1000 ||
+      !sessionIds.every((id) => typeof id === 'string') ||
+      typeof archived !== 'boolean'
+    )
+      throw new Error('sessionArchive.setMany requires up to 1000 session ids and a boolean');
+    return callHub('sessionArchive.setMany', { sessionIds, archived });
+  });
   // Shared sidebar (`sessionOpen`, docs/session-roster.md): the hub maintains
   // it; the renderer reads it for Paused/Ended labels and the cleanup prompt.
   // Cleanup hides (archives) ended sessions; it is never a lifecycle action.
@@ -1711,6 +1709,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   );
 
   ipcMain.handle(IPC.CLAUDE_SESSIONS_RECENT, () => listRecentSessions());
+  // Permanent history (docs/session-roster.md §5). The same functions answer
+  // the bus methods, so Electron and /app read identical pages.
+  ipcMain.handle(IPC.CLAUDE_SESSIONS_HISTORY, (_event, query: unknown) =>
+    listSessionHistory(query),
+  );
+  ipcMain.handle(IPC.CLAUDE_SESSIONS_FORGET, (_event, sessionId: unknown) =>
+    forgetSession({ sessionId }),
+  );
   ipcMain.handle(IPC.CLAUDE_SESSIONS_LIVE_IDS, () => listLiveSessionIds());
 
   ipcMain.handle(IPC.CLAUDE_PROFILES_LIST, () => claudeProfiles.getProfiles());

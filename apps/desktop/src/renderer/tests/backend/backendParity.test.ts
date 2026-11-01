@@ -149,6 +149,10 @@ const BUS_BACKED = [
   'getClaudeSession',
   'getAllClaudeSessions',
   'listRecentAgentSessions',
+  // Permanent history (docs/session-roster.md §5): sessions.history /
+  // sessions.forget, served by desktop main or an engine hub alike.
+  'listSessionHistory',
+  'forgetSession',
   'onClaudeSessionUpdate',
   // Library
   'libraryList',

@@ -32,7 +32,9 @@ const doc = (cleanup?: Partial<NonNullable<SessionOpenDoc['cleanup']>>): Session
 beforeEach(() => {
   for (const k of KEYS) saved[k] = api[k];
   api.sessionOpenCleanup = vi.fn().mockResolvedValue({ hidden: ['a', 'b', 'c'] });
-  api.sessionOpenSnoozeCleanup = vi.fn().mockResolvedValue({ ...doc({ suggested: false }), version: 4 });
+  api.sessionOpenSnoozeCleanup = vi
+    .fn()
+    .mockResolvedValue({ ...doc({ suggested: false }), version: 4 });
   api.sessionArchiveSetMany = vi.fn().mockResolvedValue({ version: 9, archived: {} });
 });
 afterEach(() => {
