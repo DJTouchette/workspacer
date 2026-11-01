@@ -166,12 +166,34 @@ seen, including hidden (archived) ones, which are labelled as such.
   (id, cwd, provider, transport, model, label, transcript path, first and last
   event) is permanent. In-memory eviction after 7 days stays: history is read
   from SQLite, not memory.
-- **Paged history query.** claudemon `GET /history?before=<cursor>&limit=<n>&q=<text>&cwd=<path>`
-  reads from SQLite, newest first, with an opaque cursor. The hub's
-  `sessions.history {cursor?, limit?, query?, cwd?}` → `{sessions:[…], next?}`
-  enriches each row with labels/titles the way `sessions.recent` does and adds
-  `archived` (shared archive) and `onSidebar`. `sessions.recent` keeps its
-  shape and is served from the first page.
+- **Paged history query.** claudemon serves
+  `GET /history?before=<cursor>&limit=<n>&q=<text>&cwd=<path>` →
+  `{sessions:[row…], next?}` from SQLite, newest first (limit 1–200, default
+  50; cursor `"<last_event_at>:<id>"`). `GET /sessions/{id}` answers an id
+  evicted from memory with its history row (`mode:"stopped"`, `history:true`).
+  Both session-list providers expose it on the bus, and the hub registers it
+  like `sessions.recent`:
+  ```
+  sessions.history { cursor?: string, limit?: number, query?: string, cwd?: string }
+    -> { sessions: [HistoryRow], next?: string }
+  HistoryRow = the sessions.recent row
+    { sessionId, provider, cwd, mode, transport, archived, updatedAt, startedAt, name, title, model }
+    plus { hidden: bool        // in the shared archive (user Hide)
+           onSidebar: bool     // in sessionOpen.open
+           endedAt?: ms, firstPrompt?: string, userPrompts?: number, toolCalls?: number,
+           transcriptCopy: bool }
+  ```
+  `name` uses the same precedence as `sessions.recent`: launch label, then
+  cwd rename, then auto title. `archived` keeps its legacy meaning
+  (claudemon's 7-day flag); `hidden` is the user's Hide. With an engine, the
+  hub's `live_controls` serves both methods. When desktop main is the session
+  provider (external claudemon), desktop main serves them from the same
+  claudemon routes. `sessions.recent` keeps its shape and is served from the
+  first page.
+- **Sidebar ids idle more than 7 days.** The roster fills an `open` id with no
+  in-memory row from `GET /sessions/{id}` (cached, refreshed on
+  `sessionOpen.changed`), so sidebar sessions never vanish because claudemon
+  evicted them from memory.
 - **Transcript copies.** claudemon copies each session's provider transcript
   into `<data>/transcripts/<provider>/<sessionId>.<ext>` when the session stops
   and at least every few minutes while it is live (only if the file changed),
@@ -179,8 +201,11 @@ seen, including hidden (archived) ones, which are labelled as such.
   file is missing, claudemon restores the copy to the original path. History
   conversation reads fall back to the copy. Copies are deleted only by an
   explicit delete from History.
-- **Delete from History** (`sessions.forget {sessionId}`) removes the row,
-  events and transcript copy. It is the only way anything leaves History.
+- **Delete from History**: `sessions.forget {sessionId}` → claudemon
+  `POST /sessions/{id}/forget` (409 for a live session). It removes the row,
+  events and transcript copy, then drops the id from `sessionOpen` and
+  `sessionArchive`. It is the only way anything leaves History. Clients ask
+  for confirmation first.
 
 ### 6. "Too many sessions": hub-owned cleanup prompt
 
