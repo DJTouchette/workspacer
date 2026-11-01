@@ -2,6 +2,7 @@ pub mod api;
 mod codex_extras_api;
 pub mod embedded;
 pub mod heartbeat;
+mod history;
 pub mod hook;
 pub mod init;
 pub mod mcp_ask;
@@ -173,9 +174,12 @@ async fn run_controlled(
     // Persistence runs out-of-band: subscribe to the raw-hook broadcast and
     // write each event to SQLite without blocking the hook handler's response.
     spawn_persistence_task(db.clone(), store.clone(), store.subscribe_hooks());
+    // History for every provider: hook persistence above only ever saw Claude
+    // hooks. Rows from the session-update stream, plus transcript copies.
+    history::spawn(store.clone(), db.clone());
 
-    // Periodic durability sweep: bound the in-memory session map and GC old
-    // SQLite rows so neither grows without limit over long uptime. The FIRST
+    // Periodic durability sweep: bound the in-memory session map and trim old
+    // event rows (session rows are permanent history). The FIRST
     // sweep runs immediately inside this task (off the boot path, on a blocking
     // thread) so a long-lived DB is still trimmed on a daemon that rarely stays
     // up — WITHOUT the synchronous startup prune that used to run here and could
@@ -529,9 +533,10 @@ fn confine_to_job() {
 }
 
 /// Periodic durability sweep. Evicts archived (Stopped + stale) sessions from
-/// the in-memory map and prunes the matching SQLite rows, on a slow interval.
-/// Both operations are conservative and resume-safe (see
-/// `SessionStore::evict_stale_stopped` and `Db::prune_archived`).
+/// the in-memory map and trims bulky old event rows, on a slow interval.
+/// Session rows are never deleted here: History keeps every session
+/// (`store::history`). See `SessionStore::evict_stale_stopped` and
+/// `Db::trim_archived_events`.
 fn spawn_maintenance_task(store: SessionStore, db: Db) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(MAINTENANCE_INTERVAL);
@@ -547,12 +552,12 @@ fn spawn_maintenance_task(store: SessionStore, db: Db) {
             }
             let db_inner = db.clone();
             match tokio::task::spawn_blocking(move || {
-                db_inner.prune_archived(SESSION_HYDRATE_LIMIT)
+                db_inner.trim_archived_events(SESSION_HYDRATE_LIMIT)
             })
             .await
             {
                 Ok(Ok(n)) if n > 0 => {
-                    tracing::info!(pruned = n, "pruned archived sessions from db")
+                    tracing::info!(trimmed = n, "trimmed archived session events from db")
                 }
                 Ok(Ok(_)) => {}
                 Ok(Err(err)) => tracing::warn!(?err, "db retention prune failed"),

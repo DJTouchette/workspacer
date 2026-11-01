@@ -81,6 +81,19 @@
     },
     {
       "server": "claudemon-api",
+      "pattern": "/history",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "get_history"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "pages permanent session history from SQLite — the same per-session metadata (ids, cwd, provider, model, transcript path, first prompt) the view-tier fleet and recent listings already disclose"
+    },
+    {
+      "server": "claudemon-api",
       "pattern": "/hooks/stream",
       "file": "services/claudemon/src/daemon/api.rs",
       "verbs": {
@@ -241,6 +254,19 @@
       "reason": "records a decision on a parked prompt — the same approval surface as /approve, arriving through the decision-record path rather than the yes/no one",
       "twin": "claude.approve",
       "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/forget",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "forget_session"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "deletes a STOPPED session from history: its row, events and the daemon's transcript copy (409 for a live session; the provider's own transcript is untouched). Destructive and irreversible, so it is reachable only from loopback, like every other daemon mutation"
     },
     {
       "server": "claudemon-api",

@@ -324,6 +324,9 @@ pub async fn handle(
         context_window_for_spawn(payload.context_window, prior_context_window);
     set_context_window_in_argv(&mut payload.argv, input_provider, effective_context_window);
     if is_claude_argv(&payload.argv, payload.rollout_provider.as_deref()) {
+        if let Some(source) = resume_from_argv(&payload.argv) {
+            restore_history_transcript(&db, &source).await;
+        }
         attach_launch_hooks(&mut payload).await;
     }
     match store.engines.start_pty(
@@ -712,6 +715,39 @@ pub struct SpawnManagedPayload {
     pub first_message: Option<String>,
 }
 
+/// Put a session's history transcript copy back at the provider's path when
+/// the provider has deleted its own (see `store::history::restore_before_resume`).
+/// Best-effort: a failed restore leaves the resume to fail or start fresh
+/// exactly as it would have without history.
+async fn restore_history_transcript(db: &crate::store::Db, session_id: &str) {
+    let (db, id) = (db.clone(), session_id.to_owned());
+    match tokio::task::spawn_blocking(move || {
+        crate::store::history::restore_before_resume(&db, &id)
+    })
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => {
+            tracing::warn!(?err, session = %session_id, "restoring history transcript failed")
+        }
+        Err(err) => tracing::warn!(?err, "history transcript restore task panicked"),
+    }
+}
+
+/// The session a Claude PTY argv resumes: `--resume <id>` or `--resume=<id>`.
+fn resume_from_argv(argv: &[String]) -> Option<String> {
+    let mut args = argv.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--resume" || arg == "-r" {
+            return args.next().filter(|id| !id.starts_with('-')).cloned();
+        }
+        if let Some(id) = arg.strip_prefix("--resume=") {
+            return Some(id.to_owned());
+        }
+    }
+    None
+}
+
 pub async fn handle_managed(
     State(store): State<SessionStore>,
     State(conv): State<ConversationStore>,
@@ -773,6 +809,11 @@ pub async fn handle_managed(
         .clone()
         .or_else(|| payload.resume.clone().filter(|_| !payload.fork))
         .unwrap_or_else(|| Uuid::new_v4().to_string());
+    // A resume or fork reads the source's provider transcript. If the provider
+    // has since deleted it, put the history copy back first.
+    if let Some(source) = payload.resume.as_deref() {
+        restore_history_transcript(&db, source).await;
+    }
     if payload.fork {
         if payload.resume.as_deref() == Some(session_id.as_str()) {
             return (StatusCode::BAD_REQUEST, "a fork needs its own session id").into_response();
@@ -1497,6 +1538,8 @@ mod tests {
             requested_selection: None,
             transcript_path: Some(path),
             config_root: None,
+            provider: None,
+            transport: None,
         }]);
         let plan = resolve_fork(&store, &conv, &fork_payload("claude", Some("u2")))
             .await
@@ -1910,5 +1953,87 @@ mod tests {
         .await
         .into_response();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[cfg(test)]
+mod history_restore_tests {
+    use super::*;
+    use crate::session::conversation::tests::{transcript_fixture, two_turn_rows, Scratch};
+
+    #[test]
+    fn resume_ids_are_read_from_claude_argv() {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            resume_from_argv(&argv(&["claude", "--resume", "abc"])).as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            resume_from_argv(&argv(&["claude", "--resume=abc"])).as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            resume_from_argv(&argv(&["claude", "-r", "abc"])).as_deref(),
+            Some("abc")
+        );
+        assert_eq!(resume_from_argv(&argv(&["claude", "--resume"])), None);
+        assert_eq!(
+            resume_from_argv(&argv(&["claude", "--resume", "--model"])),
+            None
+        );
+        assert_eq!(
+            resume_from_argv(&argv(&["claude", "--session-id", "x"])),
+            None
+        );
+    }
+
+    /// The provider deleted the transcript; a PTY resume puts the history copy
+    /// back before the child would read it. The child itself cannot start here
+    /// (no such binary), which is after the restore.
+    #[tokio::test]
+    async fn a_pty_resume_restores_a_deleted_transcript_first() {
+        let db = crate::store::Db::open(crate::testtmp::db_path("resume-restore")).unwrap();
+        let (_dir, transcript) = transcript_fixture(&two_turn_rows());
+        let mut s = crate::session::SessionState::new("rid".into(), Some("/work".into()));
+        s.mode = crate::session::SessionMode::Stopped;
+        s.transcript_path = Some(transcript.clone());
+        db.record_history(&[(crate::store::history::HistoryFacts::from_state(&s), true)])
+            .unwrap();
+        crate::store::history::copy_transcript(
+            &db,
+            "rid",
+            "claude",
+            std::path::Path::new(&transcript),
+        )
+        .unwrap()
+        .unwrap();
+        let before = std::fs::read(&transcript).unwrap();
+        std::fs::remove_file(&transcript).unwrap();
+
+        let cwd = Scratch::new();
+        let missing = cwd.0.join("no-such-bin").join("claude");
+        let state = crate::daemon::api::ApiState {
+            store: crate::session::SessionStore::new(),
+            db: db.clone(),
+            conv: crate::session::ConversationStore::new(),
+        };
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/sessions/spawn")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                serde_json::json!({
+                    "argv": [missing.to_string_lossy(), "--resume", "rid"],
+                    "cwd": cwd.0.to_string_lossy(),
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        use tower::ServiceExt;
+        let _ = crate::daemon::api::router(state)
+            .oneshot(req)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&transcript).unwrap(), before);
     }
 }

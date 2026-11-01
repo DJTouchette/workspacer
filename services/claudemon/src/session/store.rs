@@ -233,6 +233,17 @@ pub struct StatusLineUpdate {
     pub status_line: StatusLine,
 }
 
+/// What [`SessionStore::forget_stopped`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Forget {
+    /// The stopped row was resident and is gone.
+    Removed,
+    /// Nothing was resident under that id.
+    NotResident,
+    /// The session is live; nothing was removed.
+    Live,
+}
+
 /// Handle the daemon keeps for each connected wrapper. Sending into `tx`
 /// reaches the wrapper's WebSocket and ultimately the child's stdin / signals.
 #[derive(Clone)]
@@ -1210,6 +1221,15 @@ impl SessionStore {
                 // `SessionState::config_root`). `None` here is honest — a row
                 // written before v8, or a session the daemon did not spawn.
                 st.config_root = s.config_root.clone();
+                // Managed and stream sessions have history rows too now
+                // (`store::history`). Without these a restarted daemon would
+                // rebuild a Codex session as a Claude PTY row.
+                if let Some(provider) = &s.provider {
+                    st.provider = provider.clone();
+                }
+                if s.transport.as_deref() == Some("stream") {
+                    st.transport = Transport::Stream;
+                }
                 if let Ok(t) = OffsetDateTime::from_unix_timestamp(s.created_at) {
                     st.started_at = t;
                 }
@@ -3182,6 +3202,38 @@ impl SessionStore {
         self.aliases.retain(|_, canonical| canonical != session_id);
     }
 
+    /// Remove a STOPPED session's in-memory row for a delete from History.
+    /// A live session (anything but Stopped) is never forgotten. Publishes
+    /// `SessionRemoved`, like `drop_pending_spawn`, so observers reseed instead
+    /// of keeping the stopped snapshot.
+    pub fn forget_stopped(&self, session_id: &str) -> Forget {
+        let removed = self
+            .states
+            .remove_if(session_id, |_, state| state.mode == SessionMode::Stopped);
+        let Some((_, mut state)) = removed else {
+            return if self.states.contains_key(session_id) {
+                Forget::Live
+            } else {
+                Forget::NotResident
+            };
+        };
+        self.aliases
+            .retain(|alias, canonical| canonical != session_id && alias != session_id);
+        self.pending_messages.remove(session_id);
+        self.paste_modes.remove(session_id);
+        self.client_input_at.remove(session_id);
+        self.input_since.remove(session_id);
+        self.flush_epochs.remove(session_id);
+        self.term_sizes.remove(session_id);
+        state.updated_at = OffsetDateTime::now_utc();
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "SessionRemoved".to_string(),
+            state,
+        });
+        Forget::Removed
+    }
+
     /// Tear down everything a live spawn owns *except* the session's state row.
     ///
     /// This is what a PTY reader hitting EOF should do for a session that was
@@ -5007,6 +5059,8 @@ mod tests {
                 requested_selection: None,
                 transcript_path: None,
                 config_root: None,
+                provider: None,
+                transport: None,
             },
             crate::store::RestoredSession {
                 id: "old2".into(),
@@ -5020,6 +5074,8 @@ mod tests {
                 requested_selection: None,
                 transcript_path: None,
                 config_root: None,
+                provider: None,
+                transport: None,
             },
             crate::store::RestoredSession {
                 id: "old3".into(),
@@ -5033,6 +5089,8 @@ mod tests {
                 requested_selection: None,
                 transcript_path: None,
                 config_root: None,
+                provider: None,
+                transport: None,
             },
             crate::store::RestoredSession {
                 id: "fresh".into(),
@@ -5046,6 +5104,8 @@ mod tests {
                 requested_selection: None,
                 transcript_path: None,
                 config_root: None,
+                provider: None,
+                transport: None,
             },
         ]);
         // A live session must always survive, however old the clock says it is.
@@ -5142,6 +5202,8 @@ mod tests {
             requested_selection: None,
             transcript_path: Some(path.to_str().unwrap().to_string()),
             config_root: None,
+            provider: None,
+            transport: None,
         }]);
 
         let state = store.get("restored").expect("hydrated");
@@ -5178,6 +5240,8 @@ mod tests {
                 }),
                 transcript_path: Some("/home/u/.claude/projects/-work/restored.jsonl".into()),
                 config_root: None,
+                provider: None,
+                transport: None,
             },
             // Same id as the live one — must NOT overwrite it back to stopped.
             crate::store::RestoredSession {
@@ -5192,6 +5256,8 @@ mod tests {
                 requested_selection: None,
                 transcript_path: None,
                 config_root: None,
+                provider: None,
+                transport: None,
             },
         ]);
 
@@ -5239,6 +5305,8 @@ mod tests {
             }),
             transcript_path: None,
             config_root: None,
+            provider: None,
+            transport: None,
         }]);
 
         let restored = store.get("opaque").unwrap();

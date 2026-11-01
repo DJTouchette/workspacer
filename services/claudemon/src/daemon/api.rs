@@ -276,6 +276,8 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
             get(crate::daemon::spawn::handle_provider_models),
         )
         .route("/sessions/:id", get(get_session))
+        .route("/sessions/:id/forget", post(forget_session))
+        .route("/history", get(get_history))
         .route("/sessions/:id/input", post(post_input))
         .route("/sessions/:id/message", post(post_message))
         .route("/sessions/:id/approve", post(post_approve))
@@ -556,6 +558,7 @@ struct SessionQuery {
 
 async fn get_session(
     State(store): State<SessionStore>,
+    State(db): State<Db>,
     Path(id): Path<String>,
     Query(q): Query<SessionQuery>,
 ) -> impl IntoResponse {
@@ -593,7 +596,31 @@ async fn get_session(
             }
             Json(v).into_response()
         }
-        None => (StatusCode::NOT_FOUND, "session not found").into_response(),
+        // Evicted from memory (stopped and idle past the archive window) but
+        // still in permanent history: answer with the sparse stopped row, so a
+        // sidebar that still lists the session can read it.
+        None => match history_session(&db, &id).await {
+            Some(row) => {
+                let now = time::OffsetDateTime::now_utc().unix_timestamp();
+                let archived = now.saturating_sub(row.last_event_at)
+                    > crate::session::state::ARCHIVE_AFTER_SECONDS;
+                if let Some(version) = q.summary_meta {
+                    if version != 1 {
+                        return (StatusCode::BAD_REQUEST, "unsupported summary metadata")
+                            .into_response();
+                    }
+                    return Json(json!({"projection":"agent-status-access/v1",
+                        "session_id": row.id, "mode": "stopped", "archived": archived}))
+                    .into_response();
+                }
+                let mut v = row.to_json();
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("archived".into(), Value::Bool(archived));
+                }
+                Json(v).into_response()
+            }
+            None => (StatusCode::NOT_FOUND, "session not found").into_response(),
+        },
     }
 }
 
@@ -1755,6 +1782,7 @@ struct TranscriptQuery {
 
 async fn get_transcript(
     State(store): State<SessionStore>,
+    State(db): State<Db>,
     Path(id): Path<String>,
     Query(q): Query<TranscriptQuery>,
 ) -> impl IntoResponse {
@@ -1768,7 +1796,27 @@ async fn get_transcript(
         // straight from disk (read_for_session confines the read to the
         // projects root); without one, unknown stays 404.
         let Some(cwd) = q.cwd.filter(|c| !c.is_empty()) else {
-            return (StatusCode::NOT_FOUND, "session not found").into_response();
+            // No hint: permanent history may still know the session and hold
+            // its transcript (the original, or the daemon's copy).
+            let owned = id.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::store::history::readable_transcript(&db, &owned)
+                    .filter(|(_, row)| row.provider() == "claude")
+                    .map(|(path, _)| transcript::read_at(&path.to_string_lossy()))
+            })
+            .await;
+            return match result {
+                Ok(Some(Ok(t))) => Json(t).into_response(),
+                Ok(Some(Err(err))) => {
+                    tracing::warn!(?err, "history transcript read failed");
+                    (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
+                }
+                Ok(None) => (StatusCode::NOT_FOUND, "session not found").into_response(),
+                Err(err) => {
+                    tracing::warn!(?err, "history transcript read task panicked");
+                    (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
+                }
+            };
         };
         let result =
             tokio::task::spawn_blocking(move || transcript::read_for_session(&cwd, &id)).await;
@@ -1817,6 +1865,10 @@ async fn get_transcript(
                 return transcript::read_at(tp);
             }
         }
+        // The provider deleted it: read the daemon's copy before guessing by cwd.
+        if let Some((path, _)) = crate::store::history::readable_transcript(&db, &id) {
+            return transcript::read_at(&path.to_string_lossy());
+        }
         match cwd {
             Some(cwd) => transcript::read_for_session(&cwd, &id),
             None => Ok(transcript::Transcript::default()),
@@ -1832,6 +1884,105 @@ async fn get_transcript(
         Err(err) => {
             tracing::warn!(?err, "transcript read task panicked");
             (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
+        }
+    }
+}
+
+/// A session's permanent history row, read off the async runtime.
+async fn history_session(db: &Db, id: &str) -> Option<crate::store::history::HistoryRow> {
+    if !valid_session_id(id) {
+        return None;
+    }
+    let (db, id) = (db.clone(), id.to_owned());
+    tokio::task::spawn_blocking(move || db.history_row(&id))
+        .await
+        .ok()?
+        .ok()?
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryParams {
+    /// Opaque cursor from a previous page's `next`.
+    before: Option<String>,
+    /// Page size; default 50, capped at 200.
+    limit: Option<usize>,
+    /// Case-insensitive text matched against id, cwd, name, title and first
+    /// prompt.
+    q: Option<String>,
+    /// Only sessions whose cwd is exactly this.
+    cwd: Option<String>,
+}
+
+/// `GET /history`: every session ever recorded, newest first, from SQLite.
+/// `{sessions: [row…], next?}`. Rows carry no liveness (`mode` is always
+/// `"stopped"`); callers overlay live state.
+async fn get_history(State(db): State<Db>, Query(p): Query<HistoryParams>) -> impl IntoResponse {
+    let query = crate::store::history::HistoryQuery {
+        before: p.before,
+        limit: p.limit,
+        q: p.q,
+        cwd: p.cwd,
+    };
+    match tokio::task::spawn_blocking(move || db.history_page(&query)).await {
+        Ok(Ok(page)) => Json(page).into_response(),
+        Ok(Err(err)) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+        Err(err) => {
+            tracing::warn!(?err, "history read task panicked");
+            (StatusCode::INTERNAL_SERVER_ERROR, "history read failed").into_response()
+        }
+    }
+}
+
+/// `POST /sessions/:id/forget`: delete a stopped session from History for good: its
+/// in-memory row, its SQLite row and events, and its transcript copy. The
+/// provider's own transcript is never touched. 409 for a live session, 404
+/// when nothing is known about the id.
+async fn forget_session(
+    State(store): State<SessionStore>,
+    State(db): State<Db>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    if !valid_session_id(&id) {
+        return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
+    }
+    let resident = match store.forget_stopped(&id) {
+        crate::session::store::Forget::Removed => true,
+        crate::session::store::Forget::NotResident => false,
+        crate::session::store::Forget::Live => {
+            return (
+                StatusCode::CONFLICT,
+                "session is live; stop it before deleting it from history",
+            )
+                .into_response()
+        }
+    };
+    let owned = id.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(bool, bool)> {
+        let Some(row) = db.forget_history(&owned)? else {
+            return Ok((false, false));
+        };
+        let removed = row
+            .copy
+            .as_ref()
+            .is_some_and(|record| crate::store::history::remove_copy(&db, record));
+        Ok((true, removed))
+    })
+    .await;
+    match result {
+        Ok(Ok((had_row, copy_removed))) if had_row || resident => Json(json!({
+            "ok": true,
+            "session_id": id,
+            "transcript_copy_removed": copy_removed,
+        }))
+        .into_response(),
+        Ok(Ok(_)) => (StatusCode::NOT_FOUND, "session not found").into_response(),
+        Ok(Err(err)) => {
+            tracing::warn!(?err, session = %id, "deleting session history failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "history delete failed").into_response()
+        }
+        Err(err) => {
+            tracing::warn!(?err, "history delete task panicked");
+            (StatusCode::INTERNAL_SERVER_ERROR, "history delete failed").into_response()
         }
     }
 }
@@ -1860,6 +2011,7 @@ struct ConversationQuery {
 async fn retained_conversation(
     store: &SessionStore,
     conv: &ConversationStore,
+    db: &Db,
     id: &str,
 ) -> ConversationStore {
     if !conv.has_conversation(id) {
@@ -1893,6 +2045,37 @@ async fn retained_conversation(
             }
         }
     }
+    if !conv.has_conversation(id) && store.get(id).is_none_or(|s| s.mode == SessionMode::Stopped) {
+        // History: an evicted session, or one whose provider transcript is
+        // gone, reads from its original when present and otherwise its copy.
+        let (db, owned) = (db.clone(), id.to_owned());
+        let found = tokio::task::spawn_blocking(move || {
+            crate::store::history::readable_transcript(&db, &owned)
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some((path, row)) = found {
+            let items = match row.provider() {
+                "codex" => tokio::task::spawn_blocking(move || {
+                    crate::providers::codex_rollout::replay_conversation(&path)
+                })
+                .await
+                .unwrap_or_default(),
+                "claude" => {
+                    crate::session::conversation::replay_transcript(&path.to_string_lossy())
+                        .await
+                        .unwrap_or_default()
+                }
+                _ => Vec::new(),
+            };
+            if !items.is_empty() {
+                let replay = ConversationStore::new();
+                replay.push(id, items);
+                return replay;
+            }
+        }
+    }
     conv.clone()
 }
 
@@ -1903,6 +2086,7 @@ async fn retained_conversation(
 async fn get_conversation(
     State(store): State<SessionStore>,
     State(conv): State<ConversationStore>,
+    State(db): State<Db>,
     Path(id): Path<String>,
     Query(q): Query<ConversationQuery>,
 ) -> impl IntoResponse {
@@ -1916,7 +2100,7 @@ async fn get_conversation(
         return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
     }
     // Replay before either projection, without first cloning the full log.
-    let source = retained_conversation(&store, &conv, &id).await;
+    let source = retained_conversation(&store, &conv, &db, &id).await;
     let source = &source;
     if let Some(version) = q.summary_source {
         if version != 1 {
@@ -2340,6 +2524,7 @@ struct HandoffPayload {
 async fn post_handoff(
     State(store): State<SessionStore>,
     State(conv): State<ConversationStore>,
+    State(db): State<Db>,
     Path(id): Path<String>,
     Json(payload): Json<HandoffPayload>,
 ) -> impl IntoResponse {
@@ -2349,7 +2534,7 @@ async fn post_handoff(
         return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
     }
     // A paused/stopped session hands off from what its transcript retains.
-    let source = retained_conversation(&store, &conv, &id).await;
+    let source = retained_conversation(&store, &conv, &db, &id).await;
     let (_, items) = source.snapshot(&id).unwrap_or((0, Vec::new()));
     if items.is_empty() {
         return (
@@ -3378,6 +3563,8 @@ mod tests {
             requested_selection: None,
             transcript_path: Some(path),
             config_root: None,
+            provider: None,
+            transport: None,
         }]);
         let (status, body) = request(
             state.clone(),
@@ -6378,5 +6565,145 @@ mod tests {
             json!([{ "id": "h", "name": "Stop", "event": "Stop", "started_at": 7 }])
         );
         assert!(body.get("mcp_servers").is_none());
+    }
+}
+
+#[cfg(test)]
+mod history_api_tests {
+    use super::*;
+    use crate::session::conversation::tests::{transcript_fixture, two_turn_rows};
+    use crate::session::PendingWrite;
+    use axum::body::Body;
+    use tower::ServiceExt;
+
+    fn state() -> ApiState {
+        ApiState {
+            store: SessionStore::new(),
+            db: Db::open(crate::testtmp::db_path("history-api")).unwrap(),
+            conv: ConversationStore::new(),
+        }
+    }
+
+    async fn call(state: &ApiState, method: &str, uri: &str) -> (StatusCode, Value) {
+        let req = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(if method == "POST" {
+                Body::from("{}")
+            } else {
+                Body::empty()
+            })
+            .unwrap();
+        let resp = router(state.clone()).oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
+        (status, value)
+    }
+
+    /// A stopped Claude session with a history row, a transcript and a copy,
+    /// whose in-memory row is gone (evicted).
+    fn evicted_claude(state: &ApiState, id: &str, transcript: &str) {
+        let mut s = SessionState::new(id.into(), Some("/work".into()));
+        s.mode = SessionMode::Stopped;
+        s.transcript_path = Some(transcript.into());
+        let facts = crate::store::history::HistoryFacts::from_state(&s);
+        state.db.record_history(&[(facts, true)]).unwrap();
+        crate::store::history::copy_transcript(
+            &state.db,
+            id,
+            "claude",
+            std::path::Path::new(transcript),
+        )
+        .unwrap()
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn history_pages_and_evicted_sessions_stay_readable() {
+        let state = state();
+        let (_dir, transcript) = transcript_fixture(&two_turn_rows());
+        evicted_claude(&state, "old", &transcript);
+        state.store.register_managed("live", "/w", "codex");
+        let facts =
+            crate::store::history::HistoryFacts::from_state(&state.store.get("live").unwrap());
+        state.db.record_history(&[(facts, true)]).unwrap();
+
+        let (status, page) = call(&state, "GET", "/history?limit=1").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(page["sessions"].as_array().unwrap().len(), 1);
+        let next = page["next"].as_str().expect("a second page").to_owned();
+        let (_, second) = call(&state, "GET", &format!("/history?limit=1&before={next}")).await;
+        assert_eq!(second["sessions"].as_array().unwrap().len(), 1);
+        assert!(second.get("next").is_none());
+        let (status, _) = call(&state, "GET", "/history?before=nope").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (_, searched) = call(&state, "GET", "/history?cwd=/work").await;
+        assert_eq!(searched["sessions"][0]["session_id"], "old");
+        assert_eq!(searched["sessions"][0]["transcript_copy"], true);
+
+        // Not resident: GET /sessions/:id answers from history.
+        let (status, row) = call(&state, "GET", "/sessions/old").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(row["mode"], "stopped");
+        assert_eq!(row["provider"], "claude");
+        assert_eq!(row["history"], true);
+        let (status, meta) = call(&state, "GET", "/sessions/old?summary_meta=1").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(meta["mode"], "stopped");
+        let (status, _) = call(&state, "GET", "/sessions/never-seen").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // The provider deleted the transcript: conversation and transcript
+        // reads fall back to the daemon's copy.
+        std::fs::remove_file(&transcript).unwrap();
+        let (status, conversation) = call(&state, "GET", "/sessions/old/conversation").await;
+        assert_eq!(status, StatusCode::OK);
+        let text = conversation["items"].to_string();
+        assert!(text.contains("pick this up later"), "{conversation}");
+        let (status, read) = call(&state, "GET", "/sessions/old/transcript").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            read.to_string().contains("Noted where we left off."),
+            "{read}"
+        );
+    }
+
+    #[tokio::test]
+    async fn forget_refuses_live_sessions_and_removes_everything_for_stopped_ones() {
+        let state = state();
+        let (_dir, transcript) = transcript_fixture(&two_turn_rows());
+
+        state.store.register_managed("live", "/w", "codex");
+        let (status, _) = call(&state, "POST", "/sessions/live/forget").await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(state.store.get("live").is_some());
+
+        evicted_claude(&state, "done", &transcript);
+        // Resident too, and stopped.
+        state.store.register_managed("done", "/work", "claude");
+        state
+            .store
+            .set_managed_mode("done", SessionMode::Stopped, PendingWrite::Keep);
+        let copy = state.db.history_row("done").unwrap().unwrap().copy.unwrap();
+        let mut removed = state.store.subscribe();
+        let (status, body) = call(&state, "POST", "/sessions/done/forget").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["transcript_copy_removed"], true);
+        assert!(state.store.get("done").is_none());
+        assert!(state.db.history_row("done").unwrap().is_none());
+        assert!(!std::path::Path::new(&copy.copy).exists());
+        assert!(std::path::Path::new(&transcript).exists());
+        let update = removed.try_recv().expect("removal is published");
+        assert_eq!(update.event, "SessionRemoved");
+
+        let (status, _) = call(&state, "POST", "/sessions/done/forget").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = call(&state, "POST", "/sessions/..%2Fx/forget").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

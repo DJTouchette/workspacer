@@ -6,6 +6,7 @@
 //! survive a daemon restart — `load_recent_sessions` rehydrates the in-memory
 //! list on boot so prior agents reappear as resumable.
 
+pub mod history;
 pub mod schema;
 
 use std::path::{Path, PathBuf};
@@ -29,7 +30,8 @@ use crate::session::{
 #[derive(Clone)]
 pub struct Db {
     conn: Arc<Mutex<Connection>>,
-    #[allow(dead_code)]
+    /// The database file. Transcript copies live beside it
+    /// (`history::Db::transcript_copies_dir`).
     path: PathBuf,
 }
 
@@ -233,16 +235,19 @@ impl Db {
         let guard = self.conn.lock().expect("db mutex poisoned");
         // `user_prompt_count` is derived from the event log — the "did the user
         // actually talk to this agent" signal that lets the daemon hide
-        // spawned-but-never-used sessions from the default list. A surviving
-        // session row always keeps its events (prune deletes both together), so
-        // the count is accurate for every row this returns.
+        // spawned-but-never-used sessions from the default list. Event trimming
+        // (`trim_archived_events`) always keeps `UserPromptSubmit` rows, so the
+        // count stays accurate; the recorder's column covers sessions whose
+        // prompts never arrive as hooks.
         let mut stmt = guard.prepare(
             "SELECT s.id, s.cwd, s.tool_call_count, s.created_at, s.last_event_at,
-                    (SELECT COUNT(*) FROM events e
-                       WHERE e.session_id = s.id AND e.event_type = 'UserPromptSubmit'),
+                    MAX(COALESCE(s.user_prompt_count, 0),
+                        (SELECT COUNT(*) FROM events e
+                           WHERE e.session_id = s.id AND e.event_type = 'UserPromptSubmit')),
                     s.model, s.requested_model, s.transcript_path, s.config_root,
-                    s.requested_model_identity, s.requested_context_window
-             FROM sessions s ORDER BY s.last_event_at DESC LIMIT ?1",
+                    s.requested_model_identity, s.requested_context_window,
+                    s.provider, s.transport
+             FROM sessions s ORDER BY s.last_event_at DESC, s.id DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |r| {
             let cwd: String = r.get(1)?;
@@ -288,6 +293,8 @@ impl Db {
                 // No `filter(!is_empty)`: `Some("")` is the default account,
                 // which is a different fact from `None` (unknown).
                 config_root: r.get::<_, Option<String>>(9)?,
+                provider: r.get::<_, Option<String>>(12)?.filter(|p| !p.is_empty()),
+                transport: r.get::<_, Option<String>>(13)?.filter(|t| !t.is_empty()),
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -329,61 +336,6 @@ impl Db {
             tracing::warn!(session = %session_id, ?err, "persisting requested model selection failed");
         }
     }
-
-    /// Retention GC: delete sessions whose last event predates the 7-day archive
-    /// window, cascading to their `events` rows in the same transaction. Always
-    /// keeps the newest `keep` sessions regardless of age. Returns the count
-    /// pruned.
-    ///
-    /// Conservative by construction. Sizing `keep` at `SESSION_HYDRATE_LIMIT`
-    /// (100) matches exactly the window `load_recent_sessions` restores on the
-    /// next boot, so nothing that would ever be hydrated is deleted — and a row
-    /// older than the window would only come back *archived* (hidden) anyway.
-    /// With fewer than `keep` rows, nothing is pruned.
-    ///
-    /// "Archived" is judged purely by age here: the daemon tracks live/Stopped
-    /// mode only in the in-memory store and never stamps `state = 'stopped'` in
-    /// SQLite, so a row idle past the window is by definition not a live
-    /// session's recent activity.
-    pub fn prune_archived(&self, keep: usize) -> Result<usize> {
-        let cutoff = OffsetDateTime::now_utc().unix_timestamp()
-            - crate::session::state::ARCHIVE_AFTER_SECONDS;
-        self.prune_archived_before(keep, cutoff)
-    }
-
-    /// [`prune_archived`](Self::prune_archived) with an injected cutoff so tests
-    /// can exercise retention without back-dating rows a real week.
-    fn prune_archived_before(&self, keep: usize, cutoff: i64) -> Result<usize> {
-        let mut guard = self.conn.lock().expect("db mutex poisoned");
-        let tx = guard.transaction()?;
-        // Freeze the prune set ONCE into a temp table, then delete its events
-        // (child) and sessions (parent) from that frozen set. Re-evaluating the
-        // `ORDER BY last_event_at DESC LIMIT keep` cut once per DELETE (as this
-        // used to) can return a DIFFERENT arbitrary row among `last_event_at`
-        // ties — the events-delete and sessions-delete then disagree, a session
-        // is deleted while its events survive, and the FK (no ON DELETE CASCADE)
-        // trips with "FOREIGN KEY constraint failed". The `id` tiebreak also
-        // makes the "newest keep" cut deterministic across runs.
-        tx.execute("DROP TABLE IF EXISTS _prune_ids", [])?;
-        tx.execute(
-            "CREATE TEMP TABLE _prune_ids AS \
-             SELECT id FROM sessions \
-             WHERE last_event_at < ?1 AND id NOT IN \
-               (SELECT id FROM sessions ORDER BY last_event_at DESC, id DESC LIMIT ?2)",
-            params![cutoff, keep as i64],
-        )?;
-        tx.execute(
-            "DELETE FROM events WHERE session_id IN (SELECT id FROM _prune_ids)",
-            [],
-        )?;
-        let pruned = tx.execute(
-            "DELETE FROM sessions WHERE id IN (SELECT id FROM _prune_ids)",
-            [],
-        )?;
-        tx.execute("DROP TABLE _prune_ids", [])?;
-        tx.commit()?;
-        Ok(pruned)
-    }
 }
 
 /// A persisted session row, restored into the in-memory store on daemon boot.
@@ -419,6 +371,11 @@ pub struct RestoredSession {
     /// unknown: a row written before schema v8, or a session the daemon did
     /// not spawn. The two must not be conflated; see `schema::SCHEMA_V8`.
     pub config_root: Option<String>,
+    /// Which agent backend drove the session (`provider` column). `None` for a
+    /// hook-born row written before the column existed, which is always Claude.
+    pub provider: Option<String>,
+    /// `"pty"` or `"stream"`; `None` for rows that predate the column.
+    pub transport: Option<String>,
 }
 
 /// The facts about a session that only its SPAWN knows, carried into the
@@ -540,6 +497,20 @@ fn upsert_session_tx(tx: &Connection, event: &HookEvent, facts: SpawnFacts<'_>) 
             "UPDATE sessions SET tool_call_count = tool_call_count + 1 WHERE id = ?1",
             params![session_id],
         )?;
+    }
+    // The first thing the user asked, for History titles and search. Only the
+    // first one sticks; the transcript stays the authority for the rest.
+    if event.event == "UserPromptSubmit" {
+        if let Some(prompt) = payload
+            .get("prompt")
+            .and_then(Value::as_str)
+            .and_then(history::clip_prompt)
+        {
+            tx.execute(
+                "UPDATE sessions SET first_prompt = ?2 WHERE id = ?1 AND first_prompt IS NULL",
+                params![session_id, prompt],
+            )?;
+        }
     }
     Ok(())
 }
@@ -1958,131 +1929,144 @@ mod tests {
         std::fs::remove_file(&tmp).ok();
     }
 
-    #[test]
-    fn prune_archived_deletes_old_sessions_and_their_events() {
-        let tmp = tempfile_path();
-        let db = Db::open(&tmp).unwrap();
-        // Five old sessions (t≈1000) and three recent (t≈9000), each with an
-        // event carrying its own timestamp.
-        for i in 0..5 {
-            let mut e = ev("SessionStart", &format!("old{i}"));
-            e.timestamp = OffsetDateTime::from_unix_timestamp(1000 + i as i64).ok();
+    /// Three events per session: start, a prompt and a tool call.
+    fn seed_with_events(db: &Db, id: &str, at: i64) {
+        for (kind, offset) in [
+            ("SessionStart", 0),
+            ("UserPromptSubmit", 1),
+            ("PreToolUse", 2),
+        ] {
+            let mut e = ev(kind, id);
+            e.timestamp = OffsetDateTime::from_unix_timestamp(at + offset).ok();
+            if kind == "UserPromptSubmit" {
+                e.payload
+                    .insert("prompt".into(), json!(format!("task for {id}")));
+            }
             db.record_event(&e).unwrap();
         }
-        for i in 0..3 {
-            let mut e = ev("SessionStart", &format!("new{i}"));
-            e.timestamp = OffsetDateTime::from_unix_timestamp(9000 + i as i64).ok();
-            db.record_event(&e).unwrap();
-        }
+    }
 
-        // cutoff = 5000: all old rows predate it; keep the newest 2 overall
-        // (new2, new1). The old rows are older than cutoff AND outside the
-        // newest-2, so all five prune. Recent rows all survive (newer than cutoff).
-        let pruned = db.prune_archived_before(2, 5000).unwrap();
-        assert_eq!(pruned, 5, "all five old sessions pruned");
-
-        let conn = db.conn.lock().unwrap();
-        let sessions: i64 = conn
-            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(sessions, 3, "the three recent sessions survive");
-        let old_events: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM events WHERE session_id LIKE 'old%'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(old_events, 0, "pruned sessions' events cascaded away");
-        let new_events: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM events WHERE session_id LIKE 'new%'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(new_events, 3, "surviving sessions keep their events");
+    fn count_where(db: &Db, sql: &str) -> i64 {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row(sql, [], |r| r.get(0))
+            .unwrap()
     }
 
     #[test]
-    fn prune_archived_keep_floor_protects_old_rows_and_nothing_recent() {
+    fn retention_keeps_every_session_row_and_only_trims_non_prompt_events() {
         let tmp = tempfile_path();
         let db = Db::open(&tmp).unwrap();
         for i in 0..5 {
-            let mut e = ev("SessionStart", &format!("old{i}"));
-            e.timestamp = OffsetDateTime::from_unix_timestamp(1000 + i as i64).ok();
-            db.record_event(&e).unwrap();
+            seed_with_events(&db, &format!("old{i}"), 1000 + 10 * i);
         }
         for i in 0..3 {
-            let mut e = ev("SessionStart", &format!("new{i}"));
-            e.timestamp = OffsetDateTime::from_unix_timestamp(9000 + i as i64).ok();
-            db.record_event(&e).unwrap();
+            seed_with_events(&db, &format!("new{i}"), 9000 + 10 * i);
         }
 
-        // keep = 6, cutoff = 5000. Newest 6 by last_event_at = new2,new1,new0,
-        // old4,old3,old2 → those are protected even though old4/3/2 predate the
-        // cutoff. Only old1 and old0 are both old AND outside the newest-6.
-        let pruned = db.prune_archived_before(6, 5000).unwrap();
+        // cutoff = 5000, keep the newest 2: every old session is past the
+        // window and outside the floor, so its tool and start events go.
+        let trimmed = db.trim_archived_events_before(2, 5000).unwrap();
+        assert_eq!(trimmed, 10, "two non-prompt events from each old session");
+
         assert_eq!(
-            pruned, 2,
-            "only the two oldest rows outside the keep floor go"
+            count_where(&db, "SELECT COUNT(*) FROM sessions"),
+            8,
+            "no session row is ever deleted"
         );
-        let conn = db.conn.lock().unwrap();
-        for still in ["old2", "old3", "old4", "new0", "new1", "new2"] {
-            let n: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM sessions WHERE id = ?1",
-                    [still],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(n, 1, "{still} must be protected by the keep floor");
-        }
-        drop(conn);
-
-        // A keep larger than the row count prunes nothing.
-        assert_eq!(db.prune_archived_before(1000, 5000).unwrap(), 0);
+        assert_eq!(
+            count_where(
+                &db,
+                "SELECT COUNT(*) FROM events WHERE session_id LIKE 'old%'
+                   AND event_type = 'UserPromptSubmit'"
+            ),
+            5,
+            "prompts survive the trim"
+        );
+        assert_eq!(
+            count_where(
+                &db,
+                "SELECT COUNT(*) FROM events WHERE session_id LIKE 'old%'
+                   AND event_type <> 'UserPromptSubmit'"
+            ),
+            0
+        );
+        assert_eq!(
+            count_where(
+                &db,
+                "SELECT COUNT(*) FROM events WHERE session_id LIKE 'new%'"
+            ),
+            9,
+            "recent sessions keep every event"
+        );
+        // The prompt count, hydration's "was this used" signal, is intact.
+        let restored = db.load_recent_sessions(100).unwrap();
+        let old0 = restored.iter().find(|s| s.id == "old0").unwrap();
+        assert_eq!(old0.user_prompt_count, 1);
+        assert_eq!(old0.tool_calls, 1, "the counter column is not an event");
+        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]
-    fn prune_archived_survives_last_event_at_ties() {
-        // Regression for the Windows "FOREIGN KEY constraint failed" (SQLite
-        // 787): when many sessions share one last_event_at, the keep-boundary
-        // falls inside a tie group. The old code re-evaluated the newest-`keep`
-        // cut once per DELETE, so the events-delete and sessions-delete could
-        // pick different tied rows — deleting a session while keeping its events
-        // and tripping the FK. Freezing the prune set once must make this safe.
+    fn retention_keep_floor_protects_old_sessions_events() {
         let tmp = tempfile_path();
         let db = Db::open(&tmp).unwrap();
-        // Ten sessions ALL stamped at the same time, each with its own event.
+        for i in 0..5 {
+            seed_with_events(&db, &format!("old{i}"), 1000 + 10 * i);
+        }
+        for i in 0..3 {
+            seed_with_events(&db, &format!("new{i}"), 9000 + 10 * i);
+        }
+        // keep = 6: new2..new0 and old4..old2 are protected; old1/old0 trim.
+        assert_eq!(db.trim_archived_events_before(6, 5000).unwrap(), 4);
+        for kept in ["old2", "old3", "old4"] {
+            let n = count_where(
+                &db,
+                &format!("SELECT COUNT(*) FROM events WHERE session_id = '{kept}'"),
+            );
+            assert_eq!(n, 3, "{kept} is inside the keep floor");
+        }
+        // A floor larger than the table trims nothing.
+        assert_eq!(db.trim_archived_events_before(1000, 5000).unwrap(), 0);
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn retention_survives_last_event_at_ties() {
+        // Many sessions sharing one last_event_at put the keep boundary inside
+        // a tie group. Rows are never deleted, so no event can be orphaned.
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
         for i in 0..10 {
             let mut e = ev("SessionStart", &format!("tie{i}"));
             e.timestamp = OffsetDateTime::from_unix_timestamp(1000).ok();
             db.record_event(&e).unwrap();
         }
+        assert_eq!(db.trim_archived_events_before(3, 5000).unwrap(), 7);
+        assert_eq!(count_where(&db, "SELECT COUNT(*) FROM sessions"), 10);
+        assert_eq!(
+            count_where(
+                &db,
+                "SELECT COUNT(*) FROM events WHERE session_id NOT IN (SELECT id FROM sessions)"
+            ),
+            0
+        );
+        std::fs::remove_file(&tmp).ok();
+    }
 
-        // keep = 3 lands inside the tie group; cutoff = 5000 ages every row in.
-        // Must not error, and must leave no event orphaned.
-        let pruned = db.prune_archived_before(3, 5000).unwrap();
-        assert_eq!(pruned, 7, "ten tied rows minus the keep-3 floor");
-
-        let conn = db.conn.lock().unwrap();
-        let sessions: i64 = conn
-            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(sessions, 3, "exactly the keep floor survives");
-        let orphans: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM events \
-                 WHERE session_id NOT IN (SELECT id FROM sessions)",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(orphans, 0, "no event left pointing at a deleted session");
-        let events: i64 = conn
-            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(events, 3, "surviving sessions keep their event");
+    #[test]
+    fn the_first_prompt_is_recorded_once() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        db.record_event(&ev("SessionStart", "s")).unwrap();
+        for prompt in ["fix the login bug", "now add tests"] {
+            let mut e = ev("UserPromptSubmit", "s");
+            e.payload.insert("prompt".into(), json!(prompt));
+            db.record_event(&e).unwrap();
+        }
+        let row = db.history_row("s").unwrap().unwrap();
+        assert_eq!(row.first_prompt.as_deref(), Some("fix the login bug"));
+        std::fs::remove_file(&tmp).ok();
     }
 }

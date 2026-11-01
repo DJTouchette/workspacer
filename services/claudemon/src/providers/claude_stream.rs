@@ -6466,6 +6466,8 @@ done
             requested_selection: None,
             transcript_path: Some(path),
             config_root: None,
+            provider: None,
+            transport: None,
         }]);
         seed_resumed_history(&store, &conv, "resumed").await;
         let (seq, items) = conv.snapshot("resumed").expect("history seeded");
@@ -6624,6 +6626,8 @@ done
             requested_selection: None,
             transcript_path: Some(path),
             config_root: None,
+            provider: None,
+            transport: None,
         }]);
         let tasks = seed_resumed_history(&store, &conv, "resumed-tasks").await;
         let plan = store
