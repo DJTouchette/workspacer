@@ -750,6 +750,12 @@ impl Sessions {
             self.dismissals
                 .dismiss(id, generation.clone(), self.enrich(known));
             self.rows.write().unwrap().remove(id);
+            // Closed means gone from list_agents: it also leaves the shared
+            // sidebar, or the evicted-row fill would list it again from
+            // history. It stays in History.
+            if let Some(open) = &self.roster.open {
+                open.forget(id);
+            }
             self.confirmed.forget(id);
             if let Some(wakes) = &self.wakes {
                 wakes.forget(id);
@@ -938,7 +944,14 @@ impl Sessions {
                 self.evicted
                     .listed(&resident)
                     .into_iter()
-                    .filter(|row| super::roster::listed(row, &ctx, now)),
+                    .filter(|row| super::roster::listed(row, &ctx, now))
+                    // A closed (dismissed) session is never resurrected.
+                    .filter(|row| {
+                        row["session_id"]
+                            .as_str()
+                            .or_else(|| row["sessionId"].as_str())
+                            .is_some_and(|id| self.dismissals.allows(id, &self.generation(id)))
+                    }),
             );
             let mut rows: Vec<Value> = rows.into_iter().map(|row| self.enrich(row)).collect();
             rows.extend(self.remote_proxies.read().unwrap().values().cloned());

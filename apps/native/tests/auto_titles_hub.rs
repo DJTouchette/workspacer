@@ -132,19 +132,24 @@ async fn unnamed_native_launch_is_titled_by_the_hub_with_the_configured_model() 
             .any(|w| w == [json!("--model"), json!("gpt-5.4-mini-fixture")])
     );
 
-    // History (the hub's sessions.recent) names it the same way.
+    // History (the hub's sessions.history page, or sessions.recent on an
+    // older hub) names it the same way.
     controller
         .command(Command::Request(Request::Recent))
         .unwrap();
     until(&controller, "history row", |v| {
         v.requests.get("recent").is_some_and(|s| {
             !s.loading
-                && s.value.as_array().is_some_and(|rows| {
-                    rows.iter().any(|row| {
-                        row["sessionId"] == id.as_str()
-                            && row["name"] == "Fix the login redirect loop"
+                && s.value
+                    .get("sessions")
+                    .unwrap_or(&s.value)
+                    .as_array()
+                    .is_some_and(|rows| {
+                        rows.iter().any(|row| {
+                            row["sessionId"] == id.as_str()
+                                && row["name"] == "Fix the login redirect loop"
+                        })
                     })
-                })
         })
     })
     .await;

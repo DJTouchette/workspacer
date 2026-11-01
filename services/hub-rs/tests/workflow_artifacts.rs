@@ -105,6 +105,10 @@ async fn real_artifact_producer_emits_transitions_preserves_hook_liveness_and_ca
         .call("agents.close", json!({"sessionId":"workflow-fixture"}))
         .await
         .unwrap();
+    // Closing also takes it off the shared sidebar, so the evicted-row fill
+    // can never list it again from history.
+    let open = client.call("sessionOpen.get", json!({})).await.unwrap();
+    assert!(open["open"].get("workflow-fixture").is_none(), "{open}");
     let late = artifacts.join("subagents/workflows/wf_late");
     std::fs::create_dir_all(&late).unwrap();
     std::fs::write(late.join("agent-late.meta.json"), "{}").unwrap();
