@@ -182,6 +182,58 @@ seen, including hidden (archived) ones, which are labelled as such.
 - **Delete from History** (`sessions.forget {sessionId}`) removes the row,
   events and transcript copy. It is the only way anything leaves History.
 
+### 6. "Too many sessions": hub-owned cleanup prompt
+
+Because nothing leaves the sidebar on its own, the hub tells every client when
+the sidebar needs a cleanup. Each client renders the same prompt.
+
+- The `sessionOpen` document carries a derived block, recomputed on every
+  change and published with `sessionOpen.changed`:
+  ```
+  cleanup: { ended: <n>, threshold: <t>, suggested: <bool>, snoozedAt: <n|null> }
+  ```
+  `ended` counts sidebar sessions that are stopped, have an `ended` mark and
+  are not archived. Paused and live sessions never count.
+  `suggested = threshold > 0 && ended >= max(threshold, snoozedAt + 10)`.
+  `threshold` comes from hub config (`sessions.cleanupThreshold`, default
+  **20**, 0 disables).
+- `sessionOpen.snoozeCleanup {}` → document. It sets `snoozedAt = ended`, so
+  the prompt returns only after 10 more sessions have ended. A cleanup or a
+  manual hide that brings `ended` back under the threshold clears `snoozedAt`.
+- `sessionOpen.cleanup { olderThanMs?: number, dryRun?: bool }` →
+  `{ hidden: [ids] }` (or `{ wouldHide: [ids] }` when `dryRun` is set). It
+  hides (archives) every counted ended session whose `ended` mark is at least
+  `olderThanMs` old, or all of them when `olderThanMs` is omitted. It never
+  touches Paused or live sessions. This is one archive change: one version
+  bump and one `sessionArchive.changed`.
+- `sessionArchive.setMany { sessionIds: [..], archived: bool }` → archive
+  document. It is a bulk version of `sessionArchive.set`, with one version bump
+  and one event (cap 1,000 ids). Clients use it to **undo** a cleanup with the
+  returned ids.
+- Client UX, the same everywhere:
+  - when `cleanup.suggested` is true, show a dismissible banner/notice: "N
+    ended sessions on your sidebar".
+  - actions: **Hide all ended**, **Hide ended older than a day**, **Not now**
+    (snooze). A cleanup shows an **Undo** for a few seconds, which calls
+    `setMany archived:false` with the returned ids.
+  - the CLI (TUI) shows a one-line notice and a key binding for the same
+    actions.
+  - every hidden session stays in History.
+
+### Clients in scope
+
+Every surface renders the same roster, Paused/Ended/Starting, Hide = archive
+and the cleanup prompt:
+
+- **native:** `apps/native`
+- **web:** `/app` (the desktop renderer built for the browser, `webBackend.ts`),
+  `/m-next`, `/m` and `/remote` (`services/hub-rs/assets/web/remote.html`)
+- **desktop:** the Electron app
+- **CLI:** `apps/tui`
+
+claudemon's built-in `watch` TUI reads claudemon directly, with no hub, and
+stays a raw process view.
+
 ## Non-goals / follow-ups
 
 - No `agent.removed` topic yet. Clients still converge on removal by re-reading
