@@ -281,7 +281,7 @@ export function mount(root, ctx) {
         : query ? ['No matching sessions', 'Try a different search.']
         : filter === 'needs' ? ['Nothing needs you', 'Approvals and questions show up here, and as notifications.']
         : filter === 'working' ? ['Nothing is working', 'Agents that are mid-turn show up here.']
-        : filter === 'paused' ? ['No paused sessions', keptSupported ? 'Sessions open when the desktop closed show up here.' : 'Stopped sessions you can pick back up show up here.']
+        : filter === 'paused' ? ['No paused sessions', keptSupported ? 'Sessions still open when their app closed show up here.' : 'Stopped sessions you can pick back up show up here.']
         : ['No sessions yet', 'Start an agent with the button below.'];
       parts.push(`<div class="empty">${ic(filter === 'needs' ? 'circle-check' : 'inbox', 's20 muted')}<b>${esc(msg[0])}</b><p>${esc(msg[1])}</p></div>`);
     } else {

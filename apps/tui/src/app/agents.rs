@@ -38,15 +38,26 @@ impl App {
         // session we never saw alive is history, not fleet. (Tombstones are
         // NOT stopped — an offline hub's rows keep their last-known mode, so
         // this filter never eats them.)
-        for a in &list {
+        //
+        // A stopped LOCAL session still in the hub's shared open set
+        // (`sessionOpen`) was stopped by its app closing, not ended: it is
+        // Paused, shown whatever the toggle says, like in every other client.
+        // The open set is the local hub's, so it never marks a peer's row.
+        for a in &mut list {
             if !a.is_stopped() {
                 self.seen_live.insert(a.session_id.clone());
             }
+            a.paused = a.is_stopped()
+                && !a.is_remote()
+                && self
+                    .open_sessions
+                    .as_ref()
+                    .is_some_and(|open| open.contains(&a.session_id));
         }
         let total = list.len();
         if !self.show_all_sessions {
             let seen = &self.seen_live;
-            list.retain(|a| !a.is_stopped() || seen.contains(&a.session_id));
+            list.retain(|a| !a.is_stopped() || a.paused || seen.contains(&a.session_id));
         }
         self.hidden_count = total - list.len();
 
@@ -174,6 +185,7 @@ impl App {
         fuzzy_match(needle, &self.agent_name(a).to_lowercase())
             || fuzzy_match(needle, &a.cwd_str().to_lowercase())
             || fuzzy_match(needle, a.state())
+            || fuzzy_match(needle, a.display_state())
     }
 
     // ── daemon reactions ──────────────────────────────────────────────────

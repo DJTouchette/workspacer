@@ -948,6 +948,60 @@ async fn hides_hydrated_stopped_orphans() {
 }
 
 #[tokio::test]
+async fn stopped_sessions_in_the_hub_open_set_are_paused_and_listed() {
+    use crate::open_sessions::OpenSessions;
+    let mut app = test_app();
+    let open = |version: i64, ids: &[&str]| {
+        let ids: serde_json::Map<String, serde_json::Value> = ids
+            .iter()
+            .map(|id| ((*id).to_string(), serde_json::json!(1)))
+            .collect();
+        OpenSessions::from_document(&serde_json::json!({"version": version, "open": ids})).unwrap()
+    };
+    // Stopped when this run first saw them: one the hub still holds open
+    // (its app closed), one it does not (history).
+    app.set_agents(vec![
+        agent_cwd("paused", "/a", "stopped"),
+        agent_cwd("old", "/b", "stopped"),
+    ]);
+    assert!(app.agents.is_empty(), "no open set yet: both are history");
+
+    app.adopt_open_sessions(open(2, &["paused"]), false);
+    let ids: Vec<_> = app.agents.iter().map(|a| a.session_id.as_str()).collect();
+    assert_eq!(ids, ["paused"], "the open set lists it without the toggle");
+    assert_eq!(app.agents[0].display_state(), "paused");
+    assert_eq!(app.agents[0].state(), "stopped", "logic still sees stopped");
+    assert_eq!(app.hidden_count, 1);
+
+    // A stale or duplicate change event is ignored; a newer one lets it go.
+    app.adopt_open_sessions(open(1, &[]), true);
+    app.adopt_open_sessions(open(2, &[]), true);
+    assert_eq!(app.agents.len(), 1);
+    app.adopt_open_sessions(open(3, &[]), true);
+    assert!(app.agents.is_empty(), "let go by the hub: back to history");
+
+    // A live session is never "paused", whatever the set says.
+    app.adopt_open_sessions(open(4, &["live"]), true);
+    app.set_agents(vec![agent_cwd("live", "/c", "input")]);
+    assert_eq!(app.agents[0].display_state(), "input");
+}
+
+#[tokio::test]
+async fn the_open_set_never_marks_a_peer_row_paused() {
+    use crate::open_sessions::OpenSessions;
+    let mut app = test_app();
+    app.adopt_open_sessions(
+        OpenSessions::from_document(&serde_json::json!({"version": 1, "open": {"r": 1}})).unwrap(),
+        false,
+    );
+    let row = serde_json::json!({"sessionId": "r", "status": "ended", "cwd": "/x"});
+    let remote = crate::federation::agent_from_snapshot("peer", &row).unwrap();
+    app.remote.seed("peer", vec![remote]);
+    app.fold_fleet();
+    assert!(app.all_agents.iter().all(|a| !a.paused));
+}
+
+#[tokio::test]
 async fn sidebar_filter_narrows_and_preserves_the_full_set() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     let mut app = test_app();

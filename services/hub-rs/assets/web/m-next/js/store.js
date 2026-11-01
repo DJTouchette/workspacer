@@ -1,5 +1,5 @@
 // Everything the screens render from: live session snapshots (local and
-// federated), the shared archive, the host's kept-open set, conversations,
+// federated), the shared archive, the hub's open set, conversations,
 // usage, jobs, nodes and config. Ported from /m's data layer — the fold,
 // federation routing, peer seeds/tombstones, archive ordering and the
 // conversation polling fallback behave exactly as they did there.
@@ -49,6 +49,9 @@ export let peers = [];
 function fold(snap) {
   const prev = sessions.get(snap.sessionId);
   const next = snap.sparse && prev ? Object.assign({}, prev, snap) : snap;
+  // `starting` is present only while the hub calls the row Starting; a later
+  // sparse row without it must not inherit the stale flag through the merge.
+  if (next !== snap && !('starting' in snap)) delete next.starting;
   sessions.set(snap.sessionId, next);
 }
 export function upsert(snap) {
@@ -127,15 +130,38 @@ async function reseedPeer(name) {
   changed();
 }
 
-// ── kept-open sessions (Paused) ───────────────────────────────────────────
-// The native host remembers which sessions it had open when it closed
-// (Settings::kept_open); the hub exposes that set as `sessions.kept`. The
-// phone keeps no list of its own. A kept session the fleet list has aged out
-// is read by id, as native does.
+// ── open sessions (Paused) ────────────────────────────────────────────────
+// The hub owns one shared open set (`sessionOpen`, docs/session-roster.md):
+// sessions some client had open that have not been ended on purpose. A
+// stopped session in it reads as Paused in every client, and the hub's
+// roster already lists it, so nothing is read by id. Hubs without
+// `sessionOpen` fall back to `sessions.kept` (native's kept-open set) and the
+// by-id reads that older roster needed.
 export const kept = new Map();          // sessionId -> since (ms)
 export let keptSupported = false;
+let openDoc = null;                     // {version, open: {id: ms}}
+let openReadSeq = 0, openEventSinceRead = false;
+function applyOpen(doc, force) {
+  if (!doc || typeof doc.version !== 'number' || !doc.open || typeof doc.open !== 'object') return false;
+  if (!force && openDoc && openDoc.version >= doc.version) return false;
+  openDoc = doc;
+  kept.clear();
+  for (const [id, since] of Object.entries(doc.open)) if (id) kept.set(id, typeof since === 'number' ? since : 0);
+  keptSupported = true;
+  return true;
+}
 async function seedKept(seen) {
-  if (!can('sessions.kept')) { keptSupported = false; return; }
+  if (can('sessionOpen.get')) {
+    const seq = ++openReadSeq;
+    openEventSinceRead = false;
+    try {
+      const doc = await call('sessionOpen.get', {});
+      if (seq === openReadSeq) applyOpen(doc, !openEventSinceRead);
+      if (openDoc) return;
+    } catch { /* fall back to the legacy kept set below */ }
+  }
+  openDoc = null;
+  if (!can('sessions.kept')) { keptSupported = false; kept.clear(); return; }
   let rows = [];
   try {
     const r = await call('sessions.kept', {});
@@ -144,6 +170,7 @@ async function seedKept(seen) {
   } catch { keptSupported = false; kept.clear(); return; }
   kept.clear();
   for (const k of rows) if (k && k.sessionId) kept.set(k.sessionId, k.since || 0);
+  // Legacy roster: a kept session it has aged out is read by id.
   await Promise.all([...kept.keys()].filter((id) => !seen.has(id)).map(async (id) => {
     try {
       const row = await call('sessions.snapshot', { sessionId: id });
@@ -174,6 +201,7 @@ export function status(s) {
   if (!isLive(s)) return isPaused(s) ? { label: 'Paused', tone: 'accent', key: 'paused' } : { label: 'Ended', tone: 'muted', key: 'ended' };
   if (s.pendingApproval) return { label: 'Needs approval', tone: 'warning', key: 'approval' };
   if (s.pendingQuestions && s.pendingQuestions.length) return { label: 'Needs your input', tone: 'warning', key: 'question' };
+  if (s.starting) return { label: 'Starting', tone: 'muted', key: 'starting' };
   const a = s.ambientState || s.mode || '';
   if (WORKING.has(a)) return { label: 'Working', tone: 'busy', key: 'working' };
   if (a === 'waiting_approval' || a === 'approval') return { label: 'Needs approval', tone: 'warning', key: 'approval' };
@@ -613,6 +641,9 @@ onBus('event', (ev) => {
     if (d.peer) { offlineHubs.delete(d.peer); reseedPeer(d.peer); }
   } else if (t === 'node.state_changed') {
     applyNodeState((ev.data || {}).node);
+  } else if (t === 'sessionOpen.changed' && !peer) {
+    openEventSinceRead = true;
+    if (applyOpen(ev.data, false)) changed();
   } else if (t === 'sessionArchive.changed' && !peer) {
     archiveEventSinceRead = true;
     if (applyArchive(ev.data, false)) changed();

@@ -125,7 +125,7 @@ pub(super) fn meta_line(a: &Agent, stats: &DerivedStats) -> String {
     let mut s = if a.hub_offline {
         "hub offline".to_string()
     } else {
-        badge(a.state())
+        badge(a.display_state())
     };
     if let Some(m) = &stats.model {
         s.push_str(&format!("  {}", short_model(m)));

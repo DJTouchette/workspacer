@@ -67,7 +67,7 @@ const STALE_MS = 30000;
 /** How long to let a handshake run, by consecutive failed attempt. A real
  *  blip reconnects in milliseconds; a cold tailnet leg needs room to finish. */
 const HANDSHAKE_BUDGETS_MS = [4500, 9000, 20000];
-const TOPICS = ['agent.snapshot', 'workflow.*', 'hub.peer.*', 'node.state_changed', 'sessionArchive.changed'];
+const TOPICS = ['agent.snapshot', 'workflow.*', 'hub.peer.*', 'node.state_changed', 'sessionArchive.changed', 'sessionOpen.changed'];
 
 export function call(method, params, timeoutMs) {
   return new Promise((resolve, reject) => {

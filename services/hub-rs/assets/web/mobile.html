@@ -1099,6 +1099,9 @@
   function fold(snap) {
     const prev = sessions.get(snap.sessionId);
     const next = snap.sparse && prev ? Object.assign({}, prev, snap) : snap;
+    // `starting` rides only while the hub calls the row Starting; a later
+    // sparse row without it must not inherit the stale flag.
+    if (next !== snap && !('starting' in snap)) delete next.starting;
     sessions.set(snap.sessionId, next);
     trackDone(next);
     trackProgress(next);
@@ -1233,12 +1236,47 @@
     if (mins < 60) return `${Math.max(1, mins)}m`;
     return `${Math.floor(mins / 60)}h ${mins % 60}m`;
   }
+  // ══ open sessions (Paused) ═══════════════════════════════════════════════
+  // The hub's shared open set (sessionOpen, docs/session-roster.md): a stopped
+  // session still in it was stopped by its app closing, not ended, and reads
+  // as Paused here like in every other client. Older hubs fall back to
+  // native's kept-open set (sessions.kept).
+  let openDoc = null;                 // {version, open: {id: ms}}
+  let openIds = new Set();
+  let openReadSeq = 0, openEventSinceRead = false;
+  function applyOpen(doc, force) {
+    if (!doc || typeof doc.version !== 'number' || !doc.open || typeof doc.open !== 'object') return false;
+    if (!force && openDoc && openDoc.version >= doc.version) return false;
+    openDoc = doc;
+    openIds = new Set(Object.keys(doc.open));
+    return true;
+  }
+  async function loadOpen() {
+    if (can('sessionOpen.get')) {
+      const seq = ++openReadSeq;
+      openEventSinceRead = false;
+      try {
+        const doc = await call('sessionOpen.get', {});
+        if (seq === openReadSeq) applyOpen(doc, !openEventSinceRead);
+        if (openDoc) return;
+      } catch { /* fall back to the legacy kept set */ }
+    }
+    openDoc = null;
+    if (!can('sessions.kept')) { openIds = new Set(); return; }
+    try {
+      const r = await call('sessions.kept', {});
+      openIds = new Set(((r && Array.isArray(r.sessions)) ? r.sessions : []).map((k) => k && k.sessionId).filter(Boolean));
+    } catch { openIds = new Set(); }
+  }
+  const isPaused = (s) => !!s && !isLive(s) && !hubOf(s) && openIds.has(s.sessionId);
+
   async function seed() {
     try {
       const list = await call('sessions.snapshots', {});
       const seen = new Set();
       for (const s of (list || [])) if (s && s.sessionId) { seen.add(s.sessionId); sessionHub.delete(s.sessionId); fold(s); }
       await seedPeers(seen);
+      await loadOpen();
       // The providers' lists ARE the visible fleet — drop what they no longer
       // show. A hub whose LINK is down answered nothing at all: its sessions
       // are tombstones to keep on screen, not rows to drop.
@@ -2515,7 +2553,11 @@
     // A tombstoned card keeps rendering (muted, chip greyed, no inline
     // actions) — the fleet you can't currently reach is still your fleet.
     const down = hubDown(s);
-    const st = agentState(s), meta = down ? STATES.stopped : STATES[st];
+    const st = agentState(s);
+    let meta = down ? STATES.stopped : STATES[st];
+    // Same state keys (ranking and filters are unchanged); only the words move.
+    if (!down && st === 'stopped' && isPaused(s)) meta = Object.assign({}, meta, { label: 'Paused' });
+    else if (!down && st === 'idle' && s.starting) meta = Object.assign({}, meta, { label: 'Starting' });
     const sid = esc(s.sessionId);
     const t = stats(s);
     const ask = down ? null : askFor(s);
@@ -4650,7 +4692,7 @@
       clearTimeout(watchdog);
       backoff = 500; attempt = 0; lastActivity = Date.now(); connected = true;
       reportInteraction(true);
-      sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot', 'workflow.*', 'hub.peer.*', 'node.state_changed', 'sessionArchive.changed'] }));
+      sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot', 'workflow.*', 'hub.peer.*', 'node.state_changed', 'sessionArchive.changed', 'sessionOpen.changed'] }));
       // Everything else waits for `hello` — see onDiscover. Firing the optional
       // lookups here would run their can() guards before we know our scope,
       // when can() answers true for everything, so a view/triage token would
@@ -4725,6 +4767,10 @@
         // on a real change, so this never needs a poll behind it.
         else if (t === 'node.state_changed') applyNodeState((f.event.data || {}).node);
         // Another client archived or restored; a peer's stamped copy is not ours.
+        else if (t === 'sessionOpen.changed' && !peer) {
+          openEventSinceRead = true;
+          if (applyOpen(f.event.data, false)) afterData();
+        }
         else if (t === 'sessionArchive.changed' && !peer) {
           archiveEventSinceRead = true;
           if (applyArchive(f.event.data, false)) afterArchive();
