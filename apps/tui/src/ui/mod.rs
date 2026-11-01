@@ -54,6 +54,12 @@ use sidebar::*;
 #[path = "../ui_render_tests.rs"]
 mod render_tests;
 
+/// The footer's cleanup line, for the app tests.
+#[cfg(test)]
+pub(crate) fn cleanup_notice_for_tests(app: &App) -> Option<String> {
+    cleanup_notice(app)
+}
+
 pub fn render(f: &mut Frame, app: &mut App) {
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -121,6 +127,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
     if app.nodes_view.is_some() {
         render_nodes(f, f.area(), app);
+    }
+    if app.cleanup_chooser {
+        render_cleanup(f, f.area(), app);
     }
     if app.help {
         render_help(f, f.area(), app);

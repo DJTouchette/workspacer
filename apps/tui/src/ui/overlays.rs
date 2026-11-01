@@ -6,6 +6,48 @@
 
 use super::*;
 
+/// The sidebar-cleanup chooser: the hub's three actions, one key each.
+pub(super) fn render_cleanup(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+    let ended = app.cleanup_offer().map(|c| c.ended).unwrap_or(0);
+    let w = area.width.saturating_sub(8).clamp(20, 56).min(area.width);
+    let row = |key: &str, what: &str| {
+        Line::from(vec![
+            Span::styled(format!("  {key}  "), Style::default().fg(t.ok)),
+            Span::raw(what.to_string()),
+        ])
+    };
+    let lines = vec![
+        Line::from(Span::styled(
+            format!(
+                "  {ended} ended session{} on your sidebar",
+                if ended == 1 { "" } else { "s" }
+            ),
+            Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "  hidden sessions stay in History",
+            Style::default().fg(t.dim),
+        )),
+        Line::raw(""),
+        row("a", "hide all ended"),
+        row("o", "hide ended older than a day"),
+        row("n", "not now"),
+    ];
+    let h = lines.len() as u16 + 2;
+    let rect = modal_rect(area, w, h, ModalY::Centered);
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" clean up sidebar ")
+        .title_bottom(Line::from(Span::styled(
+            " esc cancel ",
+            Style::default().fg(t.dim),
+        )))
+        .border_style(Style::default().fg(t.accent));
+    f.render_widget(Paragraph::new(lines).block(block), rect);
+}
+
 pub(super) fn render_rename(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let Some(form) = app.rename.as_ref() else {

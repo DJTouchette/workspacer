@@ -188,6 +188,48 @@ async function seedKept(seen) {
   }));
 }
 
+// ── sidebar cleanup prompt ────────────────────────────────────────────────
+// Nothing leaves the sidebar on its own, so the hub says when it needs a
+// cleanup (`cleanup.suggested` in the sessionOpen document) and every client
+// renders the same prompt. A cleanup archives (so the sessions stay in
+// History) and returns the ids it hid, which Undo restores in one change.
+const UNDO_MS = 8000;
+export let cleanupUndo = null;          // {ids, until}
+let undoTimer = null;
+/** The offer to show, or null: not suggested, or this hub lacks the methods. */
+export function cleanupOffer() {
+  const c = openDoc && openDoc.cleanup;
+  if (!c || c.suggested !== true || !can('sessionOpen.cleanup') || !can('sessionOpen.snoozeCleanup')) return null;
+  return { ended: Math.max(0, Number(c.ended) || 0) };
+}
+/** Hide every counted ended session, or only those ended `olderThanMs` ago. */
+export async function runCleanup(olderThanMs) {
+  const params = olderThanMs ? { olderThanMs } : {};
+  const r = await call('sessionOpen.cleanup', params);
+  const ids = (r && Array.isArray(r.hidden)) ? r.hidden.filter((id) => typeof id === 'string' && id) : [];
+  clearTimeout(undoTimer);
+  cleanupUndo = ids.length && can('sessionArchive.setMany') ? { ids, until: Date.now() + UNDO_MS } : null;
+  if (cleanupUndo) undoTimer = setTimeout(() => { cleanupUndo = null; changed(); }, UNDO_MS);
+  changed();
+  return ids;
+}
+/** Not now: the hub holds the prompt back until more sessions have ended. */
+export async function snoozeCleanup() {
+  const doc = await call('sessionOpen.snoozeCleanup', {});
+  if (applyOpen(doc, false)) changed();
+}
+/** Restore what the last cleanup hid. */
+export async function undoCleanup() {
+  const undo = cleanupUndo;
+  clearTimeout(undoTimer);
+  cleanupUndo = null;
+  changed();
+  if (!undo) return 0;
+  const doc = await call('sessionArchive.setMany', { sessionIds: undo.ids, archived: false });
+  if (applyArchive(doc, false)) changed();
+  return undo.ids.length;
+}
+
 // ── session state ─────────────────────────────────────────────────────────
 export const isLive = (s) => !!s && s.status !== 'ended' && s.mode !== 'stopped';
 export const isBlocked = (s) => !!(s && (s.pendingApproval || (s.pendingQuestions && s.pendingQuestions.length)));

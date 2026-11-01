@@ -7,6 +7,7 @@ import {
   sessions, archiveReady, isArchived, status, isWorking, isPaused, needsYou, titleOf, projectOf, modelOf, providerOf,
   hubOf, hubDown, peers, coldCache, childrenOf, childActive, childStatus, isCleared, clearChild, setArchived,
   keptSupported, canResume, usage, loadUsage, proposals, seeded,
+  cleanupOffer, cleanupUndo, runCleanup, snoozeCleanup, undoCleanup,
 } from '../store.js';
 import { esc, ic, mark, spinner, brand, modelName, resetsIn } from '../util.js';
 import { notice } from '../ui.js';
@@ -21,6 +22,20 @@ const FILTERS = [
 ];
 let filter = 'all';
 let query = '';
+const DAY_MS = 86400000;
+
+/** The hub's cleanup prompt, or the Undo that follows a cleanup. */
+function cleanupHtml() {
+  if (cleanupUndo) {
+    const n = cleanupUndo.ids.length;
+    return `<div class="card banner">${ic('inbox', 's18 t-accent')}<div class="tx"><b>Hid ${n} ended session${n === 1 ? '' : 's'}</b><span>They are still in History.</span></div><button class="btn sm" data-undo-cleanup>Undo</button></div>`;
+  }
+  const offer = cleanupOffer();
+  if (!offer || !bus.connected) return '';
+  const n = offer.ended;
+  return `<div class="card banner cleanup">${ic('inbox', 's18 t-accent')}<div class="tx"><b>${n} ended session${n === 1 ? '' : 's'} on your sidebar</b><span>Hidden sessions stay in History.</span>` +
+    `<span class="acts-inline"><button class="btn sm primary" data-cleanup="all">Hide all ended</button><button class="btn sm" data-cleanup="old">Hide ended older than a day</button><button class="btn sm" data-snooze>Not now</button></span></div></div>`;
+}
 
 const pausedNow = (s) => (keptSupported ? isPaused(s) : canResume(s));
 function matches(s) {
@@ -196,6 +211,16 @@ export function mount(root, ctx) {
       notice(err ? 'Archive failed: ' + err : 'Archived — find it in History', err ? 'error' : '');
     } else if (t.dataset.clear) { closeSwipe(); clearChild(t.dataset.clear, t.dataset.child); }
     else if (t.dataset.push) { notice(await ensurePush(false) || 'Notifications on'); update(); }
+    else if (t.dataset.cleanup) {
+      try {
+        const hidden = await runCleanup(t.dataset.cleanup === 'old' ? DAY_MS : 0);
+        notice(hidden.length ? `Hid ${hidden.length} ended session${hidden.length === 1 ? '' : 's'} — find them in History` : 'Nothing to hide');
+      } catch (err) { notice('Cleanup failed: ' + (err && err.message || err), 'error'); }
+    } else if (t.dataset.snooze !== undefined) {
+      try { await snoozeCleanup(); } catch (err) { notice('Could not snooze: ' + (err && err.message || err), 'error'); }
+    } else if (t.dataset.undoCleanup !== undefined) {
+      try { const n = await undoCleanup(); if (n) notice(`Restored ${n} session${n === 1 ? '' : 's'}`, 'success'); } catch (err) { notice('Undo failed: ' + (err && err.message || err), 'error'); }
+    }
     else if (t.dataset.filter) { filter = t.dataset.filter; update(); }
   });
   root.querySelector('.seg').addEventListener('click', (e) => {
@@ -271,6 +296,7 @@ export function mount(root, ctx) {
     // Child rows whose parent matched the query still show.
     const rows = tree(shown);
     const parts = [nodesHtml()];
+    parts.push(cleanupHtml());
     if (pushOk && permission() === 'default' && bus.connected) {
       parts.push(`<div class="card banner">${ic('bell', 's18 t-accent')}<div class="tx"><b>Get a notification when an agent needs you</b><span>Approvals and questions reach this phone even when the app is closed.</span></div><button class="btn sm primary" data-push>Turn on</button></div>`);
     }

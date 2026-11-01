@@ -15,7 +15,7 @@
 // so any asset change installs a fresh shell.
 
 // <generated-shell>
-const CACHE = 'wks-m-next-23a814c3e3f7';
+const CACHE = 'wks-m-next-3980f2a85e41';
 const SHELL = [
   "./",
   "app.css",

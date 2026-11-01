@@ -31,6 +31,7 @@ pub use state::*;
 use state::{fuzzy_match, TOAST_TTL};
 
 mod agents;
+mod cleanup;
 mod nodes;
 mod providers;
 mod runs;
@@ -105,6 +106,10 @@ pub struct App {
     pub nodes: Option<crate::nodes::NodeRegistry>,
     /// The remote-nodes overlay, when open.
     pub nodes_view: Option<NodesState>,
+    /// The sidebar-cleanup chooser (`<leader> C`), when open.
+    pub cleanup_chooser: bool,
+    /// What the last cleanup hid, and when — for its short-lived Undo.
+    pub cleanup_undo: Option<(Vec<String>, Instant)>,
     /// Provider ids whose CLI the HOST has installed, from
     /// `providers.checkAll`. `None` = no answer yet (or a hub/transport that
     /// can't answer), which means every harness is offered — see
@@ -294,6 +299,8 @@ impl App {
             notes: crate::notes::load(),
             nodes: None,
             nodes_view: None,
+            cleanup_chooser: false,
+            cleanup_undo: None,
             installed_providers: None,
             bus_scope: None,
             connected: false,
@@ -524,6 +531,7 @@ impl App {
             AppMsg::Projects(projects) => self.projects = projects,
             AppMsg::PinnedCwds(shared) => self.adopt_shared_pins(shared),
             AppMsg::OpenSessions(set) => self.adopt_open_sessions(set, false),
+            AppMsg::CleanupDone(hidden) => self.cleanup_done(hidden),
             AppMsg::RemoteSeed { hub, agents } => {
                 self.remote.seed(&hub, agents);
                 self.fold_fleet();

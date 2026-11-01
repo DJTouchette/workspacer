@@ -163,6 +163,7 @@ textarea:focus-visible, input:not([type="checkbox"], [type="radio"], [type="rang
 .banner { margin: 4px 16px 6px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
 .banner .tx { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--wks-muted); }
 .banner .tx b { color: var(--wks-text); font-weight: 600; }
+.banner .acts-inline { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .node { margin: 4px 16px 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
 .node .nh { display: flex; align-items: center; gap: 8px; font-size: 14px; } .node .nh .st { margin-left: auto; font-size: var(--wks-meta); font-weight: 600; }
 .node .nd { font-size: 13px; color: var(--wks-muted); line-height: 1.4; }

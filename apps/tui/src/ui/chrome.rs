@@ -131,8 +131,40 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ));
     }
+    if !in_text {
+        if let Some(notice) = cleanup_notice(app) {
+            spans.push(Span::styled(
+                notice,
+                Style::default()
+                    .fg(app.theme.warn)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
     spans.push(Span::styled(body, Style::default().fg(app.theme.dim)));
     f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// The hub's sidebar-cleanup prompt as one footer line, naming the key that
+/// acts on it (so a remap is followed): a just-finished cleanup's Undo first,
+/// else the suggestion itself. `None` when there is nothing to say.
+pub(super) fn cleanup_notice(app: &App) -> Option<String> {
+    use crate::keys::Action;
+    if let Some(ids) = app.cleanup_undo() {
+        let n = ids.len();
+        let key = app.keymap.chord_for(Action::UndoCleanup)?;
+        return Some(format!(
+            " hid {n} session{} · {key} undo ·",
+            if n == 1 { "" } else { "s" }
+        ));
+    }
+    let offer = app.cleanup_offer()?;
+    let key = app.keymap.chord_for(Action::CleanupSidebar)?;
+    Some(format!(
+        " {} ended session{} on your sidebar · {key} clean up ·",
+        offer.ended,
+        if offer.ended == 1 { "" } else { "s" }
+    ))
 }
 
 /// The current editing/navigation mode, as a (label, colour) chip for the

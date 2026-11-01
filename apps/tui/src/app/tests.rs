@@ -1002,6 +1002,64 @@ async fn stopped_sessions_in_the_hub_open_set_are_paused_and_listed() {
 }
 
 #[tokio::test]
+async fn the_cleanup_prompt_follows_the_hub_and_its_undo_expires() {
+    use crate::open_sessions::{OpenSessions, UNDO_WINDOW};
+    let mut app = test_app();
+    let doc = |version: i64, suggested: bool| {
+        OpenSessions::from_document(&serde_json::json!({
+            "version": version, "open": {},
+            "cleanup": {"ended": 24, "threshold": 20, "suggested": suggested, "snoozedAt": null}
+        }))
+        .unwrap()
+    };
+    assert!(crate::ui::cleanup_notice_for_tests(&app).is_none());
+
+    app.adopt_open_sessions(doc(1, true), false);
+    assert_eq!(
+        crate::ui::cleanup_notice_for_tests(&app).as_deref(),
+        Some(" 24 ended sessions on your sidebar · space C clean up ·")
+    );
+    // Without a bus the chooser can't act, so it says so instead of opening.
+    app.open_cleanup();
+    assert!(!app.cleanup_chooser);
+    // Open, a stray key does nothing, esc closes without acting.
+    app.cleanup_chooser = true;
+    press(&mut app, 'z');
+    assert!(app.cleanup_chooser);
+    app.handle_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    assert!(!app.cleanup_chooser);
+
+    // A finished cleanup offers its undo first, then lets it lapse.
+    app.cleanup_done(vec!["a".into(), "b".into()]);
+    assert_eq!(app.cleanup_undo().map(<[String]>::len), Some(2));
+    assert_eq!(
+        crate::ui::cleanup_notice_for_tests(&app).as_deref(),
+        Some(" hid 2 sessions · space u undo ·")
+    );
+    app.cleanup_undo = Some((vec!["a".into()], Instant::now() - UNDO_WINDOW));
+    assert!(app.cleanup_undo().is_none(), "undo lapses after its window");
+    app.undo_cleanup();
+    assert!(app
+        .toast
+        .as_ref()
+        .is_some_and(|(t, _)| t == "nothing to undo"));
+
+    // The hub withdrawing the suggestion clears the notice.
+    app.adopt_open_sessions(doc(2, false), true);
+    assert!(crate::ui::cleanup_notice_for_tests(&app).is_none());
+}
+
+#[test]
+fn cleanup_hidden_ids_ignore_junk() {
+    let ids = super::cleanup::hidden_ids(&serde_json::json!({"hidden": ["a", "", 3, "b"]}));
+    assert_eq!(ids, ["a", "b"]);
+    assert!(super::cleanup::hidden_ids(&serde_json::json!({})).is_empty());
+}
+
+#[tokio::test]
 async fn the_open_set_never_marks_a_peer_row_paused() {
     use crate::open_sessions::OpenSessions;
     let mut app = test_app();

@@ -101,7 +101,14 @@ analytics and rich browser/editor workflows. See
   claudemon replays up to 100 prior sessions as `stopped` on restart, and that
   history would otherwise flood the list. Ones that stop *while you're watching*
   stay (so you can respawn them); `<leader>x` toggles the full history on/off and
-  the title shows how many are hidden (`agents (3 · +12 stopped)`). TUI-spawned
+  the title shows how many are hidden (`agents (3 · +12 stopped)`). On a hub
+  with the shared sidebar (`sessionOpen`), stopped sessions still on it are
+  always shown: **paused** when their app closed under them, **stopped** when
+  they were ended on purpose. When the hub says the sidebar has too many ended
+  sessions, the footer shows a one-line notice; `<leader>C` opens a chooser
+  (`a` hide all ended, `o` hide ended older than a day, `n` not now), and
+  `<leader>u` undoes a cleanup for a few seconds. Hidden sessions are archived
+  on every device and stay in History. TUI-spawned
   **shell tabs** are also kept out of the sidebar (and the dashboard / pickers) —
   they live inside their agent's tab bar, not as standalone rows. These prefer
   Claude's

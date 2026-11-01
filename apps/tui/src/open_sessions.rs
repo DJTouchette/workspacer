@@ -26,7 +26,23 @@ pub struct OpenSessions {
     pub ids: HashSet<String>,
     /// Open sessions ended on purpose: listed, but not Paused.
     pub ended: HashSet<String>,
+    /// The hub's cleanup prompt (`cleanup` in the document), when it sent one.
+    pub cleanup: Option<Cleanup>,
 }
+
+/// The hub-derived "too many sessions" block (docs/session-roster.md §6).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Cleanup {
+    /// Sidebar sessions that are stopped, marked ended and not archived.
+    pub ended: u64,
+    /// The hub asks every client to offer a cleanup now.
+    pub suggested: bool,
+}
+
+/// How long a cleanup's Undo stays offered.
+pub const UNDO_WINDOW: std::time::Duration = std::time::Duration::from_secs(8);
+/// "Hide ended older than a day".
+pub const DAY_MS: u64 = 86_400_000;
 
 impl OpenSessions {
     /// On the shared sidebar (Paused or Ended).
@@ -37,6 +53,12 @@ impl OpenSessions {
     /// Open and not ended on purpose: a stopped session reads as Paused.
     pub fn is_paused(&self, id: &str) -> bool {
         self.ids.contains(id) && !self.ended.contains(id)
+    }
+
+    /// The cleanup to offer: the hub suggests one. `None` otherwise, which
+    /// includes every hub too old to send the block (and so the methods).
+    pub fn cleanup_offer(&self) -> Option<Cleanup> {
+        self.cleanup.filter(|c| c.suggested)
     }
 
     /// `{version, open: {sessionId: sinceMs}, ended: {sessionId: endedAtMs}}`.
@@ -51,10 +73,18 @@ impl OpenSessions {
             .and_then(Value::as_object)
             .map(|ended| ended.keys().filter(|id| !id.is_empty()).cloned().collect())
             .unwrap_or_default();
+        let cleanup = doc
+            .get("cleanup")
+            .filter(|c| c.is_object())
+            .map(|c| Cleanup {
+                ended: c.get("ended").and_then(Value::as_u64).unwrap_or(0),
+                suggested: c.get("suggested").and_then(Value::as_bool) == Some(true),
+            });
         Some(Self {
             version: Some(version),
             ids: open.keys().filter(|id| !id.is_empty()).cloned().collect(),
             ended,
+            cleanup,
         })
     }
 
@@ -74,6 +104,7 @@ impl OpenSessions {
             version: None,
             ids,
             ended: HashSet::new(),
+            cleanup: None,
         }
     }
 
@@ -144,6 +175,25 @@ mod tests {
             .unwrap();
             assert!(set.is_paused("e"), "malformed ended is no marks");
         }
+    }
+
+    #[test]
+    fn the_cleanup_block_is_offered_only_when_suggested() {
+        let with = |cleanup: Value| {
+            OpenSessions::from_document(&json!({"version": 1, "open": {}, "cleanup": cleanup}))
+                .unwrap()
+        };
+        let offer =
+            with(json!({"ended": 23, "threshold": 20, "suggested": true, "snoozedAt": null}))
+                .cleanup_offer()
+                .unwrap();
+        assert_eq!(offer.ended, 23);
+        assert!(with(json!({"ended": 23, "suggested": false}))
+            .cleanup_offer()
+            .is_none());
+        assert!(with(json!("yes")).cleanup_offer().is_none());
+        let old = OpenSessions::from_document(&json!({"version": 1, "open": {}})).unwrap();
+        assert!(old.cleanup_offer().is_none(), "an older hub sends no block");
     }
 
     #[test]

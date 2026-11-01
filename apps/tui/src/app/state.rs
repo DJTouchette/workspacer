@@ -73,6 +73,8 @@ pub enum AppMsg {
     /// the legacy `sessions.kept` on an older hub). Change events are applied
     /// directly in `apply_bus_event`.
     OpenSessions(crate::open_sessions::OpenSessions),
+    /// `sessionOpen.cleanup` answered with the ids it hid (archived).
+    CleanupDone(Vec<String>),
     /// One peer hub's authoritative session roster, pulled over the federation
     /// link (`hub:<peer>/sessions.snapshots`). Replaces that hub's remote
     /// sessions wholesale — see [`crate::federation`].
