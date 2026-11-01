@@ -1094,6 +1094,23 @@
       "name": "list_saved_sessions"
     },
     {
+      "description": "List this project's scratch files (personal files kept outside git: test harnesses, repro scripts, SQL meant to be run by hand) with their purpose, status and size. Check it before writing a new harness. Scratch is $WORKSPACER_SCRATCH; files written there directly are listed with indexed:false until you record a purpose with mark_scratch.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "your working directory (any worktree of the project, or a directory inside it); the hub resolves the project's one shared scratch directory from it",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cwd"
+        ],
+        "type": "object"
+      },
+      "name": "list_scratch"
+    },
+    {
       "description": "Get full snapshots for every session at once, spanning federated peer hubs (verbose — large payload; remote rows carry a hub field). Prefer list_agents for an overview and get_snapshot for one session.",
       "inputSchema": {
         "additionalProperties": false,
@@ -1160,6 +1177,48 @@
         "type": "object"
       },
       "name": "manager_context"
+    },
+    {
+      "description": "Update a scratch file's metadata without touching its contents: purpose, keep, sensitive, status or note. Use it to record a purpose for a file you wrote straight into $WORKSPACER_SCRATCH, or to mark pending SQL done once a human has run it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "your working directory (any worktree of the project, or a directory inside it); the hub resolves the project's one shared scratch directory from it",
+            "type": "string"
+          },
+          "keep": {
+            "description": "true to protect the file from any future cleanup of old scratch",
+            "type": "boolean"
+          },
+          "note": {
+            "description": "a short free-text note, e.g. when and where pending SQL was run",
+            "type": "string"
+          },
+          "path": {
+            "description": "the file's path relative to the scratch directory, as list_scratch reports it (e.g. 'repro/login.sh' or 'sql/backfill-orders.sql'); absolute paths, '..' and symlinks are refused",
+            "type": "string"
+          },
+          "purpose": {
+            "description": "one sentence saying what the file is for",
+            "type": "string"
+          },
+          "sensitive": {
+            "description": "true if the file holds credentials or private data; its content is then withheld from remote hubs. Only the local owner can clear it",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "one of: draft, pending, done, archived. Use pending for SQL or a step that still has to be run by a human, and done (with a note saying when and how it ran) once it has",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cwd",
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "mark_scratch"
     },
     {
       "description": "Read pinned task policy and the next eligible step. Requires taskId/cwd under your manager. Follow the returned select_model/spawn_agent metadata; never infer pass from a valid result or idle.",
@@ -1446,6 +1505,28 @@
         "type": "object"
       },
       "name": "read_file"
+    },
+    {
+      "description": "Read one scratch file's text (UTF-8, up to 5 MiB) by its path relative to the scratch directory, as list_scratch reports it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "your working directory (any worktree of the project, or a directory inside it); the hub resolves the project's one shared scratch directory from it",
+            "type": "string"
+          },
+          "path": {
+            "description": "the file's path relative to the scratch directory, as list_scratch reports it (e.g. 'repro/login.sh' or 'sql/backfill-orders.sql'); absolute paths, '..' and symlinks are refused",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cwd",
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "read_scratch"
     },
     {
       "description": "Re-read the config file from disk and return it.",
@@ -2600,6 +2681,62 @@
         "type": "object"
       },
       "name": "save_saved_session"
+    },
+    {
+      "description": "Save a file in this project's scratch directory (outside git, shared by every worktree, kept when worktrees are removed) and record what it is for. Use it for repro snippets, one-off scripts, personal test harnesses and SQL meant to be run by hand, instead of the repository or /tmp. Refuses to replace an existing file unless overwrite is true. Content that looks like a credential is stored as sensitive and reported in warnings. Workspacer never runs scratch files: record SQL that still has to run as status 'pending' and leave running it to the user.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "description": "the file's full text",
+            "type": "string"
+          },
+          "cwd": {
+            "description": "your working directory (any worktree of the project, or a directory inside it); the hub resolves the project's one shared scratch directory from it",
+            "type": "string"
+          },
+          "keep": {
+            "description": "true to protect the file from any future cleanup of old scratch",
+            "type": "boolean"
+          },
+          "note": {
+            "description": "an optional short free-text note",
+            "type": "string"
+          },
+          "overwrite": {
+            "description": "true to replace an existing file at this path; without it an existing file is refused",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "the file's path relative to the scratch directory, as list_scratch reports it (e.g. 'repro/login.sh' or 'sql/backfill-orders.sql'); absolute paths, '..' and symlinks are refused",
+            "type": "string"
+          },
+          "purpose": {
+            "description": "required: one sentence saying what the file is for, so the next session can tell whether to reuse it",
+            "type": "string"
+          },
+          "sensitive": {
+            "description": "true if the file holds credentials or private data (stored 0600, content withheld from remote hubs)",
+            "type": "boolean"
+          },
+          "sessionId": {
+            "description": "your own workspacer session id, recorded as the file's author",
+            "type": "string"
+          },
+          "status": {
+            "description": "one of: draft, pending, done, archived. Use pending for SQL or a step that still has to be run by a human, and done (with a note saying when and how it ran) once it has (default draft)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cwd",
+          "path",
+          "content",
+          "purpose"
+        ],
+        "type": "object"
+      },
+      "name": "save_scratch"
     },
     {
       "description": "ripgrep a project directory for a query, returning matches grouped by file. Use for code search across the host project.",

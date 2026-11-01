@@ -1,6 +1,6 @@
 use workspacer_hub::services::launch_instructions::{
-    MANAGER_PLUGIN, ORDINARY_PLUGIN, bundle_root, launch, manager_doctrine, materialize,
-    prepare_skills, skill_version,
+    MANAGER_PLUGIN, ORDINARY_PLUGIN, SCRATCH_INSTRUCTION, bundle_root, launch, manager_doctrine,
+    materialize, prepare_skills, skill_version,
 };
 
 fn desktop_bundle() -> serde_json::Value {
@@ -207,4 +207,27 @@ fn symlinks_are_never_followed() {
 #[test]
 fn manager_doctrine_carries_the_selected_fleet_policy() {
     assert!(manager_doctrine().contains("SELECTED FLEET POLICY:"));
+}
+
+#[test]
+fn every_launch_points_at_scratch_and_the_desktop_twin_says_the_same() {
+    let cwd = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    for manager in [false, true] {
+        let text = launch("one", "claude", cwd.path(), home.path(), manager).text;
+        assert!(text.contains(SCRATCH_INSTRUCTION), "manager={manager}");
+    }
+    for needle in [
+        "$WORKSPACER_SCRATCH",
+        "list_scratch",
+        "save_scratch",
+        "mark_scratch",
+    ] {
+        assert!(SCRATCH_INSTRUCTION.contains(needle), "{needle}");
+    }
+    let desktop = include_str!("../../../apps/desktop/src/main/services/mcpConfig.ts");
+    assert!(
+        desktop.contains(&format!("\"{SCRATCH_INSTRUCTION}\"")),
+        "desktop SCRATCH_NOTE drifted from the hub's SCRATCH_INSTRUCTION"
+    );
 }

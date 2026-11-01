@@ -46,6 +46,11 @@ pub fn skill_version() -> &'static str {
 }
 pub const ORDINARY_PLUGIN: &str = "workspacer";
 pub const MANAGER_PLUGIN: &str = "workspacer-fleet";
+/// Static pointer at the project scratch directory (claudemon sets
+/// `WORKSPACER_SCRATCH` on every spawn) and the `scratch.*` tools. TWIN of
+/// `SCRATCH_NOTE` in apps/desktop/src/main/services/mcpConfig.ts: keep the two
+/// byte-identical (tests/launch_instructions.rs pins it).
+pub const SCRATCH_INSTRUCTION: &str = "Scratch: $WORKSPACER_SCRATCH is this project's personal scratch directory. It lives outside git, is shared by every worktree of the project and survives worktree removal. Put repro snippets, one-off scripts, personal test harnesses and SQL meant to be run by hand there instead of the repository or /tmp. Check list_scratch before writing a new harness, and record a purpose for anything you create with save_scratch or mark_scratch. Never run scratch SQL against a production database yourself. If $WORKSPACER_SCRATCH is unset, list_scratch reports the directory as project.files.";
 
 /// How a launch hands its role's skills to the harness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -326,7 +331,7 @@ pub fn launch(
     manager: bool,
 ) -> LaunchInstructions {
     let skills = prepare_skills(provider, cwd, home, manager);
-    let mut parts = vec![format!("You are running inside Workspacer session {session} with access to the local workspacer MCP facade."),"Use the workspacer MCP tools when they are relevant to the task. Your tool scope for this session is operator.".into()];
+    let mut parts = vec![format!("You are running inside Workspacer session {session} with access to the local workspacer MCP facade."),"Use the workspacer MCP tools when they are relevant to the task. Your tool scope for this session is operator.".into(), SCRATCH_INSTRUCTION.into()];
     if manager {
         parts.push(manager_doctrine().into());
     }

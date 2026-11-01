@@ -53,6 +53,17 @@ function workerRoleNote(scope: RemoteTokenScope): string {
 }
 
 /**
+ * Static pointer at the project scratch directory (claudemon sets
+ * WORKSPACER_SCRATCH on every spawn) and the scratch.* tools, given to
+ * operator-tier sessions only (the tools are operator tier).
+ *
+ * TWIN of SCRATCH_INSTRUCTION in services/hub-rs/src/services/launch_instructions.rs:
+ * keep the two byte-identical (services/hub-rs/tests/launch_instructions.rs pins it).
+ */
+export const SCRATCH_NOTE =
+  "Scratch: $WORKSPACER_SCRATCH is this project's personal scratch directory. It lives outside git, is shared by every worktree of the project and survives worktree removal. Put repro snippets, one-off scripts, personal test harnesses and SQL meant to be run by hand there instead of the repository or /tmp. Check list_scratch before writing a new harness, and record a purpose for anything you create with save_scratch or mark_scratch. Never run scratch SQL against a production database yourself. If $WORKSPACER_SCRATCH is unset, list_scratch reports the directory as project.files.";
+
+/**
  * Role instructions prepended to a *managed* (headless Claude / Codex /
  * OpenCode) agent's first turn when it's given the facade. The PTY Claude path
  * injects the equivalent through --append-system-prompt (facadeSpawnArgs);
@@ -73,7 +84,8 @@ export function managedFacadeInstructions(opts: {
     : '';
   const prefixNote =
     ' Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.';
-  return workerRoleNote(scope) + idNote + prefixNote;
+  const scratchNote = scope === 'operator' ? ` ${SCRATCH_NOTE}` : '';
+  return workerRoleNote(scope) + idNote + prefixNote + scratchNote;
 }
 
 /**
@@ -106,7 +118,7 @@ export function facadeSpawnArgs(opts: {
       'mcp__workspacer',
       ...(opts.additionalServers ?? []).map((server) => `mcp__${server.id}`),
     ],
-    appendSystemPrompt: `${workerRoleNote('operator')} ${idNote}`,
+    appendSystemPrompt: `${workerRoleNote('operator')} ${idNote} ${SCRATCH_NOTE}`,
   };
 }
 

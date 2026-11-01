@@ -1167,6 +1167,17 @@
         "kind": "object"
       }
     },
+    "list_scratch": {
+      "type": "listScratchIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string"
+          }
+        }
+      }
+    },
     "list_snapshots": {
       "type": "listAgentsIn",
       "rule": {
@@ -1262,6 +1273,45 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "mark_scratch": {
+      "type": "markScratchIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string"
+          },
+          "keep": {
+            "kind": "boolean",
+            "pointer": true,
+            "omit": "nil"
+          },
+          "note": {
+            "kind": "string",
+            "pointer": true,
+            "omit": "nil"
+          },
+          "path": {
+            "kind": "string"
+          },
+          "purpose": {
+            "kind": "string",
+            "pointer": true,
+            "omit": "nil"
+          },
+          "sensitive": {
+            "kind": "boolean",
+            "pointer": true,
+            "omit": "nil"
+          },
+          "status": {
+            "kind": "string",
+            "pointer": true,
+            "omit": "nil"
           }
         }
       }
@@ -1531,6 +1581,20 @@
       "rule": {
         "kind": "object",
         "fields": {
+          "path": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "read_scratch": {
+      "type": "readScratchIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string"
+          },
           "path": {
             "kind": "string"
           }
@@ -1894,6 +1958,53 @@
     "save_saved_session": {
       "type": "@object",
       "passthrough": "freeform object: original addObjectTool/addConfigSaveTool never projected map entries"
+    },
+    "save_scratch": {
+      "type": "saveScratchIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "content": {
+            "kind": "string"
+          },
+          "cwd": {
+            "kind": "string"
+          },
+          "keep": {
+            "kind": "boolean",
+            "pointer": true,
+            "omit": "nil"
+          },
+          "note": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "overwrite": {
+            "kind": "boolean",
+            "pointer": true,
+            "omit": "nil"
+          },
+          "path": {
+            "kind": "string"
+          },
+          "purpose": {
+            "kind": "string"
+          },
+          "sensitive": {
+            "kind": "boolean",
+            "pointer": true,
+            "omit": "nil"
+          },
+          "sessionId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "status": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
     },
     "search_project": {
       "type": "searchProjectIn",
