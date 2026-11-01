@@ -5,6 +5,7 @@ mod bus_commands;
 mod cache;
 mod children;
 mod chrome;
+mod cleanup;
 mod conversation;
 mod default_shell;
 mod explorer;
@@ -674,6 +675,8 @@ pub struct Workspace {
     /// Prompt caches going cold: the re-render at the next expiry and the
     /// cold-cache notes closed.
     cache: cache::CacheUi,
+    /// The hub's cleanup prompt: replies handled and the Undo on offer.
+    cleanup: cleanup::CleanupUi,
     header_bounds: gpui::Bounds<gpui::Pixels>,
     /// The conversation pane's width last frame: the tool rail floats only
     /// where it clears the chat column.
@@ -982,6 +985,7 @@ impl Workspace {
             markdown_sources: Default::default(),
             gauge_motion: Default::default(),
             cache: Default::default(),
+            cleanup: Default::default(),
             header_bounds: Default::default(),
             chat_width: Default::default(),
             tool_expansion: HashMap::new(),
@@ -1073,6 +1077,7 @@ impl Workspace {
         self.sync_tasks(&view, cx);
         self.sync_explorer(&view, cx);
         self.arm_cache_clock(&view, cx);
+        self.sync_cleanup(&view, cx);
         if let Some(receipt) = &view.spawn_receipt
             && receipt.number > self.last_spawn_receipt
         {

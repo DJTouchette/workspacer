@@ -1103,6 +1103,9 @@ impl Worker {
                 | "rewind-files"
                 | "pr-link"
                 | "pr-action"
+                | "session-cleanup"
+                | "session-snooze"
+                | "session-undo"
         ) && self.view.requests.get(key).is_some_and(|s| {
             // A rewind PREVIEW changes nothing: a newer one (another message,
             // or a retry) supersedes it. Only a real rewind is never recalled.
@@ -2123,8 +2126,13 @@ impl Worker {
                 if matches!(key, "archive" | "archive-set") && error.is_none() {
                     self.apply_archive(&value);
                 }
-                if key == "session-open" && error.is_none() {
+                // A snooze answers the open document, an undo the archive:
+                // adopt them now rather than waiting for their change events.
+                if matches!(key, "session-open" | "session-snooze") && error.is_none() {
                     self.apply_open(&value);
+                }
+                if key == "session-undo" && error.is_none() {
+                    self.apply_archive(&value);
                 }
                 // A fork opens as soon as the hub has made it.
                 if let crate::features::Request::Fork { session, label, .. } = &request

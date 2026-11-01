@@ -3558,3 +3558,90 @@ async fn shared_open_set_is_read_on_connect_followed_live_and_resynced() {
         "b"
     ));
 }
+
+/// The cleanup prompt's three hub calls carry the documented parameters; a
+/// snooze adopts the open document it answers, an undo the archive document,
+/// and a cleanup reply that does not name what it hid is an error.
+#[tokio::test]
+async fn cleanup_prompt_calls_carry_their_parameters_and_adopt_replies() {
+    use wks_native::features::Request;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    serve_until(
+        &mut hub,
+        |f| match f["method"].as_str().unwrap_or("") {
+            "sessions.snapshots" => Some(json!([session("a")])),
+            "sessionOpen.get" => Some(json!({"version":1,"open":{},"ended":{}})),
+            "sessionArchive.get" => Some(json!({"version":1,"archived":{}})),
+            _ => Some(json!({})),
+        },
+        |seen| called(seen, "sessionOpen.get") && called(seen, "sessionArchive.get"),
+    )
+    .await;
+    view(&controller, |v| {
+        v.session_open.is_some() && v.session_archive.is_some()
+    })
+    .await;
+
+    let request = |r: Request| controller.command(Command::Request(r)).unwrap();
+    request(Request::CleanupSessions {
+        older_than_ms: Some(86_400_000),
+    });
+    let call = hub.frame("call", Some("sessionOpen.cleanup")).await;
+    assert_eq!(call.value["params"], json!({"olderThanMs":86_400_000}));
+    call.result(json!({"hidden":["x","y"]})).await;
+    let v = view(&controller, |v| {
+        v.requests
+            .get("session-cleanup")
+            .is_some_and(|s| !s.loading)
+    })
+    .await;
+    assert_eq!(
+        v.requests["session-cleanup"].value["hidden"],
+        json!(["x", "y"])
+    );
+
+    request(Request::CleanupSessions {
+        older_than_ms: None,
+    });
+    let call = hub.frame("call", Some("sessionOpen.cleanup")).await;
+    assert_eq!(call.value["params"], json!({}));
+    call.result(json!({"ok":true})).await;
+    view(&controller, |v| {
+        v.requests
+            .get("session-cleanup")
+            .is_some_and(|s| !s.loading && s.error.is_some())
+    })
+    .await;
+
+    request(Request::UndoCleanup {
+        sessions: vec!["x".into(), "y".into()],
+    });
+    let call = hub.frame("call", Some("sessionArchive.setMany")).await;
+    assert_eq!(
+        call.value["params"],
+        json!({"sessionIds":["x","y"],"archived":false})
+    );
+    call.result(json!({"version":7,"archived":{}})).await;
+    view(&controller, |v| {
+        v.session_archive
+            .as_ref()
+            .is_some_and(|d| d["version"] == 7)
+    })
+    .await;
+
+    request(Request::SnoozeCleanup);
+    let call = hub.frame("call", Some("sessionOpen.snoozeCleanup")).await;
+    assert_eq!(call.value["params"], json!({}));
+    call.result(json!({"version":9,"open":{},"ended":{},
+        "cleanup":{"ended":30,"threshold":20,"suggested":false,"snoozedAt":30}}))
+        .await;
+    let v = view(&controller, |v| {
+        v.session_open.as_ref().is_some_and(|d| d["version"] == 9)
+    })
+    .await;
+    assert_eq!(
+        wks_native::features::cleanup_suggested(v.session_open.as_ref().unwrap()),
+        None
+    );
+}
