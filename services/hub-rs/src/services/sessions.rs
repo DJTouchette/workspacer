@@ -5,6 +5,7 @@ mod pull_request_watch;
 mod pull_requests;
 mod queue;
 mod send;
+mod sidebar_fill;
 mod titles;
 use super::snapshots;
 use crate::{Handle, Options, protocol::Event};
@@ -50,6 +51,8 @@ struct Sessions {
     announced: std::sync::Mutex<std::collections::BTreeSet<String>>,
     /// Pull request links (see `pull_requests`).
     pull_requests: Option<Arc<super::pull_requests::Service>>,
+    /// Sidebar sessions claudemon evicted from memory (see `sidebar_fill`).
+    evicted: sidebar_fill::Evicted,
 }
 
 pub(crate) async fn install(
@@ -80,6 +83,7 @@ pub(crate) async fn install(
     let service = Arc::new(Sessions {
         queue: queues,
         announced: Default::default(),
+        evicted: Default::default(),
         pull_requests: options.pull_requests.clone(),
         titles: title_offers,
         workflow_artifacts: options.workflow_artifacts.clone(),
@@ -602,8 +606,11 @@ impl Sessions {
         let mut lifecycle_retry = tokio::time::interval(std::time::Duration::from_secs(5));
         lifecycle_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut deferred = DeferredHistory::new(self.history.clone());
+        let mut sidebar_fill = tokio::time::interval(std::time::Duration::from_secs(5));
+        sidebar_fill.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
+                _ = sidebar_fill.tick(), if self.roster.open.is_some() => self.fill_evicted().await,
                 _ = lifecycle_retry.tick(), if self.lifecycle.is_some() || self.history.is_some() => {
                     if let Some(lifecycle) = &self.lifecycle {
                         if let Err(error) = lifecycle.reconcile().await {
@@ -649,6 +656,23 @@ impl Sessions {
                 }
             }
         }
+    }
+    /// Read sidebar ids missing from the projection from claudemon's
+    /// permanent history, so they stay listed after in-memory eviction.
+    async fn fill_evicted(&self) {
+        let Some(open) = &self.roster.open else {
+            return;
+        };
+        let version = open.version();
+        let ids = open.ids();
+        let resident: std::collections::BTreeSet<String> =
+            self.rows.read().unwrap().keys().cloned().collect();
+        self.evicted
+            .fill(version, &ids, &resident, |id| async move {
+                self.request("GET", format!("/sessions/{}", segment(&id)?), None)
+                    .await
+            })
+            .await;
     }
     /// Re-read one session's projection. False means the refresh fell back to
     /// a full reseed, which already covers every other pending session.
@@ -899,15 +923,24 @@ impl Sessions {
         if matches!(method, "agents.list" | "sessions.snapshots") {
             let ctx = self.roster.ctx();
             let now = time::OffsetDateTime::now_utc();
-            let mut rows: Vec<Value> = self
-                .rows
-                .read()
-                .unwrap()
-                .values()
-                .filter(|row| super::roster::listed(row, &ctx, now))
-                .cloned()
-                .map(|row| self.enrich(row))
-                .collect();
+            let (mut rows, resident): (Vec<Value>, std::collections::BTreeSet<String>) = {
+                let held = self.rows.read().unwrap();
+                (
+                    held.values()
+                        .filter(|row| super::roster::listed(row, &ctx, now))
+                        .cloned()
+                        .collect(),
+                    held.keys().cloned().collect(),
+                )
+            };
+            // Sidebar sessions the engine no longer holds in memory.
+            rows.extend(
+                self.evicted
+                    .listed(&resident)
+                    .into_iter()
+                    .filter(|row| super::roster::listed(row, &ctx, now)),
+            );
+            let mut rows: Vec<Value> = rows.into_iter().map(|row| self.enrich(row)).collect();
             rows.extend(self.remote_proxies.read().unwrap().values().cloned());
             return Ok(Value::Array(rows));
         }
@@ -1362,6 +1395,7 @@ mod projection_tests {
             titles: None,
             queue: Default::default(),
             announced: Default::default(),
+            evicted: Default::default(),
         });
         let http = reqwest::Client::new();
         for (id, event) in [("worker", "SessionStart"), ("worker", "UserPromptSubmit")] {
@@ -1486,6 +1520,7 @@ mod projection_tests {
             titles: None,
             queue: Default::default(),
             announced: Default::default(),
+            evicted: Default::default(),
         });
         reqwest::Client::new()
             .post(format!("http://{}/hook", ready.hook_addr))
@@ -1579,6 +1614,7 @@ mod projection_tests {
             titles: None,
             queue: Default::default(),
             announced: Default::default(),
+            evicted: Default::default(),
         });
         let now = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)?;
@@ -1639,6 +1675,44 @@ mod projection_tests {
                 .await
                 .is_err()
         );
+        // A sidebar session the engine evicted from memory stays listed from
+        // its history row; a sidebar id the engine has never heard of (404)
+        // is not listed.
+        open.set(json!({"sessionId":"evicted-old","open":true}))?;
+        open.set(json!({"sessionId":"never-existed","open":true}))?;
+        let resident: std::collections::BTreeSet<String> =
+            service.rows.read().unwrap().keys().cloned().collect();
+        service
+            .evicted
+            .fill(open.version(), &open.ids(), &resident, |id| async move {
+                if id == "evicted-old" {
+                    Ok(
+                        json!({"session_id":"evicted-old","mode":"stopped","history":true,
+                              "updated_at":"2026-01-01T00:00:00Z"}),
+                    )
+                } else {
+                    Err(anyhow!("not this fake's id"))
+                }
+            })
+            .await;
+        // The real engine answers the unknown id with a 404.
+        service.fill_evicted().await;
+        let listed = service.call("sessions.snapshots", json!({})).await?;
+        let ids: Vec<&str> = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["sessionId"].as_str())
+            .collect();
+        assert!(ids.contains(&"evicted-old"), "{ids:?}");
+        assert!(!ids.contains(&"never-existed"), "{ids:?}");
+        let evicted = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["sessionId"] == "evicted-old")
+            .unwrap();
+        assert_eq!(evicted["mode"], "stopped");
         hub.shutdown()?;
         engine.shutdown().await?;
         Ok(())

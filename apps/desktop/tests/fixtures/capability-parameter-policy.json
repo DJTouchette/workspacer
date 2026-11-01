@@ -138,6 +138,8 @@
     "sessionOpen.snoozeCleanup": "no caller values; records the current ended count as the snooze point in the hub's own session-open.json so the cleanup prompt waits for more sessions to end. Never a path, argv or policy input, and never a lifecycle action",
     "sessionArchive.setMany": "the only caller values are `sessionIds`, a capped list (1,000) of opaque bounded ids, and the boolean `archived`. It adds or removes those ids in the hub's own session-archive.json in one change, exactly as sessionArchive.set does for one id. Never a path, argv or policy input, and never a lifecycle action: nothing is stopped, signalled, closed or deleted",
     "sessionArchive.set": "the only caller values are `sessionId`, an opaque bounded id, and the boolean `archived`. It adds or removes that id in the hub's own session-archive.json, which clients read only to decide which sidebar rows to list. Never a path, argv or policy input, and never a lifecycle action: nothing is stopped, signalled, closed or deleted",
+    "sessions.forget": "the only caller value is `sessionId`, an opaque bounded id. It deletes that session's row, events and transcript copy from the engine's own permanent history store through claudemon's POST /sessions/:id/forget, which refuses a live session, then drops the id from the hub's own session-open.json and session-archive.json. Never a path, argv or policy input; it stops, signals or closes nothing, and the provider's own transcript is never touched",
+    "sessions.history": "reads the engine's permanent history store through claudemon's GET /history. `cursor` is an opaque <seconds>:<id> page token, `limit` a bounded integer (1-200), `query` a plain text substring the store matches case-insensitively, and `cwd` an exact-match filter string; none is opened, joined, confined or executed. Rows disclose what sessions.recent and agent.snapshot already carry plus the hub's own archive and sidebar membership",
     "sessions.taskStop": "sessionId plus taskId select a background task the daemon already lists as running on that session; the only effect is the CLI's own stop_task control request for that task. It can only ever STOP work, sends no signal, and takes no path, argv or policy value",
     "sessions.queueAdd": "text is a prompt for an agent that is already running, held in the hub's own message-queues.json until the hub delivers it later through this hub's own agents.sendMessage path (the same reach, the same session, and only when that session is ready for input with no approval or question open). No path, argv or policy value; holding the capability is the gate, as for agents.sendMessage, and sessions.queueAdd + claude.approve is recorded beside agents.sendMessage + claude.approve",
     "sessions.queueUpdate": "replaces the text of one entry this hub already queued for that session (selected by its opaque hub-minted id); the hub delivers it later through this hub's own agents.sendMessage path (the same reach, the same session, and only when that session is ready for input with no approval or question open). Nothing else about the entry or the session changes",
@@ -597,6 +599,16 @@
       "name": {
         "kind": "filename",
         "reason": "the value one step BEFORE the filename: both providers slug it (slug in the Rust saved-state service, slugSession in sessionService.ts, pinned against each other by contracts/filename-slug-cases.json) and then run the result through the same sessions-dir containment as a caller-supplied filename"
+      }
+    },
+    "sessions.history": {
+      "cwd": {
+        "kind": "path",
+        "reason": "an exact-match filter compared as a string against each stored row's recorded cwd in SQL; it is never opened, canonicalized, joined or used to locate a file"
+      },
+      "query": {
+        "kind": "regex",
+        "reason": "a plain substring, not a pattern: the store binds it as a SQL parameter and finds it with instr() over lowercased id, cwd, name, title and first prompt; bounded to 200 characters with control characters refused, and never reaches argv or a regex engine"
       }
     },
     "sessions.delete": {

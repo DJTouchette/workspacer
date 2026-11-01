@@ -43,6 +43,8 @@ struct Controls {
     confirmed: Arc<ConfirmedControls>,
     lifecycle: Option<Arc<Lifecycle>>,
     rows: Arc<RwLock<BTreeMap<String, Value>>>,
+    /// The shared sidebar set (and through it the archive), for history rows.
+    open: Option<Arc<super::session_open::SessionOpen>>,
     hub: Handle,
     home: PathBuf,
     config: PathBuf,
@@ -136,37 +138,121 @@ impl Controls {
             transport.unwrap_or_else(|| "pty".into()),
         )
     }
+    /// The display name precedence shared by recents and history: launch
+    /// label, then the user's cwd rename, then the hub's automatic title.
+    fn namer(&self) -> impl Fn(&str, &str) -> String + use<> {
+        let names = if self.config.is_absolute() {
+            super::profile_accounts::read(&self.config.join("tui-names.json"))
+        } else {
+            Value::Null
+        };
+        let records = self
+            .lifecycle
+            .as_ref()
+            .map(|l| l.records())
+            .unwrap_or_default();
+        move |id, cwd| {
+            let named = |value: &Value| {
+                value
+                    .as_str()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_owned)
+            };
+            let record = records.get(id);
+            record
+                .and_then(|r| named(&r.metadata["label"]))
+                .or_else(|| named(&names[cwd]))
+                .or_else(|| record.and_then(|r| named(&r.metadata["autoTitle"]["title"])))
+                .unwrap_or_default()
+        }
+    }
     async fn call(&self, method: &str, p: Value) -> Result<Value> {
         if method == "sessions.recent" {
-            let raw = self
+            let mut raw = self
                 .request("GET", "/sessions?include_archived=true".into(), None)
                 .await
                 .unwrap_or(json!([]));
-            let names = if self.config.is_absolute() {
-                super::profile_accounts::read(&self.config.join("tui-names.json"))
-            } else {
-                Value::Null
+            // Older sessions come from the permanent history store: claudemon
+            // drops stopped rows from memory after seven days, History keeps
+            // them. In-memory rows win (they carry live state).
+            if let (Some(rows), Ok(page)) = (
+                raw.as_array_mut(),
+                self.request("GET", format!("/history?limit={RECENT_HISTORY_PAGE}"), None)
+                    .await,
+            ) {
+                let known: std::collections::BTreeSet<String> = rows
+                    .iter()
+                    .filter_map(|row| row["session_id"].as_str().map(str::to_owned))
+                    .collect();
+                rows.extend(
+                    page["sessions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|row| {
+                            row["session_id"]
+                                .as_str()
+                                .is_some_and(|id| !known.contains(id))
+                        })
+                        .map(recent_history_row),
+                );
+            }
+            let name = self.namer();
+            return Ok(recent(&raw, |id, cwd| name(id, cwd)));
+        }
+        if method == "sessions.history" {
+            let query = history_query(&p)?;
+            let page = self
+                .request("GET", format!("/history{query}"), None)
+                .await?;
+            let name = self.namer();
+            let (hidden, sidebar) = match &self.open {
+                Some(open) => (open.hidden_ids(), open.ids()),
+                None => Default::default(),
             };
-            let records = self
-                .lifecycle
-                .as_ref()
-                .map(|l| l.records())
-                .unwrap_or_default();
-            // Same precedence as live snapshots: launch label, then the user's
-            // cwd rename, then the hub's automatic title.
-            return Ok(recent(&raw, |id, cwd| {
-                let named = |value: &Value| {
-                    value
-                        .as_str()
-                        .filter(|s| !s.trim().is_empty())
-                        .map(str::to_owned)
-                };
-                let record = records.get(id);
-                record
-                    .and_then(|r| named(&r.metadata["label"]))
-                    .or_else(|| named(&names[cwd]))
-                    .or_else(|| record.and_then(|r| named(&r.metadata["autoTitle"]["title"])))
-                    .unwrap_or_default()
+            let live = self.rows.read().unwrap().clone();
+            let sessions: Vec<Value> = page["sessions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|row| history_row(row, &name, &hidden, &sidebar, &live))
+                .collect();
+            let mut reply = json!({ "sessions": sessions });
+            if let Some(next) = page["next"].as_str().filter(|s| !s.is_empty()) {
+                reply["next"] = next.into();
+            }
+            return Ok(reply);
+        }
+        if method == "sessions.forget" {
+            let id = text(&p, "sessionId");
+            segment(id)?;
+            let receipt = match self
+                .request("POST", format!("/sessions/{id}/forget"), Some(json!({})))
+                .await
+            {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    let status = error
+                        .downcast_ref::<claudemon::daemon::embedded::CommandRejected>()
+                        .map(|rejected| rejected.status);
+                    match status {
+                        Some(409) => bail!(
+                            "This session is still running; stop it before deleting it from History"
+                        ),
+                        Some(404) => bail!("History has no session {id}"),
+                        _ => return Err(error),
+                    }
+                }
+            };
+            // Deleted for good: no sidebar or archive entry may keep naming it.
+            if let Some(open) = self.open.clone() {
+                let owned = id.to_owned();
+                tokio::task::spawn_blocking(move || open.forget_history(&owned)).await??;
+            }
+            return Ok(json!({
+                "ok": true,
+                "sessionId": id,
+                "transcriptCopyRemoved": receipt["transcript_copy_removed"] == true,
             }));
         }
         let id = text(&p, "sessionId");
@@ -488,6 +574,146 @@ fn model_payload(provider: &str, p: &Value) -> Result<Value> {
     }
     Ok(result)
 }
+/// History rows merged into `sessions.recent` (beyond claudemon's memory).
+const RECENT_HISTORY_PAGE: usize = 200;
+const MAX_HISTORY_LIMIT: u64 = 200;
+
+/// A history row in the in-memory row shape `recent` reads.
+fn recent_history_row(row: &Value) -> Value {
+    let mut out = json!({});
+    for key in [
+        "session_id",
+        "cwd",
+        "mode",
+        "provider",
+        "transport",
+        "updated_at",
+        "started_at",
+    ] {
+        if row[key].is_string() {
+            out[key] = row[key].clone();
+        }
+    }
+    out
+}
+
+/// `sessions.history` params as claudemon's `/history` query string.
+fn history_query(p: &Value) -> Result<String> {
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    let optional = |key: &str| -> Result<Option<&str>> {
+        match &p[key] {
+            Value::Null => Ok(None),
+            Value::String(value) => Ok(Some(value.as_str())),
+            _ => bail!("sessions.history: {key} must be text"),
+        }
+    };
+    if let Some(cursor) = optional("cursor")?.filter(|s| !s.is_empty()) {
+        let (at, id) = cursor
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("sessions.history: invalid cursor"))?;
+        anyhow::ensure!(
+            cursor.len() <= 160
+                && !at.is_empty()
+                && at.bytes().all(|b| b.is_ascii_digit() || b == b'-')
+                && segment(id).is_ok(),
+            "sessions.history: invalid cursor"
+        );
+        query.append_pair("before", cursor);
+    }
+    match &p["limit"] {
+        Value::Null => {}
+        value => {
+            let limit = value
+                .as_u64()
+                .filter(|n| (1..=MAX_HISTORY_LIMIT).contains(n))
+                .ok_or_else(|| {
+                    anyhow::anyhow!("sessions.history: limit must be 1-{MAX_HISTORY_LIMIT}")
+                })?;
+            query.append_pair("limit", &limit.to_string());
+        }
+    }
+    for (key, wire, max) in [("query", "q", 200), ("cwd", "cwd", 4096)] {
+        if let Some(value) = optional(key)?.filter(|s| !s.is_empty()) {
+            anyhow::ensure!(
+                value.len() <= max && !value.chars().any(char::is_control),
+                "sessions.history: invalid {key}"
+            );
+            query.append_pair(wire, value);
+        }
+    }
+    let query = query.finish();
+    Ok(if query.is_empty() {
+        String::new()
+    } else {
+        format!("?{query}")
+    })
+}
+
+/// One claudemon history row as a `sessions.history` row: the recent-row
+/// shape plus Hide/sidebar state and the permanent record's fields. A live
+/// session reports its live mode (the store only records it as stopped).
+fn history_row(
+    row: &Value,
+    name: &impl Fn(&str, &str) -> String,
+    hidden: &std::collections::BTreeSet<String>,
+    sidebar: &std::collections::BTreeSet<String>,
+    live: &BTreeMap<String, Value>,
+) -> Option<Value> {
+    let id = row["session_id"].as_str().filter(|id| !id.is_empty())?;
+    let field = |key: &str, fallback: &str| {
+        row[key]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(fallback)
+            .to_owned()
+    };
+    let millis = |key: &str| {
+        row[key]
+            .as_str()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.timestamp_millis())
+    };
+    let seconds = |key: &str| row[key].as_i64().map(|s| s.saturating_mul(1000));
+    let mode = live
+        .get(id)
+        .and_then(|row| row["mode"].as_str())
+        .filter(|mode| !mode.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| field("mode", "stopped"));
+    let model = row["model"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .or_else(|| row["requested_model"].as_str())
+        .unwrap_or("");
+    let mut out = json!({
+        "sessionId": id,
+        "provider": field("provider", "claude"),
+        "cwd": text(row, "cwd"),
+        "mode": mode,
+        "transport": field("transport", "pty"),
+        "archived": row["archived"] == true,
+        "updatedAt": millis("updated_at").or_else(|| seconds("last_event_at")).unwrap_or(0),
+        "startedAt": millis("started_at").or_else(|| seconds("created_at")).unwrap_or(0),
+        "name": name(id, text(row, "cwd")),
+        "title": text(row, "title"),
+        "model": model,
+        "hidden": hidden.contains(id),
+        "onSidebar": sidebar.contains(id),
+        "transcriptCopy": row["transcript_copy"] == true,
+    });
+    if let Some(ended) = seconds("ended_at") {
+        out["endedAt"] = ended.into();
+    }
+    if let Some(prompt) = row["first_prompt"].as_str().filter(|s| !s.is_empty()) {
+        out["firstPrompt"] = prompt.into();
+    }
+    for (wire, key) in [("userPrompts", "user_prompts"), ("toolCalls", "tool_calls")] {
+        if let Some(count) = row[key].as_u64() {
+            out[wire] = count.into();
+        }
+    }
+    Some(out)
+}
 fn recent(raw: &Value, name: impl Fn(&str, &str) -> String) -> Value {
     let Some(source) = raw.as_array() else {
         return json!([]);
@@ -535,6 +761,7 @@ pub(crate) fn install(mut options: Options, hub: Handle) -> Options {
         confirmed: options.confirmed_controls.clone(),
         lifecycle: options.launch_lifecycle.clone(),
         rows: options.session_snapshots.clone(),
+        open: options.session_open.clone(),
         hub,
         home: options.home_dir.clone().unwrap_or_default(),
         config: options.config_dir.clone().unwrap_or_default(),
@@ -548,6 +775,8 @@ pub(crate) fn install(mut options: Options, hub: Handle) -> Options {
         "claude.handoffAgentBrief",
         "claude.handoffSummaryBrief",
         "sessions.recent",
+        "sessions.history",
+        "sessions.forget",
     ] {
         let service = service.clone();
         options = options.handler(method, move |_, params| {
@@ -746,6 +975,7 @@ mod tests {
             confirmed,
             lifecycle: None,
             rows: rows.clone(),
+            open: None,
             hub: hub.handle(),
             home: dir.path().into(),
             config: dir.path().into(),
@@ -897,6 +1127,284 @@ mod tests {
         assert!(
             rows.read().unwrap()["manual"].get("liveEffort").is_none(),
             "late ACK cannot bind a restarted manual session"
+        );
+        hub.shutdown()?;
+        engine.shutdown().await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    #[test]
+    fn history_params_map_to_the_daemon_query_and_reject_bad_input() {
+        assert_eq!(history_query(&json!({})).unwrap(), "");
+        assert_eq!(
+            history_query(
+                &json!({"cursor":"1700000000:abc-1","limit":25,"query":"fix bug","cwd":"/w/x"})
+            )
+            .unwrap(),
+            "?before=1700000000%3Aabc-1&limit=25&q=fix+bug&cwd=%2Fw%2Fx"
+        );
+        assert_eq!(
+            history_query(&json!({"cursor":"","query":"","cwd":null})).unwrap(),
+            ""
+        );
+        for bad in [
+            json!({"limit":0}),
+            json!({"limit":201}),
+            json!({"limit":"5"}),
+            json!({"cursor":"nocolon"}),
+            json!({"cursor":"12:../x"}),
+            json!({"cursor":"ab:id"}),
+            json!({"query":"a\nb"}),
+            json!({"query":"x".repeat(201)}),
+            json!({"cwd":7}),
+        ] {
+            assert!(history_query(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn history_rows_carry_hide_sidebar_live_mode_and_record_fields() {
+        let hidden = ["h".to_owned()].into();
+        let sidebar = ["h".to_owned(), "l".to_owned()].into();
+        let live = BTreeMap::from([("l".to_owned(), json!({"mode":"responding"}))]);
+        let name = |id: &str, _: &str| {
+            if id == "h" {
+                "Label".into()
+            } else {
+                String::new()
+            }
+        };
+        let row = history_row(
+            &json!({"session_id":"h","cwd":"/w","mode":"stopped","provider":"codex","transport":"stream",
+                    "updated_at":"2026-11-01T00:00:00Z","started_at":"2026-10-31T00:00:00Z","title":"Thread",
+                    "requested_model":"gpt-5","ended_at":1_700_000_000,"first_prompt":"fix it",
+                    "user_prompts":3,"tool_calls":9,"transcript_copy":true,"history":true}),
+            &name,
+            &hidden,
+            &sidebar,
+            &live,
+        )
+        .unwrap();
+        assert_eq!(
+            row,
+            json!({"sessionId":"h","provider":"codex","cwd":"/w","mode":"stopped","transport":"stream",
+                   "archived":false,"updatedAt":1_793_491_200_000_i64,"startedAt":1_793_404_800_000_i64,
+                   "name":"Label","title":"Thread","model":"gpt-5","hidden":true,"onSidebar":true,
+                   "transcriptCopy":true,"endedAt":1_700_000_000_000_i64,"firstPrompt":"fix it",
+                   "userPrompts":3,"toolCalls":9})
+        );
+        // A live session reports its live mode; seconds-only rows still date.
+        let row = history_row(
+            &json!({"session_id":"l","mode":"stopped","last_event_at":10,"created_at":5}),
+            &name,
+            &hidden,
+            &sidebar,
+            &live,
+        )
+        .unwrap();
+        assert_eq!(row["mode"], "responding");
+        assert_eq!(row["provider"], "claude");
+        assert_eq!(row["transport"], "pty");
+        assert_eq!(row["updatedAt"], 10_000);
+        assert_eq!(row["startedAt"], 5_000);
+        assert_eq!(
+            (row["hidden"].clone(), row["onSidebar"].clone()),
+            (json!(false), json!(true))
+        );
+        assert!(row.get("endedAt").is_none() && row.get("firstPrompt").is_none());
+        assert!(history_row(&json!({"cwd":"/w"}), &name, &hidden, &sidebar, &live).is_none());
+    }
+
+    /// The real engine: hook-recorded sessions reach `sessions.history`
+    /// (paged, searchable, labelled), `sessions.recent` still lists live rows,
+    /// and `sessions.forget` refuses a live session and deletes a stopped one
+    /// from History, the sidebar and the archive.
+    #[tokio::test]
+    async fn history_and_forget_over_the_embedded_engine() -> Result<()> {
+        use claudemon::daemon::{
+            ServeConfig,
+            embedded::{EmbeddedDaemon, Options as EngineOptions},
+        };
+        let _single_engine = crate::backend::ENGINE_TEST_LOCK.lock().await;
+        let dir = tempfile::tempdir()?;
+        let mut engine = EmbeddedDaemon::start_with_options(
+            ServeConfig {
+                host: "127.0.0.1".into(),
+                hook_port: 0,
+                api_port: 0,
+                db_path: dir.path().join("state.db"),
+            },
+            EngineOptions {
+                usage_poll_on_boot: Some(false),
+            },
+        )?;
+        let ready = engine.ready().await?;
+        let mut options = Options::default();
+        options.engine = Some(engine.client());
+        let rows = options.session_snapshots.clone();
+        let hub = crate::Hub::start(options)?;
+        hub.ready().await?;
+        let archive = Arc::new(super::super::session_archive::SessionArchive::open(
+            None, None,
+        ));
+        let open = Arc::new(super::super::session_open::SessionOpen::open(
+            None,
+            None,
+            Some(archive.clone()),
+            None,
+        ));
+        let controls = Controls {
+            engine: engine.client(),
+            confirmed: Default::default(),
+            lifecycle: None,
+            rows: rows.clone(),
+            open: Some(open.clone()),
+            hub: hub.handle(),
+            home: dir.path().into(),
+            config: dir.path().into(),
+            utilities: None,
+        };
+        let http = reqwest::Client::new();
+        let hook = |event: &str, id: &str| {
+            http.post(format!("http://{}/hook", ready.hook_addr))
+                .json(&json!({"hook_event_name":event,"session_id":id,"cwd":dir.path(),"prompt":"history probe"}))
+                .send()
+        };
+        for (event, id) in [
+            ("SessionStart", "done"),
+            ("UserPromptSubmit", "done"),
+            ("SessionEnd", "done"),
+            ("SessionStart", "live"),
+        ] {
+            hook(event, id).await?.error_for_status()?;
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let page = controls.call("sessions.history", json!({})).await?;
+                let ids: Vec<&str> = page["sessions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|r| r["sessionId"].as_str())
+                    .collect();
+                if ids.contains(&"done")
+                    && ids.contains(&"live")
+                    && rows.read().unwrap().contains_key("live")
+                {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await??;
+        let cwd = dir.path().to_string_lossy().into_owned();
+        std::fs::write(
+            dir.path().join("tui-names.json"),
+            serde_json::to_vec(&json!({&cwd:"Probe project"}))?,
+        )?;
+        archive.set(json!({"sessionId":"done","archived":true}))?;
+        open.set(json!({"sessionId":"live","open":true}))?;
+        let page = controls.call("sessions.history", json!({})).await?;
+        let row = |id: &str| {
+            page["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["sessionId"] == id)
+                .cloned()
+                .unwrap()
+        };
+        let (done, live) = (row("done"), row("live"));
+        assert_eq!(done["hidden"], true);
+        assert_eq!(done["onSidebar"], false);
+        assert_eq!(done["name"], "Probe project");
+        assert_eq!(done["mode"], "stopped");
+        assert_eq!(live["hidden"], false);
+        assert_eq!(live["onSidebar"], true);
+        assert_ne!(
+            live["mode"], "stopped",
+            "a live session reports its live mode"
+        );
+
+        // Paging: one row per page, then the cursor reaches the other.
+        let first = controls
+            .call("sessions.history", json!({"limit":1}))
+            .await?;
+        assert_eq!(first["sessions"].as_array().unwrap().len(), 1);
+        let cursor = first["next"].as_str().unwrap().to_owned();
+        let second = controls
+            .call("sessions.history", json!({"limit":1,"cursor":cursor}))
+            .await?;
+        assert_eq!(second["sessions"].as_array().unwrap().len(), 1);
+        assert_ne!(
+            first["sessions"][0]["sessionId"],
+            second["sessions"][0]["sessionId"]
+        );
+        // Search passes through to the store.
+        let found = controls
+            .call("sessions.history", json!({"query":"don"}))
+            .await?;
+        let found: Vec<&Value> = found["sessions"].as_array().unwrap().iter().collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0]["sessionId"], "done");
+        assert!(
+            controls
+                .call("sessions.history", json!({"limit":0}))
+                .await
+                .is_err()
+        );
+
+        // Recents still list the live in-memory row.
+        let recent = controls.call("sessions.recent", json!({})).await?;
+        assert!(
+            recent
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["sessionId"] == "live")
+        );
+
+        // Forget: a live session is refused with a clear reason.
+        let refused = controls
+            .call("sessions.forget", json!({"sessionId":"live"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("still running"), "{refused}");
+        assert!(open.ids().contains("live"));
+        // A stopped one is deleted from History, the sidebar and the archive.
+        open.set(json!({"sessionId":"done","open":true})).ok();
+        let receipt = controls
+            .call("sessions.forget", json!({"sessionId":"done"}))
+            .await?;
+        assert_eq!(receipt["ok"], true);
+        assert_eq!(receipt["sessionId"], "done");
+        assert!(archive.get()["archived"].get("done").is_none());
+        assert!(!open.ids().contains("done"));
+        let page = controls.call("sessions.history", json!({})).await?;
+        assert!(
+            page["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["sessionId"] != "done")
+        );
+        let unknown = controls
+            .call("sessions.forget", json!({"sessionId":"done"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(unknown.contains("no session"), "{unknown}");
+        assert!(
+            controls
+                .call("sessions.forget", json!({"sessionId":"../x"}))
+                .await
+                .is_err()
         );
         hub.shutdown()?;
         engine.shutdown().await?;

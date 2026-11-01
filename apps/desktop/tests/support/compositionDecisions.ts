@@ -418,6 +418,16 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'sessions.forget': {
+    reason:
+      "deletes one stopped session, named by the opaque `sessionId`, from the engine's own permanent history store (its row, events and transcript copy) through claudemon's POST /sessions/:id/forget, which refuses a live session; the hub then drops the id from its own session-open.json and session-archive.json. WRITE-THEN-INTERPRET: it only removes records; nothing reads the deletion as config, code, argv, path or policy, and the id is validated as bounded text and never joined into a filesystem path by the hub. WIDEN-THEN-USE: it can only SHRINK what History, the sidebar and the archive list; it changes no grant, root, permission mode or approval gate, and it stops, signals or closes nothing. The provider's own transcript is never touched",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['sessionId'],
+      },
+    ],
+  },
   'sessions.delete': {
     reason:
       "deletes a saved session document. It can only remove a boot-restore document, never add one \u2014 the ADD direction is sessions.save, whose recorded pair with agents.spawn is where this document's composition lives",
@@ -1525,6 +1535,13 @@ export const parameterDecisions: Record<
   string,
   Record<string, { kind: string; reason: string }>
 > = {
+  'sessions.forget': {
+    sessionId: {
+      kind: 'id',
+      reason:
+        'selects which stopped session the engine deletes from its own history store; bounded text, never a path the hub joins, and a live session is refused',
+    },
+  },
   'sessions.queueUpdate': {
     text: {
       kind: 'shell',
@@ -2093,6 +2110,7 @@ export const actors: string[] = [
   'sessionOpen.set',
   'sessions.attachTerminal',
   'sessions.delete',
+  'sessions.forget',
   'sessions.load',
   'sessions.queueAdd',
   'sessions.queueClear',

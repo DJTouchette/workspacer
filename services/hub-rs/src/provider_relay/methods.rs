@@ -78,6 +78,8 @@ const FULL: &[&str] = &[
     "sessions.terminalKeepalive",
     "sessions.detachTerminal",
     "sessions.recent",
+    "sessions.history",
+    "sessions.forget",
     "agents.reportProgress",
     "agents.notifyWhen",
     "agents.close",

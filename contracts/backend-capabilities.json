@@ -200,6 +200,8 @@
     "sessions.queueResume",
     "sessions.queueSendNow",
     "sessions.queueUpdate",
+    "sessions.forget",
+    "sessions.history",
     "sessions.recent",
     "sessions.save",
     "sessions.snapshot",
