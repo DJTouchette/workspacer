@@ -26,6 +26,9 @@ const NONE = [
   'providers.listModels',
   // Only a boolean reaches the CLI's own apply_flag_settings {fastMode}.
   'claude.setFastMode',
+  // Hub-chosen ids only: an optional integer/boolean, or no input at all.
+  'sessionOpen.cleanup',
+  'sessionOpen.snoozeCleanup',
 ];
 // Closed vocabulary: new exemptions must change both a claim and this verifier.
 const INVERSE = [

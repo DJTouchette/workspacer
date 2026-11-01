@@ -712,6 +712,24 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'sessionOpen.cleanup': {
+    reason:
+      'hides (archives) sidebar sessions the hub itself already marked ended, chosen from its own session-open.json, as one change to its own session-archive.json. The only values are an optional bounded integer olderThanMs and an optional boolean dryRun; no caller-named id, path or argv reaches it, it never selects a Paused or live session, and it is not a lifecycle action. NOTHING HERE IS MACHINE-CHECKED beyond the integer and the boolean',
+    witnesses: [
+      {
+        kind: 'none',
+      },
+    ],
+  },
+  'sessionOpen.snoozeCleanup': {
+    reason:
+      "records the current ended count as the snooze point in the hub's own session-open.json so the cleanup prompt waits for more sessions to end. It takes no caller values, names no session, and is not a lifecycle action. NOTHING HERE IS MACHINE-CHECKED because there is no input to check",
+    witnesses: [
+      {
+        kind: 'none',
+      },
+    ],
+  },
   'sessionArchive.setMany': {
     reason:
       "adds or removes a capped list (1,000) of opaque `sessionIds` in the hub's own session-archive.json in one version bump, exactly what sessionArchive.set does for one id. WRITE-THEN-INTERPRET: nothing reads that file as config, code, argv, path or policy; each id is validated as bounded text and never joined into a path or matched against a live process. WIDEN-THEN-USE: it changes no grant, no root, no permission mode, no approval gate, and it is deliberately not a lifecycle action — no stop, signal, close or delete is reachable from it",
@@ -2070,6 +2088,8 @@ export const actors: string[] = [
   'search.project',
   'sessionArchive.set',
   'sessionArchive.setMany',
+  'sessionOpen.cleanup',
+  'sessionOpen.snoozeCleanup',
   'sessionOpen.set',
   'sessions.attachTerminal',
   'sessions.delete',
