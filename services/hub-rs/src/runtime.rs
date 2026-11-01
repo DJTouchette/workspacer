@@ -2262,6 +2262,12 @@ async fn run(
             options = crate::services::install_config(options, directory, handle.clone())?;
         }
     }
+    // Scratch is hub-owned on every host, including the Electron `--hub-only`
+    // control plane (where library.* is served by desktop instead): its
+    // directory is derived from claudemon's spawn-time WORKSPACER_SCRATCH.
+    if let Some(home) = options.home_dir.clone() {
+        options = crate::services::scratch::install(options, home, handle.clone());
+    }
     if let Some(home) = options
         .home_dir
         .clone()
