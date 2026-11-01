@@ -403,7 +403,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(px(6.))
-                        .text_size(px(11.))
+                        .text_size(px(chrome::scale::CAPTION))
                         .text_color(rgb(p.muted))
                         .child(
                             div()
@@ -748,6 +748,14 @@ impl Workspace {
                         this.show_screen(Screen::Projects, window, cx)
                     })),
             )
+            // The rail hides the filter header, so the filtered project is
+            // shown here and clicking it shows every session again.
+            .when_some(self.rail_filter(), |d, mark| {
+                d.child(mark.on_click(cx.listener(|this, _, _, cx| {
+                    this.project_filter = None;
+                    cx.notify();
+                })))
+            })
             .child(
                 self.icon_button("history-rail", "Session history", IconName::BookOpen, true)
                     .when(!self.new_session && self.screen == Screen::Recent, |d| {
@@ -912,7 +920,9 @@ impl Workspace {
                     })),
             )
             .child(
-                self.icon_button("scratch-rail", "Scratch", IconName::Inbox, true)
+                self.icon_button("scratch-rail", "Scratch", IconName::FolderClosed, true)
+                    .relative()
+                    .when_some(self.pending_badge(), |d, badge| d.child(badge))
                     .when(!self.new_session && self.screen == Screen::Scratch, |d| {
                         d.bg(rgb(p.selected)).text_color(rgb(p.text))
                     })
@@ -1061,7 +1071,7 @@ impl Workspace {
                     div()
                         .px_3()
                         .pb_3()
-                        .text_size(px(12.))
+                        .text_size(px(chrome::scale::META))
                         .text_color(rgb(p.warning))
                         .child(self.view.notice.clone())
                         .when(self.view.can_resume_power_pause, |d| {
@@ -1100,26 +1110,67 @@ impl Workspace {
                         visible_sessions.len().to_string()
                     }),
             )
-            .when_some(self.project_filter.as_ref(), |d, path| {
+            .when_some(self.project_filter.clone(), |d, filter| {
+                // The filtered project, as the Projects page draws it: mark,
+                // name and whatever scratch is waiting on the user there.
+                let group = self.filter_group();
+                let folders = self.filter_folders();
+                let (known, title) = match &group {
+                    Some(group) => (Some(group.as_known()), group.name.clone()),
+                    None => (
+                        self.known_projects()
+                            .into_iter()
+                            .find(|k| wks_native::projects::same_dir(&k.path, &filter)),
+                        self.project_name(&filter),
+                    ),
+                };
+                let mark_path = known.as_ref().map_or(filter.clone(), |k| k.path.clone());
+                let pending = self.pending_in(&folders);
+                let spawn_in = folders.first().cloned();
+                let can_spawn = self.view.connected && !self.demo && spawn_in.is_some();
                 d.child(
                     div()
                         .px_3()
                         .pb_2()
                         .flex()
                         .items_center()
-                        .gap_1()
+                        .gap_2()
+                        .debug_selector(|| "sidebar-project-filter".into())
+                        .child(self.project_mark(known.as_ref(), &mark_path, 18.))
                         .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_size(px(11.))
-                                .text_color(rgb(p.accent))
-                                .child(path.clone()),
+                                .text_size(px(chrome::scale::META))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(rgb(p.text))
+                                .child(title),
                         )
-                        .child({
-                            let path = path.clone();
-                            let can_spawn = self.view.connected && !self.demo;
+                        .when(pending > 0, |d| {
+                            let target = filter.clone();
+                            d.child(
+                                div()
+                                    .id("sidebar-filter-pending")
+                                    .debug_selector(|| "sidebar-filter-pending".into())
+                                    .flex_shrink_0()
+                                    .px_2()
+                                    .rounded_full()
+                                    .bg(gpui::Hsla::from(rgb(p.warning)).opacity(0.15))
+                                    .text_size(px(chrome::scale::CAPTION))
+                                    .text_color(rgb(p.warning))
+                                    .cursor_pointer()
+                                    .child(format!("{pending} pending"))
+                                    .tooltip(|window, cx| {
+                                        Tooltip::new("Scratch files waiting for you to run them").build(window, cx)
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.extras.scratch_preset = Some(target.clone());
+                                        this.open_feature(Screen::Scratch, window, cx)
+                                    })),
+                            )
+                        })
+                        .child(
                             self.icon_button(
                                 "new-agent-in-filter",
                                 "New agent in this project",
@@ -1127,12 +1178,14 @@ impl Workspace {
                                 can_spawn,
                             )
                             .debug_selector(|| "new-agent-in-filter".into())
-                            .when(can_spawn, |d| {
+                            .when_some(spawn_in.filter(|_| can_spawn), |d, path| {
                                 d.on_click(cx.listener(move |this, _, window, cx| {
-                                    this.new_agent_in_project(path.clone(), window, cx)
+                                    let filter = this.project_filter.clone();
+                                    this.new_agent_in_project(path.clone(), window, cx);
+                                    this.project_filter = filter;
                                 }))
-                            })
-                        })
+                            }),
+                        )
                         .child(
                             self.button("all-projects", "All", true)
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -1150,7 +1203,7 @@ impl Workspace {
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .text_size(px(12.))
+                        .text_size(px(chrome::scale::META))
                         .child(if !self.view.connected {
                             self.connection_copy().label
                         } else if self.view.sessions_loading || self.archive_loading() {
@@ -1160,7 +1213,7 @@ impl Workspace {
                         } else {
                             "No sessions yet"
                         })
-                        .child(div().text_color(rgb(p.muted)).text_size(px(11.)).child(
+                        .child(div().text_color(rgb(p.muted)).text_size(px(chrome::scale::CAPTION)).child(
                             if !self.view.connected {
                                 self.connection_copy().description
                             } else if self.view.sessions_loading || self.archive_loading() {
@@ -1384,7 +1437,7 @@ impl Workspace {
                                                 .flex()
                                                 .items_center()
                                                 .gap(px(6.))
-                                                .text_size(px(11.))
+                                                .text_size(px(chrome::scale::CAPTION))
                                                 .text_color(rgb(p.muted))
                                                 .child(
                                                     div()
@@ -1468,7 +1521,7 @@ impl Workspace {
                         },
                         p,
                     ))
-                    .child(div().text_size(px(10.)).text_color(rgb(p.muted)).child(
+                    .child(div().text_size(px(chrome::scale::OVERLINE)).text_color(rgb(p.muted)).child(
                         if control_focused {
                             "Tab next · Enter act"
                         } else if !self.settings.vim_navigation {
@@ -1498,7 +1551,7 @@ impl Workspace {
                                 .py(px(2.))
                                 .rounded_full()
                                 .bg(gpui::Hsla::from(rgb(p.accent)).opacity(0.15))
-                                .text_size(px(11.))
+                                .text_size(px(chrome::scale::CAPTION))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(rgb(p.accent))
                                 .cursor_pointer()
@@ -1535,7 +1588,9 @@ impl Workspace {
                     .child(
                         // Icon-only: the footer row also carries the connection
                         // status, and a third label pushes it out of the sidebar.
-                        self.icon_button("nav-scratch", "Scratch", IconName::Inbox, true)
+                        self.icon_button("nav-scratch", "Scratch", IconName::FolderClosed, true)
+                            .relative()
+                            .when_some(self.pending_badge(), |d, badge| d.child(badge))
                             .debug_selector(|| "nav-scratch".into())
                             .when(!self.new_session && self.screen == Screen::Scratch, |d| {
                                 d.bg(rgb(p.selected)).text_color(rgb(p.text))
@@ -1554,7 +1609,7 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap_2()
-                                .text_size(px(10.))
+                                .text_size(px(chrome::scale::OVERLINE))
                                 .text_color(rgb(p.muted))
                                 .child(label)
                                 .when(!self.view.connected, |d| d.child(status_dot(p.warning))),
@@ -1638,5 +1693,65 @@ impl Workspace {
                 .size(px(0.))
             })
             .into_any_element()
+    }
+}
+
+impl Workspace {
+    /// The Scratch icon's count of files waiting on the user, across every
+    /// project; `None` when nothing is pending (or the hub has not said).
+    fn pending_badge(&self) -> Option<Div> {
+        let total = self.pending_total();
+        (total > 0).then(|| {
+            let p = self.appearance.palette();
+            div()
+                .absolute()
+                .top(px(-3.))
+                .right(px(-3.))
+                .min_w(px(14.))
+                .h(px(14.))
+                .px(px(3.))
+                .rounded_full()
+                .bg(rgb(p.warning))
+                .text_color(rgb(p.base))
+                .text_size(px(chrome::scale::OVERLINE))
+                .font_weight(FontWeight::SEMIBOLD)
+                .flex()
+                .items_center()
+                .justify_center()
+                .debug_selector(|| "scratch-pending-badge".into())
+                .child(if total > 99 {
+                    "99+".to_owned()
+                } else {
+                    total.to_string()
+                })
+        })
+    }
+
+    /// The collapsed rail's view of the sidebar's project filter: the
+    /// project's mark, ringed, with a tooltip saying how to clear it.
+    fn rail_filter(&self) -> Option<Stateful<Div>> {
+        let filter = self.project_filter.clone()?;
+        let p = self.appearance.palette();
+        let (known, title) = match self.filter_group() {
+            Some(group) => (Some(group.as_known()), group.name),
+            None => (
+                self.known_projects()
+                    .into_iter()
+                    .find(|k| wks_native::projects::same_dir(&k.path, &filter)),
+                self.project_name(&filter),
+            ),
+        };
+        let path = known.as_ref().map_or(filter, |k| k.path.clone());
+        let tip: SharedString =
+            format!("Showing {title} only · click to show every session").into();
+        Some(
+            chrome::interactive_control(div().id("rail-project-filter"), p, true)
+                .debug_selector(|| "rail-project-filter".into())
+                .p(px(2.))
+                .rounded(px(p.control_radius))
+                .border_color(rgb(p.accent))
+                .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                .child(self.project_mark(known.as_ref(), &path, 24.)),
+        )
     }
 }

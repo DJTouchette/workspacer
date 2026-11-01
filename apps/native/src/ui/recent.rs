@@ -270,7 +270,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn worktree_root(&self) -> &str {
+    pub(super) fn worktree_root(&self) -> &str {
         self.projects
             .registry
             .as_deref()

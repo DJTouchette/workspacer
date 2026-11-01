@@ -26,6 +26,7 @@ mod message_queue;
 mod new_agent;
 mod portrait;
 mod preferences;
+mod project_groups;
 mod project_registry;
 mod pull_requests;
 mod question_sets;
@@ -81,7 +82,11 @@ fn project_read(command: &Command) -> bool {
         command,
         Command::LoadModels { .. }
             | Command::Request(
-                Request::Projects | Request::InspectProject { .. } | Request::BrowseFolders { .. }
+                Request::Projects
+                    | Request::ProjectGroups
+                    | Request::ScratchPending
+                    | Request::InspectProject { .. }
+                    | Request::BrowseFolders { .. }
             )
     )
 }

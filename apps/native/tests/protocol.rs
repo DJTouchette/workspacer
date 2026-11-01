@@ -3776,7 +3776,7 @@ async fn scratch_lists_watches_its_topic_and_marks_then_relists() {
     // The first list subscribes the topic; the call and the subscription
     // may reach the hub in either order.
     request(Request::ScratchList {
-        cwd: "/w/shop/wt".into(),
+        cwds: vec!["/w/shop/wt".into()],
     });
     let (mut list, mut watched) = (None, false);
     while list.is_none() || !watched {
@@ -3862,6 +3862,7 @@ async fn scratch_lists_watches_its_topic_and_marks_then_relists() {
         cwd: "/w/shop/wt".into(),
         path: "a.sql".into(),
         patch: json!({"status":"done","note":"ran on prod"}),
+        relist: vec!["/w/shop/wt".into(), "/w/web".into()],
     });
     let mark = hub.frame("call", Some("scratch.mark")).await;
     assert_eq!(
@@ -3869,14 +3870,146 @@ async fn scratch_lists_watches_its_topic_and_marks_then_relists() {
         json!({"cwd":"/w/shop/wt","path":"a.sql","status":"done","note":"ran on prod"})
     );
     mark.result(json!({"path":"a.sql","status":"done"})).await;
+    // Every folder of the page's project is re-listed, in order.
     let relist = hub.frame("call", Some("scratch.list")).await;
+    assert_eq!(relist.value["params"], json!({"cwd":"/w/shop/wt"}));
     relist.result(listing("done")).await;
+    let web = hub.frame("call", Some("scratch.list")).await;
+    assert_eq!(web.value["params"], json!({"cwd":"/w/web"}));
+    web.result(json!({"project":{"root":"/w/web","key":"web-2"},"items":[]}))
+        .await;
     let v = view(&controller, |v| {
         v.requests.get("scratch-mark").is_some_and(|s| !s.loading)
     })
     .await;
     assert_eq!(
-        v.requests["scratch-mark"].value["items"][0]["status"],
+        v.requests["scratch-mark"].value["lists"][0]["items"][0]["status"],
         "done"
+    );
+}
+
+/// Projects as groups of folders (docs/features/projects.md): the list
+/// subscribes `projectGroups.changed`, a change re-reads it, a save sends the
+/// editor's params and answers with the refreshed list plus the saved id, a
+/// delete carries the revision, and pending counts come from scratch.pending.
+#[tokio::test]
+async fn project_groups_list_watch_save_remove_and_pending() {
+    use wks_native::features::Request;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    fleet.result(json!([])).await;
+    view(&controller, |v| v.connected).await;
+    let request = |r: Request| controller.command(Command::Request(r)).unwrap();
+    async fn next(hub: &mut Hub) -> Frame {
+        timeout(DEADLINE, hub.frames.recv()).await.unwrap().unwrap()
+    }
+    let listed = |revision: u64, names: &[&str]| {
+        json!({"revision": revision, "groups": names.iter().enumerate().map(|(i, n)| {
+            json!({"id": format!("p_{i}"), "name": n, "folders": [format!("/w/{n}")]})
+        }).collect::<Vec<_>>()})
+    };
+
+    request(Request::ProjectGroups);
+    let (mut list, mut watched) = (None, false);
+    while list.is_none() || !watched {
+        let frame = next(&mut hub).await;
+        if frame.value["op"] == "call" && frame.value["method"] == "projectGroups.list" {
+            list = Some(frame);
+        } else if frame.value["op"] == "subscribe" {
+            watched |= frame.value["topics"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("projectGroups.changed"));
+        }
+    }
+    let list = list.unwrap();
+    list.result(listed(1, &["acme"])).await;
+    view(&controller, |v| {
+        v.requests.get("project-groups").is_some_and(|s| !s.loading)
+    })
+    .await;
+
+    // Another client changed them: the list is read again.
+    list.event("projectGroups.changed", json!({"revision": 2}))
+        .await;
+    let again = hub.frame("call", Some("projectGroups.list")).await;
+    again.result(listed(2, &["acme", "mono"])).await;
+    let v = view(&controller, |v| {
+        v.requests["project-groups"].value["revision"] == 2
+    })
+    .await;
+    assert_eq!(
+        v.requests["project-groups"].value["groups"][1]["name"],
+        "mono"
+    );
+
+    let params = json!({"name":"web","folders":["/w/web"],"revision":2});
+    request(Request::SaveProjectGroup {
+        params: params.clone(),
+    });
+    let save = hub.frame("call", Some("projectGroups.save")).await;
+    assert_eq!(save.value["params"], params);
+    save.result(json!({"id":"p_9","name":"web","folders":["/w/web"],"revision":3}))
+        .await;
+    let relist = hub.frame("call", Some("projectGroups.list")).await;
+    relist.result(listed(3, &["acme", "mono", "web"])).await;
+    let v = view(&controller, |v| {
+        v.requests
+            .get("project-group-save")
+            .is_some_and(|s| !s.loading)
+    })
+    .await;
+    assert_eq!(v.requests["project-group-save"].value["saved"], "p_9");
+    assert_eq!(v.requests["project-group-save"].value["revision"], 3);
+
+    request(Request::RemoveProjectGroup {
+        id: "p_9".into(),
+        revision: 3,
+    });
+    let remove = hub.frame("call", Some("projectGroups.remove")).await;
+    assert_eq!(remove.value["params"], json!({"id":"p_9","revision":3}));
+    remove.result(json!({"removed":true,"revision":4})).await;
+    let relist = hub.frame("call", Some("projectGroups.list")).await;
+    relist.result(listed(4, &["acme", "mono"])).await;
+    view(&controller, |v| {
+        v.requests
+            .get("project-group-remove")
+            .is_some_and(|s| !s.loading)
+    })
+    .await;
+
+    // Pending counts: read, then re-read whenever a scratch changes.
+    request(Request::ScratchPending);
+    let pending = loop {
+        let frame = next(&mut hub).await;
+        if frame.value["op"] == "call" {
+            break frame;
+        }
+    };
+    assert_eq!(pending.value["method"], "scratch.pending");
+    pending
+        .result(json!({"projects":[{"key":"acme-1","root":"/w/acme","pending":2}]}))
+        .await;
+    view(&controller, |v| {
+        v.requests
+            .get("scratch-pending")
+            .is_some_and(|s| !s.loading)
+    })
+    .await;
+    pending
+        .event("scratch.changed", json!({"key":"acme-1","pending":1}))
+        .await;
+    let reread = hub.frame("call", Some("scratch.pending")).await;
+    reread
+        .result(json!({"projects":[{"key":"acme-1","root":"/w/acme","pending":1}]}))
+        .await;
+    let v = view(&controller, |v| {
+        v.requests["scratch-pending"].value["projects"][0]["pending"] == 1
+    })
+    .await;
+    assert_eq!(
+        v.requests["scratch-pending"].value["projects"][0]["root"],
+        "/w/acme"
     );
 }

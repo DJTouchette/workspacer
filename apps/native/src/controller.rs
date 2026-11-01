@@ -759,8 +759,11 @@ struct Worker {
     dirty: bool,
     fleet_dirty: bool,
     action_number: u64,
-    /// The Scratch page has opened: `scratch.changed` is subscribed.
+    /// The Scratch page or pending badges have read: `scratch.changed` is
+    /// subscribed.
     scratch_watch: bool,
+    /// Projects have been read: `projectGroups.changed` is subscribed.
+    groups_watch: bool,
     catalog_number: u64,
     catalog_abort: Option<AbortHandle>,
     /// The last loaded catalog per provider. The view shows one at a time, and
@@ -821,6 +824,7 @@ impl Worker {
             fleet_dirty: false,
             action_number: 0,
             scratch_watch: false,
+            groups_watch: false,
             catalog_number: 0,
             catalog_abort: None,
             catalogs: BTreeMap::new(),
@@ -925,12 +929,19 @@ impl Worker {
             Command::Request(request) => {
                 // The Scratch page refreshes when an agent saves or marks a
                 // file; the topic is only watched once the page has opened.
-                let watch = !self.scratch_watch
-                    && matches!(request, crate::features::Request::ScratchList { .. })
+                // Pending badges read scratch.pending at connection, so the
+                // topic is watched from then on too.
+                use crate::features::Request as R;
+                let scratch = !self.scratch_watch
+                    && matches!(request, R::ScratchList { .. } | R::ScratchPending)
                     && self.view.may_call("scratch.list");
+                let groups = !self.groups_watch
+                    && matches!(request, R::ProjectGroups)
+                    && self.view.may_call("projectGroups.list");
                 self.request(request);
-                if watch {
-                    self.scratch_watch = true;
+                self.scratch_watch |= scratch;
+                self.groups_watch |= groups;
+                if scratch || groups {
                     self.subscribe().await;
                 }
             }
@@ -1112,6 +1123,8 @@ impl Worker {
                 | "file-save"
                 | "job-action"
                 | "scratch-mark"
+                | "project-group-save"
+                | "project-group-remove"
                 | "task-stop"
                 | "git-action"
                 | "fork"
@@ -1736,6 +1749,10 @@ impl Worker {
                     self.apply_archive(&data);
                 } else if topic == "scratch.changed" {
                     self.scratch_changed(&data);
+                } else if topic == "projectGroups.changed" {
+                    if self.view.requests.contains_key("project-groups") {
+                        self.request(crate::features::Request::ProjectGroups);
+                    }
                 } else if topic == "sessionOpen.changed" {
                     self.apply_open(&data);
                 } else if self.view.child.is_none()
@@ -2815,10 +2832,18 @@ impl Worker {
         let Some(key) = data["key"].as_str() else {
             return;
         };
+        if self.view.requests.contains_key("scratch-pending") {
+            self.request(crate::features::Request::ScratchPending);
+        }
         let Some(list) = self.view.requests.get("scratch") else {
             return;
         };
-        if list.loading || list.value["project"]["key"].as_str() != Some(key) {
+        let shown = list.value["lists"].as_array().is_some_and(|lists| {
+            lists
+                .iter()
+                .any(|l| l["project"]["key"].as_str() == Some(key))
+        });
+        if list.loading || !shown {
             return;
         }
         let list = list.request.clone();
@@ -2844,6 +2869,9 @@ impl Worker {
         topics.extend(crate::ui_requests::TOPICS.iter().map(|s| s.to_string()));
         if self.scratch_watch {
             topics.insert("scratch.changed".into());
+        }
+        if self.groups_watch {
+            topics.insert("projectGroups.changed".into());
         }
         if let Some(id) = &self.view.selected {
             topics.insert(format!("agent.conversation.{id}"));

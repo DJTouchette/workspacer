@@ -10,6 +10,7 @@
 use super::*;
 use wks_native::features::{JobAction, Request};
 use wks_native::jobs::{self, Job, Run};
+use wks_native::timing::now_ms;
 
 pub(super) const JOBS_DESCRIPTION: &str =
     "Work the hub runs on a schedule, even while this window is closed.";
@@ -22,12 +23,6 @@ const RUNS_UNSUPPORTED: &str =
     "This hub can’t list every job’s runs together. Open a job to see its own.";
 /// Runs a job row's strip shows, oldest to newest.
 const STRIP_RUNS: usize = 10;
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
-}
 
 impl Workspace {
     /// The newest list the hub returned, from a read or from a write (which

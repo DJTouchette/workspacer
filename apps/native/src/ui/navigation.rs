@@ -101,14 +101,11 @@ impl Workspace {
         );
         // Project and search each match a lineage, so workers in their own
         // worktrees stay nested under a manager the filter matched.
+        let groups = self.project_groups();
         let in_project = wks_native::navigation::lineage_filter(
             sessions,
             |ix| !self.archived(&sessions[ix].id) && !cleared[ix],
-            |ix| {
-                self.project_filter
-                    .as_ref()
-                    .is_none_or(|path| wks_native::projects::same_dir(&sessions[ix].cwd, path))
-            },
+            |ix| self.filter_holds(&groups, ix),
         );
         let visible = wks_native::navigation::lineage_filter(
             sessions,
@@ -134,20 +131,19 @@ impl Workspace {
         if self.spawn_pending || self.view.creating {
             return;
         }
-        if screen == Screen::Conversation
-            && self.project_filter.as_ref().is_some_and(|path| {
-                // A worker belongs to its manager's project for this check.
-                let sessions = &self.view.sessions;
-                !sessions
-                    .iter()
-                    .position(|s| Some(&s.id) == self.view.selected.as_ref())
-                    .is_some_and(|ix| {
-                        std::iter::once(ix)
-                            .chain(wks_native::navigation::ancestors(sessions, ix))
-                            .any(|ix| wks_native::projects::same_dir(&sessions[ix].cwd, path))
-                    })
-            })
-        {
+        if screen == Screen::Conversation && self.project_filter.is_some() && {
+            // A worker belongs to its manager's project for this check.
+            let sessions = &self.view.sessions;
+            let groups = self.project_groups();
+            !sessions
+                .iter()
+                .position(|s| Some(&s.id) == self.view.selected.as_ref())
+                .is_some_and(|ix| {
+                    std::iter::once(ix)
+                        .chain(wks_native::navigation::ancestors(sessions, ix))
+                        .any(|ix| self.filter_holds(&groups, ix))
+                })
+        } {
             self.project_filter = None;
         }
         self.screen = screen;
@@ -614,7 +610,7 @@ impl Workspace {
             Some("WORKSPACE"),
             "Projects",
             (!short).then(|| {
-                "Pinned and recent projects from the connected hub, plus folders your sessions run in."
+                "Projects group the folders that belong together. Every folder the hub knows, pinned or where a session runs, is listed below."
                     .into()
             }),
             None,
@@ -636,7 +632,7 @@ impl Workspace {
         {
             "Loading projects…"
         } else {
-            "No matching projects. Pin a directory above or clear the sidebar filter."
+            "No matching folders. Pin a folder above, or clear the search in the sidebar."
         };
         let hint = if self.settings.vim_navigation {
             "j / k navigate · Enter open · n new agent · / filter · i add · Ctrl Enter pin"
@@ -691,7 +687,13 @@ impl Workspace {
                                     chrome::Tone::Warning,
                                     p,
                                 ))
-                            }),
+                            })
+                            .child(self.render_project_groups(cx))
+                            .child(
+                                div()
+                                    .pt_2()
+                                    .child(super::projects::section_label("FOLDERS", p)),
+                            ),
                     )
                     .when(count == 0, |d| {
                         d.child(
@@ -839,6 +841,17 @@ impl Workspace {
         let edit_path = path.clone();
         let pin_path = path.clone();
         let forget = project.clone();
+        let groups = self.project_groups();
+        let group = groups
+            .groups
+            .iter()
+            .find(|g| {
+                g.folders
+                    .iter()
+                    .any(|f| wks_native::projects::same_dir(f, &project.path))
+            })
+            .map(|g| g.name.clone());
+        let pending = self.pending_in(std::slice::from_ref(&project.path));
         let details = div()
             .flex_1()
             .min_w_0()
@@ -862,9 +875,31 @@ impl Workspace {
                         d.child(
                             div()
                                 .flex_shrink_0()
-                                .text_size(px(10.))
+                                .text_size(px(chrome::scale::OVERLINE))
                                 .text_color(rgb(p.muted))
                                 .child("this device"),
+                        )
+                    })
+                    .when_some(group.clone(), |d, name| {
+                        d.child(
+                            div()
+                                .flex_shrink_0()
+                                .px_2()
+                                .rounded_full()
+                                .bg(rgb(p.selected))
+                                .text_size(px(chrome::scale::OVERLINE))
+                                .text_color(rgb(p.muted))
+                                .debug_selector(move || format!("project-in-group-{ix}"))
+                                .child(format!("in {name}")),
+                        )
+                    })
+                    .when(pending > 0, |d| {
+                        d.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(chrome::scale::OVERLINE))
+                                .text_color(rgb(p.warning))
+                                .child(format!("{pending} pending")),
                         )
                     }),
             )
@@ -872,17 +907,17 @@ impl Workspace {
                 div()
                     .truncate()
                     .font_family(mono_font())
-                    .text_size(px(11.))
+                    .text_size(px(chrome::scale::CAPTION))
                     .text_color(rgb(p.muted))
                     .child(project.path.clone()),
             )
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(px(chrome::scale::CAPTION))
                     .text_color(rgb(if project.live_sessions > 0 {
                         p.busy
                     } else {
-                        p.accent
+                        p.muted
                     }))
                     .child(sessions),
             );
@@ -942,10 +977,15 @@ impl Workspace {
                         "Forget",
                         on_device || can_write,
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.forget_project(&forget, cx);
-                    })),
+                    .debug_selector(move || format!("forget-project-{ix}"))
+                    // A disabled Forget does nothing: it used to remove the
+                    // bookmark anyway while a save was in flight.
+                    .when(on_device || can_write, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.forget_project(&forget, cx);
+                        }))
+                    }),
                 )
             })
             .child(

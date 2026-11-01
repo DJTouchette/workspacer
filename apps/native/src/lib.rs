@@ -22,6 +22,7 @@ pub mod navigation;
 pub mod path_detect;
 pub mod perf;
 pub mod plan;
+pub mod project_groups;
 pub mod projects;
 pub mod provider_status;
 pub mod pull_requests;

@@ -244,37 +244,39 @@ impl Workspace {
             .child(projects::section_label("Agent", p))
             .child(self.render_provider_choice(busy, cx))
             .child(self.render_model_select(busy, true, cx));
-        let task =
-            card()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(projects::section_label("Task", p))
-                        .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
-                            if resume {
+        let task = card()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(projects::section_label("Task", p))
+                    .child(
+                        div()
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .child(if resume {
                                 "Optional · sent after the conversation resumes"
                             } else {
                                 "Optional · you can also start empty"
-                            },
-                        )),
-                )
-                .child(
-                    div()
-                        .debug_selector(|| "launch-prompt".into())
-                        .flex_1()
-                        .min_h(px(96.))
-                        .flex()
-                        .flex_col()
-                        .child(
-                            Input::new(&self.prompt)
-                                .appearance(false)
-                                .flex_1()
-                                .min_h(px(96.))
-                                .disabled(busy),
-                        ),
-                );
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "launch-prompt".into())
+                    .flex_1()
+                    .min_h(px(96.))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Input::new(&self.prompt)
+                            .appearance(false)
+                            .flex_1()
+                            .min_h(px(96.))
+                            .disabled(busy),
+                    ),
+            );
         let gutter = if short { 12. } else { 20. };
         let content = div()
             .debug_selector(|| "launch-content".into())
@@ -306,7 +308,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .text_size(px(12.))
+                        .text_size(px(chrome::scale::META))
                         .text_color(rgb(p.accent))
                         .child(Icon::new(IconName::Info).size(px(12.)))
                         .child(
@@ -391,14 +393,14 @@ impl Workspace {
                             .flex_col()
                             .child(
                                 div()
-                                    .text_size(px(13.))
+                                    .text_size(px(chrome::scale::BODY))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(name),
                             )
                             .child(
                                 div()
                                     .truncate()
-                                    .text_size(px(11.))
+                                    .text_size(px(chrome::scale::CAPTION))
                                     .text_color(rgb(p.muted))
                                     .child(subtitle),
                             ),
@@ -483,7 +485,7 @@ impl Workspace {
                                 .rounded_full()
                                 .border_1()
                                 .border_color(rgb(p.border))
-                                .text_size(px(11.))
+                                .text_size(px(chrome::scale::CAPTION))
                                 .text_color(rgb(color))
                                 .child(text)
                         },
@@ -629,7 +631,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_size(px(12.))
+                    .text_size(px(chrome::scale::META))
                     .text_color(rgb(color))
                     .when_some(icon, |d, icon| {
                         d.child(Icon::new(icon).size(px(13.)).flex_shrink_0())
@@ -722,7 +724,7 @@ impl Workspace {
             .flex()
             .items_start()
             .gap_2()
-            .text_size(px(12.))
+            .text_size(px(chrome::scale::META))
             .child(
                 Icon::new(IconName::TriangleAlert)
                     .size(px(13.))
@@ -999,7 +1001,7 @@ impl Workspace {
             .child(
                 div()
                     .debug_selector(|| "launch-model-status".into())
-                    .text_size(px(11.))
+                    .text_size(px(chrome::scale::CAPTION))
                     .text_color(rgb(status_color))
                     .child(status),
             )
@@ -1033,9 +1035,12 @@ impl Workspace {
             .child(projects::section_label("Context window", p))
             .when(windows.is_empty(), |d| {
                 d.child(
-                    div().text_size(px(12.)).text_color(rgb(p.muted)).child(
-                        "The model's default. Models with a choice of windows list them here.",
-                    ),
+                    div()
+                        .text_size(px(chrome::scale::META))
+                        .text_color(rgb(p.muted))
+                        .child(
+                            "The model's default. Models with a choice of windows list them here.",
+                        ),
                 )
             })
             .when(!windows.is_empty(), |d| {
@@ -1095,7 +1100,7 @@ impl Workspace {
             )
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(px(chrome::scale::META))
                     .text_color(rgb(if self.permission == Permission::FullAccess {
                         p.warning
                     } else {

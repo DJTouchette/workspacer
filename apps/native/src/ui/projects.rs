@@ -243,6 +243,7 @@ impl Workspace {
             return;
         }
         self.request(Request::Projects, cx);
+        self.load_project_groups(cx);
     }
 
     /// Ask the hub about the chosen folder again (fresh form, reconnect).
@@ -922,7 +923,7 @@ impl Workspace {
                                     div()
                                         .truncate()
                                         .font_family(mono_font())
-                                        .text_size(px(11.))
+                                        .text_size(px(chrome::scale::CAPTION))
                                         .text_color(rgb(p.muted))
                                         .child(editor.path.clone()),
                                 ),
@@ -1081,7 +1082,7 @@ impl Workspace {
                                 div()
                                     .min_w_0()
                                     .truncate()
-                                    .text_size(px(15.))
+                                    .text_size(px(chrome::scale::HEADING))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(title),
                             )
@@ -1091,7 +1092,7 @@ impl Workspace {
                                     .px(px(6.))
                                     .rounded_full()
                                     .bg(rgb(p.selected))
-                                    .text_size(px(10.))
+                                    .text_size(px(chrome::scale::OVERLINE))
                                     .text_color(rgb(p.muted))
                                     .child(fact)
                             })),
@@ -1101,7 +1102,7 @@ impl Workspace {
                             .w_full()
                             .truncate()
                             .font_family(mono_font())
-                            .text_size(px(11.))
+                            .text_size(px(chrome::scale::CAPTION))
                             .text_color(rgb(p.muted))
                             .child(cwd.clone()),
                     )
@@ -1112,7 +1113,7 @@ impl Workspace {
                             .flex()
                             .items_start()
                             .gap_1()
-                            .text_size(px(11.))
+                            .text_size(px(chrome::scale::CAPTION))
                             .line_height(gpui::relative(1.4))
                             .text_color(rgb(status_color))
                             // Wraps: a missing-folder warning carries its
@@ -1134,7 +1135,7 @@ impl Workspace {
                     if pinned {
                         "Unpin project"
                     } else {
-                        "Pin to projects"
+                        "Pin project"
                     },
                     IconName::Star,
                     can_pin,
@@ -1242,7 +1243,7 @@ impl Workspace {
                 )
                 .child(
                     div()
-                        .text_size(px(13.))
+                        .text_size(px(chrome::scale::BODY))
                         .font_weight(FontWeight::MEDIUM)
                         .child(if registry_loading {
                             "Loading projects…".to_owned()
@@ -1253,7 +1254,7 @@ impl Workspace {
                         }),
                 )
                 .when(!registry_loading, |d| {
-                    d.child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(
+                    d.child(div().text_size(px(chrome::scale::META)).text_color(rgb(p.muted)).child(
                         "Paste an absolute folder path above, or browse for one on the hub.",
                     ))
                 })
@@ -1313,7 +1314,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .text_size(px(11.))
+                        .text_size(px(chrome::scale::CAPTION))
                         .text_color(rgb(p.warning))
                         .child(
                             Icon::new(IconName::TriangleAlert)
@@ -1343,7 +1344,7 @@ impl Workspace {
             .when(!self.projects.browsing && has_rows, |d| {
                 d.child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(px(chrome::scale::CAPTION))
                         .text_color(rgb(p.muted))
                         .child("↑ ↓ to move · Enter to choose · paths belong to the connected hub"),
                 )
@@ -1410,7 +1411,7 @@ impl Workspace {
                         .flex_col()
                         .child(
                             div()
-                                .text_size(px(13.))
+                                .text_size(px(chrome::scale::BODY))
                                 .font_weight(FontWeight::MEDIUM)
                                 .child(if matches!(row, PickRow::Current(_)) {
                                     "Current folder"
@@ -1422,7 +1423,7 @@ impl Workspace {
                             div()
                                 .truncate()
                                 .font_family(mono_font())
-                                .text_size(px(11.))
+                                .text_size(px(chrome::scale::CAPTION))
                                 .text_color(rgb(p.muted))
                                 .child(path.clone()),
                         ),
@@ -1453,7 +1454,7 @@ impl Workspace {
                                         div()
                                             .min_w_0()
                                             .truncate()
-                                            .text_size(px(13.))
+                                            .text_size(px(chrome::scale::BODY))
                                             .font_weight(FontWeight::MEDIUM)
                                             .child(project.title().to_owned()),
                                     )
@@ -1461,7 +1462,7 @@ impl Workspace {
                                         d.child(
                                             div()
                                                 .flex_shrink_0()
-                                                .text_size(px(10.))
+                                                .text_size(px(chrome::scale::OVERLINE))
                                                 .text_color(rgb(p.muted))
                                                 .child("this device"),
                                         )
@@ -1471,7 +1472,7 @@ impl Workspace {
                                 div()
                                     .truncate()
                                     .font_family(mono_font())
-                                    .text_size(px(11.))
+                                    .text_size(px(chrome::scale::CAPTION))
                                     .text_color(rgb(p.muted))
                                     .child(project.path.clone()),
                             ),
@@ -1480,7 +1481,7 @@ impl Workspace {
                         d.child(
                             div()
                                 .flex_shrink_0()
-                                .text_size(px(11.))
+                                .text_size(px(chrome::scale::CAPTION))
                                 .text_color(rgb(if project.live_sessions > 0 {
                                     p.busy
                                 } else {
@@ -1502,7 +1503,7 @@ impl Workspace {
                             if pinned {
                                 "Unpin project"
                             } else {
-                                "Pin to projects"
+                                "Pin project"
                             },
                             IconName::Star,
                             can_pin,
@@ -1561,7 +1562,7 @@ impl Workspace {
                         self.icon_button(
                             "browse-home",
                             "Home folder",
-                            IconName::Inbox,
+                            IconName::User,
                             !loading && !home.is_empty(),
                         )
                         .when(!loading && !home.is_empty(), |d| {
@@ -1576,7 +1577,7 @@ impl Workspace {
                             .min_w_0()
                             .truncate()
                             .font_family(mono_font())
-                            .text_size(px(12.))
+                            .text_size(px(chrome::scale::META))
                             .child(if path.is_empty() {
                                 "…".to_owned()
                             } else {
@@ -1595,25 +1596,23 @@ impl Workspace {
                         d.child(
                             div()
                                 .p_2()
-                                .text_size(px(12.))
+                                .text_size(px(chrome::scale::META))
                                 .text_color(rgb(p.muted))
                                 .child("Loading folders…"),
                         )
                     })
                     .when_some(error.clone(), |d, error| {
-                        d.child(
-                            div()
-                                .p_2()
-                                .text_size(px(12.))
-                                .text_color(rgb(p.warning))
-                                .child(format!("Couldn't open this folder: {error}")),
-                        )
+                        d.child(div().p_2().child(chrome::notice_line(
+                            format!("Couldn't open this folder: {error}"),
+                            chrome::Tone::Warning,
+                            p,
+                        )))
                     })
                     .when(!loading && error.is_none() && dirs.is_empty(), |d| {
                         d.child(
                             div()
                                 .p_2()
-                                .text_size(px(12.))
+                                .text_size(px(chrome::scale::META))
                                 .text_color(rgb(p.muted))
                                 .child("No subfolders"),
                         )
@@ -1630,7 +1629,7 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap_2()
-                                .text_size(px(12.))
+                                .text_size(px(chrome::scale::META))
                                 .hover(|s| s.bg(rgb(p.selected)))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.browse_to(target.clone(), cx)
@@ -1693,7 +1692,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .text_size(px(11.))
+                        .text_size(px(chrome::scale::CAPTION))
                         .text_color(rgb(if self.projects.fallback.is_some() {
                             p.warning
                         } else {
@@ -1728,7 +1727,7 @@ pub(super) fn registry_error_notice(error: &str) -> String {
 
 pub(super) fn section_label(label: &'static str, p: Palette) -> Div {
     div()
-        .text_size(px(11.))
+        .text_size(px(chrome::scale::CAPTION))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(p.muted))
         .child(label)

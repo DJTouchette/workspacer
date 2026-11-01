@@ -65,14 +65,27 @@ pub(super) struct Extras {
     pub job_failed_only: bool,
     /// The run open in the history, by (job id, start time).
     pub job_run_open: Option<(String, i64)>,
-    /// The folder the Scratch page shows (any folder of the project; the hub
-    /// resolves a worktree to its main checkout). Fixed while the page is open.
-    pub scratch_cwd: Option<String>,
+    /// What the Scratch page shows: a folder (the hub resolves a worktree to
+    /// its main checkout) or a project as `group:<id>`. Fixed while open.
+    pub scratch_project: Option<String>,
+    /// A project a badge asked Scratch to open on, used once.
+    pub scratch_preset: Option<String>,
     pub scratch_filter: wks_native::scratch::Filter,
-    /// The scratch file open in the list, by its relative path.
-    pub scratch_open: Option<String>,
+    /// The scratch file open in the list, by (folder, relative path).
+    pub scratch_open: Option<(String, String)>,
     pub scratch_purpose: Entity<InputState>,
     pub scratch_note: Entity<InputState>,
+    /// The project editor's draft (folders live here; the text fields in
+    /// the inputs below until Save).
+    pub group_draft: Option<wks_native::project_groups::Draft>,
+    pub group_confirm_delete: bool,
+    pub group_error: String,
+    /// A save or delete is on its way; the editor closes when it lands.
+    pub group_save_sent: bool,
+    pub group_name: Entity<InputState>,
+    pub group_icon: Entity<InputState>,
+    pub group_color: Entity<InputState>,
+    pub group_folder: Entity<InputState>,
     pub confirm_end: Option<String>,
     pub resume: Option<String>,
     pub local_paths: bool,
@@ -231,7 +244,17 @@ impl Extras {
             job_runs_tab: false,
             job_failed_only: false,
             job_run_open: None,
-            scratch_cwd: None,
+            scratch_project: None,
+            scratch_preset: None,
+            group_draft: None,
+            group_confirm_delete: false,
+            group_error: String::new(),
+            group_save_sent: false,
+            group_name: cx.new(|cx| InputState::new(window, cx).placeholder("Acme")),
+            group_icon: cx.new(|cx| InputState::new(window, cx).placeholder("🚀")),
+            group_color: cx.new(|cx| InputState::new(window, cx).placeholder("#5b8def")),
+            group_folder: cx
+                .new(|cx| InputState::new(window, cx).placeholder("/path/to/another/repository")),
             scratch_filter: Default::default(),
             scratch_open: None,
             scratch_purpose: cx
@@ -549,6 +572,7 @@ impl Workspace {
     ) {
         self.sync_file_viewer(next, window, cx);
         self.sync_archive(next, cx);
+        self.sync_project_groups(next);
         if self.settings.notifications
             && self.view.connected
             && next.connected

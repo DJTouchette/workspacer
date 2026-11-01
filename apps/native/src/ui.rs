@@ -25,6 +25,7 @@ mod motion;
 mod navigation;
 mod plan;
 mod portrait;
+mod project_groups;
 mod projects;
 mod pull_request;
 mod questions;
@@ -1623,7 +1624,7 @@ impl Workspace {
             }
             // Start where the user is looking: the filtered project, else the
             // open conversation's folder, else the last choice.
-            let here = self.project_filter.clone().or_else(|| {
+            let here = self.filter_folder().or_else(|| {
                 self.view
                     .sessions
                     .iter()
@@ -1635,7 +1636,7 @@ impl Workspace {
             if !self.seed_project(&path, cx) {
                 self.refresh_project_inspection(cx);
             }
-        } else if let Some(path) = self.project_filter.clone() {
+        } else if let Some(path) = self.filter_folder() {
             self.seed_project(&path, cx);
         }
         self.new_session = true;

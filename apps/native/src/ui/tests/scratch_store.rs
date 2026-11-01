@@ -44,7 +44,13 @@ fn marks(commands: &mut tokio::sync::mpsc::Receiver<Command>) -> Vec<(String, se
     effects(commands)
         .into_iter()
         .filter_map(|c| match c {
-            Command::Request(Request::ScratchMark { cwd, path, patch }) => {
+            Command::Request(Request::ScratchMark {
+                cwd,
+                path,
+                patch,
+                relist,
+            }) => {
+                assert_eq!(relist, [CWD], "a mark re-lists the page's folders");
                 assert_eq!(cwd, CWD, "marks name the folder the page was opened on");
                 Some((path, patch))
             }
@@ -60,20 +66,25 @@ fn scratch_opens_on_the_selected_agents_project_with_pending_files_first(cx: &mu
     assert!(
         effects(&mut commands).iter().any(|c| matches!(
             c,
-            Command::Request(Request::ScratchList { cwd }) if cwd == CWD
+            Command::Request(Request::ScratchList { cwds }) if *cwds == [CWD]
         )),
         "opening the page lists the selected agent's project"
     );
     request_state(
         &workspace,
         &mut visual,
-        Request::ScratchList { cwd: CWD.into() },
+        Request::ScratchList {
+            cwds: vec![CWD.into()],
+        },
         1,
-        listed(),
+        serde_json::json!({"lists": [listed()]}),
     );
     assert!(visual.debug_bounds("scratch-pending").is_some());
     workspace.read_with(&visual, |this, _| {
-        let listing = this.scratch_listing().unwrap();
+        let listings = this.scratch_listings().unwrap();
+        assert_eq!(listings.len(), 1);
+        let (cwd, listing) = &listings[0];
+        assert_eq!(cwd, CWD);
         assert_eq!(listing.root, "/work/shop");
         assert_eq!(listing.items[0].path, "prod/backfill.sql");
     });
@@ -91,7 +102,7 @@ fn scratch_opens_on_the_selected_agents_project_with_pending_files_first(cx: &mu
     visual.run_until_parked();
     workspace.read_with(&visual, |this, _| {
         assert_eq!(this.screen, Screen::Scratch);
-        assert_eq!(this.extras.scratch_cwd.as_deref(), Some(CWD));
+        assert_eq!(this.extras.scratch_project.as_deref(), Some(CWD));
     });
     assert!(
         !effects(&mut commands)
@@ -108,9 +119,11 @@ fn opening_a_file_reads_it_and_marks_send_only_metadata(cx: &mut TestAppContext)
     request_state(
         &workspace,
         &mut visual,
-        Request::ScratchList { cwd: CWD.into() },
+        Request::ScratchList {
+            cwds: vec![CWD.into()],
+        },
         1,
-        listed(),
+        serde_json::json!({"lists": [listed()]}),
     );
     effects(&mut commands);
 
@@ -182,12 +195,14 @@ fn opening_a_file_reads_it_and_marks_send_only_metadata(cx: &mut TestAppContext)
             cwd: CWD.into(),
             path: "prod/backfill.sql".into(),
             patch: serde_json::json!({"status":"done"}),
+            relist: vec![CWD.into()],
         },
         3,
-        after,
+        serde_json::json!({"lists": [after]}),
     );
     workspace.read_with(&visual, |this, _| {
-        let listing = this.scratch_listing().unwrap();
+        let listings = this.scratch_listings().unwrap();
+        let listing = &listings[0].1;
         assert_eq!(listing.pending(), 0);
         let open: Vec<_> = listing
             .items
@@ -206,9 +221,11 @@ fn sensitive_content_the_hub_withheld_says_so(cx: &mut TestAppContext) {
     request_state(
         &workspace,
         &mut visual,
-        Request::ScratchList { cwd: CWD.into() },
+        Request::ScratchList {
+            cwds: vec![CWD.into()],
+        },
         1,
-        listed(),
+        serde_json::json!({"lists": [listed()]}),
     );
     click(&mut visual, "scratch-row-0");
     request_state(
@@ -232,9 +249,11 @@ fn an_empty_scratch_explains_how_files_get_there(cx: &mut TestAppContext) {
     request_state(
         &workspace,
         &mut visual,
-        Request::ScratchList { cwd: CWD.into() },
+        Request::ScratchList {
+            cwds: vec![CWD.into()],
+        },
         1,
-        serde_json::json!({"project":{"root":"/work/shop","key":"k","files":"/h/f","exists":false},"items":[],"truncated":false}),
+        serde_json::json!({"lists":[{"project":{"root":"/work/shop","key":"k","files":"/h/f","exists":false},"items":[],"truncated":false}]}),
     );
     assert!(visual.debug_bounds("scratch-empty").is_some());
     assert!(visual.debug_bounds("scratch-pending").is_none());
@@ -255,6 +274,6 @@ fn the_sidebar_opens_scratch_on_the_selected_agents_project(cx: &mut TestAppCont
     workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Scratch));
     assert!(effects(&mut commands).iter().any(|c| matches!(
         c,
-        Command::Request(Request::ScratchList { cwd }) if cwd == CWD
+        Command::Request(Request::ScratchList { cwds }) if *cwds == [CWD]
     )));
 }
