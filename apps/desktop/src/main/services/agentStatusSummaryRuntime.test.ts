@@ -9,6 +9,7 @@ vi.mock('./configService', () => ({
 }));
 vi.mock('./claudemonDaemon', () => ({ CLAUDEMON_API_URL: 'http://127.0.0.1:0' }));
 vi.mock('./hubClient', () => ({ callHub: vi.fn() }));
+vi.mock('./sessionOpenCache', () => ({ openSessionIds: vi.fn(async () => new Set<string>()) }));
 vi.mock('./directCompletion', () => ({
   complete: vi.fn(),
   completionSupported: () => true,
@@ -53,6 +54,25 @@ it('visibility requires an owning local row; stopped rows need curation', () => 
       { data: { agents: [{ global: true, lastSessionId: 's' }] } },
     ),
   ).toBe(false);
+});
+it('a stopped session in the shared open set is visible; spawning and unknown modes are not', () => {
+  expect(summarySessionVisible('s', { session_id: 's', mode: 'stopped' }, null, ['s'])).toBe(true);
+  expect(summarySessionVisible('s', { session_id: 's', mode: 'stopped' }, null, ['x'])).toBe(false);
+  // The roster lists a recent stopped row by its timestamp, but the access gate
+  // never widens on time: only open/curated stopped rows pass.
+  expect(
+    summarySessionVisible(
+      's',
+      { session_id: 's', mode: 'stopped', updated_at: new Date().toISOString() },
+      null,
+    ),
+  ).toBe(false);
+  expect(
+    summarySessionVisible('s', { session_id: 's', mode: 'unknown', transport: 'stream' }, null, ['s']),
+  ).toBe(false);
+  expect(summarySessionVisible('s', { session_id: 's', mode: 'compacting' }, null, ['s'])).toBe(
+    false,
+  );
 });
 it('rejects an old daemon ignoring the projection before the model, even for a small transcript', async () => {
   const fetchMock = vi.fn(

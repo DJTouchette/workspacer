@@ -1036,6 +1036,22 @@ export function useAgentManager() {
         if (sessionIds.length) {
           window.dispatchEvent(new CustomEvent('agent:closed', { detail: { sessionIds } }));
         }
+        // Closing a card HIDES its session: the same shared archive every
+        // client's Hide writes (docs/session-roster.md, Hide = archive). The hub
+        // then drops it from the shared sidebar, so no client keeps listing it;
+        // History still shows it, labelled hidden. A federated card's session
+        // belongs to its peer hub, whose archive is not ours to edit.
+        // Best-effort: an older hub without the archive, or a failed call, must
+        // never block closing.
+        if (!agent?.hub) {
+          for (const sid of new Set(sessionIds)) {
+            try {
+              void window.electronAPI.sessionArchiveSet?.(sid, true)?.catch(() => {});
+            } catch {
+              /* best-effort */
+            }
+          }
+        }
       }
       // Tear down a dispatched worker's disposable worktree on explicit close too
       // (the same guarded, fail-closed removal the auto-drop does). No-op for a

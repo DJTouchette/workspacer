@@ -2,33 +2,30 @@ import { configService } from './configService';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { callHub } from './hubClient';
 import { AgentStatusSummaryService, SummaryUnavailable } from './agentStatusSummary';
+import { listed, layoutSessionIds } from './sessionRoster';
+import { openSessionIds } from './sessionOpenCache';
 
-// Same fleet visibility boundary as brain/visibility.go: a local live row or
-// a stopped row curated in this hub's layout. Remote ids are never resolved via
-// desktop lookalikes; federation dispatches this provider on the owning hub.
-export function summarySessionVisible(sessionId: string, row: unknown, layout: unknown): boolean {
-  const s = row as { session_id?: string; mode?: string; archived?: boolean } | null;
-  if (!s || s.session_id !== sessionId || !s.mode || s.mode === 'unknown' || s.archived)
-    return false;
-  if (['input', 'responding', 'approval', 'question'].includes(s.mode)) return true;
-  if (s.mode !== 'stopped') return false;
-  const doc = layout as {
-    data?: {
-      agents?: Array<{
-        global?: boolean;
-        sessionId?: string;
-        lastSessionId?: string;
-        tabs?: Array<{ panes?: Array<{ attachSessionId?: string }> }>;
-      }>;
-    };
-  } | null;
-  return !!doc?.data?.agents?.some(
-    (a) =>
-      !a.global &&
-      (a.sessionId === sessionId ||
-        a.lastSessionId === sessionId ||
-        a.tabs?.some((t) => t.panes?.some((p) => p.attachSessionId === sessionId))),
-  );
+const LIVE_MODES = ['input', 'responding', 'approval', 'question'];
+
+// The session roster boundary (sessionRoster.ts, docs/session-roster.md): a
+// local live row, or a stopped row that is listed because it is in the shared
+// open set or curated in this hub's layout. The access projection carries no
+// `updated_at`, so the roster's 24h window never widens this gate. Remote ids
+// are never resolved via desktop lookalikes; federation dispatches this
+// provider on the owning hub.
+export function summarySessionVisible(
+  sessionId: string,
+  row: unknown,
+  layout: unknown,
+  open: Iterable<string> = [],
+): boolean {
+  const s = row as { session_id?: unknown; mode?: unknown } | null;
+  if (!s || s.session_id !== sessionId || typeof s.mode !== 'string') return false;
+  // Auth stays an allowlist: only the four live modes and stopped, never an
+  // unknown/spawning row or a mode this gate has not been taught.
+  if (!LIVE_MODES.includes(s.mode) && s.mode !== 'stopped') return false;
+  const { updated_at: _ignored, ...access } = row as Record<string, unknown>;
+  return listed(access, { layout: layoutSessionIds(layout), open });
 }
 
 /** Reject old daemons even if they ignore summary_source and send a full log.
@@ -88,9 +85,11 @@ export function createAgentStatusSummaryService(): AgentStatusSummaryService {
         typeof (row as { archived?: unknown }).archived !== 'boolean'
       )
         throw new SummaryUnavailable();
-      const layout =
-        (row as { mode?: string } | null)?.mode === 'stopped' ? await callHub('layout.get') : null;
-      if (!summarySessionVisible(sessionId, row, layout))
+      const stopped = (row as { mode?: string } | null)?.mode === 'stopped';
+      const [layout, open] = stopped
+        ? await Promise.all([callHub('layout.get'), openSessionIds()])
+        : [null, new Set<string>()];
+      if (!summarySessionVisible(sessionId, row, layout, open))
         throw new Error('agents.summarizeStatus: permission denied');
     },
     source: readSummarySource,

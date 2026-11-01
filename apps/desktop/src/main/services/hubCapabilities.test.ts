@@ -37,13 +37,22 @@ import * as fs from 'fs';
 // Capture every registered capability handler so tests can invoke them directly.
 const registered = new Map<string, (params: unknown) => unknown>();
 const emitToRenderer = vi.fn();
+// Outbound hub calls (layout.get) reject by default — "no hub" — unless a test
+// stubs an answer.
+const callHub = vi.fn(async (_method: string, _params?: unknown): Promise<unknown> => {
+  throw new Error('hub not connected');
+});
 vi.mock('./hubClient', () => ({
   publishToHub: vi.fn(),
   registerCapability: (method: string, handler: (params: unknown) => unknown) => {
     registered.set(method, handler);
   },
   emitToRenderer: (...a: unknown[]) => emitToRenderer(...a),
+  callHub: (method: string, params?: unknown) => callHub(method, params),
 }));
+// The shared open set (sessionOpen) the roster consults.
+const openSessionIds = vi.fn(async () => new Set<string>());
+vi.mock('./sessionOpenCache', () => ({ openSessionIds: () => openSessionIds() }));
 
 // PRODUCTION MODE: the brain owns the catalog, so `cat(...)` registers nothing
 // and only main's own registerCapability handlers exist on the bus. Do not flip
@@ -185,7 +194,14 @@ vi.mock('./sessionHistory', () => ({ sessionHistory: {} }));
 vi.mock('./layoutService', () => ({ layoutService: {} }));
 vi.mock('./claudeSessionList', () => ({ listClaudeSessionsForDir: vi.fn() }));
 const listRecentSessions = vi.fn(async () => [{ sessionId: 's1', provider: 'claude' }]);
-vi.mock('./recentSessions', () => ({ listRecentSessions: () => listRecentSessions() }));
+// Raw daemon rows for the roster: null (daemon unreadable) unless stubbed.
+const listDaemonSessionRows = vi.fn(async () => null as unknown[] | null);
+const getDaemonSessionRow = vi.fn(async (_id: string) => null as unknown);
+vi.mock('./recentSessions', () => ({
+  listRecentSessions: () => listRecentSessions(),
+  listDaemonSessionRows: () => listDaemonSessionRows(),
+  getDaemonSessionRow: (id: string) => getDaemonSessionRow(id),
+}));
 vi.mock('./fileService', () => ({
   readTextFile: vi.fn(),
   writeTextFile: vi.fn(),
@@ -689,6 +705,105 @@ describe('sessions.snapshots — compacted before it leaves the process', () => 
     getSnapshot.mockReturnValue(bigSession() as never);
     const out = (await call('sessions.snapshot', { sessionId: 's1' })) as Record<string, any>;
     expect(out.conversation).toHaveLength(50);
+  });
+});
+
+// Roster membership follows the shared rule (sessionRoster.ts / hub-rs
+// roster.rs, docs/session-roster.md): a stopped session no longer vanishes just
+// because the desktop layout exists and omits it, and open sessions stay listed.
+describe('sessions.snapshots — shared session roster', () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const ids = (rows: Array<Record<string, any>>) => rows.map((r) => r.sessionId);
+  beforeEach(() => getAllSnapshots.mockReturnValue([] as never));
+
+  it('lists stopped daemon rows only from the sidebar (open) and layout — no time window', async () => {
+    getAllSnapshots.mockReturnValue([{ sessionId: 'live', cwd: '/p', status: 'active' }] as never);
+    callHub.mockResolvedValueOnce({ data: { agents: [{ sessionId: 'other', name: 'Other' }] } });
+    openSessionIds.mockResolvedValueOnce(new Set(['kept']));
+    listDaemonSessionRows.mockResolvedValueOnce([
+      { session_id: 'live', mode: 'input', updated_at: ago(1000) },
+      // Ended a minute ago but not on the sidebar: hidden (Hide = archive
+      // already took it off `open`).
+      { session_id: 'recent', mode: 'stopped', updated_at: ago(30_000) },
+      { session_id: 'kept', mode: 'stopped', cwd: '/k', provider: 'codex', updated_at: ago(60_000) },
+      { session_id: 'old', mode: 'stopped', updated_at: ago(48 * 3600_000) },
+      { session_id: 'other', mode: 'stopped', updated_at: ago(48 * 3600_000) },
+    ]);
+    const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
+    expect(ids(out)).toEqual(['live', 'kept', 'other']);
+    expect(out[1]).toMatchObject({
+      sessionId: 'kept',
+      cwd: '/k',
+      status: 'ended',
+      provider: 'codex',
+      sparse: true,
+      pendingApproval: null,
+    });
+    // Curated rows keep the layout's name.
+    expect(out[2]).toMatchObject({ sessionId: 'other', label: 'Other', status: 'ended' });
+  });
+
+  it('drops an ended store row that is off the sidebar, and keeps it while open', async () => {
+    getAllSnapshots.mockReturnValue([
+      { sessionId: 'gone', cwd: '/p', status: 'ended' },
+      { sessionId: 'paused', cwd: '/p', status: 'ended' },
+    ] as never);
+    openSessionIds.mockResolvedValueOnce(new Set(['paused']));
+    listDaemonSessionRows.mockResolvedValueOnce([
+      // The daemon copy of a hidden store row must not come back as sparse.
+      { session_id: 'gone', mode: 'stopped', updated_at: ago(1000) },
+    ]);
+    const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
+    expect(ids(out)).toEqual(['paused']);
+  });
+
+  it('keeps an old stopped session listed while it is in the shared open set', async () => {
+    openSessionIds.mockResolvedValueOnce(new Set(['paused']));
+    listDaemonSessionRows.mockResolvedValueOnce([
+      { session_id: 'paused', mode: 'stopped', updated_at: ago(30 * 24 * 3600_000), archived: true },
+    ]);
+    const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
+    expect(ids(out)).toEqual(['paused']);
+  });
+
+  it('lists a stream session that has not reported yet as starting, never a pty shell', async () => {
+    listDaemonSessionRows.mockResolvedValueOnce([
+      { session_id: 'spawn', mode: 'unknown', transport: 'stream', provider: 'claude' },
+      { session_id: 'shell', mode: 'unknown', transport: 'pty', provider: 'claude' },
+    ]);
+    const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
+    expect(ids(out)).toEqual(['spawn']);
+    expect(out[0]).toMatchObject({ status: 'starting', starting: true });
+  });
+
+  it('marks a pre-registered store row as starting', async () => {
+    getAllSnapshots.mockReturnValue([{ sessionId: 's', cwd: '/p', status: 'starting' }] as never);
+    const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
+    expect(out[0]).toMatchObject({ sessionId: 's', starting: true });
+  });
+
+  it('still serves layout ghosts when the daemon cannot be read', async () => {
+    getAllSnapshots.mockReturnValue([] as never);
+    callHub.mockResolvedValueOnce({
+      data: { agents: [{ global: true, sessionId: 'ov' }, { lastSessionId: 'g', cwd: '/g' }] },
+    });
+    const out = (await call('sessions.snapshots')) as Array<Record<string, any>>;
+    expect(out).toEqual([
+      expect.objectContaining({ sessionId: 'g', cwd: '/g', status: 'ended', sparse: true }),
+    ]);
+  });
+
+  it('answers sessions.snapshot for an evicted session from the daemon row', async () => {
+    getSnapshot.mockReturnValue(null as never);
+    getDaemonSessionRow.mockResolvedValueOnce({
+      session_id: 'gone',
+      mode: 'stopped',
+      cwd: '/x',
+      updated_at: ago(1000),
+    });
+    const out = (await call('sessions.snapshot', { sessionId: 'gone' })) as Record<string, any>;
+    expect(out).toMatchObject({ sessionId: 'gone', status: 'ended', sparse: true, cwd: '/x' });
+    expect(await call('sessions.snapshot', { sessionId: 'never' })).toBeNull();
   });
 });
 
