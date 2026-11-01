@@ -973,15 +973,30 @@ async fn stopped_sessions_in_the_hub_open_set_are_paused_and_listed() {
     assert_eq!(app.agents[0].state(), "stopped", "logic still sees stopped");
     assert_eq!(app.hidden_count, 1);
 
-    // A stale or duplicate change event is ignored; a newer one lets it go.
+    // A stale or duplicate change event is ignored; a newer one that marks it
+    // ended keeps it listed but no longer Paused.
     app.adopt_open_sessions(open(1, &[]), true);
     app.adopt_open_sessions(open(2, &[]), true);
     assert_eq!(app.agents.len(), 1);
-    app.adopt_open_sessions(open(3, &[]), true);
-    assert!(app.agents.is_empty(), "let go by the hub: back to history");
+    app.adopt_open_sessions(
+        OpenSessions::from_document(&serde_json::json!({
+            "version": 3, "open": {"paused": 1}, "ended": {"paused": 2}
+        }))
+        .unwrap(),
+        true,
+    );
+    assert_eq!(
+        app.agents.len(),
+        1,
+        "ended on purpose: still on the sidebar"
+    );
+    assert_eq!(app.agents[0].display_state(), "stopped");
+    // Archived (Hide): the hub drops it from the set, so it goes.
+    app.adopt_open_sessions(open(4, &[]), true);
+    assert!(app.agents.is_empty(), "hidden by the hub: back to history");
 
     // A live session is never "paused", whatever the set says.
-    app.adopt_open_sessions(open(4, &["live"]), true);
+    app.adopt_open_sessions(open(5, &["live"]), true);
     app.set_agents(vec![agent_cwd("live", "/c", "input")]);
     assert_eq!(app.agents[0].display_state(), "input");
 }

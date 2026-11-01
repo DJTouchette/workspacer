@@ -39,25 +39,26 @@ impl App {
         // NOT stopped — an offline hub's rows keep their last-known mode, so
         // this filter never eats them.)
         //
-        // A stopped LOCAL session still in the hub's shared open set
-        // (`sessionOpen`) was stopped by its app closing, not ended: it is
-        // Paused, shown whatever the toggle says, like in every other client.
-        // The open set is the local hub's, so it never marks a peer's row.
+        // A stopped LOCAL session on the hub's shared sidebar (`sessionOpen`)
+        // stays listed whatever the toggle says, like in every other client:
+        // Paused when its app closed under it, stopped when it was ended on
+        // purpose. Only archiving takes it off. The set is the local hub's,
+        // so it never lists or marks a peer's row.
+        let open = self.open_sessions.as_ref();
+        let on_sidebar =
+            |a: &Agent| !a.is_remote() && open.is_some_and(|o| o.contains(&a.session_id));
         for a in &mut list {
             if !a.is_stopped() {
                 self.seen_live.insert(a.session_id.clone());
             }
             a.paused = a.is_stopped()
                 && !a.is_remote()
-                && self
-                    .open_sessions
-                    .as_ref()
-                    .is_some_and(|open| open.contains(&a.session_id));
+                && open.is_some_and(|o| o.is_paused(&a.session_id));
         }
         let total = list.len();
         if !self.show_all_sessions {
             let seen = &self.seen_live;
-            list.retain(|a| !a.is_stopped() || a.paused || seen.contains(&a.session_id));
+            list.retain(|a| !a.is_stopped() || on_sidebar(a) || seen.contains(&a.session_id));
         }
         self.hidden_count = total - list.len();
 

@@ -1,13 +1,15 @@
-//! The hub's shared open set (`sessionOpen`, see docs/session-roster.md).
+//! The hub's shared sidebar set (`sessionOpen`, see docs/session-roster.md).
 //!
-//! The hub remembers which sessions some client had open and that were not
-//! ended on purpose. A stopped session still in that set was stopped by its
-//! app (or host) closing, so every client shows it as Paused and resumable
-//! instead of hiding it as history. The TUI reads the document once per bus
+//! `open` is every session the sidebar keeps; `ended` marks the open ones
+//! that were ended on purpose (by the user or the agent). A stopped session
+//! that is open and unmarked was stopped by its app (or host) closing: every
+//! client shows it as Paused and resumable. One that is open and marked ended
+//! stays listed as stopped. Nothing leaves the set except by archiving (Hide),
+//! which the TUI does not write here. The TUI reads the document once per bus
 //! (re)connect and follows `sessionOpen.changed`; it keeps no list of its own.
 //!
-//! Older hubs have no `sessionOpen`. They expose native's kept-open set as
-//! `sessions.kept` instead, which carries no version and is used as is.
+//! Older hubs have no `sessionOpen`. They expose the open, unended ids as
+//! `sessions.kept` instead, which carries no version and no marks.
 
 use serde_json::Value;
 use std::collections::HashSet;
@@ -20,26 +22,44 @@ pub struct OpenSessions {
     /// The document version, for ordering a read against change events.
     /// `None` for the legacy `sessions.kept` answer, which has none.
     pub version: Option<i64>,
+    /// Every session the shared sidebar keeps.
     pub ids: HashSet<String>,
+    /// Open sessions ended on purpose: listed, but not Paused.
+    pub ended: HashSet<String>,
 }
 
 impl OpenSessions {
+    /// On the shared sidebar (Paused or Ended).
     pub fn contains(&self, id: &str) -> bool {
         self.ids.contains(id)
     }
 
-    /// `{version, open: {sessionId: sinceMs}}`. `None` when malformed, so a
-    /// bad payload never clears a good set.
+    /// Open and not ended on purpose: a stopped session reads as Paused.
+    pub fn is_paused(&self, id: &str) -> bool {
+        self.ids.contains(id) && !self.ended.contains(id)
+    }
+
+    /// `{version, open: {sessionId: sinceMs}, ended: {sessionId: endedAtMs}}`.
+    /// `None` when `version`/`open` are malformed, so a bad payload never
+    /// clears a good set. `ended` is read tolerantly: absent or malformed is
+    /// no marks.
     pub fn from_document(doc: &Value) -> Option<Self> {
         let version = doc.get("version")?.as_i64()?;
         let open = doc.get("open")?.as_object()?;
+        let ended = doc
+            .get("ended")
+            .and_then(Value::as_object)
+            .map(|ended| ended.keys().filter(|id| !id.is_empty()).cloned().collect())
+            .unwrap_or_default();
         Some(Self {
             version: Some(version),
             ids: open.keys().filter(|id| !id.is_empty()).cloned().collect(),
+            ended,
         })
     }
 
-    /// The legacy `sessions.kept` answer: `{sessions: [{sessionId, since}]}`.
+    /// The legacy `sessions.kept` answer: `{sessions: [{sessionId, since}]}`,
+    /// the open and unended ids, so every one of them reads as Paused.
     pub fn from_kept(doc: &Value) -> Self {
         let ids = doc
             .get("sessions")
@@ -50,7 +70,11 @@ impl OpenSessions {
             .filter(|id| !id.is_empty())
             .map(String::from)
             .collect();
-        Self { version: None, ids }
+        Self {
+            version: None,
+            ids,
+            ended: HashSet::new(),
+        }
     }
 
     /// Whether `next` should replace `held`. A change event must be strictly
@@ -101,12 +125,35 @@ mod tests {
     }
 
     #[test]
+    fn ended_marks_are_tolerant_and_only_unmarked_open_ids_are_paused() {
+        let set = OpenSessions::from_document(
+            &json!({"version": 1, "open": {"p": 1, "e": 2}, "ended": {"e": 3, "gone": 4}}),
+        )
+        .unwrap();
+        assert!(set.contains("p") && set.contains("e") && !set.contains("gone"));
+        assert!(set.is_paused("p"));
+        assert!(!set.is_paused("e"), "ended on purpose: listed, not Paused");
+        assert!(
+            !set.is_paused("gone"),
+            "a mark alone does not list a session"
+        );
+        for ended in [json!(null), json!(["e"]), json!("e")] {
+            let set = OpenSessions::from_document(
+                &json!({"version": 1, "open": {"e": 1}, "ended": ended}),
+            )
+            .unwrap();
+            assert!(set.is_paused("e"), "malformed ended is no marks");
+        }
+    }
+
+    #[test]
     fn reads_the_legacy_kept_set_without_a_version() {
         let set = OpenSessions::from_kept(&json!({"sessions": [
             {"sessionId": "a", "since": 1}, {"sessionId": ""}, {"since": 2}
         ]}));
         assert_eq!(set.version, None);
         assert_eq!(set.ids, HashSet::from(["a".to_string()]));
+        assert!(set.is_paused("a"), "legacy kept ids are open and unended");
         assert!(OpenSessions::from_kept(&json!({"nope": 1})).ids.is_empty());
     }
 

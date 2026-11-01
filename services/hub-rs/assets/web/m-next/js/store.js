@@ -130,16 +130,19 @@ async function reseedPeer(name) {
   changed();
 }
 
-// ── open sessions (Paused) ────────────────────────────────────────────────
-// The hub owns one shared open set (`sessionOpen`, docs/session-roster.md):
-// sessions some client had open that have not been ended on purpose. A
-// stopped session in it reads as Paused in every client, and the hub's
-// roster already lists it, so nothing is read by id. Hubs without
-// `sessionOpen` fall back to `sessions.kept` (native's kept-open set) and the
-// by-id reads that older roster needed.
-export const kept = new Map();          // sessionId -> since (ms)
+// ── sidebar set (Paused / Ended) ──────────────────────────────────────────
+// The hub owns one shared sidebar set (`sessionOpen`, docs/session-roster.md):
+// `open` is every session the sidebar keeps, and `ended` marks the ones that
+// were ended on purpose. Stopped + open + not ended reads as Paused in every
+// client; stopped + open + ended reads as Ended and stays listed. The hub's
+// roster already lists open sessions, so nothing is read by id. Hide is the
+// archive; this client never writes the set. Hubs without `sessionOpen` fall
+// back to `sessions.kept` (open and not ended) and the by-id reads that older
+// roster needed.
+export const kept = new Map();          // sessionId -> since (ms), the open set
+export const ended = new Set();         // open ids ended on purpose
 export let keptSupported = false;
-let openDoc = null;                     // {version, open: {id: ms}}
+let openDoc = null;                     // {version, open: {id: ms}, ended: {id: ms}}
 let openReadSeq = 0, openEventSinceRead = false;
 function applyOpen(doc, force) {
   if (!doc || typeof doc.version !== 'number' || !doc.open || typeof doc.open !== 'object') return false;
@@ -147,6 +150,11 @@ function applyOpen(doc, force) {
   openDoc = doc;
   kept.clear();
   for (const [id, since] of Object.entries(doc.open)) if (id) kept.set(id, typeof since === 'number' ? since : 0);
+  // Tolerant: an absent or malformed `ended` is no marks, not a bad document.
+  ended.clear();
+  if (doc.ended && typeof doc.ended === 'object' && !Array.isArray(doc.ended)) {
+    for (const id of Object.keys(doc.ended)) if (id) ended.add(id);
+  }
   keptSupported = true;
   return true;
 }
@@ -161,6 +169,7 @@ async function seedKept(seen) {
     } catch { /* fall back to the legacy kept set below */ }
   }
   openDoc = null;
+  ended.clear();
   if (!can('sessions.kept')) { keptSupported = false; kept.clear(); return; }
   let rows = [];
   try {
@@ -190,7 +199,8 @@ export const isWorking = (s) => {
 };
 /** Stopped by the host closing rather than ended: resumable from the composer. */
 export const isPaused = (s) =>
-  !!s && !isLive(s) && kept.has(s.sessionId) && ['claude', 'codex', ''].includes(s.provider || '');
+  !!s && !isLive(s) && kept.has(s.sessionId) && !ended.has(s.sessionId) &&
+  ['claude', 'codex', ''].includes(s.provider || '');
 /** A Claude or Codex session that has stopped can be resumed by sending. */
 export const canResume = (s) => !!s && !isLive(s) && ['claude', 'codex', ''].includes(s.provider || '') && !!s.cwd;
 export const providerOf = (s) => (s && s.provider) || 'claude';

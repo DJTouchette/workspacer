@@ -1236,19 +1236,23 @@
     if (mins < 60) return `${Math.max(1, mins)}m`;
     return `${Math.floor(mins / 60)}h ${mins % 60}m`;
   }
-  // ══ open sessions (Paused) ═══════════════════════════════════════════════
-  // The hub's shared open set (sessionOpen, docs/session-roster.md): a stopped
-  // session still in it was stopped by its app closing, not ended, and reads
-  // as Paused here like in every other client. Older hubs fall back to
-  // native's kept-open set (sessions.kept).
-  let openDoc = null;                 // {version, open: {id: ms}}
+  // ══ sidebar set (Paused) ══════════════════════════════════════════════════
+  // The hub's shared sidebar set (sessionOpen, docs/session-roster.md): a
+  // stopped session that is open and not marked ended was stopped by its app
+  // closing, and reads as Paused here like in every other client. One marked
+  // ended stays listed as Stopped. Hide is the archive; this page never
+  // writes the set. Older hubs fall back to sessions.kept (open, not ended).
+  let openDoc = null;                 // {version, open: {id: ms}, ended: {id: ms}}
   let openIds = new Set();
+  let endedIds = new Set();
   let openReadSeq = 0, openEventSinceRead = false;
   function applyOpen(doc, force) {
     if (!doc || typeof doc.version !== 'number' || !doc.open || typeof doc.open !== 'object') return false;
     if (!force && openDoc && openDoc.version >= doc.version) return false;
     openDoc = doc;
     openIds = new Set(Object.keys(doc.open));
+    // Tolerant: an absent or malformed `ended` is no marks.
+    endedIds = new Set(doc.ended && typeof doc.ended === 'object' && !Array.isArray(doc.ended) ? Object.keys(doc.ended) : []);
     return true;
   }
   async function loadOpen() {
@@ -1262,13 +1266,14 @@
       } catch { /* fall back to the legacy kept set */ }
     }
     openDoc = null;
+    endedIds = new Set();
     if (!can('sessions.kept')) { openIds = new Set(); return; }
     try {
       const r = await call('sessions.kept', {});
       openIds = new Set(((r && Array.isArray(r.sessions)) ? r.sessions : []).map((k) => k && k.sessionId).filter(Boolean));
     } catch { openIds = new Set(); }
   }
-  const isPaused = (s) => !!s && !isLive(s) && !hubOf(s) && openIds.has(s.sessionId);
+  const isPaused = (s) => !!s && !isLive(s) && !hubOf(s) && openIds.has(s.sessionId) && !endedIds.has(s.sessionId);
 
   async function seed() {
     try {
