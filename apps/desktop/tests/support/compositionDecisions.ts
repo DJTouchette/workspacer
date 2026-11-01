@@ -418,6 +418,26 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'projectGroups.save': {
+    reason:
+      "creates or replaces one named group of folders in the hub's own project-groups.json, under the config lock and a revision compare-and-set. `folders` are absolute path strings normalised like project_key and kept only as membership labels; `name`, `color` and `icon` are bounded display labels. WRITE-THEN-INTERPRET: the only later readers are projectGroups.list and clients that use the groups to filter and label sessions and scratch; nothing opens, canonicalizes, lists, spawns in or executes a group folder, and the file is not config.yaml, so no config reader, spawn plan, workflow, hook or policy consults it. WIDEN-THEN-USE: a group grants nothing over its folders and changes no grant, root, permission mode, approval gate, spawn input or token; a folder already in another group is refused rather than moved",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['folders'],
+      },
+    ],
+  },
+  'projectGroups.remove': {
+    reason:
+      "deletes one group, named by its opaque hub-minted `id`, from the hub's own project-groups.json under the config lock and an optional revision compare-and-set. WRITE-THEN-INTERPRET: it only removes a record that projectGroups.list returns as data; the group's folders, their config.yaml settings and their scratch are untouched, and nothing is deleted on disk, executed or stopped. WIDEN-THEN-USE: it can only SHRINK what the Projects screen groups together; it changes no grant, root, permission mode or approval gate",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['id'],
+      },
+    ],
+  },
   'scratch.save': {
     reason:
       "writes one file into the project's personal scratch store, ~/.workspacer/scratch/<key>/files, and records its metadata in the hub's own index.json there. `cwd` only selects which project's scratch directory (canonicalized once, keyed by its first .git ancestor) and `path` is a relative path the hub refuses when absolute, dotted or symlinked and then requires to stay inside files/. WRITE-THEN-INTERPRET: the scratch directory lies outside every checkout and is not a config, skill, library, hook, job or launch root; the hub and claudemon never execute, source, parse or load a scratch file, there is deliberately no run or execute method, and the only later readers are scratch.list/scratch.read returning it as data. An agent that runs a scratch script does so with its own shell tools, the same authority it already had over /tmp. WIDEN-THEN-USE: it changes no grant, root, permission mode, approval gate, spawn input or token; credential-shaped content only tightens the file to sensitive 0600, and an existing file is replaced only with overwrite:true",
@@ -1555,6 +1575,20 @@ export const parameterDecisions: Record<
   string,
   Record<string, { kind: string; reason: string }>
 > = {
+  'projectGroups.save': {
+    folders: {
+      kind: 'path',
+      reason:
+        "absolute path strings stored as membership labels in the hub's own project-groups.json, normalised like project_key and compared as strings; never opened, canonicalized, joined, listed or used as a spawn cwd",
+    },
+  },
+  'projectGroups.remove': {
+    id: {
+      kind: 'id',
+      reason:
+        "selects which group the hub deletes from its own project-groups.json; bounded opaque text, never a path the hub joins, and the group's folders are untouched",
+    },
+  },
   'scratch.save': {
     cwd: {
       kind: 'path',
@@ -2127,6 +2161,8 @@ export const actors: string[] = [
   'nodes.wake',
   'notifications.post',
   'plugins.prepareLaunch',
+  'projectGroups.remove',
+  'projectGroups.save',
   'providers.listModels',
   'push.revoke',
   'push.subscribe',

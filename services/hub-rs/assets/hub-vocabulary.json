@@ -137,6 +137,9 @@
     "notifications.post",
     "plugins.prepareLaunch",
     "plugins.tools",
+    "projectGroups.list",
+    "projectGroups.remove",
+    "projectGroups.save",
     "providers.checkAll",
     "providers.listModels",
     "push.key",
@@ -166,6 +169,7 @@
     "routing.select",
     "scratch.list",
     "scratch.mark",
+    "scratch.pending",
     "scratch.read",
     "scratch.save",
     "search.project",
@@ -1289,6 +1293,13 @@
       "Disposition": "host-only",
       "Method": "",
       "Reason": "the other edge of plugin.loaded — which sidecar just stopped being supervised. Same plane, same audience",
+      "Publisher": ""
+    },
+    {
+      "Pattern": "projectGroups.changed",
+      "Disposition": "guarded-by-capability",
+      "Method": "projectGroups.list",
+      "Reason": "a bare refetch signal whose only field is the new revision number of the hub's own project-groups.json. It discloses that a project group was created, edited or removed, which is exactly what projectGroups.list discloses, and projectGroups.list is in neither scoped tier, so only a caller that may already list the groups receives it. Publishing it is the hub's own (projectGroups.save and projectGroups.remove publish it after their write; the topic has no provider publisher), so a forged event cannot put a refetch storm or a fake revision in front of a client. It is not in the federation forward list",
       "Publisher": ""
     },
     {

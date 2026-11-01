@@ -73,13 +73,14 @@ for a read, a write or a listing.
 | `scratch.read {cwd, path}` | Text content, 5 MiB cap. Sensitive content is withheld from federated callers. |
 | `scratch.save {cwd, path, content, purpose, …}` | Write a file + its metadata. `purpose` is required. Refuses to overwrite unless `overwrite:true`. |
 | `scratch.mark {cwd, path, …}` | Update metadata only: `purpose`, `keep`, `sensitive`, `status`, `note`. |
+| `scratch.pending {}` | Every project scratch with a pending file: `{projects:[{key, root, pending}], truncated}`, sorted by key. Reads each `index.json` only (1,000 project dirs, symlinks and damaged indexes skipped). |
 
 Metadata: `purpose`, `sessionId`, `keep`, `sensitive`, `status`
 (`draft` · `pending` · `done` · `archived`), `statusAt`, `note`, `createdAt`,
 `updatedAt`. `status:"pending"` is how "this SQL still has to run on prod" is
 recorded; `done` + `note` records when and how it ran.
 
-Mutations publish `scratch.changed` `{key}` (not forwarded to federated peers).
+Mutations publish `scratch.changed` `{key, pending}` — `pending` is that project's pending count after the write (not forwarded to federated peers).
 
 ## Sensitive content
 

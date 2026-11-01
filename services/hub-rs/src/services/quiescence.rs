@@ -620,6 +620,8 @@ pub(crate) fn passive_request(method: &str, params: Option<&Value>) -> bool {
             | "library.list"
             | "scratch.list"
             | "scratch.read"
+            | "scratch.pending"
+            | "projectGroups.list"
             | "push.key"
             | "git.status"
             | "git.diff"

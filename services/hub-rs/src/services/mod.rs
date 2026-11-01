@@ -39,6 +39,7 @@ pub mod pricing;
 pub mod profile_accounts;
 pub mod profiles;
 pub mod progress;
+pub mod project_groups;
 pub mod provider_utilities;
 pub mod pull_requests;
 pub(crate) mod push;
