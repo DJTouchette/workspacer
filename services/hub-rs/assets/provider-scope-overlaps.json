@@ -239,6 +239,16 @@
       "requiresAdoptedNote": false
     },
     {
+      "method": "sessions.forget",
+      "rationale": "Both delete one stopped session from the engine's permanent history store through claudemon's POST /sessions/:id/forget (a live session is refused); the Rust owner also drops it from the shared sidebar set and archive. Neither touches the provider's own transcript.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.history",
+      "rationale": "Both page the engine's permanent history store through claudemon's GET /history, labelled with the shared archive (hidden) and sidebar set (onSidebar); neither edits Electron UI state.",
+      "requiresAdoptedNote": false
+    },
+    {
       "method": "sessions.recent",
       "rationale": "Rust now supplies owned persistent recents and metadata; Electron can have additional UI session history. Old peers with blank fields remain a compatibility concern.",
       "requiresAdoptedNote": true
