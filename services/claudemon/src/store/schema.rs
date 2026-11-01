@@ -94,11 +94,66 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         unversioned_step(conn, add_session_requested_selection)
             .context("adding rollback-compatible requested model selection columns")?;
     }
+    // Permanent-history columns: additive and unversioned for the same
+    // rollback reason as the selection columns above. A prior v8 daemon never
+    // reads them, and its inserts leave them NULL, which every reader treats
+    // as unknown.
+    if !history_columns_present(conn)? {
+        unversioned_step(conn, add_session_history_columns)
+            .context("adding rollback-compatible session history columns")?;
+    }
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS execution_leases (
         session_id TEXT PRIMARY KEY, metadata TEXT NOT NULL
     )",
     )?;
+    // History pages order by (last_event_at, id) with a keyset cursor; the
+    // v2 index has no id tiebreak. An index is invisible to an older binary.
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS sessions_history ON sessions(last_event_at DESC, id DESC)",
+    )?;
+    Ok(())
+}
+
+/// Nullable columns the permanent history (`store::history`) records for
+/// sessions whose rows hooks never describe (stream and managed providers),
+/// and for the History list itself.
+///
+/// SCHEMA MAINTENANCE CONTRACT: like the selection columns, these are not a
+/// numbered step. A future `sessions` rebuild must copy them.
+pub(crate) const HISTORY_COLUMNS: &[(&str, &str)] = &[
+    ("provider", "TEXT"),
+    ("transport", "TEXT"),
+    ("title", "TEXT"),
+    ("first_prompt", "TEXT"),
+    ("user_prompt_count", "INTEGER"),
+    ("transcript_copy", "TEXT"),
+    ("ended_at", "INTEGER"),
+];
+
+fn history_columns_present(conn: &Connection) -> rusqlite::Result<bool> {
+    let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?;
+    for (name, _) in HISTORY_COLUMNS {
+        if !stmt.exists([name])? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Each column checked on its own, so an interrupted run repairs on reopen.
+fn add_session_history_columns(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?;
+    let mut missing = Vec::new();
+    for column in HISTORY_COLUMNS {
+        if !stmt.exists([column.0])? {
+            missing.push(column);
+        }
+    }
+    drop(stmt);
+    for (name, kind) in missing {
+        conn.execute_batch(&format!("ALTER TABLE sessions ADD COLUMN {name} {kind};"))?;
+    }
     Ok(())
 }
 

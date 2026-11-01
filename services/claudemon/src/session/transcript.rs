@@ -44,6 +44,30 @@ pub fn projects_dir() -> Option<PathBuf> {
 static EXTRA_ROOTS: once_cell::sync::Lazy<std::sync::Mutex<Vec<PathBuf>>> =
     once_cell::sync::Lazy::new(|| std::sync::Mutex::new(Vec::new()));
 
+/// The daemon's own transcript-copy stores (`store::history`). Kept apart from
+/// [`EXTRA_ROOTS`] so registering one never turns the "no roots known" case
+/// into a confined one: copies are only ever an additional readable place.
+static COPY_ROOTS: once_cell::sync::Lazy<std::sync::Mutex<Vec<PathBuf>>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(Vec::new()));
+
+/// Let transcript readers open files inside a history copy store. The
+/// directory is daemon-owned and holds only copies the daemon itself wrote.
+pub fn allow_copy_root(root: impl Into<PathBuf>) {
+    let root = root.into();
+    if let Ok(mut roots) = COPY_ROOTS.lock() {
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+}
+
+fn in_copy_root(path: &std::path::Path) -> bool {
+    COPY_ROOTS
+        .lock()
+        .map(|roots| roots.iter().any(|root| is_within(root, path)))
+        .unwrap_or(false)
+}
+
 /// Register a spawn's `CLAUDE_CONFIG_DIR` (if it set one) as a transcript root.
 pub fn allow_spawn_env(env: &std::collections::HashMap<String, String>) {
     let Some(dir) = env.get("CLAUDE_CONFIG_DIR").map(|d| d.trim()) else {
@@ -97,7 +121,9 @@ pub fn path_is_allowed(path: &std::path::Path) -> bool {
     if roots.is_empty() {
         return true;
     }
-    roots.iter().any(|root| is_within(root, path)) || under_a_claude_config_dir(path)
+    roots.iter().any(|root| is_within(root, path))
+        || under_a_claude_config_dir(path)
+        || in_copy_root(path)
 }
 
 /// True if `path` is `<dir>/projects/**` and `<dir>` looks like a Claude config

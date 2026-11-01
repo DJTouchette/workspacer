@@ -38,6 +38,11 @@
     },
     {
       "method": "GET",
+      "pattern": "/history",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
       "pattern": "/hooks/stream",
       "server": "claudemon-api"
     },
@@ -94,6 +99,11 @@
     {
       "method": "POST",
       "pattern": "/sessions/:id/fast-mode",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/forget",
       "server": "claudemon-api"
     },
     {
