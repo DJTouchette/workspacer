@@ -224,7 +224,13 @@ impl Workspace {
         }
         let p = self.appearance.palette();
         Some(
+            // A hairline above, like the footer's: the session list scrolls
+            // under this strip, and without an edge a half-clipped row reads
+            // as part of the meters.
             div()
+                .pt_2()
+                .border_t_1()
+                .border_color(rgb(p.border))
                 .flex()
                 .flex_col()
                 .children(strip)
@@ -240,7 +246,7 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap_2()
-                                .text_size(px(11.))
+                                .text_size(px(chrome::scale::CAPTION))
                                 .text_color(rgb(p.muted))
                                 .cursor_pointer()
                                 .hover(move |s| s.bg(rgb(p.surface)))

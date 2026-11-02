@@ -63,6 +63,13 @@ pub(super) fn interactive_control(
         })
 }
 
+/// A wash of the palette's text color at `alpha`: the fill for tonal
+/// secondary controls, visible on chat, surface and selected backgrounds
+/// alike because it is relative to whatever sits beneath it.
+pub(super) fn tonal(p: Palette, alpha: f32) -> gpui::Hsla {
+    gpui::Hsla::from(rgb(p.text)).opacity(alpha)
+}
+
 /// Shared outer measure and gutters for transcript, header and composer.
 /// Anthropic brand clay, as the desktop's `CLAUDE_CLAY`.
 pub(super) const CLAUDE_CLAY: u32 = 0xD97757;
@@ -1303,8 +1310,8 @@ impl Workspace {
             .child(Icon::new(icon).size(px(13.)))
     }
 
-    /// A text button for actions that stop or remove something: quiet at
-    /// rest, error-toned, never mistaken for the page's primary action.
+    /// A button for actions that stop or remove something: a faint error
+    /// wash at rest, error-toned, never mistaken for the page's primary action.
     pub(super) fn danger_button(
         &self,
         id: impl Into<SharedString>,
@@ -1320,8 +1327,9 @@ impl Workspace {
             .rounded(px(p.control_radius))
             .text_size(px(scale::META))
             .text_color(rgb(if enabled { p.error } else { p.disabled }))
+            .bg(if enabled { tint(0.08) } else { tonal(p, 0.04) })
             .when(enabled, |d| {
-                d.hover_text_style(move |s| s.bg(tint(0.12)).text_color(rgb(p.error)))
+                d.hover_text_style(move |s| s.bg(tint(0.14)).text_color(rgb(p.error)))
                     .active_text_style(move |s| s.bg(tint(0.2)).text_color(rgb(p.error)))
             })
             .child(label.into())

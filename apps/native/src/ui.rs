@@ -1788,18 +1788,31 @@ impl Workspace {
             .rounded(px(p.control_radius))
             .text_color(rgb(if enabled { p.text } else { p.disabled }))
             .text_size(px(12.))
+            // A secondary button is tonal at rest — a faint wash of the text
+            // color, so it reads as a control on any surface and in every
+            // theme — and the 2px edge stays free for the focus ring.
+            .bg(if primary {
+                rgb(if enabled { p.primary } else { p.selected }).into()
+            } else {
+                chrome::tonal(p, if enabled { 0.07 } else { 0.04 })
+            })
             .when(primary, |d| {
-                d.bg(rgb(if enabled { p.primary } else { p.selected }))
-                    .text_color(rgb(if enabled { p.on_primary } else { p.disabled }))
+                d.text_color(rgb(if enabled { p.on_primary } else { p.disabled }))
             })
             .when(enabled, |d| {
-                d.hover_text_style(|s| {
-                    s.bg(rgb(if primary { p.primary_hover } else { p.selected }))
-                        .text_color(rgb(if primary { p.on_primary } else { p.text }))
+                d.hover_text_style(move |s| {
+                    if primary {
+                        s.bg(rgb(p.primary_hover)).text_color(rgb(p.on_primary))
+                    } else {
+                        s.bg(chrome::tonal(p, 0.12)).text_color(rgb(p.text))
+                    }
                 })
-                .active_text_style(|s| {
-                    s.bg(rgb(if primary { p.primary_pressed } else { p.border }))
-                        .text_color(rgb(if primary { p.on_primary } else { p.text }))
+                .active_text_style(move |s| {
+                    if primary {
+                        s.bg(rgb(p.primary_pressed)).text_color(rgb(p.on_primary))
+                    } else {
+                        s.bg(chrome::tonal(p, 0.17)).text_color(rgb(p.text))
+                    }
                 })
             })
             .child(label.into())
