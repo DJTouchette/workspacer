@@ -319,7 +319,9 @@ fn a_delivery_receipt_shows_on_the_matching_bubble(cx: &mut TestAppContext) {
 #[gpui::test]
 fn session_page_compacts_forks_and_reconnects_mcp_servers(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
-    visual.simulate_resize(size(px(1200.), px(1000.)));
+    // Tall enough that the MCP card, below Details, Actions and Context,
+    // is on screen to be clicked.
+    visual.simulate_resize(size(px(1200.), px(1600.)));
     show(
         &workspace,
         &mut visual,

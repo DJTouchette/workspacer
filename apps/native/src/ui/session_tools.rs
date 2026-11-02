@@ -52,9 +52,9 @@ impl ReviewKind {
     const ALL: [Self; 4] = [Self::Uncommitted, Self::Branch, Self::Commit, Self::Custom];
     fn label(self) -> &'static str {
         match self {
-            Self::Uncommitted => "Uncommitted changes",
-            Self::Branch => "Against a branch",
-            Self::Commit => "A commit",
+            Self::Uncommitted => "Uncommitted",
+            Self::Branch => "Branch",
+            Self::Commit => "Commit",
             Self::Custom => "Custom",
         }
     }
@@ -117,9 +117,8 @@ impl ToolsUi {
             review_text: cx.new(|cx| InputState::new(window, cx)),
             goal_objective: cx
                 .new(|cx| InputState::new(window, cx).placeholder("What should Codex achieve?")),
-            goal_budget: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("Token budget (optional), such as 50k")
-            }),
+            goal_budget: cx
+                .new(|cx| InputState::new(window, cx).placeholder("Token budget (optional)")),
         }
     }
 }
@@ -722,45 +721,63 @@ impl Workspace {
         Some(
             chrome::card(p)
                 .debug_selector(|| "context-card".into())
-                .p_4()
+                .px_4()
+                .pt_4()
+                .pb_1()
                 .flex()
                 .flex_col()
-                .gap_3()
-                .child(projects::section_label("Context and history", p))
+                .child(super::features::card_heading("Context and history", None, p).pb_1())
                 .when(compact, |d| {
                     d.child(
                         div()
                             .flex()
-                            .items_center()
+                            .flex_col()
                             .gap_2()
+                            .pt_2()
+                            .pb_3()
                             .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(Input::new(&self.tools.compact_note)),
+                                super::features::action_row(
+                                    "Compact context",
+                                    if s.compacting {
+                                        "Compacting the conversation now…".to_owned()
+                                    } else if !live {
+                                        history.clone().unwrap_or_else(|| {
+                                            "Available while the agent is running.".into()
+                                        })
+                                    } else {
+                                        history.clone().unwrap_or_else(|| {
+                                            "Summarises the conversation so far to free context. The agent keeps working from the summary.".into()
+                                        })
+                                    },
+                                    None,
+                                    p,
+                                )
+                                .py_0()
+                                .border_t_0(),
                             )
                             .child(
-                                self.button("compact-context", "Compact context", can_compact)
-                                    .debug_selector(|| "compact-context".into())
-                                    .flex_shrink_0()
-                                    .when(can_compact, |d| {
-                                        d.on_click(cx.listener(|this, _, window, cx| {
-                                            this.compact_context(window, cx)
-                                        }))
-                                    }),
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(Input::new(&self.tools.compact_note)),
+                                    )
+                                    .child(
+                                        self.button("compact-context", "Compact", can_compact)
+                                            .debug_selector(|| "compact-context".into())
+                                            .flex_shrink_0()
+                                            .py(px(6.))
+                                            .when(can_compact, |d| {
+                                                d.on_click(cx.listener(|this, _, window, cx| {
+                                                    this.compact_context(window, cx)
+                                                }))
+                                            }),
+                                    ),
                             ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(chrome::scale::CAPTION))
-                            .text_color(rgb(p.muted))
-                            .child(if s.compacting {
-                                "Compacting the conversation now…".to_owned()
-                            } else {
-                                history.clone().unwrap_or_else(|| {
-                                    "Summarises the conversation so far to free context. The agent keeps working from the summary.".into()
-                                })
-                            }),
                     )
                 })
                 .when(fork, |d| {
@@ -768,13 +785,18 @@ impl Workspace {
                     let busy = forking.is_some_and(|f| f.loading);
                     let enabled = self.view.connected && !busy;
                     d.child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                self.button("fork-session", "Fork session", enabled)
+                        super::features::action_row(
+                            "Fork session",
+                            match forking {
+                                Some(f) if f.loading => "Forking…".to_owned(),
+                                Some(f) if f.error.is_some() => {
+                                    refusal(f.error.as_deref().unwrap_or_default())
+                                }
+                                _ => "A new session with this conversation; this one keeps running."
+                                    .to_owned(),
+                            },
+                            Some(
+                                self.button("fork-session", "Fork", enabled)
                                     .debug_selector(|| "fork-session".into())
                                     .when(enabled, |d| {
                                         d.on_click(cx.listener(move |this, _, _, cx| {
@@ -787,22 +809,12 @@ impl Workspace {
                                                 cx,
                                             )
                                         }))
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_size(px(chrome::scale::CAPTION))
-                                    .text_color(rgb(p.muted))
-                                    .child(match forking {
-                                        Some(f) if f.loading => "Forking…".to_owned(),
-                                        Some(f) if f.error.is_some() => {
-                                            refusal(f.error.as_deref().unwrap_or_default())
-                                        }
-                                        _ => "A new session with this conversation; this one keeps running.".to_owned(),
-                                    }),
+                                    })
+                                    .into_any_element(),
                             ),
+                            p,
+                        )
+                        .when(!compact, |d| d.border_t_0()),
                     )
                 }),
         )
@@ -824,26 +836,35 @@ impl Workspace {
         let live = self.view.connected && !s.stopped() && !self.view.busy;
         let reconnect = live && self.view.may_call("claude.mcpReconnect");
         let refresh = live && self.view.may_call("sessions.mcpStatus");
+        let failed = servers.iter().filter(|m| m.failed()).count();
+        let summary = match (servers.len(), failed) {
+            (0, _) => Some("This session has no MCP servers.".to_owned()),
+            (_, 0) => None,
+            (n, f) => Some(format!("{f} of {n} failed to connect.")),
+        };
         Some(
             chrome::card(p)
                 .debug_selector(|| "mcp-card".into())
-                .p_4()
+                .px_4()
+                .pt_4()
+                .pb_1()
                 .flex()
                 .flex_col()
-                .gap_2()
                 .child(
                     div()
                         .flex()
-                        .items_center()
+                        .items_start()
                         .gap_2()
+                        .pb_3()
+                        .child(div().flex_1().min_w_0().child(super::features::card_heading(
+                            "MCP servers",
+                            None,
+                            p,
+                        )))
                         .child(
-                            div()
-                                .flex_1()
-                                .child(projects::section_label("MCP servers", p)),
-                        )
-                        .child(
-                            self.button("mcp-refresh", "Refresh", refresh)
+                            self.quiet_button("mcp-refresh", "Refresh", IconName::Redo, refresh)
                                 .debug_selector(|| "mcp-refresh".into())
+                                .my(px(-6.))
                                 .when(refresh, |d| {
                                     d.on_click(
                                         cx.listener(|this, _, _, cx| {
@@ -853,21 +874,25 @@ impl Workspace {
                                 }),
                         ),
                 )
-                .when(s.provider_id() == "codex" && servers.iter().any(|m| m.failed()), |d| {
+                .when_some(summary, |d, summary| {
+                    d.child(
+                        div()
+                            .pb_3()
+                            .text_size(px(chrome::scale::META))
+                            .text_color(rgb(p.muted))
+                            .child(summary),
+                    )
+                })
+                .when(s.provider_id() == "codex" && failed > 0, |d| {
                     d.child(
                         div()
                             .debug_selector(|| "mcp-codex-reload".into())
-                            .text_size(px(chrome::scale::CAPTION))
-                            .text_color(rgb(p.muted))
-                            .child("Codex reconnects by reloading every MCP server of this session, not only the one you choose."),
-                    )
-                })
-                .when(servers.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .text_color(rgb(p.muted))
-                            .text_size(px(12.))
-                            .child("This session has no MCP servers."),
+                            .pb_3()
+                            .child(chrome::notice_line(
+                                "Codex reconnects by reloading every MCP server of this session, not only the one you choose.",
+                                chrome::Tone::Info,
+                                p,
+                            )),
                     )
                 })
                 .children(servers.iter().enumerate().map(|(ix, server)| {
@@ -880,14 +905,21 @@ impl Workspace {
                     let name = server.name.clone();
                     div()
                         .debug_selector(move || format!("mcp-server-{ix}"))
+                        .min_h(px(40.))
+                        .py_1()
+                        .border_t_1()
+                        .border_color(rgb(p.border))
                         .flex()
                         .items_center()
                         .gap_2()
-                        .text_size(px(12.))
+                        .text_size(px(chrome::scale::META))
                         .child(status_dot(color))
                         .child(
                             div()
                                 .flex_shrink_0()
+                                .max_w(px(220.))
+                                .truncate()
+                                .text_size(px(chrome::scale::BODY))
                                 .font_weight(FontWeight::MEDIUM)
                                 .child(server.name.clone()),
                         )
@@ -896,7 +928,7 @@ impl Workspace {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_color(rgb(p.muted))
+                                .text_color(rgb(if server.failed() { p.error } else { p.muted }))
                                 .child(match &server.error {
                                     Some(error) => format!("{} · {error}", server.status_label()),
                                     None => server.status_label().to_owned(),
@@ -910,6 +942,7 @@ impl Workspace {
                                     reconnect,
                                 )
                                 .debug_selector(move || format!("mcp-reconnect-{ix}"))
+                                .py(px(6.))
                                 .when(reconnect, |d| {
                                     d.on_click(cx.listener(move |this, _, _, cx| {
                                         this.act(Action::McpReconnect(name.clone()), cx)
@@ -919,7 +952,13 @@ impl Workspace {
                         })
                 }))
                 .when(s.provider_id() == "claude" && !self.demo, |d| {
-                    d.child(self.render_external_mcp(cx))
+                    d.child(
+                        div()
+                            .py_3()
+                            .border_t_1()
+                            .border_color(rgb(p.border))
+                            .child(self.render_external_mcp(cx)),
+                    )
                 }),
         )
     }
@@ -941,20 +980,35 @@ impl Workspace {
         if !goals && !review && sandbox.is_none() {
             return None;
         }
-        let card = chrome::card(p)
-            .debug_selector(|| "codex-card".into())
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_3();
-        let card = card.when(goals, |d| {
-            let goal = s.goal.clone();
-            let mut section = div()
-                .debug_selector(|| "goal-section".into())
+        // Each section after the first sits under a divider.
+        let mut sections = 0;
+        let mut section_frame = |selector: &'static str, title: &'static str| {
+            sections += 1;
+            div()
+                .debug_selector(move || selector.into())
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(projects::section_label("Goal", p));
+                .py_3()
+                .when(sections > 1, |d| d.border_t_1().border_color(rgb(p.border)))
+                .child(
+                    div()
+                        .text_size(px(chrome::scale::BODY))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(title),
+                )
+        };
+        let card = chrome::card(p)
+            .debug_selector(|| "codex-card".into())
+            .px_4()
+            .pt_4()
+            .pb_1()
+            .flex()
+            .flex_col()
+            .child(super::features::card_heading("Codex", None, p));
+        let card = card.when(goals, |d| {
+            let goal = s.goal.clone();
+            let mut section = section_frame("goal-section", "Goal");
             if let Some(goal) = &goal {
                 let status = goal.status.clone();
                 let usage = goal.usage();
@@ -962,7 +1016,7 @@ impl Workspace {
                     .child(
                         div()
                             .debug_selector(|| "goal-current".into())
-                            .text_size(px(13.))
+                            .text_size(px(chrome::scale::BODY))
                             .text_color(rgb(p.text))
                             .child(goal.objective.clone()),
                     )
@@ -1037,9 +1091,9 @@ impl Workspace {
                             .min_w(px(180.))
                             .child(Input::new(&self.tools.goal_objective)),
                     )
-                    .child(div().w(px(150.)).child(Input::new(&self.tools.goal_budget)))
+                    .child(div().w(px(180.)).child(Input::new(&self.tools.goal_budget)))
                     .child(
-                        self.primary_button(
+                        self.button(
                             "goal-save",
                             if goal.is_some() {
                                 "Update goal"
@@ -1061,32 +1115,24 @@ impl Workspace {
         let card = card.when(review, |d| {
             let kind = self.tools.review_kind;
             d.child(
-                div()
-                    .debug_selector(|| "review-section".into())
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(projects::section_label("Review changes", p))
-                    .child(div().flex().flex_wrap().gap_2().children(
-                        ReviewKind::ALL.into_iter().enumerate().map(|(ix, choice)| {
-                            let active = choice == kind;
-                            self.button(
-                                SharedString::from(format!("review-kind-{ix}")),
-                                choice.label(),
-                                true,
-                            )
-                            .debug_selector(move || format!("review-kind-{ix}"))
-                            .when(active, |d| d.bg(rgb(p.selected)).text_color(rgb(p.accent)))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.tools.review_kind = choice;
-                                let placeholder = choice.placeholder();
-                                this.tools.review_text.update(cx, |input, cx| {
-                                    input.set_placeholder(placeholder, window, cx)
-                                });
-                                cx.notify();
-                            }))
-                        }),
-                    ))
+                section_frame("review-section", "Review changes")
+                    .child(div().flex().child(self.segmented(
+                        "review-kind",
+                        ReviewKind::ALL
+                            .into_iter()
+                            .map(|choice| (choice, choice.label().to_owned()))
+                            .collect(),
+                        kind,
+                        |this, choice, window, cx| {
+                            this.tools.review_kind = choice;
+                            let placeholder = choice.placeholder();
+                            this.tools.review_text.update(cx, |input, cx| {
+                                input.set_placeholder(placeholder, window, cx)
+                            });
+                            cx.notify();
+                        },
+                        cx,
+                    )))
                     .child(
                         div()
                             .flex()
@@ -1110,7 +1156,7 @@ impl Workspace {
                                 )
                             })
                             .child(
-                                self.primary_button("review-start", "Start review", live)
+                                self.button("review-start", "Start review", live)
                                     .debug_selector(|| "review-start".into())
                                     .when(live, |d| {
                                         d.on_click(
@@ -1121,49 +1167,44 @@ impl Workspace {
                     ),
             )
         });
-        let card =
-            card.when_some(sandbox, |d, sandbox| {
-                let setting_up = sandbox.setting_up();
-                let enabled = live && !sandbox.ready && !setting_up;
-                d.child(
+        let card = card.when_some(sandbox, |d, sandbox| {
+            let setting_up = sandbox.setting_up();
+            let enabled = live && !sandbox.ready && !setting_up;
+            d.child(
+                section_frame("sandbox-section", "Windows sandbox").child(
                     div()
-                        .debug_selector(|| "sandbox-section".into())
                         .flex()
-                        .flex_col()
+                        .items_center()
                         .gap_2()
-                        .child(projects::section_label("Windows sandbox", p))
                         .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(div().flex_1().min_w_0().child(chrome::notice_line(
-                                    sandbox.notice().unwrap_or_else(|| {
-                                        "Codex's Windows sandbox is ready.".into()
+                            div().flex_1().min_w_0().child(chrome::notice_line(
+                                sandbox
+                                    .notice()
+                                    .unwrap_or_else(|| "Codex's Windows sandbox is ready.".into()),
+                                if sandbox.ready {
+                                    chrome::Tone::Success
+                                } else if setting_up {
+                                    chrome::Tone::Loading
+                                } else {
+                                    chrome::Tone::Warning
+                                },
+                                p,
+                            )),
+                        )
+                        .when(!sandbox.ready, |d| {
+                            d.child(
+                                self.button("sandbox-setup", "Set up sandbox", enabled)
+                                    .debug_selector(|| "sandbox-setup".into())
+                                    .when(enabled, |d| {
+                                        d.on_click(cx.listener(|this, _, _, cx| {
+                                            this.act(Action::SandboxSetup, cx)
+                                        }))
                                     }),
-                                    if sandbox.ready {
-                                        chrome::Tone::Success
-                                    } else if setting_up {
-                                        chrome::Tone::Loading
-                                    } else {
-                                        chrome::Tone::Warning
-                                    },
-                                    p,
-                                )))
-                                .when(!sandbox.ready, |d| {
-                                    d.child(
-                                        self.button("sandbox-setup", "Set up sandbox", enabled)
-                                            .debug_selector(|| "sandbox-setup".into())
-                                            .when(enabled, |d| {
-                                                d.on_click(cx.listener(|this, _, _, cx| {
-                                                    this.act(Action::SandboxSetup, cx)
-                                                }))
-                                            }),
-                                    )
-                                }),
-                        ),
-                )
-            });
+                            )
+                        }),
+                ),
+            )
+        });
         Some(card)
     }
 
