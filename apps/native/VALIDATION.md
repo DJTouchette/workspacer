@@ -1823,3 +1823,12 @@ Limits: the fixture serves no `pr.*`, `mcpServers` or live permission mode.
 Because of that, the linked-PR header and review threads, the MCP card, and a
 selected live Access mode are covered by GPUI tests rather than captures.
 There were no Windows/macOS or hardware-GPU checks.
+
+Checks on the final branch: the full native suite (`cargo test --locked
+--features ui-tests --no-fail-fast -- --test-threads=1`) ran **675 passed,
+1 ignored, 0 failed** (the bin target alone: 337 passed, 1 ignored).
+`cargo clippy --locked --all-targets --features ui-tests -- -D warnings` was
+clean, and rustfmt was clean on every touched file. New GPUI tests cover:
+History row click versus Hide, the Hidden empty state's "Show all", a failed
+Jobs load with Try again, linking a pasted PR URL on Enter, a failed Scratch
+read with Try again, and the pin-folder form staying hidden until `i`.
