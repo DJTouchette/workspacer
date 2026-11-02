@@ -1079,23 +1079,56 @@ impl Workspace {
             .flex_col()
             .gap_3()
             .child(projects::section_label("Access", p))
+            // One segmented control, like the Model page's live Access: the
+            // chosen mode is the filled segment (Full access in the warning
+            // tone), not blue text on a row of look-alike buttons.
             .child(
-                div().flex().flex_wrap().gap_2().children(
-                    Permission::choices(self.provider)
-                        .iter()
-                        .copied()
-                        .map(|permission| {
-                            self.button(permission.label(), permission.label(), !busy)
-                                .when(self.permission == permission, |d| {
-                                    d.bg(rgb(p.selected)).text_color(rgb(p.accent))
-                                })
-                                .when(!busy, |d| {
-                                    d.on_click(cx.listener(move |this, _, _, cx| {
-                                        this.permission = permission;
-                                        cx.notify();
+                div().flex().child(
+                    div()
+                        .debug_selector(|| "launch-access".into())
+                        .flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .p(px(3.))
+                        .rounded(px(18.))
+                        .bg(rgb(p.base))
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .children(Permission::choices(self.provider).iter().copied().map(
+                            |permission| {
+                                let active = self.permission == permission;
+                                chrome::interactive_control(div().id(permission.label()), p, !busy)
+                                    .debug_selector(move || {
+                                        format!("access-{}", permission.label())
+                                    })
+                                    .h(px(28.))
+                                    .px_3()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_full()
+                                    .text_size(px(chrome::scale::META))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(rgb(match (active, busy) {
+                                        (_, true) => p.disabled,
+                                        (true, _) if permission == Permission::FullAccess => {
+                                            p.warning
+                                        }
+                                        (true, _) => p.text,
+                                        (false, false) => p.muted,
                                     }))
-                                })
-                        }),
+                                    .when(active, |d| d.bg(rgb(p.selected)))
+                                    .child(permission.label())
+                                    .when(!busy, |d| {
+                                        d.hover(move |s| s.text_color(rgb(p.text))).on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.permission = permission;
+                                                cx.notify();
+                                            }),
+                                        )
+                                    })
+                            },
+                        )),
                 ),
             )
             .child(
