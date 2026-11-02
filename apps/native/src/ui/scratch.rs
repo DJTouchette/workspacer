@@ -17,10 +17,22 @@ use wks_native::scratch::{self, Content, Filter, Item, Listing, Status};
 use wks_native::{jobs, timing::now_ms, tool_preview};
 
 pub(super) const SCRATCH_DESCRIPTION: &str = "Personal files kept outside git and shared by every worktree: harnesses, repros and SQL meant to be run by hand.";
-const NO_PROJECT: &str = "Open an agent or a project to see its scratch.";
-const NO_SCRATCH: &str = "Nothing in this project's scratch yet. Agents keep repros, one-off scripts and harnesses here; ask one to save something.";
-const NO_OPEN: &str = "Nothing open. Everything here is done or archived; switch to All to see it.";
-const NO_PENDING: &str = "Nothing is waiting on you.";
+const NO_PROJECT: (&str, &str) = (
+    "No project open",
+    "Open an agent or a project to see its scratch.",
+);
+const NO_SCRATCH: (&str, &str) = (
+    "No scratch files yet",
+    "Agents keep repros, one-off scripts and harnesses here. Ask one to save something.",
+);
+const NO_OPEN: (&str, &str) = (
+    "Nothing open",
+    "Everything here is done or archived. Switch to All to see it.",
+);
+const NO_PENDING: (&str, &str) = (
+    "Nothing waiting on you",
+    "No file is waiting to be run by hand.",
+);
 const FOOTER: &str = "Workspacer never runs scratch files. Pending means a file is waiting for you to run it by hand; mark it done when you have.";
 const UNRECORDED: &str = "No purpose recorded. An agent wrote this straight into the folder.";
 /// Projects the switcher offers.
@@ -208,17 +220,59 @@ impl Workspace {
         let p = self.appearance.palette();
         let page = div().flex().flex_col().gap_3();
         if self.extras.scratch_project.is_none() {
-            return page.child(empty_line(NO_PROJECT, p));
+            return page.child(empty_state(IconName::FolderClosed, NO_PROJECT, p));
         }
         let listings = self.scratch_listings();
-        let loading = self.view.requests.get("scratch").is_some_and(|s| s.loading);
+        let read = self.view.requests.get("scratch");
+        let loading = read.is_some_and(|s| s.loading);
+        let failed = read
+            .filter(|s| !s.loading)
+            .and_then(|s| s.error.clone())
+            .filter(|e| !e.is_empty());
         let page = page
             .child(self.scratch_project_bar(listings.as_deref(), cx))
-            .child(self.feature_message("scratch"))
-            .child(self.feature_message("scratch-mark"));
+            .when(self.has_feature_message("scratch-mark"), |d| {
+                d.child(self.feature_message("scratch-mark"))
+            });
         let Some(listings) = listings else {
-            return page;
+            // Nothing listed yet: say why, and offer the way out of an error.
+            return match failed {
+                Some(error) => page.child(
+                    empty_state_toned(
+                        IconName::TriangleAlert,
+                        p.error,
+                        ("Couldn't read scratch", ""),
+                        p,
+                    )
+                    .debug_selector(|| "scratch-error".into())
+                    .child(
+                        div()
+                            .max_w(px(420.))
+                            .text_center()
+                            .text_size(px(chrome::scale::META))
+                            .text_color(rgb(p.error))
+                            .child(error),
+                    )
+                    .child(
+                        div().pt_1().child(
+                            self.button("scratch-retry", "Try again", true)
+                                .debug_selector(|| "scratch-retry".into())
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh_scratch(cx))),
+                        ),
+                    ),
+                ),
+                None if loading => page.child(chrome::notice_line(
+                    "Reading scratch…",
+                    chrome::Tone::Loading,
+                    p,
+                )),
+                None => page,
+            };
         };
+        // A refresh that failed after a good read keeps the list and says so.
+        let page = page.when_some(failed, |d, error| {
+            d.child(chrome::notice_line(error, chrome::Tone::Error, p))
+        });
         let filter = self.extras.scratch_filter;
         let rows: Vec<Row> = listings
             .iter()
@@ -306,7 +360,10 @@ impl Workspace {
             _ => NO_OPEN,
         };
         page.when(ix == 0 && !loading, |d| {
-            d.child(empty_line(empty, p).debug_selector(|| "scratch-empty".into()))
+            d.child(
+                empty_state(IconName::FolderClosed, empty, p)
+                    .debug_selector(|| "scratch-empty".into()),
+            )
         })
         .child(body)
         .child(
@@ -356,33 +413,45 @@ impl Workspace {
                 )
             })
             .child(div().flex_1())
-            .children(self.folder_actions(&listing.files, cx))
+            .children(self.folder_actions(&listing.files, true, cx))
     }
 
     /// Copy (and, when the hub is on this computer, open) a scratch folder.
-    fn folder_actions(&self, folder: &str, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// `compact` draws them as icons (with tooltips), for section headings.
+    fn folder_actions(
+        &self,
+        folder: &str,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         if folder.is_empty() {
             return Vec::new();
         }
         let id = SharedString::from(format!("scratch-copy-folder-{}", folder.len()));
         let copy = folder.to_owned();
         let mut out = vec![
-            self.quiet_button(id, "Copy folder path", IconName::Copy, true)
-                .debug_selector(|| "scratch-copy-folder".into())
-                .on_click(cx.listener(move |_, _, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
-                }))
-                .into_any_element(),
+            if compact {
+                self.icon_button(id, "Copy folder path", IconName::Copy, true)
+            } else {
+                self.quiet_button(id, "Copy folder path", IconName::Copy, true)
+            }
+            .debug_selector(|| "scratch-copy-folder".into())
+            .on_click(cx.listener(move |_, _, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+            }))
+            .into_any_element(),
         ];
         if self.extras.local_paths {
             let open = folder.to_owned();
             out.push(
-                self.quiet_button(
-                    SharedString::from(format!("scratch-reveal-folder-{}", folder.len())),
-                    "Show folder",
-                    IconName::FolderOpen,
-                    true,
-                )
+                {
+                    let id = SharedString::from(format!("scratch-reveal-folder-{}", folder.len()));
+                    if compact {
+                        self.icon_button(id, "Show folder", IconName::FolderOpen, true)
+                    } else {
+                        self.quiet_button(id, "Show folder", IconName::FolderOpen, true)
+                    }
+                }
                 .on_click(
                     cx.listener(move |_, _, _, cx| {
                         cx.open_with_system(std::path::Path::new(&open))
@@ -442,9 +511,17 @@ impl Workspace {
                 .filter(|k| k.listed("") && !groups.grouped(&k.path))
                 .map(|k| (k.path.clone(), k)),
         );
-        let chips = choices
+        let shown: Vec<_> = choices.into_iter().take(SWITCHER_PROJECTS).collect();
+        // The switcher names the open project itself (as its selected tab),
+        // so the heading only repeats it when the switcher cannot.
+        let in_switcher = shown.len() > 1
+            && shown.iter().any(|(choice, _)| {
+                choice == &target
+                    || (!choice.starts_with("group:")
+                        && wks_native::projects::same_dir(choice, &target))
+            });
+        let chips = shown
             .into_iter()
-            .take(SWITCHER_PROJECTS)
             .enumerate()
             .map(|(ix, (choice, known))| {
                 let active = choice == target
@@ -452,23 +529,27 @@ impl Workspace {
                         && wks_native::projects::same_dir(&choice, &target));
                 interactive_control(div().id(("scratch-project", ix)), p, !active)
                     .debug_selector(move || format!("scratch-project-{ix}"))
+                    .h(px(28.))
                     .pl_1()
-                    .pr_2()
-                    .py(px(2.))
+                    .pr(px(10.))
                     .rounded(px(p.control_radius))
                     .flex()
                     .items_center()
-                    .gap_1()
-                    .text_size(px(chrome::scale::CAPTION))
-                    .when(active, |d| d.bg(rgb(p.selected)).text_color(rgb(p.text)))
+                    .gap(px(6.))
+                    .text_size(px(chrome::scale::META))
+                    .when(active, |d| {
+                        d.bg(rgb(p.selected))
+                            .text_color(rgb(p.text))
+                            .font_weight(FontWeight::MEDIUM)
+                    })
                     .when(!active, |d| {
                         d.text_color(rgb(p.muted))
-                            .hover(move |s| s.text_color(rgb(p.text)))
+                            .hover(move |s| s.bg(chrome::tonal(p, 0.05)).text_color(rgb(p.text)))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.pick_scratch_project(choice.clone(), cx)
                             }))
                     })
-                    .child(self.project_mark(Some(&known), &known.path, 16.))
+                    .child(self.project_mark(Some(&known), &known.path, 18.))
                     .child(known.title().to_owned())
             })
             .collect::<Vec<_>>();
@@ -476,43 +557,63 @@ impl Workspace {
             .filter(|l| l.len() == 1)
             .and_then(|l| l.first())
             .map(|(_, l)| (l.root.clone(), l.files.clone()));
+        let root = |root: String| {
+            div()
+                .min_w_0()
+                .truncate()
+                .font_family(mono_font())
+                .text_size(px(chrome::scale::CAPTION))
+                .text_color(rgb(p.muted))
+                .debug_selector(|| "scratch-root".into())
+                .child(root)
+        };
         div()
             .flex()
             .flex_col()
             .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_2()
-                    .child(self.project_mark(Some(&identity), &identity.path, 24.))
-                    .child(
-                        div()
-                            .text_size(px(chrome::scale::BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .debug_selector(|| "scratch-project-name".into())
-                            .child(name),
-                    )
-                    .when_some(single.clone(), |d, (root, _)| {
-                        d.child(
-                            div()
-                                .min_w_0()
-                                .truncate()
-                                .font_family(mono_font())
-                                .text_size(px(chrome::scale::CAPTION))
-                                .text_color(rgb(p.muted))
-                                .debug_selector(|| "scratch-root".into())
-                                .child(root),
-                        )
-                    })
-                    .child(div().flex_1())
-                    .when_some(single, |d, (_, files)| {
-                        d.children(self.folder_actions(&files, cx))
-                    }),
-            )
-            .when(chips.len() > 1, |d| {
-                d.child(div().flex().flex_wrap().gap_1().children(chips))
+            .when(in_switcher, |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "scratch-switcher".into())
+                        .flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .children(chips),
+                )
+            })
+            // A project of several folders heads each folder's own section.
+            .when(!in_switcher || single.is_some(), |d| {
+                d.child(
+                    div()
+                        .min_h(px(28.))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .min_w_0()
+                        .when(!in_switcher, |d| {
+                            d.child(self.project_mark(Some(&identity), &identity.path, 24.))
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(chrome::scale::BODY))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .debug_selector(|| "scratch-project-name".into())
+                                        .child(name),
+                                )
+                        })
+                        .when(in_switcher, |d| {
+                            d.child(
+                                Icon::new(IconName::Folder)
+                                    .size(px(12.))
+                                    .text_color(rgb(p.muted)),
+                            )
+                        })
+                        .when_some(single.clone(), |d, (path, _)| d.child(root(path)))
+                        .child(div().flex_1())
+                        .when_some(single.clone(), |d, (_, files)| {
+                            d.children(self.folder_actions(&files, false, cx))
+                        }),
+                )
             })
     }
 
@@ -680,10 +781,12 @@ impl Workspace {
         let keep_path = item.path.clone();
         let keep_cwd = cwd.clone();
         let keep = !item.keep;
+        // Keeping is a side setting, not a status: quieter than the marks.
         actions = actions.child(
-            self.button(
+            self.quiet_button(
                 format!("scratch-keep-{ix}"),
                 if item.keep { "Stop keeping" } else { "Keep" },
+                IconName::Heart,
                 enabled,
             )
             .debug_selector(move || format!("scratch-keep-{ix}"))
@@ -741,9 +844,9 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
-            .child(super::projects::section_label("PURPOSE", p))
+            .child(super::projects::section_label("Purpose", p))
             .child(Input::new(&self.extras.scratch_purpose).disabled(!enabled))
-            .child(super::projects::section_label("NOTE", p))
+            .child(super::projects::section_label("Note", p))
             .child(Input::new(&self.extras.scratch_note).disabled(!enabled))
             .child(
                 div().flex().child(
@@ -867,11 +970,49 @@ fn tag(icon: IconName, text: &'static str, color: u32) -> Div {
         .child(text)
 }
 
-fn empty_line(text: &'static str, p: Palette) -> Div {
+/// A centred icon, a short title and one line of what to do about it.
+fn empty_state(icon: IconName, (title, detail): (&'static str, &'static str), p: Palette) -> Div {
+    empty_state_toned(icon, p.muted, (title, detail), p)
+}
+
+fn empty_state_toned(
+    icon: IconName,
+    color: u32,
+    (title, detail): (&'static str, &'static str),
+    p: Palette,
+) -> Div {
     div()
-        .py_6()
-        .text_center()
-        .text_size(px(chrome::scale::META))
-        .text_color(rgb(p.muted))
-        .child(text)
+        .py_8()
+        .px_4()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .size(px(36.))
+                .rounded_full()
+                .bg(chrome::tonal(p, 0.06))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(Icon::new(icon).size(px(16.)).text_color(rgb(color))),
+        )
+        .child(
+            div()
+                .pt_1()
+                .text_size(px(chrome::scale::BODY))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title),
+        )
+        .when(!detail.is_empty(), |d| {
+            d.child(
+                div()
+                    .max_w(px(420.))
+                    .text_center()
+                    .text_size(px(chrome::scale::META))
+                    .text_color(rgb(p.muted))
+                    .child(detail),
+            )
+        })
 }

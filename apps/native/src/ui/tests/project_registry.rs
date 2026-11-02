@@ -298,7 +298,17 @@ fn project_bookmark_can_be_saved_without_launching_an_agent(cx: &mut TestAppCont
             this.update_view(Arc::new(state("a")), window, cx);
         })
     });
-    visual.simulate_keystrokes("g p i");
+    // Pinning by path is folded away behind Add folder until asked for.
+    visual.simulate_keystrokes("g p");
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("add-folder").is_some());
+    assert!(visual.debug_bounds("pin-folder-form").is_none());
+    visual.simulate_keystrokes("i");
+    visual.run_until_parked();
+    assert!(
+        visual.debug_bounds("pin-folder-form").is_some(),
+        "i opens it"
+    );
     visual.simulate_input("/work/jk-project/");
     visual.simulate_keystrokes("ctrl-enter");
     workspace.read_with(&visual, |this, cx| {

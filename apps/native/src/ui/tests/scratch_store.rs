@@ -259,6 +259,45 @@ fn an_empty_scratch_explains_how_files_get_there(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("scratch-pending").is_none());
 }
 
+/// A failed read says so and offers to read again; it is never shown as an
+/// empty scratch.
+#[gpui::test]
+fn a_failed_read_offers_to_try_again(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    open_page(&workspace, &mut visual);
+    effects(&mut commands);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = (*this.view).clone();
+            let request = Request::ScratchList {
+                cwds: vec![CWD.into()],
+            };
+            view.requests.insert(
+                request.key(),
+                wks_native::features::RequestState {
+                    request,
+                    number: 1,
+                    loading: false,
+                    error: Some("scratch store unavailable".into()),
+                    value: Arc::new(serde_json::Value::Null),
+                },
+            );
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("scratch-error").is_some());
+    assert!(visual.debug_bounds("scratch-empty").is_none());
+    click(&mut visual, "scratch-retry");
+    assert!(
+        effects(&mut commands).iter().any(|c| matches!(
+            c,
+            Command::Request(Request::ScratchList { cwds }) if *cwds == [CWD]
+        )),
+        "Try again lists the same folders"
+    );
+}
+
 #[gpui::test]
 fn the_sidebar_opens_scratch_on_the_selected_agents_project(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);

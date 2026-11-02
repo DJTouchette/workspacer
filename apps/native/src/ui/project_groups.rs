@@ -36,6 +36,23 @@ impl Workspace {
         .unwrap_or_default()
     }
 
+    /// Whether `feature_message(key)` has anything to say.
+    pub(super) fn has_feature_message(&self, key: &str) -> bool {
+        self.view
+            .requests
+            .get(key)
+            .is_some_and(|s| s.loading || s.error.as_ref().is_some_and(|e| !e.is_empty()))
+    }
+
+    /// The project list has been read (or there is nothing to read from), so
+    /// an empty one means no projects rather than not yet or not at all.
+    fn groups_loaded(&self) -> bool {
+        self.view
+            .requests
+            .get("project-groups")
+            .is_none_or(|s| !s.loading && s.error.is_none())
+    }
+
     /// Projects and pending scratch counts, read with the folder registry on
     /// every (re)connection and visit to Projects.
     pub(super) fn load_project_groups(&mut self, cx: &mut Context<Self>) {
@@ -303,7 +320,7 @@ impl Workspace {
 
     /// The Projects page's projects: a card per group, the New project
     /// action, and the editor when it is open.
-    pub(super) fn render_project_groups(&self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_project_groups(&self, compact: bool, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         let groups = self.project_groups();
         let can_write = self.view.connected
@@ -335,7 +352,13 @@ impl Workspace {
                     .justify_between()
                     .child(super::projects::section_label("PROJECTS", p))
                     .child(
-                        self.quiet_button("new-project-group", "New project", IconName::Plus, can_write)
+                        // One editor at a time: New project rests while one is open.
+                        self.quiet_button(
+                            "new-project-group",
+                            "New project",
+                            IconName::Plus,
+                            can_write && self.extras.group_draft.is_none(),
+                        )
                             .debug_selector(|| "new-project-group".into())
                             .when(can_write && self.extras.group_draft.is_none(), |d| {
                                 d.on_click(cx.listener(|this, _, window, cx| {
@@ -344,22 +367,55 @@ impl Workspace {
                             }),
                     ),
             )
-            .child(self.feature_message("project-groups"))
-            .when(editing_new, |d| d.child(self.render_group_editor(cx)))
-            .when(groups.groups.is_empty() && !editing_new, |d| {
-                d.child(
-                    div()
-                        .py_2()
-                        .text_size(px(chrome::scale::CAPTION))
-                        .text_color(rgb(p.muted))
-                        .child("Group folders that belong together, such as an app's api, web and infra repositories, into one project."),
-                )
+            // Only a read in flight or failed takes a line; an empty one
+            // would still take the gap.
+            .when(self.has_feature_message("project-groups"), |d| {
+                d.child(self.feature_message("project-groups"))
             })
+            .when(editing_new, |d| d.child(self.render_group_editor(cx)))
+            .when(
+                groups.groups.is_empty() && !editing_new && self.groups_loaded(),
+                |d| {
+                    d.child(
+                        div()
+                            .debug_selector(|| "project-groups-empty".into())
+                            .px_3()
+                            .py(px(10.))
+                            .rounded(px(p.panel_radius))
+                            .border_1()
+                            .border_dashed()
+                            .border_color(rgb(p.border))
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                Icon::new(IconName::FolderClosed)
+                                    .size(px(16.))
+                                    .text_color(rgb(p.muted)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(chrome::scale::META))
+                                    .text_color(rgb(p.muted))
+                                    .child("No projects yet. Group an app's api, web and infra folders into one project to filter, launch and read scratch across them."),
+                            ),
+                    )
+                },
+            )
             .children(groups.groups.iter().enumerate().map(|(ix, group)| {
                 if editing(&group.id) {
                     self.render_group_editor(cx)
                 } else {
-                    self.render_group_card(ix, group, counts.get(&group.id).copied(), can_write, cx)
+                    self.render_group_card(
+                        ix,
+                        group,
+                        counts.get(&group.id).copied(),
+                        can_write,
+                        compact,
+                        cx,
+                    )
                 }
             }))
     }
@@ -370,6 +426,7 @@ impl Workspace {
         group: &Group,
         sessions: Option<(usize, usize)>,
         can_write: bool,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.appearance.palette();
@@ -378,30 +435,32 @@ impl Workspace {
         let folders = group.folders.len();
         let mut meta = format!("{folders} folder{}", if folders == 1 { "" } else { "s" });
         if all > 0 {
-            meta = format!(
-                "{meta} · {live} running · {all} session{}",
-                if all == 1 { "" } else { "s" }
-            );
+            meta = format!("{meta} · {all} session{}", if all == 1 { "" } else { "s" });
         }
         let open = group.id.clone();
         let spawn = group.folders.first().cloned();
         let edit = group.clone();
         let scratch = group.id.clone();
         let can_spawn = self.view.connected && !self.demo && spawn.is_some();
-        chrome::card(p)
+        // A fill like the folder cards below, not another bordered box.
+        div()
+            .rounded(px(p.panel_radius))
+            .bg(rgb(p.surface))
+            .overflow_hidden()
             .debug_selector(move || format!("project-group-{ix}"))
             .flex()
             .flex_col()
             .child(
                 div()
                     .id(("project-group", ix))
-                    .px_4()
-                    .py_3()
+                    .pl_3()
+                    .pr_2()
+                    .py(px(10.))
                     .flex()
                     .items_center()
                     .gap_3()
                     .cursor_pointer()
-                    .hover(move |s| s.bg(gpui::Hsla::from(rgb(p.selected)).opacity(0.5)))
+                    .hover(move |s| s.bg(rgb(p.selected)))
                     .on_click(
                         cx.listener(move |this, _, window, cx| this.open_group(&open, window, cx)),
                     )
@@ -434,12 +493,22 @@ impl Workspace {
                                                     format!("project-group-pending-{ix}")
                                                 })
                                                 .flex_shrink_0()
-                                                .px_2()
+                                                .px(px(6.))
                                                 .rounded_full()
                                                 .bg(gpui::Hsla::from(rgb(p.warning)).opacity(0.15))
                                                 .text_size(px(chrome::scale::CAPTION))
                                                 .text_color(rgb(p.warning))
                                                 .cursor_pointer()
+                                                .hover(move |s| {
+                                                    s.bg(gpui::Hsla::from(rgb(p.warning))
+                                                        .opacity(0.28))
+                                                })
+                                                .tooltip(|window, cx| {
+                                                    gpui_component::tooltip::Tooltip::new(
+                                                        "Open this project's scratch",
+                                                    )
+                                                    .build(window, cx)
+                                                })
                                                 .child(format!("{pending} pending"))
                                                 .on_click(cx.listener(
                                                     move |this, _, window, cx| {
@@ -457,10 +526,32 @@ impl Workspace {
                                     }),
                             )
                             .child(
+                                // Running work in the busy colour, as on the
+                                // folder cards; the rest is detail.
                                 div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .min_w_0()
                                     .text_size(px(chrome::scale::CAPTION))
                                     .text_color(rgb(p.muted))
-                                    .child(meta),
+                                    .when(live > 0, |d| {
+                                        d.child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .size(px(6.))
+                                                .rounded_full()
+                                                .bg(rgb(p.busy)),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .text_color(rgb(p.busy))
+                                                .child(format!("{live} running")),
+                                        )
+                                        .child("·")
+                                    })
+                                    .child(div().min_w_0().truncate().child(meta)),
                             ),
                     )
                     .child(
@@ -470,11 +561,21 @@ impl Workspace {
                             .items_center()
                             .gap_1()
                             .child(
-                                self.button(
-                                    format!("project-group-new-agent-{ix}"),
-                                    "New agent",
-                                    can_spawn,
-                                )
+                                if compact {
+                                    self.icon_button(
+                                        format!("project-group-new-agent-{ix}"),
+                                        "New agent in this project",
+                                        IconName::Plus,
+                                        can_spawn,
+                                    )
+                                } else {
+                                    self.quiet_button(
+                                        format!("project-group-new-agent-{ix}"),
+                                        "New agent",
+                                        IconName::Plus,
+                                        can_spawn,
+                                    )
+                                }
                                 .debug_selector(move || format!("project-group-new-agent-{ix}"))
                                 .when_some(
                                     spawn.filter(|_| can_spawn),
@@ -505,36 +606,46 @@ impl Workspace {
                             ),
                     ),
             )
-            .child(div().px_4().pb_3().flex().flex_col().gap(px(2.)).children(
-                // Each folder by name first; the path is detail, cut to fit.
-                group.folders.iter().map(|folder| {
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .min_w_0()
-                        .child(
-                            Icon::new(IconName::Folder)
-                                .size(px(11.))
-                                .text_color(rgb(p.muted)),
-                        )
-                        .child(
+            // Folders sit under the name, past the mark.
+            .child(
+                div()
+                    .pl(px(56.))
+                    .pr_4()
+                    .pb(px(10.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .children(
+                        // Each folder by name first; the path is detail, cut to fit.
+                        group.folders.iter().map(|folder| {
                             div()
-                                .flex_shrink_0()
-                                .text_size(px(chrome::scale::META))
-                                .child(self.project_name(folder)),
-                        )
-                        .child(
-                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
                                 .min_w_0()
-                                .truncate()
-                                .font_family(mono_font())
-                                .text_size(px(chrome::scale::CAPTION))
-                                .text_color(rgb(p.muted))
-                                .child(folder.clone()),
-                        )
-                }),
-            ))
+                                .child(
+                                    Icon::new(IconName::Folder)
+                                        .size(px(11.))
+                                        .text_color(rgb(p.muted)),
+                                )
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(chrome::scale::META))
+                                        .child(self.project_name(folder)),
+                                )
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .font_family(mono_font())
+                                        .text_size(px(chrome::scale::CAPTION))
+                                        .text_color(rgb(p.muted))
+                                        .child(folder.clone()),
+                                )
+                        }),
+                    ),
+            )
     }
 
     fn render_group_editor(&self, cx: &mut Context<Self>) -> Div {
@@ -582,13 +693,21 @@ impl Workspace {
         let folders = draft.folders.iter().enumerate().map(|(ix, folder)| {
             let remove = folder.clone();
             div()
+                .pl_2()
                 .flex()
                 .items_center()
                 .gap_2()
+                .min_w_0()
                 .child(
                     Icon::new(IconName::Folder)
                         .size(px(12.))
                         .text_color(rgb(p.muted)),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(chrome::scale::META))
+                        .child(self.project_name(folder)),
                 )
                 .child(
                     div()
@@ -597,6 +716,7 @@ impl Workspace {
                         .truncate()
                         .font_family(mono_font())
                         .text_size(px(chrome::scale::CAPTION))
+                        .text_color(rgb(p.muted))
                         .child(folder.clone()),
                 )
                 .child(
@@ -617,22 +737,29 @@ impl Workspace {
                     }),
                 )
         });
+        let suggestions_empty = suggestions.is_empty();
         let chips = suggestions.into_iter().enumerate().map(|(ix, path)| {
             let add = path.clone();
             interactive_control(div().id(("group-folder-suggest", ix)), p, enabled)
                 .debug_selector(move || format!("group-folder-suggest-{ix}"))
+                .h(px(24.))
                 .px_2()
-                .py(px(2.))
-                .rounded(px(p.control_radius))
-                .bg(rgb(p.surface))
+                .rounded_full()
+                .bg(chrome::tonal(p, 0.06))
                 .text_size(px(chrome::scale::CAPTION))
                 .text_color(rgb(p.muted))
-                .hover(|s| s.text_color(rgb(p.text)))
+                .hover(move |s| s.bg(chrome::tonal(p, 0.12)).text_color(rgb(p.text)))
                 .flex()
                 .items_center()
                 .gap_1()
                 .child(Icon::new(IconName::Plus).size(px(10.)))
-                .child(wks_native::projects::basename(&path).to_owned())
+                .child(self.project_name(&path))
+                .tooltip({
+                    let path = SharedString::from(path.clone());
+                    move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(path.clone()).build(window, cx)
+                    }
+                })
                 .when(enabled, |d| {
                     d.on_click(cx.listener(move |this, _, window, cx| {
                         this.add_group_folder(add.clone(), window, cx)
@@ -640,11 +767,32 @@ impl Workspace {
                 })
         });
         let existing = draft.id.is_some();
-        let delete_label = if self.extras.group_confirm_delete {
-            "Delete project (folders stay)"
+        let confirming = self.extras.group_confirm_delete;
+        let delete_label = if confirming {
+            "Delete project"
         } else {
             "Delete"
         };
+        // The mark follows the form as typed.
+        let name = self.extras.group_name.read(cx).value().trim().to_owned();
+        let icon = self.extras.group_icon.read(cx).value().trim().to_owned();
+        let colour = self.extras.group_color.read(cx).value().trim().to_owned();
+        let colour = colour
+            .strip_prefix('#')
+            .filter(|hex| hex.len() == 6)
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok());
+        let preview = Group {
+            id: draft.id.clone().unwrap_or_default(),
+            name: if name.is_empty() {
+                "New project".into()
+            } else {
+                name.clone()
+            },
+            folders: draft.folders.clone(),
+            color: colour,
+            icon: (!icon.is_empty()).then_some(icon),
+        }
+        .as_known();
         chrome::card(p)
             .debug_selector(|| "project-group-editor".into())
             .p_4()
@@ -653,13 +801,33 @@ impl Workspace {
             .gap_3()
             .child(
                 div()
-                    .text_size(px(chrome::scale::BODY))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(if existing {
-                        "Edit project"
-                    } else {
-                        "New project"
-                    }),
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(self.project_mark(Some(&preview), &preview.path, 32.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_size(px(chrome::scale::BODY))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(if existing {
+                                        "Edit project"
+                                    } else {
+                                        "New project"
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(chrome::scale::CAPTION))
+                                    .text_color(rgb(p.muted))
+                                    .child("A project groups folders; the folders themselves stay where they are."),
+                            ),
+                    ),
             )
             .child(
                 div()
@@ -670,20 +838,20 @@ impl Workspace {
                         div()
                             .flex_1()
                             .min_w(px(200.))
-                            .child(field("NAME", &self.extras.group_name)),
+                            .child(field("Name", &self.extras.group_name)),
                     )
                     .child(
                         div()
                             .w(px(96.))
-                            .child(field("ICON", &self.extras.group_icon)),
+                            .child(field("Icon", &self.extras.group_icon)),
                     )
                     .child(
                         div()
                             .w(px(120.))
-                            .child(field("COLOUR", &self.extras.group_color)),
+                            .child(field("Colour", &self.extras.group_color)),
                     ),
             )
-            .child(super::projects::section_label("FOLDERS", p))
+            .child(div().pt_1().child(super::projects::section_label("Folders", p)))
             .when(draft.folders.is_empty(), |d| {
                 d.child(
                     div()
@@ -692,7 +860,9 @@ impl Workspace {
                         .child("No folders yet. Add the repositories this project spans."),
                 )
             })
-            .children(folders)
+            .when(!draft.folders.is_empty(), |d| {
+                d.child(div().flex().flex_col().children(folders))
+            })
             .child(
                 div()
                     .flex()
@@ -717,7 +887,24 @@ impl Workspace {
                             }),
                     ),
             )
-            .child(div().flex().flex_wrap().gap_1().children(chips))
+            .when(!suggestions_empty, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .pr_1()
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.muted))
+                                .child("Suggested"),
+                        )
+                        .children(chips),
+                )
+            })
+
             .when(!self.extras.group_error.is_empty(), |d| {
                 d.child(
                     chrome::notice_line(self.extras.group_error.clone(), chrome::Tone::Error, p)
@@ -739,6 +926,18 @@ impl Workspace {
                                 .when(enabled, |d| {
                                     d.on_click(cx.listener(|this, _, _, cx| this.delete_group(cx)))
                                 }),
+                        )
+                    })
+                    // Asked twice: the second press says what it keeps.
+                    .when(existing && confirming, |d| {
+                        d.child(
+                            div()
+                                .pl_2()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.warning))
+                                .child("Press again to delete; folders stay."),
                         )
                     })
                     .child(div().flex_1())

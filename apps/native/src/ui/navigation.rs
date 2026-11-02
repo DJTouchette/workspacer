@@ -601,16 +601,21 @@ impl Workspace {
     pub(super) fn render_projects(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         // Short windows give the list, not the explanations, the height.
         let short = window.viewport_size().height < px(620.);
+        // Narrow windows keep each folder's actions to icons.
+        let compact = window.viewport_size().width < px(960.);
+        let gutter = if short { 16. } else { 24. };
         let p = self.appearance.palette();
         let rows = self.project_rows(cx);
         let count = rows.len();
         let can_write = self.can_write_projects();
+        // An open editor takes the room it needs above the folders.
+        let editing = self.projects.editor.is_some() || self.extras.group_draft.is_some();
         let header = self.page_header(
             None,
             Some("WORKSPACE"),
             "Projects",
             (!short).then(|| {
-                "Projects group the folders that belong together. Every folder the hub knows, pinned or where a session runs, is listed below."
+                "Group the folders that belong together. Every folder the hub knows, pinned or where a session ran, is listed under Folders."
                     .into()
             }),
             None,
@@ -630,27 +635,38 @@ impl Workspace {
             .is_some_and(|s| s.loading)
             && self.projects.registry.is_none()
         {
-            "Loading projects…"
+            "Loading folders…"
+        } else if self.search.read(cx).value().trim().is_empty() {
+            "No folders yet. Add one, or start an agent in a folder and it shows here."
         } else {
-            "No matching folders. Pin a folder above, or clear the search in the sidebar."
+            "No folders match the sidebar search."
         };
         let hint = if self.settings.vim_navigation {
-            "j / k navigate · Enter open · n new agent · / filter · i add · Ctrl Enter pin"
+            "j / k navigate · Enter open · n new agent · / filter · i add folder · Ctrl Enter pin"
         } else {
-            "Click a project to open it · New agent starts another · Ctrl Enter to pin a path"
+            "Click a folder to see its sessions · New agent starts another there"
         };
         let list = uniform_list(
             "project-list",
             count,
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                 range
-                    .map(|ix| this.render_project_row(ix, &rows[ix], cx))
+                    .map(|ix| this.render_project_row(ix, &rows[ix], gutter, compact, cx))
                     .collect::<Vec<_>>()
             }),
         )
         .track_scroll(self.projects_scroll.clone())
         .flex_1()
-        .min_h_0();
+        // The folders keep some of the page, unless an editor above needs
+        // it: then the editor is the task, and it scrolls only when even
+        // the whole page is too short.
+        .min_h(px(if editing {
+            0.
+        } else if short {
+            96.
+        } else {
+            180.
+        }));
         div()
             .relative()
             .flex_1()
@@ -671,14 +687,15 @@ impl Workspace {
                     .flex_col()
                     .child(
                         div()
-                            .px(px(if short { 16. } else { 24. }))
+                            .id("projects-top")
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .px(px(gutter))
                             .pt(px(top))
-                            .pb_3()
                             .flex()
                             .flex_col()
                             .gap(px(if short { 8. } else { 16. }))
                             .child(header)
-                            .child(self.render_project_form(short, can_write, cx))
                             .children(self.render_project_notices(cx))
                             .children(self.render_identity_editor(cx))
                             .when_some(self.projects.registry_error.clone(), |d, error| {
@@ -688,17 +705,18 @@ impl Workspace {
                                     p,
                                 ))
                             })
-                            .child(self.render_project_groups(cx))
-                            .child(
-                                div()
-                                    .pt_2()
-                                    .child(super::projects::section_label("FOLDERS", p)),
-                            ),
+                            .child(self.render_project_groups(compact, cx)),
+                    )
+                    .child(
+                        self.render_folders_heading(count, gutter, short, can_write, window, cx)
+                            // The editor above may scroll; a rule keeps the
+                            // cut from reading as broken.
+                            .when(editing, |d| d.border_t_1().border_color(rgb(p.border))),
                     )
                     .when(count == 0, |d| {
                         d.child(
                             div()
-                                .px_6()
+                                .px(px(gutter))
                                 .py_6()
                                 .text_center()
                                 .text_size(px(chrome::scale::META))
@@ -709,8 +727,11 @@ impl Workspace {
                     .child(list)
                     .child(
                         div()
-                            .px_6()
-                            .py_3()
+                            .mx(px(gutter))
+                            .py(px(if short { 8. } else { 10. }))
+                            .border_t_1()
+                            .border_color(rgb(p.border))
+                            .truncate()
                             .text_size(px(chrome::scale::CAPTION))
                             .text_color(rgb(p.muted))
                             .child(hint),
@@ -729,14 +750,79 @@ impl Workspace {
         self.view.connected && !self.demo && !saving
     }
 
-    /// The path field that pins a project on the hub.
-    fn render_project_form(&self, short: bool, can_write: bool, cx: &mut Context<Self>) -> Div {
+    /// FOLDERS and its Add folder action. Pinning a path is rare, so the
+    /// field stays folded away until Add folder (or `i`) focuses it, and
+    /// stays open while it holds a path.
+    fn render_folders_heading(
+        &self,
+        count: usize,
+        gutter: f32,
+        short: bool,
+        can_write: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = self.appearance.palette();
-        chrome::card(p)
-            .p(px(if short { 10. } else { 16. }))
+        let field = self.project_path.read(cx);
+        let adding = field.focus_handle(cx).is_focused(window) || !field.value().trim().is_empty();
+        div()
+            .mx(px(gutter))
+            .pt(px(if short { 8. } else { 16. }))
+            .pb_2()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_2()
+            .child(
+                div()
+                    .h(px(32.))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(super::projects::section_label("FOLDERS", p))
+                    .when(count > 0, |d| {
+                        d.child(
+                            div()
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.disabled))
+                                .child(count.to_string()),
+                        )
+                    })
+                    .child(div().flex_1())
+                    .when(!adding, |d| {
+                        d.child(
+                            self.quiet_button(
+                                "add-folder",
+                                "Add folder",
+                                IconName::Plus,
+                                can_write,
+                            )
+                            .debug_selector(|| "add-folder".into())
+                            .when(can_write, |d| {
+                                d.on_click(cx.listener(|this, _, window, cx| {
+                                    this.project_path
+                                        .update(cx, |input, cx| input.focus(window, cx));
+                                    cx.notify();
+                                }))
+                            }),
+                        )
+                    }),
+            )
+            .when(adding, |d| {
+                d.child(self.render_project_form(short, can_write, cx))
+            })
+    }
+
+    /// The path field that pins a folder on the hub.
+    fn render_project_form(&self, short: bool, can_write: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        div()
+            .debug_selector(|| "pin-folder-form".into())
+            .p(px(if short { 8. } else { 12. }))
+            .rounded(px(p.panel_radius))
+            .bg(rgb(p.surface))
+            .flex()
+            .flex_col()
+            .gap_2()
             .child(
                 div()
                     .flex()
@@ -746,7 +832,7 @@ impl Workspace {
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(220.))
+                            .min_w(px(200.))
                             .child(Input::new(&self.project_path)),
                     )
                     .when(self.extras.local_paths, |d| {
@@ -754,6 +840,17 @@ impl Workspace {
                             cx.listener(|this, _, window, cx| this.pick_folder(true, window, cx)),
                         ))
                     })
+                    .child(
+                        self.button("cancel-pin-folder", "Cancel", true)
+                            .debug_selector(|| "cancel-pin-folder".into())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.project_path
+                                    .update(cx, |input, cx| input.set_value("", window, cx));
+                                this.settings_error.clear();
+                                window.focus(&this.focus);
+                                cx.notify();
+                            })),
+                    )
                     .child(
                         self.primary_button("save-project", "Pin folder", can_write)
                             .flex_shrink_0()
@@ -770,12 +867,11 @@ impl Workspace {
                         .text_size(px(chrome::scale::CAPTION))
                         .text_color(rgb(p.muted))
                         .child(
-                            "Paths belong to the connected hub. Pinning a folder shares it with Workspacer on that hub; it does not create the folder or launch an agent. To group folders, make a project below.",
+                            "An absolute path on the hub's machine. Pinning lists the folder here; it does not create it or start an agent.",
                         ),
                 )
             })
     }
-
     /// Settings and project notices, with the offer to keep projects on
     /// this device when the hub could not take them.
     fn render_project_notices(&self, cx: &mut Context<Self>) -> Vec<Div> {
@@ -824,17 +920,28 @@ impl Workspace {
         notices
     }
 
-    fn render_project_row(&self, ix: usize, project: &KnownProject, cx: &mut Context<Self>) -> Div {
+    fn render_project_row(
+        &self,
+        ix: usize,
+        project: &KnownProject,
+        gutter: f32,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = self.appearance.palette();
         let can_write = self.can_write_projects();
         let can_spawn = self.view.connected && !self.demo;
         let pinned = project.favourite;
         let on_device = project.source == wks_native::projects::Source::Device;
-        let sessions = match (project.live_sessions, project.sessions) {
-            (0, 0) => "No sessions yet · open to start one".to_owned(),
-            (0, 1) => "1 ended · open to view it".to_owned(),
-            (0, n) => format!("{n} ended · open to browse them"),
-            (live, n) => format!("{live} running of {n} · open to browse them"),
+        let live = project.live_sessions;
+        let ended = project.sessions.saturating_sub(live);
+        // What runs there, plainly; the whole card is the way in.
+        let activity = match (live, ended) {
+            (0, 0) => "No sessions yet".to_owned(),
+            (0, 1) => "1 ended session".to_owned(),
+            (0, n) => format!("{n} ended sessions"),
+            (live, 0) => format!("{live} running"),
+            (live, n) => format!("{live} running · {n} ended"),
         };
         let path = project.path.clone();
         let new_path = path.clone();
@@ -852,6 +959,14 @@ impl Workspace {
             })
             .map(|g| g.name.clone());
         let pending = self.pending_in(std::slice::from_ref(&project.path));
+        let pill = |color: u32, alpha: f32| {
+            div()
+                .flex_shrink_0()
+                .px(px(6.))
+                .rounded_full()
+                .bg(gpui::Hsla::from(rgb(color)).opacity(alpha))
+                .text_size(px(chrome::scale::CAPTION))
+        };
         let details = div()
             .flex_1()
             .min_w_0()
@@ -868,26 +983,16 @@ impl Workspace {
                         div()
                             .min_w_0()
                             .truncate()
+                            .text_size(px(chrome::scale::BODY))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(project.title().to_owned()),
                     )
-                    .when(on_device, |d| {
-                        d.child(
-                            div()
-                                .flex_shrink_0()
-                                .text_size(px(chrome::scale::OVERLINE))
-                                .text_color(rgb(p.muted))
-                                .child("this device"),
-                        )
-                    })
                     .when_some(group.clone(), |d, name| {
                         d.child(
-                            div()
-                                .flex_shrink_0()
-                                .px_2()
-                                .rounded_full()
-                                .bg(rgb(p.selected))
-                                .text_size(px(chrome::scale::OVERLINE))
+                            pill(p.text, 0.08)
+                                .min_w_0()
+                                .max_w(px(160.))
+                                .truncate()
                                 .text_color(rgb(p.muted))
                                 .debug_selector(move || format!("project-in-group-{ix}"))
                                 .child(format!("in {name}")),
@@ -895,11 +1000,18 @@ impl Workspace {
                     })
                     .when(pending > 0, |d| {
                         d.child(
-                            div()
-                                .flex_shrink_0()
-                                .text_size(px(chrome::scale::OVERLINE))
+                            pill(p.warning, 0.15)
                                 .text_color(rgb(p.warning))
                                 .child(format!("{pending} pending")),
+                        )
+                    })
+                    .when(on_device, |d| {
+                        d.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.muted))
+                                .child("this device"),
                         )
                     }),
             )
@@ -913,52 +1025,57 @@ impl Workspace {
             )
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .min_w_0()
                     .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(if project.live_sessions > 0 {
-                        p.busy
-                    } else {
-                        p.muted
-                    }))
-                    .child(sessions),
+                    .text_color(rgb(p.muted))
+                    .when(live > 0, |d| {
+                        d.text_color(rgb(p.busy)).child(
+                            div()
+                                .flex_shrink_0()
+                                .size(px(6.))
+                                .rounded_full()
+                                .bg(rgb(p.busy)),
+                        )
+                    })
+                    .child(div().min_w_0().truncate().child(activity)),
             );
-        let row = chrome::interactive_control(div().id(("project", ix)), p, true)
-            .h_full()
-            .p_3()
-            .rounded(px(p.panel_radius))
-            .bg(rgb(if ix == self.project_cursor {
-                p.selected
-            } else {
-                p.surface
-            }))
-            .cursor_pointer()
-            .hover(|style| style.bg(rgb(p.selected)))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.open_project_path(path.clone(), window, cx)
-            }))
+        let new_agent = if compact {
+            self.icon_button(
+                SharedString::from(format!("new-agent-in-project-{ix}")),
+                "New agent in this folder",
+                IconName::Plus,
+                can_spawn,
+            )
+        } else {
+            self.quiet_button(
+                SharedString::from(format!("new-agent-in-project-{ix}")),
+                "New agent",
+                IconName::Plus,
+                can_spawn,
+            )
+        };
+        let actions = div()
+            .flex_shrink_0()
             .flex()
             .items_center()
-            .gap_3()
-            .child(self.project_mark(Some(project), &project.path, 36.))
-            .child(details)
+            .gap_1()
             .child(
-                self.quiet_button(
-                    SharedString::from(format!("new-agent-in-project-{ix}")),
-                    "New agent",
-                    IconName::Plus,
-                    can_spawn,
-                )
-                .debug_selector(move || format!("new-agent-in-project-{ix}"))
-                .when(can_spawn, |d| {
-                    d.on_click(cx.listener(move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        this.new_agent_in_project(new_path.clone(), window, cx);
-                    }))
-                }),
+                new_agent
+                    .debug_selector(move || format!("new-agent-in-project-{ix}"))
+                    .when(can_spawn, |d| {
+                        d.on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.new_agent_in_project(new_path.clone(), window, cx);
+                        }))
+                    }),
             )
             .child(
                 self.icon_button(
                     SharedString::from(format!("edit-project-{ix}")),
-                    "Project settings: name, icon and pull requests",
+                    "Folder settings: name, icon and pull requests",
                     IconName::Settings,
                     can_write,
                 )
@@ -1003,6 +1120,27 @@ impl Workspace {
                     }))
                 }),
             );
-        div().h(px(84.)).px_6().pb_2().child(row)
+        let row = chrome::interactive_control(div().id(("project", ix)), p, true)
+            .h_full()
+            .pl_3()
+            .pr_2()
+            .rounded(px(p.panel_radius))
+            .bg(rgb(if ix == self.project_cursor {
+                p.selected
+            } else {
+                p.surface
+            }))
+            .cursor_pointer()
+            .hover(|style| style.bg(rgb(p.selected)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_project_path(path.clone(), window, cx)
+            }))
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(self.project_mark(Some(project), &project.path, 32.))
+            .child(details)
+            .child(actions);
+        div().h(px(80.)).px(px(gutter)).pb_2().child(row)
     }
 }
