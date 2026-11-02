@@ -219,3 +219,46 @@ fn job_sessions_are_marked_and_open_from_their_run(cx: &mut TestAppContext) {
         assert_eq!(this.extras.job_run_open, None);
     });
 }
+
+/// A hub that cannot list jobs gets a plain explanation and a retry, not a
+/// bare error as the page's first line.
+#[gpui::test]
+fn jobs_that_cannot_load_explain_and_retry(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            this.update_view(Arc::new(state("a")), window, cx);
+            this.open_feature(Screen::Jobs, window, cx);
+            let mut view = (*this.view).clone();
+            view.requests.insert(
+                Request::Jobs.key(),
+                wks_native::features::RequestState {
+                    request: Request::Jobs,
+                    number: 1,
+                    loading: false,
+                    error: Some("Unknown method: jobs.list".into()),
+                    value: Arc::new(serde_json::Value::Null),
+                },
+            );
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("jobs-unavailable").is_some());
+    effects(&mut commands);
+    click(&mut visual, "jobs-retry");
+    assert!(
+        effects(&mut commands)
+            .iter()
+            .any(|c| matches!(c, Command::Request(Request::Jobs))),
+        "Try again reads the jobs again"
+    );
+    // Once the hub lists them, the rows show. (Test frames keep every
+    // selector ever drawn, so the explanation's absence is not checkable.)
+    request_state(&workspace, &mut visual, Request::Jobs, 2, listed());
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.job_rows().map(|rows| rows.len()), Some(2))
+    });
+    assert!(visual.debug_bounds("job-row-0").is_some());
+}

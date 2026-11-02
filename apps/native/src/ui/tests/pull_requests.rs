@@ -194,3 +194,42 @@ fn an_unlinked_session_is_offered_its_branch_pull_request(cx: &mut TestAppContex
         "{sent:?}"
     );
 }
+
+/// A pasted URL links from Enter as well as its button, and the button does
+/// nothing until there is something to link.
+#[gpui::test]
+fn a_pasted_url_links_on_enter(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1400.), px(900.)));
+    show(&workspace, &mut visual, session_view(false));
+    open_page(&workspace, &mut visual);
+    effects(&mut commands);
+    tap(&mut visual, "pr-link-url");
+    assert!(
+        !requests(&mut commands)
+            .iter()
+            .any(|r| matches!(r, Request::PrLink { .. })),
+        "an empty field links nothing"
+    );
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.pr.url.update(cx, |input, cx| input.focus(window, cx))
+        })
+    });
+    visual.run_until_parked();
+    visual.simulate_input(URL);
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    let sent = requests(&mut commands);
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [Request::PrLink { session, url: Some(url) }, Request::PrThreads { .. }]
+                if session == "a" && url == URL
+        ),
+        "{sent:?}"
+    );
+    workspace.read_with(&visual, |this, cx| {
+        assert!(this.pr.url.read(cx).value().is_empty(), "the field clears")
+    });
+}

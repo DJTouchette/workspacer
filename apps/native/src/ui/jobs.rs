@@ -14,8 +14,12 @@ use wks_native::timing::now_ms;
 
 pub(super) const JOBS_DESCRIPTION: &str =
     "Work the hub runs on a schedule, even while this window is closed.";
-const JOBS_FOOTER: &str = "To add or change a job, ask any agent, for example “every weekday at 7, run the tests and wake an agent if anything fails.” What it proposes waits here, switched off, until you approve it.";
-const NO_JOBS: &str = "No jobs yet. Ask any agent for one; it will wait here for you to approve.";
+const JOBS_FOOTER: &str = "To add or change a job, ask any agent. What it proposes waits here, switched off, until you approve it.";
+const NO_JOBS_TITLE: &str = "No jobs yet";
+const NO_JOBS: &str = "Ask any agent for one, for example “every weekday at 7, run the tests and wake an agent if anything fails.” What it proposes waits here until you approve it.";
+const UNAVAILABLE_TITLE: &str = "Couldn’t load jobs";
+const UNAVAILABLE: &str =
+    "The hub didn’t list its jobs. It may be a version without jobs, or the request failed.";
 const PROPOSAL_NOTE: &str =
     "An agent proposed this. It does nothing until you approve it, so read it first.";
 const CHANGE_NOTE: &str = "An agent proposed this change. The job keeps running as it is until you approve; approving keeps its history and whether it is paused.";
@@ -71,32 +75,103 @@ impl Workspace {
     pub(super) fn render_jobs(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         let rows = self.job_rows();
-        let loading = self.view.requests.get("jobs").is_some_and(|s| s.loading);
         let list = rows.clone().unwrap_or_default();
         let runs = self.job_runs();
+        let read = self.view.requests.get("jobs");
+        // A failed read matters on its own only while there is nothing to
+        // show; over a listed page it is a line above the (older) rows.
+        let read_error = read
+            .filter(|s| !s.loading)
+            .and_then(|s| s.error.clone())
+            .filter(|e| !e.is_empty());
         let page = div()
             .flex()
             .flex_col()
             .gap_3()
             .child(self.job_tabs(&list, runs.as_deref(), cx))
-            .child(self.feature_message("jobs"))
+            .when(rows.is_some(), |d| {
+                d.children(
+                    read_error
+                        .clone()
+                        .map(|e| chrome::notice_line(e, chrome::Tone::Error, p)),
+                )
+            })
             .child(self.feature_message("job-action"));
         if self.extras.job_runs_tab {
             return page.child(self.render_run_history(&list, runs, cx));
         }
-        page.when(rows.as_ref().is_some_and(Vec::is_empty) && !loading, |d| {
-            d.child(empty_jobs(p))
-        })
-        .children(
-            list.iter()
-                .enumerate()
-                .map(|(ix, job)| self.render_job(ix, job, &list, runs.as_deref(), cx)),
-        )
-        .child(
+        let Some(rows) = rows else {
+            return page.child(match read_error {
+                Some(error) => self.jobs_unavailable(error, cx),
+                None => div().py_2().child(chrome::notice_line(
+                    "Loading jobs…",
+                    chrome::Tone::Loading,
+                    p,
+                )),
+            });
+        };
+        if rows.is_empty() {
+            return page.child(jobs_state(
+                IconName::Calendar,
+                NO_JOBS_TITLE,
+                NO_JOBS,
+                p.muted,
+                p,
+            ));
+        }
+        // Proposals sort first; they are what the page needs from the user.
+        let waiting = rows.iter().filter(|j| j.proposal()).count();
+        let mut page = page;
+        for (ix, job) in rows.iter().enumerate() {
+            if waiting > 0 && ix == 0 {
+                page = page.child(group_label("Needs your approval", p.warning));
+            } else if waiting > 0 && ix == waiting {
+                page = page.child(group_label("Scheduled", p.muted).pt_2());
+            }
+            page = page.child(self.render_job(ix, job, &rows, runs.as_deref(), cx));
+        }
+        page.child(
             div()
+                .pt_1()
                 .text_size(px(chrome::scale::CAPTION))
                 .text_color(rgb(p.muted))
                 .child(JOBS_FOOTER),
+        )
+    }
+
+    /// The hub did not answer `jobs.list`: say so plainly, with its reason
+    /// and a way to ask again, instead of opening on a bare error.
+    fn jobs_unavailable(&self, error: String, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        let connected = self.view.connected;
+        jobs_state(
+            IconName::TriangleAlert,
+            UNAVAILABLE_TITLE,
+            UNAVAILABLE,
+            p.warning,
+            p,
+        )
+        .debug_selector(|| "jobs-unavailable".into())
+        .child(
+            div()
+                .max_w(px(420.))
+                .text_center()
+                .font_family(mono_font())
+                .text_size(px(chrome::scale::CAPTION))
+                .text_color(rgb(p.muted))
+                .child(error),
+        )
+        .child(
+            div().pt_1().child(
+                self.button("jobs-retry", "Try again", connected)
+                    .debug_selector(|| "jobs-retry".into())
+                    .when(connected, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| {
+                            this.request(Request::Jobs, cx);
+                            this.request(Request::JobRuns, cx);
+                        }))
+                    }),
+            ),
         )
     }
 
@@ -109,50 +184,58 @@ impl Workspace {
                 .filter(|r| r.status == "error" && jobs::day_label(r.started_at, now) == "Today")
                 .count()
         });
-        let segment = |id: &'static str, label: String, runs_tab: bool, alert: bool| {
-            let active = self.extras.job_runs_tab == runs_tab;
-            div()
-                .id(id)
-                .debug_selector(move || id.into())
-                .px_3()
-                .py(px(3.))
-                .rounded(px(p.control_radius))
-                .text_size(px(chrome::scale::CAPTION))
-                .flex()
-                .items_center()
-                .gap_1()
-                .when(active, |d| {
-                    d.bg(rgb(p.surface))
-                        .text_color(rgb(p.text))
-                        .shadow(chrome::floating_shadow(p))
-                })
-                .when(!active, |d| {
-                    d.text_color(rgb(p.muted))
-                        .cursor_pointer()
-                        .hover(|s| s.text_color(rgb(p.text)))
-                })
-                .child(label)
-                .when(alert, |d| {
-                    d.child(
-                        div()
-                            .text_color(rgb(p.error))
-                            .child(format!("· {failed_today} failed today")),
-                    )
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.extras.job_runs_tab != runs_tab {
-                        this.extras.job_runs_tab = runs_tab;
-                        if runs_tab {
-                            this.request(Request::JobRuns, cx);
+        let waiting = list.iter().filter(|j| j.proposal()).count();
+        let segment =
+            |id: &'static str, label: String, runs_tab: bool, alert: Option<(String, u32)>| {
+                let active = self.extras.job_runs_tab == runs_tab;
+                div()
+                    .id(id)
+                    .debug_selector(move || id.into())
+                    .px_3()
+                    .py(px(4.))
+                    .rounded(px(p.control_radius))
+                    .text_size(px(chrome::scale::META))
+                    .font_weight(FontWeight::MEDIUM)
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .when(active, |d| {
+                        d.bg(rgb(p.surface))
+                            .text_color(rgb(p.text))
+                            .shadow(chrome::floating_shadow(p))
+                    })
+                    .when(!active, |d| {
+                        d.text_color(rgb(p.muted))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(p.text)))
+                    })
+                    .child(label)
+                    .when_some(alert, |d, (text, color)| {
+                        d.child(
+                            div()
+                                .px(px(6.))
+                                .rounded_full()
+                                .bg(tint(color, 0.14))
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(color))
+                                .child(text),
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.extras.job_runs_tab != runs_tab {
+                            this.extras.job_runs_tab = runs_tab;
+                            if runs_tab {
+                                this.request(Request::JobRuns, cx);
+                            }
+                            cx.notify();
                         }
-                        cx.notify();
-                    }
-                }))
-        };
-        let jobs_label = if list.is_empty() {
+                    }))
+            };
+        let scheduled = list.len() - waiting;
+        let jobs_label = if scheduled == 0 {
             "Jobs".to_owned()
         } else {
-            format!("Jobs ({})", list.iter().filter(|j| !j.proposal()).count())
+            format!("Jobs {scheduled}")
         };
         div().flex().child(
             div()
@@ -161,12 +244,17 @@ impl Workspace {
                 .gap(px(2.))
                 .rounded(px(p.control_radius + 2.))
                 .bg(rgb(p.selected))
-                .child(segment("jobs-tab-jobs", jobs_label, false, false))
+                .child(segment(
+                    "jobs-tab-jobs",
+                    jobs_label,
+                    false,
+                    (waiting > 0).then(|| (format!("{waiting} to approve"), p.warning)),
+                ))
                 .child(segment(
                     "jobs-tab-runs",
                     "Runs".to_owned(),
                     true,
-                    failed_today > 0,
+                    (failed_today > 0).then(|| (format!("{failed_today} failed today"), p.error)),
                 )),
         )
     }
@@ -189,10 +277,12 @@ impl Workspace {
         };
         let state = self.view.requests.get("job-runs");
         let Some(runs) = runs else {
-            return match state {
-                Some(s) if s.error.is_some() => caption(RUNS_UNSUPPORTED.into(), p.muted),
-                _ => caption("Loading runs…".into(), p.muted),
-            };
+            return div().py_2().child(match state {
+                Some(s) if s.error.is_some() => {
+                    chrome::notice_line(RUNS_UNSUPPORTED, chrome::Tone::Info, p)
+                }
+                _ => chrome::notice_line("Loading runs…", chrome::Tone::Loading, p),
+            });
         };
         let failed_only = self.extras.job_failed_only;
         let failed = runs.iter().filter(|r| r.status == "error").count();
@@ -202,9 +292,10 @@ impl Workspace {
                 .id(id)
                 .debug_selector(move || id.into())
                 .px_2()
-                .py(px(2.))
+                .py(px(3.))
                 .rounded(px(p.control_radius))
                 .text_size(px(chrome::scale::CAPTION))
+                .font_weight(FontWeight::MEDIUM)
                 .when(active, |d| d.bg(rgb(p.selected)).text_color(rgb(p.text)))
                 .when(!active, |d| {
                     d.text_color(rgb(p.muted))
@@ -279,8 +370,9 @@ impl Workspace {
         page
     }
 
-    /// One run in the history: when, which job, how it went, how long, and
-    /// its first line; open, its whole output and where to go next.
+    /// One run in the history: how it went, which job, when and how long,
+    /// then its first line of output; open, its whole output and where to
+    /// go next.
     fn run_row(
         &self,
         ix: usize,
@@ -305,17 +397,22 @@ impl Workspace {
             None => run.summary().to_owned(),
         };
         let session = session.map(|s| s.id.clone());
+        let meta = [run_word(run).to_owned(), run.duration()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
         let header = div()
             .id(("job-run", ix))
             .debug_selector(move || format!("job-run-{ix}"))
             .px_4()
-            .py_2()
+            .py(px(10.))
             .flex()
             .items_center()
             .gap_3()
             .min_w_0()
             .cursor_pointer()
-            .hover(|s| s.bg(rgb(p.selected)))
+            .hover(|s| s.bg(chrome::tonal(p, 0.04)))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.extras.job_run_open = if this.extras.job_run_open.as_ref() == Some(&toggle) {
                     None
@@ -331,76 +428,84 @@ impl Workspace {
                     IconName::ChevronRight
                 })
                 .size(px(12.))
+                .flex_shrink_0()
                 .text_color(rgb(p.muted)),
             )
-            .child(
-                div()
-                    .size(px(8.))
-                    .rounded_full()
-                    .flex_shrink_0()
-                    .bg(rgb(color)),
-            )
-            .child(
-                div()
-                    .w(px(64.))
-                    .flex_shrink_0()
-                    .font_family(mono_font())
-                    .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(p.muted))
-                    .child(jobs::clock(run.started_at, self.settings.twelve_hour_clock)),
-            )
-            .child(
-                div()
-                    .w(px(180.))
-                    .flex_shrink_0()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(chrome::scale::META))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .when(job.is_none(), |d| d.text_color(rgb(p.muted)))
-                    .child(job.map_or("Removed job".to_owned(), |j| j.name.clone())),
-            )
-            .child(
-                div()
-                    .w(px(56.))
-                    .flex_shrink_0()
-                    .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(color))
-                    .child(run.label()),
-            )
-            .child(
-                div()
-                    .w(px(56.))
-                    .flex_shrink_0()
-                    .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(p.muted))
-                    .child(run.duration()),
-            )
+            .child(status_dot(color, 8.))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .truncate()
-                    .font_family(mono_font())
-                    .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(p.muted))
-                    .child(summary),
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap_2()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(chrome::scale::META))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(if job.is_some() { p.text } else { p.muted }))
+                                    .child(
+                                        job.map_or("Removed job".to_owned(), |j| j.name.clone()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_size(px(chrome::scale::CAPTION))
+                                    // Failures carry the colour; the rest
+                                    // leave it to the dot.
+                                    .text_color(rgb(if run.status == "error" {
+                                        color
+                                    } else {
+                                        p.muted
+                                    }))
+                                    .child(meta),
+                            ),
+                    )
+                    .when(!summary.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .font_family(mono_font())
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.muted))
+                                .child(summary),
+                        )
+                    }),
             )
             .when_some(session, |d, id| {
                 d.child(
-                    self.button(
+                    self.quiet_button(
                         SharedString::from(format!("job-run-row-session-{ix}")),
                         "Open",
+                        IconName::ArrowRight,
                         true,
                     )
                     .debug_selector(move || format!("job-run-row-session-{ix}"))
-                    .flex_shrink_0()
+                    .py_1()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.open_alerted_session(id.clone(), window, cx)
                     })),
                 )
-            });
+            })
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .font_family(mono_font())
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(p.muted))
+                    .child(jobs::clock(run.started_at, self.settings.twelve_hour_clock)),
+            );
         div()
             .flex()
             .flex_col()
@@ -541,112 +646,161 @@ impl Workspace {
             .then(|| all.iter().find(|j| j.id == job.replaces))
             .flatten();
         let now = now_ms();
-        let mut when = job.trigger_summary();
+        let proposal = job.proposal();
+        let paused = !job.enabled && !proposal;
+        let mut when = schedule(&job.spec["trigger"], self.settings.twelve_hour_clock)
+            .unwrap_or_else(|| job.trigger_summary());
         if job.enabled
             && let Some(at) = job.next_run_at
         {
-            when = format!("{when} ({})", jobs::until(at, now));
+            when = format!("{when} · next {}", jobs::until(at, now));
         }
-        let summary = format!("{when} · {}", job.action_summary());
+        if job.change() {
+            let name = target.map_or("a removed job", |t| t.name.as_str());
+            when = format!("{when} · changes {name}, proposed by {}", job.proposed_by);
+        } else if proposal {
+            when = format!("{when} · proposed by {}", job.proposed_by);
+        }
         let toggle = job.id.clone();
-        chrome::card(p)
-            .debug_selector(move || format!("job-row-{ix}"))
+        let header = div()
+            .id(("job-row", ix))
+            .min_w_0()
+            .px_4()
+            .py_3()
             .flex()
-            .flex_col()
+            .flex_wrap()
+            .items_center()
+            .gap_3()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx)))
+            .child(
+                Icon::new(if expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .size(px(12.))
+                .flex_shrink_0()
+                .text_color(rgb(p.muted)),
+            )
             .child(
                 div()
-                    .id(("job-row", ix))
-                    .px_4()
-                    .py_3()
+                    .flex_1()
+                    .min_w(px(220.))
                     .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_3()
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx)))
-                    .child(
-                        Icon::new(if expanded {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        })
-                        .size(px(12.))
-                        .text_color(rgb(p.muted)),
-                    )
+                    .flex_col()
+                    .gap(px(3.))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w(px(220.))
                             .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(px(chrome::scale::BODY))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .when(!job.enabled && !job.proposal(), |d| {
-                                                d.text_color(rgb(p.muted))
-                                            })
-                                            .child(job.name.clone()),
-                                    )
-                                    .child(self.job_status(job, target, now))
-                                    .children(self.run_strip(&job.id, runs)),
-                            )
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
                             .child(
                                 div()
                                     .min_w_0()
                                     .truncate()
-                                    .font_family(mono_font())
-                                    .text_size(px(chrome::scale::CAPTION))
-                                    .text_color(rgb(p.muted))
-                                    .child(summary),
-                            ),
+                                    .text_size(px(chrome::scale::BODY))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(if paused { p.muted } else { p.text }))
+                                    .child(job.name.clone()),
+                            )
+                            .children(self.job_chip(job, p))
+                            .child(div().flex_1())
+                            .child(self.job_status(job, now))
+                            .children((!proposal).then(|| self.run_strip(&job.id, runs)).flatten()),
                     )
-                    .child(self.job_actions(ix, job, target, cx)),
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(chrome::scale::META))
+                            .text_color(rgb(if paused { p.muted } else { p.prose }))
+                            .child(when),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(mono_font())
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .child(job.action_summary()),
+                    ),
             )
-            .when(expanded, |d| d.child(self.job_detail(job, target)))
+            .child(self.job_actions(ix, job, target, cx));
+        let card = chrome::card(p)
+            .debug_selector(move || format!("job-row-{ix}"))
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .child(header)
+            .when(expanded, |d| d.child(self.job_detail(job, target)));
+        if !proposal {
+            return card;
+        }
+        // What waits on the user: a warning rule down its edge and a faint
+        // warning wash, so it reads as "needs you" before it is read.
+        card.border_color(tint(p.warning, 0.4))
+            .bg(tint(p.warning, 0.05))
+            .relative()
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(px(3.))
+                    .bg(rgb(p.warning)),
+            )
     }
 
-    /// The badge beside a job's name: what it is waiting on, or how its
-    /// last run went.
-    fn job_status(&self, job: &Job, target: Option<&Job>, now: i64) -> Div {
-        let p = self.appearance.palette();
+    /// The state beside a job's name: waiting for approval, running, or
+    /// switched off.
+    fn job_chip(&self, job: &Job, p: Palette) -> Option<Div> {
         let (text, color) = if job.change() {
-            let name = target.map_or("a removed job", |t| t.name.as_str());
-            (
-                format!("change to {name} · by {}", job.proposed_by),
-                p.warning,
-            )
+            ("Proposed change", p.warning)
         } else if job.proposal() {
-            (format!("proposed by {}", job.proposed_by), p.warning)
+            // Its group, rule and wash already say it waits on the user.
+            return None;
         } else if job.running {
-            ("running".to_owned(), p.busy)
-        } else if let Some(run) = &job.last_run {
-            let at = run.finished_at.unwrap_or(run.started_at);
-            let color = match run.status.as_str() {
-                "ok" => p.success,
-                "error" => p.error,
-                _ => p.muted,
-            };
-            (format!("{} {}", run.label(), jobs::since(at, now)), color)
+            ("Running", p.busy)
         } else if !job.enabled {
-            ("paused".to_owned(), p.muted)
+            ("Paused", p.muted)
         } else {
-            return div();
+            return None;
         };
+        Some(chip(text, color, p))
+    }
+
+    /// Right of a job's name: how its last run went.
+    fn job_status(&self, job: &Job, now: i64) -> Div {
+        let p = self.appearance.palette();
+        let caption = |text: String, color: u32| {
+            div()
+                .flex_shrink_0()
+                .text_size(px(chrome::scale::CAPTION))
+                .text_color(rgb(color))
+                .child(text)
+        };
+        if job.proposal() {
+            return div();
+        }
+        let Some(run) = &job.last_run else {
+            return caption("Not run yet".into(), p.muted);
+        };
+        let at = run.finished_at.unwrap_or(run.started_at);
+        let color = run_color(run, p);
         div()
             .flex_shrink_0()
-            .text_size(px(chrome::scale::CAPTION))
-            .text_color(rgb(color))
-            .child(text)
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(status_dot(color, 6.))
+            .child(caption(
+                format!("{} {}", run_word(run), jobs::since(at, now)),
+                if run.status == "ok" { p.muted } else { color },
+            ))
     }
 
     fn job_actions(
@@ -660,21 +814,25 @@ impl Workspace {
         let id = job.id.clone();
         let proposal = job.proposal();
         let confirming = self.extras.job_confirm_remove.as_deref() == Some(id.as_str());
-        let remove_label = match (proposal, confirming) {
-            (true, _) => "Reject",
-            (false, false) => "Remove",
-            (false, true) => "Remove job and history",
-        };
         let remove_id = id.clone();
-        let remove = self
-            .danger_button(job_control("remove", ix), remove_label, enabled)
-            .debug_selector(move || format!("job-remove-{ix}"))
-            .when(enabled, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.remove_job(&remove_id, proposal, cx);
-                }))
-            });
+        // Removing is quiet until it is asked for; the second click, which
+        // deletes the history too, is the one that looks destructive.
+        let remove = if confirming {
+            self.danger_button(job_control("remove", ix), "Remove job and history", enabled)
+        } else {
+            self.job_quiet(
+                job_control("remove", ix),
+                if proposal { "Reject" } else { "Remove" },
+                enabled,
+            )
+        }
+        .debug_selector(move || format!("job-remove-{ix}"))
+        .when(enabled, |d| {
+            d.on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.remove_job(&remove_id, proposal, cx);
+            }))
+        });
         let row = div()
             .flex_shrink_0()
             .flex()
@@ -685,8 +843,10 @@ impl Workspace {
             // A change whose job is gone has nothing left to change.
             let can_approve = enabled && (!job.change() || target.is_some());
             let approval = job.approval();
+            // Proposals sort first: the first is the page's one primary
+            // action, the rest stay tonal.
             let approve = self
-                .primary_button(job_control("approve", ix), "Approve", can_approve)
+                .button_style(job_control("approve", ix), "Approve", can_approve, ix == 0)
                 .debug_selector(move || format!("job-approve-{ix}"))
                 .when(can_approve, |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
@@ -720,6 +880,23 @@ impl Workspace {
         row.child(pause).child(run)
     }
 
+    /// A text-only, low-emphasis row action.
+    fn job_quiet(&self, id: SharedString, label: &'static str, enabled: bool) -> Stateful<Div> {
+        let p = self.appearance.palette();
+        chrome::interactive_control(div().id(id), p, enabled)
+            .px_3()
+            .py_2()
+            .rounded(px(p.control_radius))
+            .font_weight(FontWeight::MEDIUM)
+            .text_size(px(chrome::scale::META))
+            .text_color(rgb(if enabled { p.muted } else { p.disabled }))
+            .when(enabled, |d| {
+                d.cursor_pointer()
+                    .hover_text_style(|s| s.bg(chrome::tonal(p, 0.07)).text_color(rgb(p.text)))
+            })
+            .child(label)
+    }
+
     /// A proposal goes on one click; a job carries history, so removing it
     /// takes a second.
     fn remove_job(&mut self, id: &str, proposal: bool, cx: &mut Context<Self>) {
@@ -744,18 +921,16 @@ impl Workspace {
         };
         div()
             .debug_selector(|| "job-detail".into())
-            .px_4()
-            .pb_3()
+            .border_t_1()
+            .border_color(rgb(p.border))
+            .pr_4()
+            .pt_3()
+            .pb_4()
             .pl(px(44.))
             .flex()
             .flex_col()
             .gap_3()
-            .children(note.map(|note| {
-                div()
-                    .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(p.warning))
-                    .child(note)
-            }))
+            .children(note.map(|note| chrome::notice_line(note, chrome::Tone::Warning, p)))
             .map(|d| match target {
                 Some(current) => d
                     .child(self.spec_block(Some("Now"), current, None))
@@ -765,9 +940,22 @@ impl Workspace {
             .when(!job.proposal(), |d| d.child(self.job_history(&job.id)))
     }
 
+    /// The spec field by field, its schedule in the same plain words as
+    /// the row.
+    fn job_details(&self, job: &Job) -> Vec<(String, String)> {
+        let plain = schedule(&job.spec["trigger"], self.settings.twelve_hour_clock);
+        job.details()
+            .into_iter()
+            .map(|(label, value)| match (&plain, label.as_str()) {
+                (Some(plain), "When") => (label, plain.clone()),
+                _ => (label, value),
+            })
+            .collect()
+    }
+
     fn spec_block(&self, title: Option<&'static str>, job: &Job, base: Option<&Job>) -> Div {
         let p = self.appearance.palette();
-        let before = base.map(Job::details);
+        let before = base.map(|base| self.job_details(base));
         div()
             .flex()
             .flex_col()
@@ -779,7 +967,7 @@ impl Workspace {
                     .text_color(rgb(p.muted))
                     .child(title)
             }))
-            .children(job.details().into_iter().map(|(label, value)| {
+            .children(self.job_details(job).into_iter().map(|(label, value)| {
                 let changed = before
                     .as_ref()
                     .is_some_and(|rows| !rows.iter().any(|row| row.0 == label && row.1 == value));
@@ -864,7 +1052,7 @@ impl Workspace {
                         div()
                             .flex_shrink_0()
                             .text_color(rgb(p.muted))
-                            .child(format!("{} {}", run.label(), jobs::since(at, now))),
+                            .child(format!("{} {}", run_word(&run), jobs::since(at, now))),
                     )
                     .when(!run.duration().is_empty(), |d| {
                         d.child(
@@ -904,11 +1092,172 @@ fn job_control(action: &str, ix: usize) -> SharedString {
     format!("job-{action}-{ix}").into()
 }
 
-fn empty_jobs(p: Palette) -> Div {
+/// How a run went, as a word a row can lead with.
+fn run_word(run: &Run) -> &'static str {
+    match run.status.as_str() {
+        "ok" => "Succeeded",
+        "skipped" => "Skipped",
+        _ => "Failed",
+    }
+}
+
+fn tint(color: u32, alpha: f32) -> gpui::Hsla {
+    gpui::Hsla::from(rgb(color)).opacity(alpha)
+}
+
+fn status_dot(color: u32, size: f32) -> Div {
     div()
-        .py_6()
-        .text_center()
-        .text_size(px(chrome::scale::META))
-        .text_color(rgb(p.muted))
-        .child(NO_JOBS)
+        .size(px(size))
+        .rounded_full()
+        .flex_shrink_0()
+        .bg(rgb(color))
+}
+
+/// A small state pill: its tone's text on a faint wash of the same tone.
+fn chip(text: &'static str, color: u32, p: Palette) -> Div {
+    div()
+        .flex_shrink_0()
+        .px(px(6.))
+        .py(px(1.))
+        .rounded(px(p.control_radius))
+        .bg(if color == p.muted {
+            chrome::tonal(p, 0.08)
+        } else {
+            tint(color, 0.14)
+        })
+        .text_size(px(chrome::scale::CAPTION))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(rgb(color))
+        .child(text)
+}
+
+/// The overline above a group of job rows.
+fn group_label(text: &'static str, color: u32) -> Div {
+    div()
+        .px_1()
+        .text_size(px(chrome::scale::OVERLINE))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(color))
+        .child(text.to_uppercase())
+}
+
+/// A centred page state (nothing yet, or not available): an icon on a
+/// tonal disc, a heading and one short paragraph.
+fn jobs_state(
+    icon: IconName,
+    title: &'static str,
+    body: &'static str,
+    tone: u32,
+    p: Palette,
+) -> Div {
+    div()
+        .py_8()
+        .px_4()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .size(px(40.))
+                .rounded_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(if tone == p.muted {
+                    chrome::tonal(p, 0.07)
+                } else {
+                    tint(tone, 0.14)
+                })
+                .child(Icon::new(icon).size(px(18.)).text_color(rgb(tone))),
+        )
+        .child(
+            div()
+                .pt_1()
+                .text_size(px(chrome::scale::HEADING))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title),
+        )
+        .child(
+            div()
+                .max_w(px(420.))
+                .text_center()
+                .text_size(px(chrome::scale::META))
+                .line_height(gpui::relative(1.45))
+                .text_color(rgb(p.muted))
+                .child(body),
+        )
+}
+
+/// A job's trigger in plain words: "Every 4 hours", "Weekdays at 7:00 AM".
+/// `None` for a kind this client does not know, which then reads as the
+/// hub's own summary.
+fn schedule(trigger: &serde_json::Value, twelve_hour: bool) -> Option<String> {
+    let time = |at: &str| -> String {
+        match chrono::NaiveTime::parse_from_str(at, "%H:%M") {
+            Ok(t) if twelve_hour => t.format("%-I:%M %p").to_string(),
+            Ok(t) => t.format("%H:%M").to_string(),
+            Err(_) => at.to_owned(),
+        }
+    };
+    Some(match trigger["kind"].as_str()? {
+        "interval" => match trigger["everyMinutes"].as_i64()? {
+            1 => "Every minute".into(),
+            60 => "Every hour".into(),
+            1440 => "Every day".into(),
+            m if m > 0 && m % 1440 == 0 => format!("Every {} days", m / 1440),
+            m if m > 0 && m % 60 == 0 => format!("Every {} hours", m / 60),
+            m => format!("Every {m} minutes"),
+        },
+        "daily" => {
+            let at = time(trigger["at"].as_str()?);
+            let mut days: Vec<u64> = trigger["days"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|d| d.as_u64().filter(|d| *d < 7))
+                .collect();
+            days.sort_unstable();
+            days.dedup();
+            const NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+            const PLURAL: [&str; 7] = [
+                "Sundays",
+                "Mondays",
+                "Tuesdays",
+                "Wednesdays",
+                "Thursdays",
+                "Fridays",
+                "Saturdays",
+            ];
+            match days.as_slice() {
+                [] | [0, 1, 2, 3, 4, 5, 6] => format!("Every day at {at}"),
+                [1, 2, 3, 4, 5] => format!("Weekdays at {at}"),
+                [0, 6] => format!("Weekends at {at}"),
+                [day] => format!("{} at {at}", PLURAL[*day as usize]),
+                days => format!(
+                    "{} at {at}",
+                    days.iter()
+                        .map(|d| NAMES[*d as usize])
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            }
+        }
+        "once" => {
+            let at = trigger["once"].as_str()?;
+            match chrono::DateTime::parse_from_rfc3339(at) {
+                Ok(t) => t
+                    .with_timezone(&chrono::Local)
+                    .format(if twelve_hour {
+                        "Once, %a %b %-d at %-I:%M %p"
+                    } else {
+                        "Once, %a %b %-d at %H:%M"
+                    })
+                    .to_string(),
+                Err(_) => format!("Once, {at}"),
+            }
+        }
+        "manual" => "Only when run by hand".into(),
+        _ => return None,
+    })
 }

@@ -3,7 +3,8 @@
 //! agent), and linking, changing or unlinking it. Everything runs on the
 //! hub, as the user signed in to `gh` / `az` there.
 use super::*;
-use gpui_component::input::Input;
+use gpui::Subscription;
+use gpui_component::input::{Input, InputEvent};
 use wks_native::{
     features::{PrAction, Request},
     pull_requests::{self, Link, Thread, Threads},
@@ -20,15 +21,31 @@ pub(super) struct PrUi {
     pub show_resolved: bool,
     /// Change the link even though one is set.
     pub relinking: bool,
+    /// Enter in the URL field links it; typing re-renders Link URL's state.
+    _watch: Subscription,
 }
 
 impl PrUi {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
+        let url = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Paste a GitHub or Azure DevOps pull request URL")
+        });
+        let _watch = cx.subscribe_in(
+            &url,
+            window,
+            |this: &mut Workspace, _, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter { secondary: false }
+                    if this.screen == Screen::PullRequest =>
+                {
+                    this.link_typed_url(window, cx)
+                }
+                InputEvent::Change if this.screen == Screen::PullRequest => cx.notify(),
+                _ => {}
+            },
+        );
         Self {
-            url: cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder("Paste a GitHub or Azure DevOps pull request URL")
-            }),
+            url,
             reply: cx.new(|cx| {
                 InputState::new(window, cx)
                     .auto_grow(2, 8)
@@ -42,6 +59,7 @@ impl PrUi {
             replying: None,
             show_resolved: false,
             relinking: false,
+            _watch,
         }
     }
 }
@@ -141,6 +159,18 @@ impl Workspace {
         );
         // The snapshot carries the link; the threads can load now.
         self.request(Request::PrThreads { url }, cx);
+    }
+
+    /// Link the URL typed in the linker, from its button or Enter.
+    fn link_typed_url(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let url = self.pr.url.read(cx).value().trim().to_owned();
+        if url.is_empty() || !self.view.connected {
+            return;
+        }
+        self.pr
+            .url
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.link_pull_request(url, cx);
     }
 
     fn pr_action(&mut self, action: PrAction, cx: &mut Context<Self>) {
@@ -339,20 +369,29 @@ impl Workspace {
                     .is_none_or(|current| current.url != found.url)
             });
         let detected = branch.map(|s| &s.value["detected"]);
+        // The branch lookup only offers a shortcut: when it cannot answer,
+        // that is a quiet aside, never the first thing the page shouts.
         let status: Option<(String, chrome::Tone)> = match branch {
             Some(s) if s.loading => Some((
                 "Looking for a pull request on this branch…".into(),
                 chrome::Tone::Loading,
             )),
             Some(s) => match (&s.error, suggestion.as_ref()) {
-                (Some(error), _) => Some((error.clone(), chrome::Tone::Warning)),
+                (Some(error), _) => Some((
+                    format!(
+                        "Couldn’t look for one on this branch ({error}). Paste its URL instead."
+                    ),
+                    chrome::Tone::Info,
+                )),
                 (None, Some(_)) => None,
                 (None, None) => Some((
                     detected
                         .and_then(|d| d["problem"].as_str())
                         .map(str::to_owned)
                         .unwrap_or_else(|| match detected.and_then(|d| d["branch"].as_str()) {
-                            Some(branch) => format!("No open pull request for {branch}."),
+                            Some(branch) => format!(
+                                "No open pull request for {branch}. Paste a URL to link another."
+                            ),
                             None => "No branch is checked out here.".into(),
                         }),
                     chrome::Tone::Info,
@@ -360,24 +399,43 @@ impl Workspace {
             },
             None => None,
         };
-        let url_input = self.pr.url.clone();
+        let typed = !self.pr.url.read(cx).value().trim().is_empty();
+        let can_link = connected && typed;
         let mut card = chrome::card(p)
             .debug_selector(|| "pr-linker".into())
             .p_4()
             .flex()
             .flex_col()
             .gap_3()
-            .child(features::card_heading(
-                if relinking {
-                    "Change the linked pull request"
-                } else {
-                    "Link a pull request"
-                },
-                Some(
-                    "The agent can read its comments, reply and resolve threads, and hears about new comments while it works.",
-                ),
-                p,
-            ));
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap_3()
+                    .child(
+                        div()
+                            .size(px(32.))
+                            .flex_shrink_0()
+                            .rounded_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(chrome::tonal(p, 0.07))
+                            .child(icon().size(px(15.)).text_color(rgb(p.muted))),
+                    )
+                    .child(div().flex_1().min_w_0().child(features::card_heading(
+                        if relinking {
+                            "Change the linked pull request"
+                        } else {
+                            "Link a pull request"
+                        },
+                        Some(
+                            "The agent can then read its review comments, reply, resolve threads, and hear about new comments while it works.",
+                        ),
+                        p,
+                    ))),
+            );
+        let suggested = suggestion.is_some();
         if let Some(found) = suggestion {
             let url = found.url.clone();
             card = card.child(
@@ -388,7 +446,8 @@ impl Workspace {
                     .gap_3()
                     .p_3()
                     .rounded(px(p.control_radius))
-                    .bg(rgb(p.selected))
+                    .bg(chrome::tonal(p, 0.05))
+                    .child(icon().size(px(14.)).text_color(rgb(p.success)))
                     .child(
                         div()
                             .flex_1()
@@ -398,12 +457,27 @@ impl Workspace {
                             .gap_0p5()
                             .child(
                                 div()
-                                    .truncate()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(format!("{} {}", found.short(), found.title)),
+                                    .flex()
+                                    .gap_2()
+                                    .min_w_0()
+                                    .text_size(px(chrome::scale::BODY))
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_color(rgb(p.muted))
+                                            .child(found.short()),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(found.title.clone()),
+                                    ),
                             )
                             .child(
                                 div()
+                                    .truncate()
                                     .text_size(px(chrome::scale::META))
                                     .text_color(rgb(p.muted))
                                     .child(format!(
@@ -434,15 +508,12 @@ impl Workspace {
                 .gap_2()
                 .child(div().flex_1().min_w_0().child(Input::new(&self.pr.url)))
                 .child(
-                    self.button_style("pr-link-url", "Link URL", connected, false)
-                        .when(connected, |d| {
+                    // The suggestion, when there is one, is the primary way.
+                    self.button_style("pr-link-url", "Link URL", can_link, !suggested)
+                        .debug_selector(|| "pr-link-url".into())
+                        .when(can_link, |d| {
                             d.on_click(cx.listener(move |this, _, window, cx| {
-                                let url = url_input.read(cx).value().trim().to_owned();
-                                if url.is_empty() {
-                                    return;
-                                }
-                                url_input.update(cx, |input, cx| input.set_value("", window, cx));
-                                this.link_pull_request(url, cx);
+                                this.link_typed_url(window, cx)
                             }))
                         }),
                 ),
@@ -514,7 +585,11 @@ impl Workspace {
                             } else {
                                 "Show resolved"
                             },
-                            IconName::EyeOff,
+                            if show_resolved {
+                                IconName::EyeOff
+                            } else {
+                                IconName::Eye
+                            },
                             true,
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -680,7 +755,11 @@ impl Workspace {
                 self.quiet_button(
                     SharedString::from(format!("{key}-reply")),
                     if replying { "Cancel reply" } else { "Reply" },
-                    IconName::ArrowLeft,
+                    if replying {
+                        Icon::new(IconName::Close)
+                    } else {
+                        Icon::empty().path("lucide/reply.svg")
+                    },
                     connected,
                 )
                 .debug_selector({

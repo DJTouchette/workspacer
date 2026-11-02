@@ -278,10 +278,9 @@ impl Workspace {
                 .items_center()
                 .gap_4()
                 .min_w_0()
-                .py_1()
                 .child(
                     div()
-                        .w(px(96.))
+                        .w(px(72.))
                         .flex_shrink_0()
                         .text_size(px(chrome::scale::META))
                         .text_color(rgb(p.muted))
@@ -300,7 +299,7 @@ impl Workspace {
             .p_4()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap_3()
             .child(projects::section_label("This session", p))
             .child(fact(
                 "Agent",
@@ -319,51 +318,72 @@ impl Workspace {
             .child(
                 div()
                     .text_size(px(chrome::scale::CAPTION))
+                    .line_height(gpui::relative(1.45))
                     .text_color(rgb(p.muted))
                     .child(if fresh {
                         format!(
-                            "A new {name} agent starts in this same folder with an empty context \
-                             and reads a written brief, so this session's long context is not \
-                             read again. This session stays available with its history."
+                            "A new {name} agent starts here with an empty context and reads a \
+                             written brief, so this long context is not read again. This session \
+                             keeps its history."
                         )
                     } else {
                         format!(
-                            "{name} starts in this same folder and reads a written brief. This \
-                             session stays available with its history; {name} does not receive \
-                             the private context held by {source_name}."
+                            "{name} starts here and reads a written brief. This session keeps its \
+                             history; {name} does not see the private context {source_name} holds."
                         )
                     }),
             );
         let other = handoff::target(&source).unwrap_or("codex");
+        // Which handoff: a segmented control above everything it changes.
         let way = |id: &'static str, label: String, value: bool| {
-            self.button(id, label, !busy)
+            let active = fresh == value;
+            div()
+                .id(id)
                 .debug_selector(move || id.into())
-                .when(fresh == value, |d| {
-                    d.bg(rgb(p.selected)).text_color(rgb(p.accent))
+                .px_3()
+                .py(px(5.))
+                .rounded(px(p.control_radius))
+                .text_size(px(chrome::scale::META))
+                .font_weight(FontWeight::MEDIUM)
+                .when(active, |d| {
+                    d.bg(rgb(p.surface))
+                        .text_color(rgb(if busy { p.disabled } else { p.text }))
+                        .shadow(chrome::floating_shadow(p))
                 })
-                .when(!busy && fresh != value, |d| {
-                    d.on_click(cx.listener(move |this, _, window, cx| {
-                        if let Some(source) = this.selected_session().cloned() {
-                            this.seed_handoff(&source, value, window, cx);
-                        }
-                        cx.notify();
-                    }))
+                .when(!active, |d| {
+                    d.text_color(rgb(if busy { p.disabled } else { p.muted }))
                 })
+                .when(!busy && !active, |d| {
+                    d.cursor_pointer()
+                        .hover(|s| s.text_color(rgb(p.text)))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if let Some(source) = this.selected_session().cloned() {
+                                this.seed_handoff(&source, value, window, cx);
+                            }
+                            cx.notify();
+                        }))
+                })
+                .child(label)
         };
-        let ways = div()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .child(way(
-                "handoff-way-other",
-                format!("Continue with {}", handoff::provider_name(other)),
-                false,
-            ))
-            .child(way(
-                "handoff-way-fresh",
-                format!("Start a fresh {source_name}"),
-                true,
-            ));
+        let ways = div().flex().child(
+            div()
+                .p(px(2.))
+                .flex()
+                .flex_wrap()
+                .gap(px(2.))
+                .rounded(px(p.control_radius + 2.))
+                .bg(rgb(p.selected))
+                .child(way(
+                    "handoff-way-other",
+                    format!("Continue with {}", handoff::provider_name(other)),
+                    false,
+                ))
+                .child(way(
+                    "handoff-way-fresh",
+                    format!("Start a fresh {source_name}"),
+                    true,
+                )),
+        );
 
         let detection = match (checking, found) {
             (true, _) => chrome::notice_line(
@@ -377,14 +397,12 @@ impl Workspace {
                 p,
             ),
             (_, Some(false)) => chrome::notice_line(
-                format!("{name} was not found on the hub’s machine. Set it up before continuing."),
+                format!("{name} isn’t installed on the hub’s machine. Set it up to continue."),
                 chrome::Tone::Warning,
                 p,
             ),
             (_, None) => chrome::notice_line(
-                format!(
-                    "Could not confirm {name} is installed; the hub refuses the launch if it is not."
-                ),
+                format!("Couldn’t confirm {name} is installed; the hub refuses the launch if not."),
                 chrome::Tone::Info,
                 p,
             ),
@@ -406,6 +424,7 @@ impl Workspace {
                             .min_w_0()
                             .flex()
                             .flex_col()
+                            .gap_0p5()
                             .child(
                                 div()
                                     .text_size(px(chrome::scale::HEADING))
@@ -423,85 +442,137 @@ impl Workspace {
                             ),
                     )
                     .when(missing, |d| {
-                        d.child(self.button("handoff-setup", "Agent setup", true).on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.open_feature(Screen::Setup, window, cx)
-                            }),
-                        ))
+                        d.child(
+                            self.button("handoff-setup", "Agent setup", true)
+                                .flex_shrink_0()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_feature(Screen::Setup, window, cx)
+                                })),
+                        )
                     }),
             )
-            .child(ways)
             .child(self.render_launch_options(busy, cx));
 
         let stopped = source.stopped();
         let brief = self.extras.handoff_brief;
-        let choice = |id: &'static str, label: String, value: Brief, enabled: bool| {
-            self.button(id, label, enabled)
-                .debug_selector(move || id.into())
-                .when(brief == value, |d| {
-                    d.bg(rgb(p.selected)).text_color(rgb(p.accent))
-                })
-                .when(enabled, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        this.extras.handoff_brief = value;
-                        cx.notify();
-                    }))
-                })
-        };
+        // One choice per row: a radio, its name and what it costs.
+        let choice =
+            |id: &'static str, label: String, hint: String, value: Brief, enabled: bool| {
+                let chosen = brief == value;
+                div()
+                    .id(id)
+                    .debug_selector(move || id.into())
+                    .px_3()
+                    .py(px(10.))
+                    .rounded(px(p.control_radius))
+                    .flex()
+                    .items_start()
+                    .gap_3()
+                    .when(chosen, |d| d.bg(chrome::tonal(p, 0.06)))
+                    .when(enabled && !chosen, |d| {
+                        d.cursor_pointer().hover(|s| s.bg(chrome::tonal(p, 0.03)))
+                    })
+                    .when(enabled, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.extras.handoff_brief = value;
+                            cx.notify();
+                        }))
+                    })
+                    .child(
+                        div()
+                            .mt(px(2.))
+                            .size(px(14.))
+                            .flex_shrink_0()
+                            .rounded_full()
+                            .border_1()
+                            .border_color(rgb(if chosen {
+                                p.accent
+                            } else if enabled {
+                                p.muted
+                            } else {
+                                p.disabled
+                            }))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(chosen, |d| {
+                                d.child(div().size(px(6.)).rounded_full().bg(rgb(p.accent)))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_size(px(chrome::scale::BODY))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(rgb(if enabled { p.text } else { p.disabled }))
+                                    .child(label),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(chrome::scale::META))
+                                    .line_height(gpui::relative(1.4))
+                                    .text_color(rgb(if enabled { p.muted } else { p.disabled }))
+                                    .child(hint),
+                            ),
+                    )
+            };
+        let fallback = "If that fails, the hub uses the quick summary and says so.";
         let brief_card = chrome::card(p)
             .p_4()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_2()
             .child(projects::section_label("Brief", p))
             .child(
                 div()
                     .flex()
-                    .flex_wrap()
-                    .gap_2()
+                    .flex_col()
+                    .gap_1()
                     .child(choice(
                         "handoff-brief-agent",
                         format!("Written by {source_name}"),
+                        if stopped {
+                            "This agent has ended, so it can’t write its own brief.".into()
+                        } else {
+                            format!(
+                                "{source_name} stops its current work and writes it: one turn, \
+                                 up to 2½ minutes. {fallback}"
+                            )
+                        },
                         Brief::Agent,
                         !busy && !stopped,
                     ))
                     .child(choice(
                         "handoff-brief-summary",
                         "Summary by a fast model".into(),
+                        format!(
+                            "A fast, inexpensive model (Haiku for Claude, unless Settings names \
+                             another title model) reads the conversation and writes it, in about \
+                             1½ minutes. {source_name} isn’t resumed or sent anything. {fallback}"
+                        ),
                         Brief::Summary,
                         !busy,
                     ))
                     .child(choice(
                         "handoff-brief-quick",
                         "Quick summary".into(),
+                        if stopped {
+                            "The hub summarizes this agent’s retained conversation right away."
+                                .into()
+                        } else {
+                            "The hub summarizes the retained conversation right away. Nothing is \
+                             sent to this agent."
+                                .into()
+                        },
                         Brief::Mechanical,
                         !busy,
                     )),
-            )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(p.muted))
-                    .child(match (brief, stopped) {
-                        (Brief::Agent, _) => format!(
-                            "{source_name} stops its current work and writes the brief, which takes \
-                             one turn and up to 2½ minutes. If it cannot, the hub uses a quick \
-                             summary instead and says so."
-                        ),
-                        (Brief::Summary, _) => format!(
-                            "A fast, inexpensive model (Haiku for Claude, unless Settings names \
-                             another title model) reads the quick summary and the latest part of \
-                             the conversation and writes the brief, in up to about 1½ minutes. \
-                             {source_name} is not resumed or sent anything. If the model cannot, \
-                             the hub uses the quick summary instead and says so."
-                        ),
-                        (Brief::Mechanical, true) => "This agent has ended, so the hub summarizes \
-                            its retained conversation."
-                            .into(),
-                        (Brief::Mechanical, false) => "The hub summarizes the retained \
-                            conversation now. Nothing is sent to this agent."
-                            .into(),
-                    }),
             );
 
         let progress = self
@@ -547,6 +618,7 @@ impl Workspace {
             // Progress and failures sit beside the header's Continue, not
             // below the fold.
             .children(status.map(|s| s.debug_selector(|| "handoff-status".into())))
+            .child(ways)
             .child(from)
             .child(successor)
             .child(brief_card)
