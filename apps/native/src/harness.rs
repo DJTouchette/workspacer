@@ -8,6 +8,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{Instant, MissedTickBehavior, interval};
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
+mod catalog;
+
 type Socket = WebSocketStream<TcpStream>;
 
 /// The client went away (or sent something unreadable): the connection ends.
@@ -79,6 +81,10 @@ pub struct Options {
     /// The first session's approval is a finished plan (`ExitPlanMode`) and
     /// its account's 5-hour window is spent, for dock-card captures.
     pub plan_and_limit: bool,
+    /// Believable Projects, project groups, Scratch, Jobs and History data
+    /// under fixture paths (`/home/dev/...`), with the live sessions running
+    /// in those folders. Off: the fixture is unchanged.
+    pub catalog: bool,
 }
 
 /// One connection's fixture hub: what it serves and remembers between frames.
@@ -112,6 +118,7 @@ struct Fixture {
     due: Vec<(Instant, String, Value)>,
     finish_at: Instant,
     finished_parent: Option<Value>,
+    catalog: Option<catalog::Catalog>,
 }
 
 impl Fixture {
@@ -134,6 +141,19 @@ impl Fixture {
         if options.rich {
             items.extend(rich_items());
         }
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut config = json!({
+            "projects": {},
+            "agents": {
+                "childFullAccess": false,
+                "jobFullAccess": false,
+                "ignoreExternalMcp": false,
+                "autoTitle": {"enabled": true, "model": "haiku"},
+            },
+        });
+        if options.catalog {
+            config["projects"] = catalog::projects(now);
+        }
         Self {
             options,
             topics: BTreeSet::new(),
@@ -149,20 +169,13 @@ impl Fixture {
             restart_stream: false,
             written: BTreeMap::new(),
             shells: BTreeMap::new(),
-            config: json!({
-                "projects": {},
-                "agents": {
-                    "childFullAccess": false,
-                    "jobFullAccess": false,
-                    "ignoreExternalMcp": false,
-                    "autoTitle": {"enabled": true, "model": "haiku"},
-                },
-            }),
+            config,
             spawned: Vec::new(),
             openings: BTreeMap::new(),
             due: Vec::new(),
             finish_at: Instant::now() + Duration::from_secs(4),
             finished_parent: None,
+            catalog: options.catalog.then(|| catalog::Catalog::new(now)),
         }
     }
 
@@ -209,7 +222,11 @@ impl Fixture {
     async fn replay_finished(&mut self, socket: &mut Socket) -> Result<(), Closed> {
         if self.finished_parent.is_none() && Instant::now() >= self.finish_at {
             self.pending = false;
-            self.finished_parent = Some(finished_rich_parent());
+            let mut row = finished_rich_parent();
+            if self.options.catalog {
+                row["cwd"] = json!(catalog::live_cwd(0));
+            }
+            self.finished_parent = Some(row);
         }
         if let Some(row) = &self.finished_parent {
             send(socket, event("agent.snapshot", row.clone())).await?;
@@ -315,7 +332,20 @@ impl Fixture {
     async fn call(&mut self, socket: &mut Socket, frame: &Value) -> Result<Value, Closed> {
         let params = &frame["params"];
         let id = params["sessionId"].as_str().unwrap_or_default();
-        Ok(match frame["method"].as_str().unwrap_or_default() {
+        let method = frame["method"].as_str().unwrap_or_default();
+        if self.catalog.is_some() {
+            let live = match method {
+                "sessions.history" | "sessions.forget" => self.snapshots(),
+                _ => Value::Null,
+            };
+            let live = live.as_array().map(Vec::as_slice).unwrap_or_default();
+            if let Some(catalog) = self.catalog.as_mut()
+                && let Some(reply) = catalog.call(method, params, live)
+            {
+                return Ok(reply);
+            }
+        }
+        Ok(match method {
             "config.get" => self.config.clone(),
             "config.save" => self.save_config(params),
             "desktop.saveConfig" => {
@@ -708,22 +738,31 @@ impl Fixture {
     }
 
     fn snapshots(&self) -> Value {
+        let catalog = self.options.catalog;
         let fixed = (0..self.options.sessions).map(|i| {
             let id = format!("demo-{i:04}");
             let snapshot = json!({
                 "sessionId": id,
                 "label": if i == 0 {
                     "Native client experiment".into()
+                } else if catalog {
+                    catalog::live_label(i)
                 } else {
                     format!("Worker {i}")
                 },
-                "cwd": format!("/workspaces/project-{}", i % 8),
+                "cwd": if catalog {
+                    catalog::live_cwd(i).to_owned()
+                } else {
+                    format!("/workspaces/project-{}", i % 8)
+                },
                 "parentSessionId": if i == 1 { "demo-0000" } else { "" },
                 "provider": "claude",
                 "model": "sonnet",
                 "transport": "stream",
                 "mode": if self.streaming && self.active_id == id {
                     "responding"
+                } else if catalog && catalog::live_stopped(i) {
+                    "stopped"
                 } else {
                     "input"
                 },

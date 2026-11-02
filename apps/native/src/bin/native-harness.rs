@@ -69,6 +69,11 @@ enum Command {
         /// window is spent (plan card and limit card captures).
         #[arg(long)]
         plan_and_limit: bool,
+        /// Serve believable Projects, project groups, Scratch, Jobs and
+        /// History data (fixture paths under /home/dev); live sessions run in
+        /// those project folders.
+        #[arg(long)]
+        catalog: bool,
     },
     /// Measure the real turn-footer summary path, excluding GPUI layout/GPU work.
     BenchTurnSummary {
@@ -177,6 +182,7 @@ async fn main() -> Result<()> {
             pending_questions,
             child_lifecycle,
             plan_and_limit,
+            catalog,
         } => {
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("Fixture hub: ws://{}/bus", listener.local_addr()?);
@@ -190,6 +196,7 @@ async fn main() -> Result<()> {
                     pending_questions,
                     child_lifecycle,
                     plan_and_limit,
+                    catalog,
                 },
             )
             .await?;

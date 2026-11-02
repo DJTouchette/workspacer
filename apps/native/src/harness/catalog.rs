@@ -1,0 +1,1769 @@
+//! `native-harness serve --catalog`: believable data for the feature pages
+//! (Projects, project groups, Scratch, Jobs, History) so they can be looked
+//! at without a real hub. Every path is an obvious fixture path under
+//! `/home/dev`; nothing here touches the disk or starts anything.
+//!
+//! Replies mirror the Rust hub's JSON (`services/hub-rs`: `project_groups.rs`,
+//! `scratch.rs`, `jobs.rs`, `live_controls.rs` for `sessions.history`), and
+//! writes (`projectGroups.save/remove`, `scratch.mark`, `jobs.upsert/remove/
+//! run`, `sessions.forget`) land in memory for the connection's lifetime.
+use serde_json::{Map, Value, json};
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::project_groups::within;
+use crate::projects::{self, WorktreeRepo, same_dir};
+
+pub const WORKSPACER: &str = "/home/dev/src/workspacer";
+pub const NATIVE: &str = "/home/dev/src/workspacer/apps/native";
+pub const HUB: &str = "/home/dev/src/hub-rs";
+pub const INFRA: &str = "/home/dev/src/infra";
+pub const NOTES: &str = "/home/dev/notes";
+const SCRATCH_BASE: &str = "/home/dev/.workspacer/scratch";
+const TREES: &str = "/home/dev/.workspacer/worktrees";
+
+/// The repositories scratch resolves to (a subfolder or worktree files under
+/// its repository's main checkout, as the hub's `project_root` does).
+const SCRATCH_ROOTS: [&str; 4] = [WORKSPACER, HUB, INFRA, NOTES];
+
+const MINUTE: i64 = 60_000;
+const HOUR: i64 = 60 * MINUTE;
+const DAY: i64 = 24 * HOUR;
+
+/// Rows one `sessions.history` page holds here, below the hub's 200, so the
+/// page's "Load older" cursor path has something to load.
+const HISTORY_PAGE: usize = 20;
+/// The hub's own bound on `limit`.
+const HISTORY_LIMIT: u64 = 200;
+
+/// Live fixture sessions: `(folder, label)`, cycled by index.
+const LIVE: [(&str, &str); 12] = [
+    (NATIVE, "Native client experiment"),
+    (WORKSPACER, "Session creation review"),
+    (HUB, "Bus fan-out backpressure"),
+    (WORKSPACER, "Release checklist for 0.9"),
+    (NOTES, "Weekly notes tidy-up"),
+    (INFRA, "Fly deploy dry run"),
+    (NATIVE, "Scroll perf profiling"),
+    (HUB, "Federation handshake retries"),
+    (WORKSPACER, "Settings search audit"),
+    (INFRA, "Terraform drift check"),
+    (NATIVE, "Jobs page empty state"),
+    (HUB, "Reconnect storm repro"),
+];
+
+/// Live sessions listed in History as well (the hub's history holds every
+/// session it has seen, running ones included).
+const LIVE_IN_HISTORY: usize = 4;
+
+pub fn live_cwd(index: usize) -> &'static str {
+    LIVE[index % LIVE.len()].0
+}
+
+pub fn live_label(index: usize) -> String {
+    let label = LIVE[index % LIVE.len()].1;
+    match index / LIVE.len() {
+        0 => label.to_owned(),
+        round => format!("{label} · {}", round + 1),
+    }
+}
+
+/// Some live rows have ended, so project cards read "N running of M".
+pub fn live_stopped(index: usize) -> bool {
+    index >= 3 && index.is_multiple_of(3)
+}
+
+fn wall_now() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+fn rfc3339(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_default()
+}
+
+fn text<'a>(params: &'a Value, key: &str) -> &'a str {
+    params[key].as_str().map(str::trim).unwrap_or("")
+}
+
+/// `config.projects`: the registry the Projects page reads, four pinned.
+pub fn projects(now: i64) -> Value {
+    json!({
+        WORKSPACER: {"label": "workspacer", "favourite": true, "lastOpened": now - 40 * MINUTE,
+            "color": "#5b8def", "git": {"provider": "github"}},
+        NATIVE: {"label": "Native client", "icon": "🦀", "favourite": true,
+            "lastOpened": now - 2 * HOUR},
+        HUB: {"label": "hub-rs", "favourite": true, "lastOpened": now - 26 * HOUR,
+            "color": "#e0794f"},
+        NOTES: {"label": "Notes", "icon": "📝", "favourite": true, "lastOpened": now - 3 * DAY},
+        INFRA: {"label": "Infra", "lastOpened": now - 6 * DAY, "color": "#9b6bd6"},
+    })
+}
+
+/// One fixture scratch file: its repository, the hub's list row and its text.
+struct ScratchFile {
+    root: &'static str,
+    item: Value,
+    content: &'static str,
+}
+
+/// A seeded scratch file: `(root, path, hours ago, purpose, status, keep,
+/// sensitive, note, session, content)`; no purpose = written straight into
+/// the directory by an agent (`indexed:false`).
+type Seed = (
+    &'static str,
+    &'static str,
+    i64,
+    Option<&'static str>,
+    Option<&'static str>,
+    bool,
+    bool,
+    Option<&'static str>,
+    Option<&'static str>,
+    &'static str,
+);
+
+const SCRATCH: [Seed; 12] = [
+    (
+        WORKSPACER,
+        "prod/backfill-session-titles.sql",
+        3,
+        Some("Backfill auto titles for sessions created before 0.9"),
+        Some("pending"),
+        true,
+        true,
+        None,
+        Some("hist-04"),
+        "-- Run by hand against the hub's session store (prod). Safe to re-run.\nBEGIN;\nCREATE TABLE IF NOT EXISTS sessions_titles_backup AS\n  SELECT session_id, title FROM sessions;\nUPDATE sessions\n   SET title = substr(first_prompt, 1, 60)\n WHERE (title IS NULL OR title = '')\n   AND first_prompt IS NOT NULL\n   AND started_at < '2026-10-01';\nCOMMIT;\n",
+    ),
+    (
+        WORKSPACER,
+        "repro/sidebar-flicker.sh",
+        6,
+        Some("Repro for the sidebar flicker on reconnect"),
+        Some("draft"),
+        true,
+        false,
+        Some("Restart the hub between runs or the cache hides it."),
+        None,
+        "#!/usr/bin/env bash\n# Drop and restore the bus connection every 2s while the sidebar is open.\nset -euo pipefail\nfor i in $(seq 1 20); do\n  sudo iptables -A OUTPUT -p tcp --dport 7895 -j DROP\n  sleep 2\n  sudo iptables -D OUTPUT -p tcp --dport 7895 -j DROP\n  sleep 2\n  echo \"cycle $i\"\ndone\n",
+    ),
+    (
+        WORKSPACER,
+        "notes/native-ui-pass.md",
+        1,
+        None,
+        None,
+        false,
+        false,
+        None,
+        None,
+        "# Native UI pass\n\n- [x] Project cards: running/total counts\n- [ ] History: date headers wrap at narrow widths\n- [ ] Jobs: failed run detail is cut at one line\n- [ ] Scratch: pending badge contrast on Light\n",
+    ),
+    (
+        WORKSPACER,
+        "bench/switch-results.json",
+        50,
+        Some("Parent/child switch timings for the PR"),
+        Some("done"),
+        false,
+        false,
+        Some("Numbers went into the PR description."),
+        None,
+        "{\n  \"cycles\": 20,\n  \"parent_to_new_child\": {\"shown_p50_ms\": 38.2, \"shown_p95_ms\": 51.0},\n  \"child_to_parent\": {\"shown_p50_ms\": 34.9, \"shown_p95_ms\": 47.3}\n}\n",
+    ),
+    (
+        WORKSPACER,
+        "old/migrate-config.py",
+        300,
+        Some("One-off config.yaml migration"),
+        Some("archived"),
+        false,
+        false,
+        None,
+        None,
+        "import yaml, pathlib\n\npath = pathlib.Path.home() / '.workspacer' / 'config.yaml'\nconfig = yaml.safe_load(path.read_text())\nconfig.setdefault('projects', {})\nfor fav in config.get('directories', {}).get('favourites', []):\n    config['projects'].setdefault(fav, {})['favourite'] = True\npath.write_text(yaml.safe_dump(config))\n",
+    ),
+    (
+        HUB,
+        "load/bus-fanout.ts",
+        20,
+        Some("Load test the bus fan-out before the release"),
+        Some("pending"),
+        true,
+        false,
+        Some("Staging only. Prod has the rate limiter off."),
+        Some("hist-02"),
+        "import WebSocket from 'ws';\n\nconst url = process.env.BUS ?? 'ws://127.0.0.1:7895/bus';\nconst clients = Array.from({ length: 200 }, () => new WebSocket(url));\nfor (const ws of clients) {\n  ws.on('open', () => ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot'] })));\n}\n",
+    ),
+    (
+        HUB,
+        "sql/jobs-history-cleanup.sql",
+        75,
+        Some("Trim job history older than 90 days"),
+        Some("draft"),
+        false,
+        false,
+        None,
+        None,
+        "DELETE FROM job_runs WHERE started_at < strftime('%s','now','-90 days') * 1000;\nVACUUM;\n",
+    ),
+    (
+        HUB,
+        "curl/federation-handshake.sh",
+        120,
+        Some("Manual federation handshake check"),
+        Some("done"),
+        false,
+        false,
+        Some("Handshake fixed in #482."),
+        None,
+        "curl -fsS -H \"Authorization: Bearer $PEER_TOKEN\" https://peer.internal:7895/federation/hello | jq .\n",
+    ),
+    (
+        INFRA,
+        "deploy/rotate-fly-token.sh",
+        30,
+        Some("Rotate the Fly.io deploy token by hand"),
+        Some("pending"),
+        true,
+        true,
+        None,
+        Some("hist-08"),
+        "#!/usr/bin/env bash\nset -euo pipefail\nfly tokens create deploy --app wks-hub --expiry 720h > /tmp/fly-token\ngh secret set FLY_API_TOKEN < /tmp/fly-token\nshred -u /tmp/fly-token\n",
+    ),
+    (
+        INFRA,
+        "terraform/plan-2026-10-30.txt",
+        72,
+        None,
+        None,
+        false,
+        false,
+        None,
+        None,
+        "Terraform will perform the following actions:\n\n  # fly_machine.hub will be updated in-place\n  ~ resource \"fly_machine\" \"hub\" {\n      ~ image = \"registry.fly.io/wks-hub:0.8.4\" -> \"registry.fly.io/wks-hub:0.9.0\"\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n",
+    ),
+    (
+        NOTES,
+        "drafts/release-0.9.md",
+        52,
+        Some("Release notes for 0.9"),
+        Some("draft"),
+        true,
+        false,
+        None,
+        Some("hist-10"),
+        "# 0.9\n\n## Highlights\n\n- Projects can group several folders.\n- Scratch: pending files show on every project card.\n- Jobs: proposals wait for your approval.\n",
+    ),
+    (
+        NOTES,
+        "todo/review-replies.md",
+        9,
+        Some("Review replies to post by hand"),
+        Some("pending"),
+        false,
+        false,
+        None,
+        None,
+        "- #512: agree on the cursor format; will rename `before` to `cursor`.\n- #515: the empty state copy is intentional, see the design note.\n",
+    ),
+];
+
+/// Ended sessions in History: `(id, provider, model, title, folder, hours
+/// ago, prompts, tool calls, hidden, first prompt)`.
+type Past = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    f64,
+    u64,
+    u64,
+    bool,
+    &'static str,
+);
+
+const PAST: [Past; 25] = [
+    (
+        "hist-01",
+        "claude",
+        "sonnet",
+        "Sidebar polish pass",
+        "/home/dev/.workspacer/worktrees/workspacer/sidebar-polish",
+        0.6,
+        6,
+        41,
+        false,
+        "Tighten the sidebar row spacing and fix the hover state.",
+    ),
+    (
+        "hist-02",
+        "codex",
+        "gpt-5.6-sol",
+        "Bus reconnect jitter",
+        HUB,
+        1.5,
+        4,
+        27,
+        false,
+        "Add jitter to the bus reconnect backoff.",
+    ),
+    (
+        "hist-03",
+        "claude",
+        "opus",
+        "Flaky watcher test",
+        "/home/dev/src/workspacer/.claude/worktrees/flaky-watcher",
+        3.,
+        9,
+        88,
+        false,
+        "watcher::tests::debounce fails about one run in ten. Find out why.",
+    ),
+    (
+        "hist-04",
+        "claude",
+        "sonnet",
+        "Project cards: running counts",
+        NATIVE,
+        5.,
+        5,
+        36,
+        false,
+        "Project cards should say how many sessions are running.",
+    ),
+    (
+        "hist-05",
+        "claude",
+        "haiku",
+        "Standup notes",
+        NOTES,
+        8.,
+        2,
+        4,
+        false,
+        "Summarise yesterday's merged PRs for standup.",
+    ),
+    (
+        "hist-06",
+        "codex",
+        "gpt-5.6-sol",
+        "Jobs history pagination",
+        "/home/dev/src/hub-rs/src/services",
+        22.,
+        7,
+        52,
+        false,
+        "jobs.history returns everything at once; page it.",
+    ),
+    (
+        "hist-07",
+        "claude",
+        "sonnet",
+        "Theme contrast audit",
+        NATIVE,
+        26.,
+        3,
+        19,
+        false,
+        "Check every theme for text below 4.5:1 contrast.",
+    ),
+    (
+        "hist-08",
+        "claude",
+        "opus",
+        "Fly secrets rotation runbook",
+        INFRA,
+        30.,
+        4,
+        12,
+        false,
+        "Write a runbook for rotating the Fly deploy token.",
+    ),
+    (
+        "hist-09",
+        "codex",
+        "gpt-5.6-sol",
+        "Scratch store index repair",
+        HUB,
+        48.,
+        6,
+        44,
+        false,
+        "A damaged scratch index.json hides every file. Make it recover.",
+    ),
+    (
+        "hist-10",
+        "claude",
+        "sonnet",
+        "Release notes draft",
+        NOTES,
+        52.,
+        3,
+        9,
+        false,
+        "Draft the 0.9 release notes from the changelog.",
+    ),
+    (
+        "hist-11",
+        "claude",
+        "sonnet",
+        "Terminal resize glitch",
+        NATIVE,
+        70.,
+        8,
+        63,
+        false,
+        "Resizing the terminal pane leaves a stale last row.",
+    ),
+    (
+        "hist-12",
+        "claude",
+        "opus",
+        "Federation token refresh",
+        HUB,
+        75.,
+        5,
+        31,
+        false,
+        "Peer tokens expire mid-session; refresh them before they do.",
+    ),
+    (
+        "hist-13",
+        "claude",
+        "sonnet",
+        "Quick repro: ws close codes",
+        "/tmp/repro-ws-close",
+        96.,
+        2,
+        7,
+        true,
+        "Which close code does tungstenite send on a dropped TCP connection?",
+    ),
+    (
+        "hist-14",
+        "codex",
+        "gpt-5.6-sol",
+        "Migrate config loader",
+        WORKSPACER,
+        100.,
+        6,
+        49,
+        false,
+        "Move the config loader to the shared crate.",
+    ),
+    (
+        "hist-15",
+        "claude",
+        "sonnet",
+        "Profile startup",
+        NATIVE,
+        120.,
+        4,
+        22,
+        false,
+        "Cold start takes 900ms. Profile it.",
+    ),
+    (
+        "hist-16",
+        "claude",
+        "haiku",
+        "Reading list triage",
+        NOTES,
+        145.,
+        1,
+        3,
+        true,
+        "Sort my reading list by topic.",
+    ),
+    (
+        "hist-17",
+        "claude",
+        "sonnet",
+        "Terraform plan review",
+        INFRA,
+        170.,
+        3,
+        11,
+        false,
+        "Review this terraform plan before I apply it.",
+    ),
+    (
+        "hist-18",
+        "codex",
+        "gpt-5.6-sol",
+        "Usage pace calculation",
+        WORKSPACER,
+        190.,
+        5,
+        38,
+        false,
+        "The 7-day pace reads 'overspending' right after a reset.",
+    ),
+    (
+        "hist-19",
+        "claude",
+        "sonnet",
+        "Handoff brief wording",
+        "/home/dev/.workspacer/worktrees/workspacer/handoff-copy",
+        215.,
+        3,
+        14,
+        false,
+        "Make the handoff brief read less like a log dump.",
+    ),
+    (
+        "hist-20",
+        "claude",
+        "opus",
+        "Hub plugin loader",
+        HUB,
+        240.,
+        11,
+        97,
+        false,
+        "Load hub plugins from ~/.workspacer/plugins with a manifest.",
+    ),
+    (
+        "hist-21",
+        "claude",
+        "sonnet",
+        "Changelog for 0.8",
+        NOTES,
+        260.,
+        2,
+        6,
+        false,
+        "Write the 0.8 changelog.",
+    ),
+    (
+        "hist-22",
+        "codex",
+        "gpt-5.6-sol",
+        "Diff viewer word wrap",
+        NATIVE,
+        290.,
+        4,
+        26,
+        false,
+        "Long lines in the diff viewer overflow instead of wrapping.",
+    ),
+    (
+        "hist-23",
+        "claude",
+        "sonnet",
+        "Bootstrap new laptop",
+        INFRA,
+        310.,
+        3,
+        18,
+        true,
+        "Write a bootstrap script for a fresh dev laptop.",
+    ),
+    (
+        "hist-24",
+        "claude",
+        "sonnet",
+        "Session archive semantics",
+        WORKSPACER,
+        340.,
+        6,
+        29,
+        false,
+        "What should Hide do to a running session?",
+    ),
+    (
+        "hist-25",
+        "claude",
+        "haiku",
+        "Try the new picker",
+        "/tmp/picker-spike",
+        400.,
+        1,
+        2,
+        false,
+        "Spike: a fuzzy folder picker.",
+    ),
+];
+
+const JOB_TESTS: &str = "a41c7e09d2b84f6e9c03b5d1";
+const JOB_HEALTH: &str = "5e8d20f1c7a94b3e8d6f0a2c";
+const JOB_AUDIT: &str = "c09b4e7a1f2d48c6b5e3a790";
+const JOB_PRUNE: &str = "e7f3a5c1b9d04e28a6c4f1b0";
+
+/// One connection's catalog: what the feature pages read and write.
+pub struct Catalog {
+    /// When the connection opened; seeded times count back from it.
+    now: i64,
+    groups: Vec<Value>,
+    revision: u64,
+    scratch: Vec<ScratchFile>,
+    jobs: Vec<Value>,
+    /// Newest first, as the hub keeps them.
+    runs: Vec<Value>,
+    next_run: BTreeMap<String, i64>,
+    /// Ended sessions, newest first.
+    history: Vec<Value>,
+    /// Ended live rows deleted from History.
+    forgotten: BTreeSet<String>,
+    created: u64,
+}
+
+impl Catalog {
+    pub fn new(now: i64) -> Self {
+        let group = |id: &str, name: &str, folders: &[&str], color: &str, icon: &str| {
+            json!({"id": id, "name": name, "folders": folders, "color": color, "icon": icon,
+                "createdAt": rfc3339(now - 9 * DAY), "updatedAt": rfc3339(now - 2 * DAY)})
+        };
+        let scratch = SCRATCH
+            .iter()
+            .map(
+                |&(root, path, hours, purpose, status, keep, sensitive, note, session, content)| {
+                    let modified = now - hours * HOUR;
+                    let indexed = purpose.is_some();
+                    let stamp = |ms: i64| indexed.then(|| rfc3339(ms));
+                    ScratchFile {
+                        root,
+                        item: json!({
+                            "path": path,
+                            "size": content.len(),
+                            "modifiedAt": rfc3339(modified),
+                            "indexed": indexed,
+                            "purpose": purpose,
+                            "sessionId": session,
+                            "keep": keep,
+                            "sensitive": sensitive,
+                            "status": status,
+                            "statusAt": status.and(stamp(modified)),
+                            "note": note,
+                            "createdAt": stamp(modified - 2 * HOUR),
+                            "updatedAt": stamp(modified),
+                        }),
+                        content,
+                    }
+                },
+            )
+            .collect();
+        let history = PAST
+            .iter()
+            .enumerate()
+            .map(
+                |(
+                    ix,
+                    &(id, provider, model, title, cwd, hours, prompts, tools, hidden, prompt),
+                )| {
+                    let updated = now - (hours * HOUR as f64) as i64;
+                    let started = updated - (20 + (ix as i64 * 17) % 90) * MINUTE;
+                    json!({
+                        "sessionId": id,
+                        "provider": provider,
+                        "cwd": cwd,
+                        "mode": "stopped",
+                        "transport": "stream",
+                        "archived": false,
+                        "updatedAt": updated,
+                        "startedAt": started,
+                        "endedAt": updated,
+                        "name": title,
+                        "title": title,
+                        "model": model,
+                        "hidden": hidden,
+                        "onSidebar": false,
+                        "transcriptCopy": ix % 7 != 3,
+                        "firstPrompt": prompt,
+                        "userPrompts": prompts,
+                        "toolCalls": tools,
+                    })
+                },
+            )
+            .collect();
+        let mut catalog = Self {
+            now,
+            groups: vec![
+                group(
+                    "p_7c1e5a90d2",
+                    "Workspacer",
+                    &[WORKSPACER, HUB],
+                    "#5b8def",
+                    "🧰",
+                ),
+                group("p_3b9f0e64a1", "Ops", &[INFRA], "#9b6bd6", "🚀"),
+            ],
+            revision: 3,
+            scratch,
+            jobs: seed_jobs(now),
+            runs: seed_runs(now),
+            next_run: BTreeMap::new(),
+            history,
+            forgotten: BTreeSet::new(),
+            created: 0,
+        };
+        for job in catalog.jobs.clone() {
+            catalog.schedule(&job, now);
+        }
+        catalog
+    }
+
+    /// The reply to `method`, or `None` when the catalog does not serve it.
+    /// `live` is the fixture's `sessions.snapshots` rows.
+    pub fn call(&mut self, method: &str, params: &Value, live: &[Value]) -> Option<Value> {
+        let result = match method {
+            "projectGroups.list" => Ok(self.list_groups()),
+            "projectGroups.save" => self.save_group(params),
+            "projectGroups.remove" => self.remove_group(params),
+            "scratch.pending" => Ok(self.scratch_pending()),
+            "scratch.list" => self.scratch_list(params),
+            "scratch.read" => self.scratch_read(params),
+            "scratch.mark" => self.scratch_mark(params),
+            "jobs.list" => Ok(self.jobs_list()),
+            "jobs.history" => Ok(self.jobs_history(params)),
+            "jobs.upsert" => self.jobs_upsert(params),
+            "jobs.remove" => self.jobs_remove(params),
+            "jobs.run" => self.jobs_run(params),
+            "sessions.history" => self.history(params, live),
+            "sessions.forget" => self.forget(params, live),
+            _ => return None,
+        };
+        Some(result.unwrap_or_else(|error| json!({"ok": false, "error": error})))
+    }
+
+    // ---- project groups ---------------------------------------------------
+
+    /// By name, case-insensitively, then by id (the hub's order).
+    fn list_groups(&self) -> Value {
+        let mut groups = self.groups.clone();
+        groups.sort_by(|a, b| {
+            let name = |g: &Value| g["name"].as_str().unwrap_or_default().to_lowercase();
+            name(a)
+                .cmp(&name(b))
+                .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+        });
+        json!({"revision": self.revision, "groups": groups})
+    }
+
+    fn check_revision(&self, params: &Value) -> Result<(), String> {
+        match params["revision"].as_u64() {
+            Some(expected) if expected != self.revision => Err(format!(
+                "conflict: project groups changed (now revision {}, this edit was made against {expected}); reload and try again",
+                self.revision
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn save_group(&mut self, params: &Value) -> Result<Value, String> {
+        let name = text(params, "name");
+        if name.is_empty() {
+            return Err("name is required".into());
+        }
+        let folders: Vec<String> = params["folders"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(projects::project_key)
+            .filter(|f| !f.is_empty())
+            .collect();
+        if folders.is_empty() {
+            return Err("folders is required: at least one absolute folder".into());
+        }
+        if let Some(folder) = folders
+            .iter()
+            .find(|f| !crate::launch::absolute_directory(f))
+        {
+            return Err(format!("{folder} is not an absolute folder"));
+        }
+        self.check_revision(params)?;
+        let id = Some(text(params, "id")).filter(|id| !id.is_empty());
+        let existing = id.map(|id| self.groups.iter().position(|g| g["id"] == id));
+        if let (Some(id), Some(None)) = (id, existing) {
+            return Err(format!(
+                "there is no project {id}; leave id out to create a new one"
+            ));
+        }
+        for folder in &folders {
+            if let Some(other) = self.groups.iter().find(|g| {
+                g["id"].as_str() != id
+                    && g["folders"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .any(|f| same_dir(f, folder))
+            }) {
+                let other = other["name"].as_str().unwrap_or_default();
+                return Err(format!(
+                    "{folder} is already in the project “{other}”; remove it there first"
+                ));
+            }
+        }
+        let stamp = rfc3339(wall_now());
+        let optional = |key: &str| Some(text(params, key)).filter(|v| !v.is_empty());
+        let mut group = json!({
+            "id": id.map(str::to_owned).unwrap_or_else(|| {
+                self.created += 1;
+                format!("p_f1c0{:06x}", self.created)
+            }),
+            "name": name,
+            "folders": folders,
+            "color": optional("color").map(str::to_ascii_lowercase),
+            "icon": optional("icon"),
+            "createdAt": stamp,
+            "updatedAt": stamp,
+        });
+        match existing.flatten() {
+            Some(ix) => {
+                group["createdAt"] = self.groups[ix]["createdAt"].clone();
+                self.groups[ix] = group.clone();
+            }
+            None => self.groups.push(group.clone()),
+        }
+        self.revision += 1;
+        group["revision"] = json!(self.revision);
+        Ok(group)
+    }
+
+    fn remove_group(&mut self, params: &Value) -> Result<Value, String> {
+        let id = text(params, "id");
+        if id.is_empty() {
+            return Err("id is required: the project to remove".into());
+        }
+        self.check_revision(params)?;
+        let before = self.groups.len();
+        self.groups.retain(|g| g["id"] != id);
+        if self.groups.len() == before {
+            return Err(format!("there is no project {id}"));
+        }
+        self.revision += 1;
+        Ok(json!({"removed": true, "revision": self.revision}))
+    }
+
+    // ---- scratch ----------------------------------------------------------
+
+    fn scratch_pending(&self) -> Value {
+        let mut rows: Vec<Value> = SCRATCH_ROOTS
+            .iter()
+            .filter_map(|root| {
+                let pending = self
+                    .scratch
+                    .iter()
+                    .filter(|f| f.root == *root && f.item["status"] == "pending")
+                    .count();
+                (pending > 0)
+                    .then(|| json!({"key": scratch_key(root), "root": root, "pending": pending}))
+            })
+            .collect();
+        rows.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
+        json!({"projects": rows, "truncated": false})
+    }
+
+    fn scratch_list(&self, params: &Value) -> Result<Value, String> {
+        let cwd = scratch_cwd(params)?;
+        let Some(root) = scratch_root(cwd) else {
+            // A folder with no scratch yet: the hub answers an empty listing.
+            return Ok(json!({
+                "project": describe(&projects::project_key(cwd), false),
+                "items": [],
+                "truncated": false,
+            }));
+        };
+        let mut items: Vec<Value> = self
+            .scratch
+            .iter()
+            .filter(|f| f.root == root)
+            .map(|f| f.item.clone())
+            .collect();
+        items.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
+        Ok(json!({"project": describe(root, true), "items": items, "truncated": false}))
+    }
+
+    fn scratch_file(&mut self, params: &Value) -> Result<&mut ScratchFile, String> {
+        let cwd = scratch_cwd(params)?;
+        let path = text(params, "path");
+        if path.is_empty() {
+            return Err("path is required: a path relative to the project's scratch".into());
+        }
+        let root = scratch_root(cwd);
+        self.scratch
+            .iter_mut()
+            .find(|f| Some(f.root) == root && f.item["path"] == path)
+            .ok_or_else(|| format!("{path} is not a file in this project's scratch"))
+    }
+
+    fn scratch_read(&mut self, params: &Value) -> Result<Value, String> {
+        let file = self.scratch_file(params)?;
+        let mut result = file.item.clone();
+        result["content"] = json!(file.content);
+        Ok(result)
+    }
+
+    fn scratch_mark(&mut self, params: &Value) -> Result<Value, String> {
+        let purpose = params["purpose"].as_str().map(str::trim);
+        if purpose == Some("") {
+            return Err("purpose cannot be cleared; give a one-line purpose".into());
+        }
+        let status = params["status"].as_str();
+        if let Some(status) = status
+            && !["draft", "pending", "done", "archived"].contains(&status)
+        {
+            return Err("status must be one of draft, pending, done, archived".into());
+        }
+        let note = params["note"].as_str().map(str::trim);
+        let (keep, sensitive) = (params["keep"].as_bool(), params["sensitive"].as_bool());
+        if purpose.is_none()
+            && status.is_none()
+            && note.is_none()
+            && keep.is_none()
+            && sensitive.is_none()
+        {
+            return Err("nothing to mark: pass purpose, keep, sensitive, status or note".into());
+        }
+        let stamp = rfc3339(wall_now());
+        let item = &mut self.scratch_file(params)?.item;
+        if let Some(purpose) = purpose {
+            item["purpose"] = json!(purpose);
+        }
+        if let Some(keep) = keep {
+            item["keep"] = json!(keep);
+        }
+        if let Some(sensitive) = sensitive {
+            item["sensitive"] = json!(sensitive);
+        }
+        if let Some(status) = status {
+            if item["status"] != status {
+                item["statusAt"] = json!(stamp);
+            }
+            item["status"] = json!(status);
+        }
+        if let Some(note) = note {
+            item["note"] = json!(note);
+        }
+        if item["indexed"] != true {
+            item["indexed"] = json!(true);
+            item["createdAt"] = json!(stamp);
+        }
+        item["updatedAt"] = json!(stamp);
+        Ok(item.clone())
+    }
+
+    // ---- jobs -------------------------------------------------------------
+
+    fn schedule(&mut self, job: &Value, from: i64) {
+        let id = job["id"].as_str().unwrap_or_default().to_owned();
+        let trigger = &job["trigger"];
+        let next = match trigger["kind"].as_str() {
+            _ if job["enabled"] != true || !text(job, "proposedBy").is_empty() => None,
+            Some("interval") => {
+                Some(from + trigger["everyMinutes"].as_i64().unwrap_or(60) * MINUTE)
+            }
+            Some("daily") => Some(from + 14 * HOUR + 12 * MINUTE),
+            _ => None,
+        };
+        match next {
+            Some(at) => self.next_run.insert(id, at),
+            None => self.next_run.remove(&id),
+        };
+    }
+
+    fn jobs_list(&self) -> Value {
+        let jobs: Vec<Value> = self
+            .jobs
+            .iter()
+            .map(|job| {
+                let mut row = job.clone();
+                let id = job["id"].as_str().unwrap_or_default();
+                if let Some(at) = self.next_run.get(id) {
+                    row["nextRunAt"] = json!(at);
+                }
+                if let Some(run) = self.runs.iter().find(|r| r["jobId"] == id) {
+                    row["lastRun"] = run.clone();
+                }
+                row
+            })
+            .collect();
+        json!({"jobs": jobs})
+    }
+
+    fn jobs_history(&self, params: &Value) -> Value {
+        let id = text(params, "id");
+        let runs: Vec<&Value> = self
+            .runs
+            .iter()
+            .filter(|r| id.is_empty() || r["jobId"] == id)
+            .collect();
+        json!({"runs": runs})
+    }
+
+    fn jobs_upsert(&mut self, params: &Value) -> Result<Value, String> {
+        let mut job = params.clone();
+        let Some(spec) = job.as_object_mut() else {
+            return Err("a job is an object".into());
+        };
+        for live in ["nextRunAt", "running", "lastRun"] {
+            spec.remove(live);
+        }
+        if text(&job, "name").is_empty() {
+            return Err("job needs a name".into());
+        }
+        let now = wall_now();
+        let id = text(params, "id").to_owned();
+        let proposal = !text(params, "proposedBy").is_empty();
+        let replaces = text(params, "replaces").to_owned();
+        job["updatedAt"] = json!(now);
+        // Approving a proposed change: only the spec moves onto the target,
+        // which keeps its id, history and on/off state.
+        if !proposal && !replaces.is_empty() {
+            if !self
+                .jobs
+                .iter()
+                .any(|j| j["id"] == id.as_str() && !text(j, "proposedBy").is_empty())
+            {
+                return Err(format!("no proposal {id:?}"));
+            }
+            let target = self
+                .jobs
+                .iter_mut()
+                .find(|j| j["id"] == replaces.as_str() && text(j, "proposedBy").is_empty())
+                .ok_or_else(|| format!("no job {replaces:?}"))?;
+            for key in ["name", "trigger", "action", "updatedAt"] {
+                target[key] = job[key].clone();
+            }
+            let updated = target.clone();
+            self.jobs.retain(|j| j["id"] != id.as_str());
+            self.next_run.remove(&id);
+            self.schedule(&updated, now);
+            return Ok(updated);
+        }
+        if !proposal && let Some(spec) = job.as_object_mut() {
+            spec.remove("replaces");
+        }
+        if id.is_empty() {
+            self.created += 1;
+            job["id"] = json!(format!("f1c0{:020x}", self.created));
+            job["createdAt"] = json!(now);
+            self.jobs.push(job.clone());
+        } else {
+            let existing = self
+                .jobs
+                .iter_mut()
+                .find(|j| j["id"] == id.as_str())
+                .ok_or_else(|| format!("no job {id:?}"))?;
+            job["createdAt"] = existing["createdAt"].clone();
+            *existing = job.clone();
+        }
+        self.schedule(&job, now);
+        Ok(job)
+    }
+
+    fn jobs_remove(&mut self, params: &Value) -> Result<Value, String> {
+        let id = text(params, "id");
+        if id.is_empty() {
+            return Err("jobs.remove requires {id}".into());
+        }
+        self.jobs.retain(|j| {
+            j["id"] != id && !(!text(j, "proposedBy").is_empty() && j["replaces"] == id)
+        });
+        self.runs.retain(|r| r["jobId"] != id);
+        self.next_run.remove(id);
+        Ok(json!({"ok": true}))
+    }
+
+    /// Records a skipped run: the fixture hub never runs anything.
+    fn jobs_run(&mut self, params: &Value) -> Result<Value, String> {
+        let id = text(params, "id");
+        let job = self
+            .jobs
+            .iter()
+            .find(|j| j["id"] == id)
+            .ok_or_else(|| format!("no job {id:?}"))?;
+        if !text(job, "proposedBy").is_empty() {
+            return Err(format!(
+                "job {:?} is an unapproved proposal — the user approves it in Jobs first",
+                text(job, "name")
+            ));
+        }
+        let now = wall_now();
+        self.runs.insert(
+            0,
+            json!({"jobId": id, "startedAt": now, "finishedAt": now + 300, "status": "skipped",
+                "detail": "fixture hub: nothing runs here"}),
+        );
+        Ok(json!({"started": true}))
+    }
+
+    // ---- history ----------------------------------------------------------
+
+    /// History rows for the first live sessions and any launched here.
+    fn live_history(&self, live: &[Value]) -> Vec<Value> {
+        live.iter()
+            .enumerate()
+            .filter(|(ix, row)| {
+                let id = row["sessionId"].as_str().unwrap_or_default();
+                (*ix < LIVE_IN_HISTORY || id.starts_with("fixture-spawn-"))
+                    && !self.forgotten.contains(id)
+            })
+            .map(|(ix, row)| {
+                let ix = ix as i64;
+                let label = row["label"].as_str().unwrap_or_default();
+                json!({
+                    "sessionId": row["sessionId"],
+                    "provider": row["provider"].as_str().unwrap_or("claude"),
+                    "cwd": row["cwd"],
+                    "mode": row["mode"].as_str().unwrap_or("input"),
+                    "transport": "stream",
+                    "archived": false,
+                    "updatedAt": self.now - ix * 4 * MINUTE,
+                    "startedAt": self.now - (ix + 1) * 35 * MINUTE,
+                    "name": label,
+                    "title": label,
+                    "model": row["model"].as_str().unwrap_or_default(),
+                    "hidden": false,
+                    "onSidebar": true,
+                    "transcriptCopy": false,
+                    "userPrompts": 3 + ix,
+                    "toolCalls": 12 + 7 * ix,
+                })
+            })
+            .collect()
+    }
+
+    /// One page, newest first: `{sessions, next?}` where `next` is the
+    /// `<updatedAt>:<sessionId>` cursor of the page's last row.
+    fn history(&self, params: &Value, live: &[Value]) -> Result<Value, String> {
+        let limit = match &params["limit"] {
+            Value::Null => HISTORY_LIMIT,
+            value => value
+                .as_u64()
+                .filter(|n| (1..=HISTORY_LIMIT).contains(n))
+                .ok_or_else(|| format!("sessions.history: limit must be 1-{HISTORY_LIMIT}"))?,
+        } as usize;
+        let limit = limit.min(HISTORY_PAGE);
+        let mut rows = self.live_history(live);
+        rows.extend(self.history.iter().cloned());
+        rows.sort_by(|a, b| {
+            b["updatedAt"]
+                .as_i64()
+                .cmp(&a["updatedAt"].as_i64())
+                .then_with(|| a["sessionId"].as_str().cmp(&b["sessionId"].as_str()))
+        });
+        let query = text(params, "query").to_lowercase();
+        if !query.is_empty() {
+            rows.retain(|row| {
+                let haystack = [
+                    "name",
+                    "cwd",
+                    "firstPrompt",
+                    "provider",
+                    "model",
+                    "sessionId",
+                ]
+                .iter()
+                .filter_map(|key| row[*key].as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .to_lowercase();
+                query.split_whitespace().all(|term| haystack.contains(term))
+            });
+        }
+        let start = match Some(text(params, "cursor")).filter(|c| !c.is_empty()) {
+            None => 0,
+            Some(cursor) => {
+                let (at, id) = cursor
+                    .split_once(':')
+                    .ok_or("sessions.history: invalid cursor")?;
+                let at: i64 = at.parse().map_err(|_| "sessions.history: invalid cursor")?;
+                rows.iter()
+                    .position(|row| row["sessionId"] == id)
+                    .map(|ix| ix + 1)
+                    .or_else(|| {
+                        rows.iter()
+                            .position(|row| row["updatedAt"].as_i64() < Some(at))
+                    })
+                    .unwrap_or(rows.len())
+            }
+        };
+        let end = (start + limit).min(rows.len());
+        let page = &rows[start..end];
+        let mut reply = json!({"sessions": page});
+        if end < rows.len()
+            && let Some(last) = page.last()
+        {
+            reply["next"] = json!(format!(
+                "{}:{}",
+                last["updatedAt"].as_i64().unwrap_or(0),
+                last["sessionId"].as_str().unwrap_or_default()
+            ));
+        }
+        Ok(reply)
+    }
+
+    fn forget(&mut self, params: &Value, live: &[Value]) -> Result<Value, String> {
+        let id = text(params, "sessionId");
+        if id.is_empty() {
+            return Err("sessions.forget requires a sessionId".into());
+        }
+        if let Some(row) = live.iter().find(|row| row["sessionId"] == id) {
+            if row["mode"] != "stopped" {
+                return Err(
+                    "This session is still running; stop it before deleting it from History".into(),
+                );
+            }
+            if !self.forgotten.insert(id.to_owned()) {
+                return Err(format!("History has no session {id}"));
+            }
+            return Ok(json!({"ok": true, "sessionId": id, "transcriptCopyRemoved": false}));
+        }
+        let ix = self
+            .history
+            .iter()
+            .position(|row| row["sessionId"] == id)
+            .ok_or_else(|| format!("History has no session {id}"))?;
+        let row = self.history.remove(ix);
+        Ok(
+            json!({"ok": true, "sessionId": id, "transcriptCopyRemoved": row["transcriptCopy"] == true}),
+        )
+    }
+}
+
+fn seed_jobs(now: i64) -> Vec<Value> {
+    vec![
+        json!({
+            "id": JOB_TESTS, "name": "Nightly test sweep", "enabled": true,
+            "trigger": {"kind": "daily", "at": "07:00", "days": [1, 2, 3, 4, 5]},
+            "action": {"kind": "spawn", "spawn": {
+                "cwd": WORKSPACER, "provider": "claude", "model": "sonnet",
+                "permissionMode": "acceptEdits",
+                "prompt": "The nightly test run failed. Triage the failures below, fix what is clearly a regression, and list anything that looks flaky.\n\n{{output}}",
+                "context": [{"kind": "shell",
+                    "shell": {"command": "cargo test --locked --workspace 2>&1 | tail -n 200"},
+                    "ignoreExitCode": true, "skipUnlessMatch": "FAILED|panicked"}],
+            }},
+            "createdAt": now - 40 * DAY, "updatedAt": now - 12 * DAY,
+        }),
+        json!({
+            "id": JOB_HEALTH, "name": "Hub health check", "enabled": true,
+            "trigger": {"kind": "interval", "everyMinutes": 30},
+            "action": {"kind": "shell", "shell": {
+                "command": "curl -fsS http://127.0.0.1:7895/health", "cwd": HUB}},
+            "createdAt": now - 21 * DAY, "updatedAt": now - 21 * DAY,
+        }),
+        json!({
+            "id": JOB_AUDIT, "name": "Weekly dependency audit", "enabled": false,
+            "trigger": {"kind": "daily", "at": "09:30", "days": [1]},
+            "action": {"kind": "spawn", "spawn": {
+                "cwd": HUB, "provider": "codex", "model": "gpt-5.6-sol", "effort": "medium",
+                "prompt": "Review this cargo audit report. Open a PR bumping anything with a fix available; summarise the rest.\n\n{{output}}",
+                "context": [{"kind": "shell", "shell": {"command": "cargo audit --json"},
+                    "ignoreExitCode": true, "skipIfEmpty": true}],
+            }},
+            "createdAt": now - 30 * DAY, "updatedAt": now - 5 * DAY,
+        }),
+        json!({
+            "id": JOB_PRUNE, "name": "Prune merged worktrees", "enabled": false,
+            "proposedBy": "Release checklist for 0.9",
+            "trigger": {"kind": "daily", "at": "18:00"},
+            "action": {"kind": "shell", "shell": {
+                "command": "git worktree prune && git branch --merged main | grep -v ' main$' | xargs -r git branch -d",
+                "cwd": WORKSPACER}},
+            "createdAt": now - 50 * MINUTE, "updatedAt": now - 50 * MINUTE,
+        }),
+    ]
+}
+
+/// Runs across the three jobs, newest first: the nightly sweep's latest run
+/// failed, the health check had one refused connection, the paused audit's
+/// last run found nothing to fix.
+fn seed_runs(now: i64) -> Vec<Value> {
+    let run = |job: &str, ago: i64, took: i64, status: &str, detail: &str| {
+        json!({"jobId": job, "startedAt": now - ago, "finishedAt": now - ago + took,
+            "status": status, "detail": detail})
+    };
+    let mut runs = vec![
+        run(
+            JOB_HEALTH,
+            8 * MINUTE,
+            400,
+            "ok",
+            "{\"ok\":true,\"uptime\":\"3d 4h\"}",
+        ),
+        run(
+            JOB_HEALTH,
+            38 * MINUTE,
+            380,
+            "ok",
+            "{\"ok\":true,\"uptime\":\"3d 3h\"}",
+        ),
+        run(
+            JOB_HEALTH,
+            68 * MINUTE,
+            40,
+            "error",
+            "exit 7\ncurl: (7) Failed to connect to 127.0.0.1 port 7895 after 0 ms: Connection refused",
+        ),
+        run(
+            JOB_HEALTH,
+            98 * MINUTE,
+            410,
+            "ok",
+            "{\"ok\":true,\"uptime\":\"3d 2h\"}",
+        ),
+        run(
+            JOB_TESTS,
+            3 * HOUR,
+            20 * MINUTE,
+            "error",
+            "step 1 timed out after 20m: cargo test --locked --workspace 2>&1 | tail -n 200",
+        ),
+        run(
+            JOB_TESTS,
+            DAY + 3 * HOUR,
+            9 * MINUTE,
+            "ok",
+            "spawned 6d0f3c1a-8b2e-4f57-9c1d-2a7e5b90c3f4",
+        ),
+        run(
+            JOB_TESTS,
+            4 * DAY + 3 * HOUR,
+            8 * MINUTE,
+            "skipped",
+            "step 1 output did not match /FAILED|panicked/",
+        ),
+        run(
+            JOB_AUDIT,
+            5 * DAY + 2 * HOUR,
+            3 * MINUTE,
+            "skipped",
+            "step 1 output was empty",
+        ),
+        run(
+            JOB_TESTS,
+            5 * DAY + 3 * HOUR,
+            11 * MINUTE,
+            "ok",
+            "spawned 0b7e2d94-51c3-4a8f-b6e0-9f2c4d1a7e35",
+        ),
+        run(
+            JOB_AUDIT,
+            12 * DAY + 2 * HOUR,
+            6 * MINUTE,
+            "ok",
+            "spawned 9a4c1e7f-2d3b-4c58-8e6a-1f0b3d5c7a92",
+        ),
+    ];
+    runs.sort_by_key(|r| std::cmp::Reverse(r["startedAt"].as_i64()));
+    runs
+}
+
+fn scratch_cwd(params: &Value) -> Result<&str, String> {
+    Some(text(params, "cwd"))
+        .filter(|cwd| !cwd.is_empty())
+        .ok_or_else(|| "cwd is required: the absolute working directory of the project".into())
+}
+
+/// The repository `cwd` belongs to: the longest scratch root holding it,
+/// with a worktree checkout resolved to its repository first.
+fn scratch_root(cwd: &str) -> Option<&'static str> {
+    let cwd = match projects::worktree_repo(cwd, TREES) {
+        Some(WorktreeRepo::Dir(repo)) => repo,
+        Some(WorktreeRepo::Named { name, .. }) => {
+            return SCRATCH_ROOTS
+                .iter()
+                .find(|root| projects::basename(root) == name)
+                .copied();
+        }
+        None => cwd.to_owned(),
+    };
+    SCRATCH_ROOTS
+        .iter()
+        .filter(|root| within(&cwd, root))
+        .max_by_key(|root| root.len())
+        .copied()
+}
+
+/// claudemon's scratch key: the folder name, then a 64-bit FNV-1a of the
+/// whole root.
+fn scratch_key(root: &str) -> String {
+    let base: String = projects::basename(root)
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(40)
+        .collect();
+    let hash = root.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{base}-{hash:016x}")
+}
+
+fn describe(root: &str, exists: bool) -> Value {
+    let key = scratch_key(root);
+    let dir = format!("{SCRATCH_BASE}/{key}");
+    let mut project = Map::new();
+    project.insert("root".into(), json!(root));
+    project.insert("key".into(), json!(key));
+    project.insert("files".into(), json!(format!("{dir}/files")));
+    project.insert("dir".into(), json!(dir));
+    project.insert("exists".into(), json!(exists));
+    Value::Object(project)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Session;
+
+    fn live(count: usize) -> Vec<Value> {
+        (0..count)
+            .map(|i| {
+                json!({"sessionId": format!("demo-{i:04}"), "label": live_label(i),
+                    "cwd": live_cwd(i), "provider": "claude", "model": "sonnet",
+                    "mode": if live_stopped(i) { "stopped" } else { "input" }})
+            })
+            .collect()
+    }
+
+    fn sessions(rows: &[Value]) -> Vec<Session> {
+        rows.iter()
+            .map(|row| {
+                let mut session = Session::default();
+                session.merge(row);
+                session
+            })
+            .collect()
+    }
+
+    #[test]
+    fn projects_read_as_pinned_folders_with_running_counts() {
+        let now = wall_now();
+        let config = json!({"projects": projects(now)});
+        let rows = live(12);
+        let known = projects::list(Some(&projects::registry(&config)), &sessions(&rows), &[]);
+        assert_eq!(known.len(), 5, "{known:#?}");
+        assert_eq!(known.iter().filter(|p| p.favourite).count(), 4);
+        let get = |path: &str| known.iter().find(|p| p.path == path).unwrap();
+        let native = get(NATIVE);
+        assert_eq!(
+            (native.title(), native.mark().as_str()),
+            ("Native client", "🦀")
+        );
+        assert_eq!((native.sessions, native.live_sessions), (3, 2));
+        assert_eq!(get(WORKSPACER).color, Some(0x5b8def));
+        assert_eq!(get(WORKSPACER).git.provider, "github");
+        assert!(
+            known.iter().all(|p| p.sessions > 0),
+            "every project has sessions"
+        );
+    }
+
+    #[test]
+    fn groups_parse_and_save_remove_in_memory() {
+        let mut catalog = Catalog::new(wall_now());
+        let list = catalog.call("projectGroups.list", &json!({}), &[]).unwrap();
+        let groups = crate::project_groups::parse(&list).unwrap();
+        assert_eq!(groups.revision, 3);
+        let shape: Vec<_> = groups
+            .groups
+            .iter()
+            .map(|g| {
+                (
+                    g.name.as_str(),
+                    g.folders.len(),
+                    g.color.is_some(),
+                    g.icon.is_some(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [("Ops", 1, true, true), ("Workspacer", 2, true, true)]
+        );
+        let workspacer = groups
+            .groups
+            .iter()
+            .find(|g| g.name == "Workspacer")
+            .unwrap();
+        assert!(
+            workspacer.holds(NATIVE),
+            "a subfolder is in its folder's group"
+        );
+
+        // A save the editor would send: new project with a free folder.
+        let mut draft = crate::project_groups::Draft {
+            name: "Notes".into(),
+            color: "#E0A84F".into(),
+            icon: "📝".into(),
+            ..Default::default()
+        };
+        draft.add_folder(NOTES);
+        let saved = catalog
+            .call("projectGroups.save", &draft.params(3).unwrap(), &[])
+            .unwrap();
+        assert_eq!(
+            (saved["revision"].as_u64(), saved["color"].as_str()),
+            (Some(4), Some("#e0a84f"))
+        );
+        // A stale revision and a folder another group holds are refused.
+        let stale = catalog.call("projectGroups.save", &draft.params(3).unwrap(), &[]);
+        assert!(
+            stale.unwrap()["error"]
+                .as_str()
+                .unwrap()
+                .contains("conflict")
+        );
+        draft.folders = vec![HUB.into()];
+        let taken = catalog.call("projectGroups.save", &draft.params(4).unwrap(), &[]);
+        assert!(
+            taken.unwrap()["error"]
+                .as_str()
+                .unwrap()
+                .contains("Workspacer")
+        );
+        // Renaming keeps the id; removing drops it.
+        let mut rename = crate::project_groups::Draft::of(workspacer);
+        rename.name = "Workspacer stack".into();
+        let renamed = catalog
+            .call("projectGroups.save", &rename.params(4).unwrap(), &[])
+            .unwrap();
+        assert_eq!(renamed["id"], workspacer.id.as_str());
+        let removed = catalog
+            .call(
+                "projectGroups.remove",
+                &json!({"id": saved["id"], "revision": 5}),
+                &[],
+            )
+            .unwrap();
+        assert_eq!(removed, json!({"removed": true, "revision": 6}));
+        let list = catalog.call("projectGroups.list", &json!({}), &[]).unwrap();
+        let groups = crate::project_groups::parse(&list).unwrap();
+        assert_eq!(groups.groups.len(), 2);
+        assert!(groups.groups.iter().any(|g| g.name == "Workspacer stack"));
+    }
+
+    #[test]
+    fn scratch_lists_reads_and_marks_per_repository() {
+        let mut catalog = Catalog::new(wall_now());
+        let pending = crate::project_groups::pending_roots(
+            &catalog.call("scratch.pending", &json!({}), &[]).unwrap(),
+        );
+        assert_eq!(pending.len(), 4);
+        assert_eq!(
+            crate::project_groups::pending_in(&pending, &[NATIVE.to_owned()]),
+            1
+        );
+        assert_eq!(
+            crate::project_groups::pending_in(&pending, &[WORKSPACER.into(), HUB.into()]),
+            2
+        );
+
+        // A subfolder and a worktree list their repository's scratch.
+        for cwd in [
+            NATIVE,
+            "/home/dev/.workspacer/worktrees/workspacer/sidebar-polish",
+        ] {
+            let value = catalog
+                .call("scratch.list", &json!({"cwd": cwd}), &[])
+                .unwrap();
+            let list = crate::scratch::parse_list(&value).unwrap();
+            assert_eq!(list.root, WORKSPACER);
+            assert_eq!(list.items.len(), 5);
+            assert_eq!(list.pending(), 1);
+            assert!(
+                list.items
+                    .iter()
+                    .any(|i| i.status == crate::scratch::Status::Unrecorded)
+            );
+            assert!(list.key.starts_with("workspacer-") && list.exists);
+        }
+        let empty = catalog
+            .call("scratch.list", &json!({"cwd": "/tmp/x"}), &[])
+            .unwrap();
+        assert!(crate::scratch::parse_list(&empty).unwrap().items.is_empty());
+
+        let read = catalog
+            .call(
+                "scratch.read",
+                &json!({"cwd": HUB, "path": "load/bus-fanout.ts"}),
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(
+            crate::scratch::parse_read(&read),
+            Some(crate::scratch::Content::Text { text, .. }) if text.contains("WebSocket")
+        ));
+        let mark = json!({"cwd": HUB, "path": "load/bus-fanout.ts", "status": "done", "note": "ran on staging"});
+        let marked = catalog.call("scratch.mark", &mark, &[]).unwrap();
+        assert_eq!(
+            (marked["status"].as_str(), marked["note"].as_str()),
+            (Some("done"), Some("ran on staging"))
+        );
+        let pending = crate::project_groups::pending_roots(
+            &catalog.call("scratch.pending", &json!({}), &[]).unwrap(),
+        );
+        assert_eq!(pending.len(), 3);
+        let nothing = catalog.call(
+            "scratch.mark",
+            &json!({"cwd": HUB, "path": "load/bus-fanout.ts"}),
+            &[],
+        );
+        assert_eq!(nothing.unwrap()["ok"], false);
+    }
+
+    #[test]
+    fn jobs_mix_states_and_history_pages_by_job() {
+        let mut catalog = Catalog::new(wall_now());
+        let jobs = crate::jobs::parse_list(&catalog.call("jobs.list", &json!({}), &[]).unwrap());
+        assert_eq!(jobs.len(), 4);
+        assert!(jobs[0].proposal(), "proposals list first");
+        assert_eq!(jobs.iter().filter(|j| j.enabled).count(), 2);
+        let tests = jobs.iter().find(|j| j.id == JOB_TESTS).unwrap();
+        assert_eq!(tests.last_run.as_ref().unwrap().label(), "failed");
+        assert_eq!(
+            tests.action_summary(),
+            format!("1 step → agent in {WORKSPACER}")
+        );
+        assert!(tests.next_run_at.is_some());
+        assert!(
+            jobs.iter()
+                .find(|j| j.id == JOB_AUDIT)
+                .unwrap()
+                .next_run_at
+                .is_none()
+        );
+
+        let all = crate::jobs::parse_runs(&catalog.call("jobs.history", &json!({}), &[]).unwrap());
+        assert_eq!(all.len(), 10);
+        assert!(all.windows(2).all(|w| w[0].started_at >= w[1].started_at));
+        let one = crate::jobs::parse_runs(
+            &catalog
+                .call("jobs.history", &json!({"id": JOB_HEALTH}), &[])
+                .unwrap(),
+        );
+        assert_eq!(one.len(), 4);
+        assert!(one.iter().all(|r| r.job_id == JOB_HEALTH));
+
+        // Approve the proposal, pause a job, run one, remove one.
+        let proposal = jobs[0].clone();
+        catalog
+            .call("jobs.upsert", &proposal.approval(), &[])
+            .unwrap();
+        catalog
+            .call("jobs.upsert", &tests.with_enabled(false), &[])
+            .unwrap();
+        assert_eq!(
+            catalog
+                .call("jobs.run", &json!({"id": JOB_HEALTH}), &[])
+                .unwrap()["started"],
+            true
+        );
+        catalog
+            .call("jobs.remove", &json!({"id": JOB_AUDIT}), &[])
+            .unwrap();
+        let jobs = crate::jobs::parse_list(&catalog.call("jobs.list", &json!({}), &[]).unwrap());
+        assert_eq!(jobs.len(), 3);
+        assert!(jobs.iter().all(|j| !j.proposal()));
+        assert!(jobs.iter().find(|j| j.id == JOB_PRUNE).unwrap().enabled);
+        assert!(!jobs.iter().find(|j| j.id == JOB_TESTS).unwrap().enabled);
+        let health = jobs.iter().find(|j| j.id == JOB_HEALTH).unwrap();
+        assert_eq!(health.last_run.as_ref().unwrap().label(), "skipped");
+    }
+
+    #[test]
+    fn history_pages_by_cursor_searches_and_forgets() {
+        let now = wall_now();
+        let mut catalog = Catalog::new(now);
+        let rows = live(6);
+        let first = crate::features::history_page(
+            catalog
+                .call("sessions.history", &json!({"limit": 200}), &rows)
+                .unwrap(),
+            "",
+            None,
+        )
+        .unwrap();
+        let page = first["sessions"].as_array().unwrap().clone();
+        assert_eq!(page.len(), HISTORY_PAGE);
+        let cursor = first["next"].as_str().unwrap().to_owned();
+        let second = catalog
+            .call(
+                "sessions.history",
+                &json!({"limit": 200, "cursor": cursor}),
+                &rows,
+            )
+            .unwrap();
+        assert!(second.get("next").is_none());
+        let mut all = page;
+        all.extend(second["sessions"].as_array().unwrap().iter().cloned());
+        assert_eq!(all.len(), PAST.len() + LIVE_IN_HISTORY);
+        let ids: BTreeSet<_> = all
+            .iter()
+            .map(|r| r["sessionId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids.len(), all.len(), "no row repeats across pages");
+        assert!(
+            all.windows(2)
+                .all(|w| w[0]["updatedAt"].as_i64() >= w[1]["updatedAt"].as_i64())
+        );
+        assert_eq!(all.iter().filter(|r| r["hidden"] == true).count(), 3);
+        for provider in ["claude", "codex"] {
+            assert!(all.iter().any(|r| r["provider"] == provider));
+        }
+        let days: BTreeSet<_> = all
+            .iter()
+            .map(|r| (now - r["updatedAt"].as_i64().unwrap()) / DAY)
+            .collect();
+        assert!(days.len() >= 8, "{days:?}");
+        // Every row merges into a session the page can title and file.
+        for session in sessions(&all) {
+            assert!(
+                !session.id.is_empty() && !session.title().is_empty() && !session.cwd.is_empty()
+            );
+        }
+
+        let found = catalog
+            .call(
+                "sessions.history",
+                &json!({"limit": 200, "query": "terraform"}),
+                &rows,
+            )
+            .unwrap();
+        let found = found["sessions"].as_array().unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0]["sessionId"], "hist-17",
+            "first prompt and title both match"
+        );
+
+        let gone = catalog
+            .call("sessions.forget", &json!({"sessionId": "hist-07"}), &rows)
+            .unwrap();
+        assert_eq!(gone["ok"], true);
+        let running = catalog
+            .call("sessions.forget", &json!({"sessionId": "demo-0000"}), &rows)
+            .unwrap();
+        assert!(running["error"].as_str().unwrap().contains("still running"));
+        let ended = catalog
+            .call("sessions.forget", &json!({"sessionId": "demo-0003"}), &rows)
+            .unwrap();
+        assert_eq!(ended["ok"], true);
+        let again = catalog
+            .call("sessions.forget", &json!({"sessionId": "hist-07"}), &rows)
+            .unwrap();
+        assert_eq!(again["ok"], false);
+        let left = catalog
+            .call("sessions.history", &json!({"limit": 200}), &rows)
+            .unwrap();
+        let left = left["sessions"].as_array().unwrap();
+        assert!(
+            !left
+                .iter()
+                .any(|r| r["sessionId"] == "hist-07" || r["sessionId"] == "demo-0003")
+        );
+    }
+}
