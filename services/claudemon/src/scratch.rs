@@ -279,7 +279,14 @@ mod tests {
         let wt = tmp.path().join("worktrees/shop/fix-cart");
         git(
             &main,
-            &["worktree", "add", "-q", "-b", "wks/fix", wt.to_str().unwrap()],
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "wks/fix",
+                wt.to_str().unwrap(),
+            ],
         );
         std::fs::create_dir_all(wt.join("src")).unwrap();
         let root = std::fs::canonicalize(&main).unwrap();
@@ -323,7 +330,10 @@ mod tests {
     fn keys_are_readable_stable_and_distinguish_same_named_projects() {
         let a = key(Path::new("/home/me/work/shop"));
         let b = key(Path::new("/home/me/home/shop"));
-        assert!(a.starts_with("shop-") && a.len() == "shop-".len() + 16, "{a}");
+        assert!(
+            a.starts_with("shop-") && a.len() == "shop-".len() + 16,
+            "{a}"
+        );
         assert_ne!(a, b);
         assert_eq!(a, key(Path::new("/home/me/work/shop")));
         assert!(key(Path::new("/")).starts_with("project-"));
@@ -363,17 +373,30 @@ mod tests {
         assert_eq!(chosen[ENV], "/mine");
 
         let mut missing = std::collections::HashMap::new();
-        inject_env_with_home(&mut missing, tmp.path().join("gone").to_str().unwrap(), &home);
-        assert!(!missing.contains_key(ENV), "an unresolvable cwd skips, never fails");
+        inject_env_with_home(
+            &mut missing,
+            tmp.path().join("gone").to_str().unwrap(),
+            &home,
+        );
+        assert!(
+            !missing.contains_key(ENV),
+            "an unresolvable cwd skips, never fails"
+        );
 
         let plain = tmp.path().join("plain");
         std::fs::create_dir_all(&plain).unwrap();
         let mut outside = std::collections::HashMap::new();
         inject_env_with_home(&mut outside, plain.to_str().unwrap(), &home);
-        assert!(!outside.contains_key(ENV), "a directory outside git gets no scratch at spawn");
+        assert!(
+            !outside.contains_key(ENV),
+            "a directory outside git gets no scratch at spawn"
+        );
 
         let mut temp = std::collections::HashMap::new();
         inject_env(&mut temp, main.to_str().unwrap());
-        assert!(!temp.contains_key(ENV), "a repository under the temp dir is skipped");
+        assert!(
+            !temp.contains_key(ENV),
+            "a repository under the temp dir is skipped"
+        );
     }
 }

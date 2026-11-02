@@ -35,7 +35,17 @@ pub struct Report {
     pub unresolved_registrations: BTreeSet<String>,
     pub source_files: usize,
 }
+/// The trace recurses once per call and expression level, so its depth grows
+/// with the hub's call chains; it runs on its own thread with a stack sized
+/// for that, not the caller's (2 MiB for a test thread). Syn trees are not
+/// `Send`, so the index is built on that thread too.
+const SCAN_STACK: usize = 256 << 20;
 pub fn scan(sources: BTreeMap<String, String>) -> Result<Report, String> {
-    let index = Index::parse(sources)?;
-    Ok(trace::scan(&index))
+    std::thread::Builder::new()
+        .name("capability-scan".into())
+        .stack_size(SCAN_STACK)
+        .spawn(move || Ok(trace::scan(&Index::parse(sources)?)))
+        .map_err(|e| format!("spawn scan thread: {e}"))?
+        .join()
+        .map_err(|_| "scan thread panicked".to_string())?
 }
