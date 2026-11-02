@@ -1775,3 +1775,51 @@ Full native suite passes serialized (`--test-threads=1`). Run in parallel,
 `projects_hub` and `rust_hub` tests fail with "a claudemon runtime is already
 active in this process". That is the process-wide embedded-runtime guard, which
 this change does not touch. It was not re-run on the base commit.
+
+## UI/UX pass: Session, Projects, History, Jobs, Scratch, Model, Setup, Handoff (2026-11-02)
+
+A visual pass on the feature pages that had not had one since they shipped.
+Every change was checked in real windows: private Xvfb + Openbox + lavapipe,
+debug build, against `native-harness serve --sessions 6 --turns 0
+--rich-transcript --catalog`. `--catalog` is new. It is an opt-in fixture with
+five folders, two project groups, twelve scratch files, four jobs (failed,
+paused, proposed) with run history, and 25+ paged history rows. The default
+fixture is unchanged. Captures were taken at 1200×800 in Dark and Light,
+720×480 / 760×560, and Nord / Catppuccin Latte.
+
+- **Shared:** secondary buttons had no resting fill and read as text. They
+  are now tonal (`chrome::tonal`), and danger buttons get an error wash. A
+  hairline separates the sidebar's scrolling list from the usage strip. Launch
+  Access (New agent, Handoff) is a segmented control, as on the Model page.
+- **Session details:** the session's name is the title, with a status pill
+  and a model/context/project line. Name, agent, folder and PR form one fact
+  list. Resume is the only primary, and Archive / End session are separate
+  titled rows. Context, MCP and Codex cards share one heading style.
+- **Model / Setup:** Refresh moved onto the Model row, and Effort and Context
+  share a row. Access is a real segmented control with the current mode.
+  Setup's Recheck is in the header, and install state is a pill.
+- **History:** flat rows that open on click, with Resume/Hide/Delete as quiet
+  hover actions; previously every row had a blue Open button. Ended rows drop
+  the status badge, and empty and no-match states explain themselves.
+- **Projects / Scratch:** the "Pin folder" card no longer leads the page;
+  pinning is now Add folder in the FOLDERS heading. Project and folder cards
+  share one style with busy-dot counts, and the editor previews the mark.
+  Scratch has a project switcher instead of naming the project twice, plus
+  real empty and error states.
+- **Jobs / Handoff / PR:** proposals sit in a warning-toned "Needs your
+  approval" group with one primary Approve. Schedules are written in plain
+  words with the next run, and load errors offer Try again. Handoff's mode is
+  a segmented control and its brief is radio rows. A failed PR branch lookup
+  is now a quiet info line.
+
+Before / after (dark, 1200×800):
+[session](docs/ui-pass-session.png), [model](docs/ui-pass-model.png),
+[setup](docs/ui-pass-setup.png), [history](docs/ui-pass-history.png),
+[projects](docs/ui-pass-projects.png), [scratch](docs/ui-pass-scratch.png),
+[jobs](docs/ui-pass-jobs.png). After only:
+[light](docs/ui-pass-light.png), [narrow](docs/ui-pass-narrow.png).
+
+Limits: the fixture serves no `pr.*`, `mcpServers` or live permission mode.
+Because of that, the linked-PR header and review threads, the MCP card, and a
+selected live Access mode are covered by GPUI tests rather than captures.
+There were no Windows/macOS or hardware-GPU checks.
