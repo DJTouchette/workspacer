@@ -94,9 +94,11 @@ def fixture(mode):
         def server_bind(self):
             socketserver.TCPServer.server_bind(self)
             self.server_name, self.server_port = self.server_address[:2]
-    for port in (0, 0, api, hook):
+    # The reserved ports are bound first: an ephemeral bind could otherwise be
+    # handed one of them back, since the smoke released them for this process.
+    for port in (api, hook, 0, 0):
         servers.append(Server(('127.0.0.1', port), Handler))
-    hub, mcp = [item.server_port for item in servers[:2]]
+    hub, mcp = [item.server_port for item in servers[2:]]
     workers = [threading.Thread(target=item.serve_forever, kwargs={'poll_interval': .05}) for item in servers]
     for worker in workers:
         worker.start()
