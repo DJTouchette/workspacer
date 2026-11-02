@@ -145,10 +145,12 @@ fn delete_asks_first_and_never_offers_a_live_session(cx: &mut TestAppContext) {
     workspace.read_with(&visual, |this, _| {
         assert_eq!(this.extras.recent.confirm_delete, None)
     });
-    // The running session's Delete is drawn disabled: pressing it does nothing.
+    // The running session's Delete is drawn disabled: pressing it does
+    // nothing, not even open the row it sits on.
     click(&mut visual, "recent-delete-2");
     workspace.read_with(&visual, |this, _| {
-        assert_eq!(this.extras.recent.confirm_delete, None)
+        assert_eq!(this.extras.recent.confirm_delete, None);
+        assert_eq!(this.screen, Screen::Recent);
     });
     assert!(requests(&mut commands).is_empty());
 }

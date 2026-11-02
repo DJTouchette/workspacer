@@ -303,6 +303,51 @@ fn history_keyboard_cursor_opens_the_highlighted_session(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+fn history_rows_open_on_click_and_their_actions_stay_their_own(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands) = history_fixture(cx);
+    let _ = effects(&mut commands);
+    let opened = |commands: &mut tokio::sync::mpsc::Receiver<Command>| -> Vec<String> {
+        effects(commands)
+            .into_iter()
+            .filter_map(|c| match c {
+                Command::OpenRecent(s) => Some(s.id),
+                _ => None,
+            })
+            .collect()
+    };
+    // A row's own action does its job and leaves the row closed.
+    click(&mut visual, "recent-hide-1");
+    assert!(opened(&mut commands).is_empty());
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.screen, Screen::Recent);
+        assert!(this.archived("s1"), "hidden");
+    });
+    // Anywhere else on the row opens its session: there is no Open button.
+    click(&mut visual, "recent-row-1");
+    assert_eq!(opened(&mut commands), ["s1"]);
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.screen, Screen::Conversation)
+    });
+}
+
+#[gpui::test]
+fn an_empty_hidden_filter_offers_the_way_back(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _) = history_fixture(cx);
+    visual.update(|_, cx| {
+        workspace.update(cx, |this, cx| {
+            this.extras.show_archived = true;
+            cx.notify();
+        })
+    });
+    visual.run_until_parked();
+    assert!(page(&workspace, &visual).is_empty());
+    bounds_of(&mut visual, "history-empty");
+    click(&mut visual, "history-show-all");
+    workspace.read_with(&visual, |this, _| assert!(!this.extras.show_archived));
+    assert_eq!(page(&workspace, &visual).len(), 3);
+}
+
+#[gpui::test]
 fn history_groups_fold_and_show_more_instead_of_truncating(cx: &mut TestAppContext) {
     let (workspace, mut visual, _, _updates) = fixture(cx);
     let rows: Vec<_> = (0..(recent::GROUP_ROWS + 3))
