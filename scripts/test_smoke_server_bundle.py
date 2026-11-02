@@ -19,6 +19,7 @@ SPEC.loader.exec_module(smoke)
 
 def fixture(mode):
     import http.server
+    import socketserver
     import threading
     import time
     args = sys.argv[3:]
@@ -87,8 +88,14 @@ def fixture(mode):
             self.wfile.write(body)
         def log_message(self, *args):
             pass
+    class Server(http.server.ThreadingHTTPServer):
+        # HTTPServer.server_bind reverse-resolves the host with getfqdn; on
+        # macOS runners that lookup can stall past the 2s readiness budget.
+        def server_bind(self):
+            socketserver.TCPServer.server_bind(self)
+            self.server_name, self.server_port = self.server_address[:2]
     for port in (0, 0, api, hook):
-        servers.append(http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler))
+        servers.append(Server(('127.0.0.1', port), Handler))
     hub, mcp = [item.server_port for item in servers[:2]]
     workers = [threading.Thread(target=item.serve_forever, kwargs={'poll_interval': .05}) for item in servers]
     for worker in workers:
