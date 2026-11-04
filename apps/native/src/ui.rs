@@ -286,7 +286,7 @@ fn configure_theme_v2(c: &mut gpui_component::ThemeColor, p: &Palette, dark: boo
     c.list_active = solid(p.selected);
     c.list_active_border = solid(r.focus);
     // r2-systems: Markdown tables share the one table style.
-    let table = primitives::table_style(&p);
+    let table = primitives::table_style(p);
     c.table = solid(table.row_bg);
     c.table_even = solid(table.row_bg);
     c.table_head = solid(table.head_bg);
