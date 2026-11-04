@@ -259,5 +259,13 @@
       "url": "http://localhost:8080",
       "icon": "\ud83c\udf10"
     }
-  ]
+  ],
+  "queue": {
+    "maxAgents": 4,
+    "maxShell": 2,
+    "maxCpuPressure": 60,
+    "maxMemoryPressure": 25,
+    "minAvailableMemoryMb": 1024,
+    "minFreeDiskMb": 2048
+  }
 }

@@ -267,4 +267,12 @@ export const CONFIG_DEFAULTS = {
       icon: '🌐',
     },
   ],
+  queue: {
+    maxAgents: 4,
+    maxShell: 2,
+    maxCpuPressure: 60,
+    maxMemoryPressure: 25,
+    minAvailableMemoryMb: 1024,
+    minFreeDiskMb: 2048,
+  },
 } as const;

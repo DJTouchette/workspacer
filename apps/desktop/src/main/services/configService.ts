@@ -337,6 +337,16 @@ interface Config {
     /** Command for the 'terminal' engine; the file path is appended as its last arg. */
     terminalCommand: string;
   };
+  /** Host work queue limits (docs/host-work-queue.md). The hub reads them and
+   *  writes them through `queue.setConfig`; desktop only round-trips them. */
+  queue?: {
+    maxAgents: number;
+    maxShell: number;
+    maxCpuPressure: number;
+    maxMemoryPressure: number;
+    minAvailableMemoryMb: number;
+    minFreeDiskMb: number;
+  };
 }
 
 function defaultShells(): ShellOption[] {
