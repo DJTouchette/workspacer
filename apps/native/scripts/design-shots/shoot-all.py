@@ -304,7 +304,7 @@ LANDMARKS = {
     "TITLE_TASKS_BADGE": lambda shot: (1078, 30),   # background-task count
     # v1: the approval card above the composer; v2: the strip on the composer.
     "APPROVAL_DETAILS": lambda shot: (1360, 833) if shot["v2"] else (1361, 749),
-    "APPROVAL_DENY_NOTE": lambda shot: (952, 869) if shot["v2"] else (740, 795),
+    "APPROVAL_DENY_NOTE": lambda shot: (952, 869) if shot["v2"] else (910, 795),
     "README_LINK": lambda shot: (591, 497),         # README.md link, last assistant message
     "TALL_README_LINK": lambda shot: (169, 1097),   # same link in the 1000x1600 tall layout
     "TASK_ROW_DEV": lambda shot: (1200, 85),        # "npm run dev" in the tasks panel

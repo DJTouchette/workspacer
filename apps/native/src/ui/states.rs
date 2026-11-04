@@ -859,8 +859,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap(px(t.space.xxs))
-            .children(STARTERS.into_iter().enumerate().map(|(ix, (id, text))| {
-                let _ = ix;
+            .children(STARTERS.into_iter().map(|(id, text)| {
                 primitives::list_row(id, false, true, &p)
                     .debug_selector(move || id.into())
                     .text_color(rgb(p.roles.text_secondary))
