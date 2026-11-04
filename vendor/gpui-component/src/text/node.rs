@@ -1577,12 +1577,34 @@ impl Node {
                 div()
                     .id("div")
                     .children(children.iter().enumerate().map(move |(ix, node)| {
-                        node.render_block(
+                        let block = node.render_block(
                             options.is_last(options.is_last && ix + 1 == count),
                             node_cx,
                             window,
                             cx,
-                        )
+                        );
+                        // Workspacer patch: prose measure and heading room.
+                        match node_cx.style.layout {
+                            Some(layout) => {
+                                let prose = matches!(
+                                    node,
+                                    Node::Paragraph(_)
+                                        | Node::Heading { .. }
+                                        | Node::Blockquote { .. }
+                                        | Node::List { .. }
+                                );
+                                div()
+                                    .when(ix > 0 && matches!(node, Node::Heading { .. }), |d| {
+                                        d.pt(layout.heading_space)
+                                    })
+                                    .when(prose, |d| {
+                                        d.when_some(layout.measure, |d, measure| d.max_w(measure))
+                                    })
+                                    .child(block)
+                                    .into_any_element()
+                            }
+                            None => block,
+                        }
                     }))
                     .into_any_element()
             }
@@ -1607,18 +1629,24 @@ impl Node {
                     text_size = (f)(*level, node_cx.style.heading_base_font_size);
                 }
 
+                let layout = node_cx.style.layout;
                 h_flex()
                     .id(("h", *level as usize))
                     .pb(rems(0.3))
                     .whitespace_normal()
                     .text_size(text_size)
-                    .font_weight(font_weight)
-                    .when_some(node_cx.style.prose, |this, prose| {
-                        this.text_color(prose.strong)
-                            .when(*level <= 2, |this| {
-                                this.mb(rems(0.4)).border_b_1().border_color(prose.rule)
-                            })
+                    .font_weight(if layout.is_some() && font_weight == FontWeight::BOLD {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        font_weight
                     })
+                    .when_some(node_cx.style.prose, |this, prose| {
+                        this.text_color(prose.strong).when(
+                            *level <= 2 && layout.is_none_or(|l| l.heading_rule),
+                            |this| this.mb(rems(0.4)).border_b_1().border_color(prose.rule),
+                        )
+                    })
+                    .when_some(layout, |this, layout| this.pb(layout.heading_gap))
                     .child(children.render(node_cx, window, cx))
                     .into_any_element()
             }

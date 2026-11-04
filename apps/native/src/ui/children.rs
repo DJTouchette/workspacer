@@ -73,8 +73,7 @@ impl Workspace {
                         rows.iter().position(|r| r.key == key)
                     })
                     .unwrap_or(rows.len() - 1);
-            let ix = wks_native::tool_preview::group_span(rows, ix, self.settings.merge_turn_tools)
-                .map_or(ix, |span| span.end - 1);
+            let ix = self.work_span(rows, ix).map_or(ix, |span| span.end - 1);
             groups.entry(ix).or_default().push(child.clone());
         }
         groups
@@ -155,7 +154,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         if self.design().is_v2() {
-            return self.render_children_v2(parent, key, children, window, cx);
+            return self.render_children_v2(parent, key, children, None, window, cx);
         }
         let p = self.palette();
         let mut body = div()

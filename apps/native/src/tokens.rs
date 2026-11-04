@@ -624,6 +624,23 @@ pub struct TranscriptTokens {
     /// Inline image previews.
     pub image_width: f32,
     pub image_height: f32,
+    // r2-transcript
+    /// The fluid column (content, gutters excluded): never narrower than
+    /// `reading_min` while the pane allows, growing with the window up to
+    /// `reading_max` (Comfortable) or `reading_wide` (Wide).
+    pub reading_min: f32,
+    pub reading_max: f32,
+    pub reading_wide: f32,
+    /// Running prose (paragraphs, headings, lists, quotes) stops at this
+    /// many ems of the reading size (~80ch); code, tables and cards span.
+    pub prose_measure_em: f32,
+    /// Room above a Markdown heading that follows other blocks, and below it.
+    pub heading_space: f32,
+    pub heading_gap: f32,
+    /// An event row's leading icon column (bare glyph, no tile).
+    pub event_icon: f32,
+    /// Room between hairline-divided items inside one container.
+    pub inset_row: f32,
 }
 
 impl Tokens {
@@ -643,6 +660,15 @@ impl Tokens {
                 heading_steps: [9., 5., 2., 0.],
                 image_width: 320.,
                 image_height: 180.,
+                // r2-transcript: v1 never draws these (v2 values).
+                reading_min: 680.,
+                reading_max: 1100.,
+                reading_wide: 1280.,
+                prose_measure_em: 44.,
+                heading_space: 24.,
+                heading_gap: 8.,
+                event_icon: 16.,
+                inset_row: 36.,
             },
             Design::V2 => TranscriptTokens {
                 user_max: 0.7,
@@ -654,9 +680,18 @@ impl Tokens {
                 brief_max: 120.,
                 prose_line_height: 1.6,
                 paragraph_gap: 0.7,
-                heading_steps: [5., 3., 1., 0.],
+                heading_steps: [9., 5., 2., 0.],
                 image_width: 360.,
                 image_height: 220.,
+                // r2-transcript
+                reading_min: 680.,
+                reading_max: 1100.,
+                reading_wide: 1280.,
+                prose_measure_em: 44.,
+                heading_space: 24.,
+                heading_gap: 8.,
+                event_icon: 16.,
+                inset_row: 36.,
             },
         }
     }

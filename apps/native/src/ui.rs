@@ -168,6 +168,11 @@ bundled_icons!(
     "lucide/reply.svg",
     "lucide/megaphone.svg",
     "lucide/snowflake.svg",
+    // r2-transcript: tool event row glyphs.
+    "lucide/file-text.svg",
+    "lucide/pencil.svg",
+    "lucide/sparkles.svg",
+    "lucide/wrench.svg",
     "lucide/git-pull-request.svg",
 );
 
