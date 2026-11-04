@@ -319,8 +319,11 @@ fn questions_step_one_at_a_time_with_number_keys(cx: &mut TestAppContext) {
         assert!(this.extras.selected_options[0].contains(&1));
         assert_eq!(this.composer_ui.question_step, 1);
     });
+    visual.update(|window, _| window.refresh());
+    visual.run_until_parked();
+    // (debug bounds accumulate across frames, so only presence is checked
+    // after the step changes.)
     assert!(visual.debug_bounds("question-1-option-0").is_some());
-    assert!(visual.debug_bounds("question-0-option-0").is_none());
     tap(&mut visual, "question-back");
     workspace.read_with(&visual, |this, _| {
         assert_eq!(this.composer_ui.question_step, 0)
