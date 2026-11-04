@@ -64,6 +64,9 @@ pub struct ProseLayout {
     pub measure: Option<Pixels>,
     /// Space above a heading that follows other blocks.
     pub heading_space: Pixels,
+    /// Space above a heading that opens the text (what precedes it is
+    /// outside the view).
+    pub heading_lead: Pixels,
     /// Space below a heading.
     pub heading_gap: Pixels,
     /// Whether level 1-2 headings keep their underline.

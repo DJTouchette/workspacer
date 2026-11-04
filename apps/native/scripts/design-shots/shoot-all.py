@@ -186,7 +186,9 @@ def shots():
         nav("s") + [("click", 1360, 76), ("sleep", 0.5), ("type", "reading width"), ("sleep", 0.8)])
     # area-fixture (round 2): the fleet's story states, each on screen.
     add("conversation-tool-rows", "A run of tool calls: Grep, Read, Edit, Write, Bash with results",
-        [("wheel", 4, 1000, 400)])
+        # r3-transcript: v2 folds finished work; Ctrl+O opens every block.
+        [("design", [("wheel", 4, 1000, 400)],
+          [("key", "Escape"), ("key", "ctrl+o"), ("sleep", 1.0), ("wheel", 1, 1000, 400)])])
     add("subagent-stalled", "A stalled subagent (no heartbeat for 7 minutes) beside working and done ones",
         [("key", "Escape"), ("keys", "ctrl+u", "ctrl+u", "ctrl+u")])
     add("failed-task-log", "Background tasks: the failed test run's log",
@@ -201,7 +203,8 @@ def shots():
         [("key", "ctrl+k"), ("sleep", 0.8), ("type", ">the"), ("sleep", 0.6)])
     # r2-transcript: the turn's tool calls as event rows ("Worked … · n tools").
     add("transcript-tools", "Transcript: a turn's tool calls as one-line event rows",
-        [("wheel", 6, 1000, 400)])
+        [("design", [("wheel", 6, 1000, 400)],
+          [("key", "Escape"), ("key", "ctrl+o"), ("sleep", 1.0), ("wheel", 14, 1000, 400)])])
     return s
 
 

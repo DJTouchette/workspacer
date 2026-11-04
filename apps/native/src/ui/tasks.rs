@@ -811,17 +811,27 @@ impl Workspace {
                             })
                             .into_any_element()
                     } else {
+                        // r3-transcript: a failed task's failing lines stand
+                        // out (red on a faint wash), v2 only.
+                        let highlight = v2 && task.as_ref().is_some_and(bg::Task::failed);
                         uniform_list(
                             "task-log-lines",
                             count,
                             cx.processor(move |_this, range: std::ops::Range<usize>, _, _| {
                                 range
                                     .map(|ix| {
+                                        let failing =
+                                            highlight && v2::failing_line(lines[ix].as_ref());
                                         div()
                                             .id(ix)
                                             .px_3()
                                             .whitespace_nowrap()
                                             .text_color(rgb(p.prose))
+                                            .when(failing, |d| {
+                                                d.debug_selector(|| "task-log-failing".into())
+                                                    .text_color(rgb(p.error))
+                                                    .bg(primitives::wash(p.error, t.wash.rest))
+                                            })
                                             .child(lines[ix].clone())
                                     })
                                     .collect::<Vec<_>>()

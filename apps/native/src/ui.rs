@@ -751,6 +751,18 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("?", ToggleShortcuts, Some("VimNormal && DesignV2")),
         KeyBinding::new("ctrl-/", ToggleShortcuts, Some("Workspace && DesignV2")),
         KeyBinding::new("cmd-/", ToggleShortcuts, Some("Workspace && DesignV2")),
+        // r3-transcript: show every work block's tools (free in v1 and in
+        // the composer's input).
+        KeyBinding::new(
+            "ctrl-o",
+            transcript_v2::ExpandAllTools,
+            Some("Workspace && DesignV2"),
+        ),
+        KeyBinding::new(
+            "cmd-o",
+            transcript_v2::ExpandAllTools,
+            Some("Workspace && DesignV2"),
+        ),
         // r2-shell: the command palette's list keys, ahead of its input's own.
         KeyBinding::new("up", palette::PaletteUp, Some("CommandPalette > Input")),
         KeyBinding::new("down", palette::PaletteDown, Some("CommandPalette > Input")),

@@ -36,6 +36,7 @@ fn reads(n: usize) -> View {
 #[gpui::test]
 fn v2_tool_calls_are_compact_rows_that_open_in_place(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _) = fixture(cx);
+    // Running calls: the block in progress stays open.
     v2(&workspace, &mut visual, reads(3));
     assert!(visual.debug_bounds("tool-activity-group").is_some());
     let row = visual.debug_bounds("tool-toggle-0").unwrap();
@@ -46,7 +47,7 @@ fn v2_tool_calls_are_compact_rows_that_open_in_place(cx: &mut TestAppContext) {
         assert_eq!(this.tool_expansion.get("call:call-0"), Some(&true));
     });
     assert!(visual.debug_bounds("tool-details").is_some());
-    // The summary line folds the run.
+    // The summary line folds the run again.
     let open = visual
         .debug_bounds("last-transcript-row")
         .unwrap()
@@ -97,31 +98,165 @@ fn wake_view(approval: bool) -> View {
     view
 }
 
+// r3-transcript: another session's wake is a one-line event, never a card,
+// and never shows its internal id.
 #[gpui::test]
-fn v2_pending_wake_is_a_full_card_with_its_worker_actions(cx: &mut TestAppContext) {
+fn v2_pending_wake_is_one_line_with_go(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _) = fixture(cx);
     v2(&workspace, &mut visual, wake_view(true));
-    assert!(visual.debug_bounds("fleet-card").is_some());
+    let line = visual.debug_bounds("fleet-card-header").unwrap();
+    assert_eq!(
+        f32::from(line.size.height),
+        Tokens::V2.transcript().tool_row,
+        "one line, not a card"
+    );
     assert!(visual.debug_bounds("fleet-card-status").is_some());
+    assert!(visual.debug_bounds("fleet-entry-id-0").is_none());
     click(&mut visual, "fleet-entry-open-0");
     let effect = next_effect(&mut commands);
     assert!(matches!(&effect, Some(Command::Select(id)) if id == "worker-1"));
 }
 
 #[gpui::test]
-fn v2_resolved_wake_collapses_to_one_line_and_opens_on_click(cx: &mut TestAppContext) {
+fn v2_resolved_wake_is_one_line_and_opens_its_details_on_click(cx: &mut TestAppContext) {
     let (workspace, mut visual, _, _) = fixture(cx);
     v2(&workspace, &mut visual, wake_view(false));
     let line = visual.debug_bounds("fleet-card").unwrap();
     assert!(
-        f32::from(line.size.height) <= Tokens::V2.transcript().tool_row + 1.,
+        f32::from(
+            visual
+                .debug_bounds("fleet-card-header")
+                .unwrap()
+                .size
+                .height
+        ) <= Tokens::V2.transcript().tool_row + 1.,
         "one line, not a card: {:?}",
         line.size
     );
-    assert!(visual.debug_bounds("fleet-entry-open-0").is_none());
+    assert!(visual.debug_bounds("fleet-details").is_none());
     click(&mut visual, "fleet-card-header");
-    assert!(visual.debug_bounds("fleet-entry-open-0").is_some());
+    assert!(visual.debug_bounds("fleet-details").is_some());
+    assert!(visual.debug_bounds("fleet-entry-reply-0").is_some());
     assert!(visual.debug_bounds("fleet-card").unwrap().size.height > line.size.height);
+}
+
+/// `n` reads that have all finished.
+fn reads_done(n: usize) -> View {
+    let mut view = state("a");
+    view.transcript.snapshot(ConversationSnapshot {
+        seq: 2 * n as u64,
+        first_seq: 1,
+        items: (0..n)
+            .flat_map(|i| {
+                [
+                    Item {
+                        kind: "tool_use".into(),
+                        id: format!("call-{i}"),
+                        name: "Read".into(),
+                        input: serde_json::json!({"file_path":format!("src/file-{i}.rs")}),
+                        ..Default::default()
+                    },
+                    Item {
+                        kind: "tool_result".into(),
+                        tool_use_id: format!("call-{i}"),
+                        content: "1 fn main() {}".into(),
+                        ..Default::default()
+                    },
+                ]
+            })
+            .collect(),
+    });
+    view
+}
+
+// r3-transcript: finished work folds to one line ("Worked … · 3 tools ›").
+#[gpui::test]
+fn v2_finished_work_folds_to_one_line(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _, _) = fixture(cx);
+    v2(&workspace, &mut visual, reads_done(3));
+    assert!(visual.debug_bounds("work-card-toggle").is_some());
+    assert!(visual.debug_bounds("tool-toggle-0").is_none());
+    click(&mut visual, "work-card-toggle");
+    assert!(visual.debug_bounds("tool-toggle-0").is_some());
+}
+
+fn failed_command_view() -> View {
+    let mut view = state("a");
+    view.transcript.snapshot(ConversationSnapshot {
+        seq: 3,
+        first_seq: 1,
+        items: vec![
+            Item {
+                kind: "tool_use".into(),
+                id: "call-0".into(),
+                name: "Bash".into(),
+                input: serde_json::json!({"command":"cargo test"}),
+                ..Default::default()
+            },
+            Item {
+                kind: "tool_result".into(),
+                tool_use_id: "call-0".into(),
+                is_error: true,
+                content: "Exit code 101\nerror: could not compile".into(),
+                ..Default::default()
+            },
+            Item {
+                kind: "tool_use".into(),
+                id: "call-1".into(),
+                name: "Read".into(),
+                input: serde_json::json!({"file_path":"src/a.rs"}),
+                ..Default::default()
+            },
+            Item {
+                kind: "tool_result".into(),
+                tool_use_id: "call-1".into(),
+                content: "1 fn a() {}".into(),
+                ..Default::default()
+            },
+        ],
+    });
+    view
+}
+
+#[gpui::test]
+fn v2_short_output_and_failures_show_inline_and_ctrl_o_opens_everything(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _, _) = fixture(cx);
+    v2(&workspace, &mut visual, failed_command_view());
+    // A failed block stays open; its failure reads inline, in red, with
+    // the exit code on the row, without opening the call.
+    assert!(visual.debug_bounds("tool-toggle-0").is_some());
+    assert!(visual.debug_bounds("event-fault").is_some());
+    assert!(visual.debug_bounds("tool-details").is_none());
+    let inline = workspace.read_with(&visual, |this, _| {
+        format!("tool-inline-output-{}-call:call-0", this.chat_owner())
+    });
+    let inline: &'static str = Box::leak(inline.into_boxed_str());
+    assert!(visual.debug_bounds(inline).is_some(), "{inline}");
+    // Folded by hand, then Ctrl+O (the expand-all toggle) and back. The
+    // list keeps a measured copy's selectors, so heights tell the state.
+    let height = |visual: &mut VisualTestContext| {
+        f32::from(
+            visual
+                .debug_bounds("last-transcript-row")
+                .unwrap()
+                .size
+                .height,
+        )
+    };
+    let open = height(&mut visual);
+    click(&mut visual, "work-card-toggle");
+    let folded = height(&mut visual);
+    assert!(folded < open, "{folded} < {open}");
+    let expand = |visual: &mut VisualTestContext| {
+        visual.update(|_, cx| workspace.update(cx, |this, cx| this.toggle_expand_all(cx)));
+        visual.run_until_parked();
+    };
+    expand(&mut visual);
+    workspace.read_with(&visual, |this, _| assert!(this.chat.expand_all));
+    assert_eq!(height(&mut visual), open);
+    expand(&mut visual);
+    workspace.read_with(&visual, |this, _| assert!(!this.chat.expand_all));
+    assert_eq!(height(&mut visual), folded);
 }
 
 fn user_view(text: &str) -> View {
@@ -201,7 +336,7 @@ fn v2_reading_width_widens_the_column(cx: &mut TestAppContext) {
         roomy >= tt.reading_max - 1.,
         "{roomy} reaches the cap in a wide window"
     );
-    let snug = width_for(cx, 1500., ReadingWidth::Comfortable);
+    let snug = width_for(cx, 1140., ReadingWidth::Comfortable);
     assert!(
         snug < roomy,
         "{snug} < {roomy}: the column grows with the window"

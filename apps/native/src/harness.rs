@@ -1173,6 +1173,23 @@ pub fn rich_items() -> Vec<Value> {
             "workspacer-spawn",
             "{\"sessionId\":\"demo-0001\",\"messageQueued\":true,\"taskTracking\":false}",
         ),
+        // r3-transcript: a failed run and its fix, so the transcript shows
+        // a failure inline (red, with its exit code) and the recovery.
+        tool(
+            "bash-2-fail",
+            "Bash",
+            json!({"command":"cargo test --test session","description":"Run the new session test"}),
+        ),
+        json!({"kind":"tool_result","tool_use_id":"bash-2-fail","is_error":true,"content":"Exit code 101\nerror[E0599]: no function `open_last` found for struct `Workspace`\n --> tests/session.rs:5:32\nerror: could not compile `wks-native` (test \"session\") due to 1 previous error"}),
+        tool(
+            "edit-open-last",
+            "Edit",
+            json!({"file_path":"src/workspace.rs","old_string":"impl Workspace {","new_string":"impl Workspace {\n    pub fn open_last() -> Result<Self> {\n        Self::open(&settings::path())\n    }\n"}),
+        ),
+        result(
+            "edit-open-last",
+            "The file src/workspace.rs has been updated.",
+        ),
         tool(
             "bash-2",
             "Bash",

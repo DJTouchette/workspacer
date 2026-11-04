@@ -43,7 +43,68 @@ pub(super) fn retry_prompt(task: &bg::Task) -> String {
     }
 }
 
+/// r3-transcript: a log line that reports a failure (compiler errors,
+/// failed tests, panics), highlighted in the failed task's log.
+pub(super) fn failing_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+    lower.starts_with("error")
+        || lower.starts_with("fail")
+        || lower.starts_with("test result: failed")
+        || lower.contains("... failed")
+        || lower.contains("panicked at")
+        || lower.starts_with("fatal:")
+        || (lower.contains("exited with code") && !lower.contains("code 0"))
+        || lower.starts_with("✗")
+        || lower.starts_with("×")
+}
+
+/// How many failing lines "Ask agent to fix" quotes.
+const FIX_QUOTE_LINES: usize = 12;
+
+/// What "Ask agent to fix" drafts: the failure, where its log is, and the
+/// failing lines quoted, for the agent to fix rather than just re-run.
+pub(super) fn fix_prompt(task: &bg::Task, lines: &[SharedString]) -> String {
+    let title = task.title();
+    let mut text = match task.kind {
+        Kind::Shell => format!("The background command `{title}` failed."),
+        _ => format!("The background task \"{title}\" failed."),
+    };
+    if !task.error.trim().is_empty() {
+        text.push_str(&format!(" {}", task.error.trim()));
+    }
+    let failing: Vec<&str> = lines
+        .iter()
+        .map(|l| l.as_ref())
+        .filter(|l| failing_line(l))
+        .take(FIX_QUOTE_LINES)
+        .collect();
+    if !failing.is_empty() {
+        text.push_str(&format!("\n\n```\n{}\n```", failing.join("\n")));
+    }
+    if let Some(file) = &task.redirect_file {
+        text.push_str(&format!("\n\nThe full log is in {file}."));
+    }
+    text.push_str("\n\nFind the cause, fix it, and run it again.");
+    text
+}
+
 impl Workspace {
+    /// "Ask agent to fix": the failure and its failing lines in the
+    /// composer, focused, for the user to send.
+    fn ask_to_fix(&mut self, task: &bg::Task, window: &mut Window, cx: &mut Context<Self>) {
+        let text = fix_prompt(task, &self.tasks.lines);
+        self.composer.update(cx, |input, cx| {
+            input.set_value(text, window, cx);
+            input.focus(window, cx);
+        });
+        self.tasks.notice = Some((
+            "The request is in the composer: send it to ask the agent.".into(),
+            Tone::Info,
+        ));
+        cx.notify();
+    }
+
     /// Put a retry request in the composer, focused, for the user to send.
     fn retry_task(&mut self, task: &bg::Task, window: &mut Window, cx: &mut Context<Self>) {
         let text = retry_prompt(task);
@@ -522,6 +583,50 @@ impl Workspace {
             .when(running, |d| {
                 d.child(self.render_stop_control_v2(&log.task, confirming, "task-log-stop", 0, cx))
             })
+            // r3-transcript: a failure offers its recovery where it is read.
+            .when_some(task.filter(|t| t.failed()).cloned(), |d, task| {
+                let retry = task.clone();
+                d.child(
+                    primitives::with_tooltip(
+                        primitives::button(
+                            "task-log-retry-task",
+                            "Retry",
+                            Some(IconName::Redo),
+                            ButtonVariant::Secondary,
+                            ButtonSize::Small,
+                            true,
+                            &p,
+                        ),
+                        "Ask the agent to run it again (drafted in the composer)",
+                        None,
+                        &p,
+                    )
+                    .debug_selector(|| "task-log-retry-task".into())
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.retry_task(&retry, window, cx)),
+                    ),
+                )
+                .child(
+                    primitives::with_tooltip(
+                        primitives::button(
+                            "task-log-fix",
+                            "Ask agent to fix",
+                            None,
+                            ButtonVariant::Primary,
+                            ButtonSize::Small,
+                            true,
+                            &p,
+                        ),
+                        "Draft a request with the failing lines for the agent to fix",
+                        None,
+                        &p,
+                    )
+                    .debug_selector(|| "task-log-fix".into())
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.ask_to_fix(&task, window, cx)),
+                    ),
+                )
+            })
     }
 }
 
@@ -565,5 +670,39 @@ mod tests {
             true,
         );
         assert!(!meta.contains("Failed"), "the badge says it: {meta}");
+    }
+
+    #[test]
+    fn failing_lines_are_found_and_quoted_for_the_fix() {
+        for line in [
+            "error[E0599]: no function `open_last`",
+            "test restores_the_last_workspace ... FAILED",
+            "test result: FAILED. 0 passed; 1 failed",
+            "thread 'main' panicked at src/main.rs:4:5",
+            "FAIL src/app.test.ts",
+        ] {
+            assert!(failing_line(line), "{line}");
+        }
+        for line in [
+            "test result: ok. 1 passed; 0 failed",
+            "   Compiling wks-native v0.9.0",
+            "running 1 test",
+        ] {
+            assert!(!failing_line(line), "{line}");
+        }
+        let task = bg::Task {
+            kind: Kind::Shell,
+            status: "failed".into(),
+            description: "cargo test".into(),
+            ..Default::default()
+        };
+        let lines: Vec<SharedString> = ["running 1 test", "test x ... FAILED", "ok"]
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        let prompt = fix_prompt(&task, &lines);
+        assert!(prompt.contains("`cargo test` failed"), "{prompt}");
+        assert!(prompt.contains("test x ... FAILED"), "{prompt}");
+        assert!(!prompt.contains("running 1 test"), "{prompt}");
     }
 }

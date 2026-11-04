@@ -560,6 +560,11 @@ impl Workspace {
             .on_action(
                 cx.listener(|this, _: &NextNeedsYou, window, cx| this.next_needs_you(window, cx)),
             )
+            .on_action(
+                cx.listener(|this, _: &super::transcript_v2::ExpandAllTools, _, cx| {
+                    this.toggle_expand_all(cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &ToggleShortcuts, _, cx| {
                 if this.design().is_v2() {
                     this.toggle_shortcuts(cx)

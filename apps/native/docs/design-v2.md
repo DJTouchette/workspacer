@@ -351,6 +351,20 @@ The v2 conversation lives in `ui/transcript_v2.rs`; the v1 renderers
 | Syntax | `syntax_v2(appearance)`: one calm set per theme, nothing purple (`v2_syntax_reads_on_the_card_surface_and_is_never_purple`) |
 | Shots | `shoot-all.py --only transcript-` (earlier, start, fleet, wide, full); the rig's `("wheel", notches, x, y)` step scrolls the chat |
 
+### Round 3 (R3.4: one column, one rhythm)
+
+| | |
+|---|---|
+| One width | Prose, tool rows, cards, tables and code share the reading column (`reading_max` 800, Wide 1100; no separate prose measure). Event rows hang their hover fill into the gutter on both sides, so their right edge is the column's; a trailing tertiary button (Review, Go) pulls its padding out so its label meets that edge |
+| Event row | `EventRow` gains `scope` ("This turn"), `fault` (red, inline: "exit code 101", "1 failed", a worker's failure) and `reveal` (chevron always shown). `EventEnd::Quiet` durations render inline after the result ("· 2 matches · 6s"); only `EventEnd::Badge` (a state that needs reading) sits on the right edge |
+| Work blocks | Finished work folds to one line, `work_line` → `format::worked_summary` ("Worked 5m 40s · 6 tools ›") with a Done/Failed/Working glyph; the block still in progress (`summary.running`, or the transcript's last while `Session::busy`) and one with a failure stay open. **Ctrl+O** (`transcript_v2::ExpandAllTools`, `Workspace && DesignV2`; free elsewhere) toggles `ChatUi::expand_all`: every block open, no "earlier tools" fold |
+| Inline output | `inline_output(category, output, failed)`: ≤ `INLINE_LINES` (5) lines of a command/search/other tool show under the row in dimmed mono, shared indentation removed; a failure shows its last 5 lines in red with "… n earlier lines", the exit code (`exit_code`) on the row. Reads and edits never inline. Failed calls no longer auto-open their details |
+| Rhythm | `TranscriptTokens::paragraph_space` 16, `heading_space` 32 above, `heading_gap` 12 below (vendor `ProseLayout::heading_lead` gives a heading that opens a message the same room), `heading_steps` [5, 2, 0, 0] over the 15px reading size = 20 / 17 / 15 from the type scale, line height 1.6 |
+| Fleet wakes | Never a card: one `EventRow` per worker in the lexicon ("Release checklist for 0.9 needs you · Go", "Usage meter rounding · Done", "Queue priority ordering · Failed · Credit balance is too low"), no ids. Go selects a session that waits on you now (live approval/question) or an openable worker (Open, on hover). Clicking opens notes, last reply, Reply, results, "Why this was raised" and Copy on a guide |
+| Subagents | `child_status` speaks only the lexicon (Offline → `StatusKind::Offline`; lost → Failed; starting → Working; stopped → Idle). A stalled one offers **View output** (tertiary; opens its session or history) · **Nudge** (secondary: a managed session gets `Action::SendNow(NUDGE_TEXT)`; a provider subagent has no inbox, so Nudge drafts `nudge_parent_prompt` to the agent that runs it) · **Stop** (managed only) |
+| Changes | The turn line reads "Changed 2 files This turn +5 −2". Changes has no per-turn filter, so Review's tooltip says it opens every uncommitted change |
+| Task log | A failed task's log header offers Retry (secondary) and **Ask agent to fix** (primary: `fix_prompt` quotes up to 12 `failing_line`s and the log path); failing lines are red on a faint error wash (`task-log-failing`) |
+
 ## Panels (area-panels)
 
 `Tokens::panels` (`src/tokens.rs`) holds the side panels' measures and
