@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "mcp-tools.json": "1b920b2078d40b5880a97d37340941cf5939bbc4ec1ace031ac1bd27a034d894",
-    "mcp-help.json": "7ffe1f5d3166f9a6e658011674c73ff6b47aeda33e41d35120747c67a70e5313",
+    "mcp-help.json": "8b85776d24fbf41387a7dc701368c5923b5406f094cb0e19a2ba785fdc1702ce",
     "mcp-rust-presentation.json": "76bde4e8bbd383f0f398f0d59b97814a765818abad1516b7f64f2af436cc73c8",
     "mcp-wire-contract.json": "ad0058a00e26dd1e7e10bb840a93105c05db249800b7cbc6ef94abed146df4f4",
     "mcp-wire-overrides.json": "e82a1a69381b40ed1c27f188aa513a7bd367c0b022f3884cf5ec9b088cd20413"

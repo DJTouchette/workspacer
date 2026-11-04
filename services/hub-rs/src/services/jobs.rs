@@ -49,6 +49,8 @@ const JOB_FIELDS: &[&str] = &[
     "action",
     "proposedBy",
     "replaces",
+    "host",
+    "priority",
     "createdAt",
     "updatedAt",
 ];
@@ -112,6 +114,16 @@ pub struct Job {
     #[serde(skip_serializing_if = "String::is_empty")]
     #[serde(deserialize_with = "null_default")]
     pub replaces: String,
+    /// Where a spawn or shell action runs: empty runs it inline as always;
+    /// `local`, a federation peer name or `any` submits a work-queue item
+    /// instead (docs/host-work-queue.md).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(deserialize_with = "null_default")]
+    pub host: String,
+    /// The queue item's priority; only used when `host` is set.
+    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(deserialize_with = "null_default")]
+    pub priority: i64,
     #[serde(deserialize_with = "null_default")]
     pub created_at: i64,
     #[serde(deserialize_with = "null_default")]
@@ -120,6 +132,10 @@ pub struct Job {
 impl Job {
     pub fn is_proposal(&self) -> bool {
         !self.proposed_by.trim().is_empty()
+    }
+    /// Runs through the work queue rather than inline.
+    pub fn is_queued(&self) -> bool {
+        !self.host.is_empty() && matches!(string(&self.action, "kind"), "spawn" | "shell")
     }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -142,6 +158,19 @@ pub fn validate(job: &Job) -> Result<()> {
     check_keys(&job.action, ACTION_FIELDS)?;
     if job.name.trim().is_empty() {
         bail!("job needs a name");
+    }
+    if !job.host.is_empty()
+        && job.host != "local"
+        && job.host != "any"
+        && !super::work_queue::peer_name_shaped(&job.host)
+    {
+        bail!("host must be \"\", \"local\", \"any\" or a federation peer name");
+    }
+    if !(-1_000_000..=1_000_000).contains(&job.priority) {
+        bail!("priority must be an integer between -1000000 and 1000000");
+    }
+    if !job.host.is_empty() && string(&job.action, "kind") == "call" {
+        bail!("a call action runs inline; host applies only to spawn and shell actions");
     }
     match job.trigger.kind.as_str() {
         "interval" => {
@@ -420,6 +449,10 @@ struct State {
     next: BTreeMap<String, DateTime<Utc>>,
     running: BTreeSet<String>,
     history: BTreeMap<String, Vec<Run>>,
+    /// The queue item each queued job last submitted, as (host, item id):
+    /// `local` or the peer name. Not persisted; local items are also found by
+    /// their `source.jobId` after a restart.
+    queued: BTreeMap<String, (String, String)>,
     hash: Option<Vec<u8>>,
     /// Size and mtime of the spec as last read, so an unchanged file is not
     /// re-read and re-hashed on every tick.
@@ -431,9 +464,17 @@ pub struct Service {
     hub: Handle,
     state: Mutex<State>,
     queue: mpsc::UnboundedSender<Job>,
+    work_queue: Option<Arc<super::work_queue::WorkQueue>>,
 }
 impl Service {
     pub fn open(path: PathBuf, hub: Handle) -> (Arc<Self>, mpsc::UnboundedReceiver<Job>) {
+        Self::open_with_queue(path, hub, None)
+    }
+    pub(crate) fn open_with_queue(
+        path: PathBuf,
+        hub: Handle,
+        work_queue: Option<Arc<super::work_queue::WorkQueue>>,
+    ) -> (Arc<Self>, mpsc::UnboundedReceiver<Job>) {
         let history_path = path.with_file_name("jobs-history.json");
         let history = std::fs::read(&history_path)
             .ok()
@@ -450,10 +491,12 @@ impl Service {
                 next: BTreeMap::new(),
                 running: BTreeSet::new(),
                 history,
+                queued: BTreeMap::new(),
                 hash: None,
                 stamp: None,
             }),
             queue,
+            work_queue,
         });
         service.reload(&mut service.state.lock().unwrap(), Utc::now());
         (service, receiver)
@@ -668,6 +711,8 @@ impl Service {
                     updated.name = job.name;
                     updated.trigger = job.trigger;
                     updated.action = job.action;
+                    updated.host = job.host;
+                    updated.priority = job.priority;
                     updated.updated_at = job.updated_at;
                     state.jobs[target] = updated.clone();
                     state.jobs.remove(from);
@@ -809,12 +854,29 @@ impl Service {
         due
     }
     async fn execute(self: Arc<Self>, job: Job, client: Client) {
-        self.execute_with_runner(job, &client).await
+        let runner = Live {
+            client,
+            queue: self.work_queue.clone(),
+        };
+        self.execute_with_runner(job, &runner).await
     }
     async fn execute_with_runner(self: Arc<Self>, job: Job, client: &impl Runner) {
         let started = Utc::now();
-        let result =
-            tokio::time::timeout(Duration::from_secs(15 * 60), perform(&job, client)).await;
+        let work = async {
+            if !job.is_queued() {
+                return perform(&job, client).await;
+            }
+            let last = self.state.lock().unwrap().queued.get(&job.id).cloned();
+            let (host, id) = perform_queued(&job, client, last).await?;
+            let detail = format!("queued {id} on {host}");
+            self.state
+                .lock()
+                .unwrap()
+                .queued
+                .insert(job.id.clone(), (host, id));
+            Ok(detail)
+        };
+        let result = tokio::time::timeout(Duration::from_secs(15 * 60), work).await;
         let (status, detail) = match result {
             Ok(Ok(detail)) => ("ok", head(&detail, 2000)),
             Ok(Err(error)) if error.downcast_ref::<Skip>().is_some() => {
@@ -896,6 +958,52 @@ impl std::error::Error for Skip {}
 trait Runner: Send + Sync {
     fn invoke<'a>(&'a self, method: &'a str, params: Value) -> BoxFuture<'a, Result<Value>>;
     fn shell<'a>(&'a self, action: &'a Value) -> BoxFuture<'a, Result<(String, bool)>>;
+    /// Submit a work-queue item with the owner's authority, routed by its
+    /// `host`. Returns where it landed (`local` or the peer) and its id.
+    fn submit(&self, _params: Value) -> BoxFuture<'_, Result<(String, String)>> {
+        Box::pin(async { bail!("this hub has no work queue; a job with host cannot run") })
+    }
+    /// An item of this job still queued or running: (id, state, host).
+    fn queue_active<'a>(
+        &'a self,
+        _job_id: &'a str,
+        _last: Option<(&'a str, &'a str)>,
+    ) -> BoxFuture<'a, Result<Option<(String, String, String)>>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+/// The production runner: the hub's own bus client plus the work queue.
+struct Live {
+    client: Client,
+    queue: Option<Arc<super::work_queue::WorkQueue>>,
+}
+impl Runner for Live {
+    fn invoke<'a>(&'a self, method: &'a str, params: Value) -> BoxFuture<'a, Result<Value>> {
+        self.client.invoke(method, params)
+    }
+    fn shell<'a>(&'a self, action: &'a Value) -> BoxFuture<'a, Result<(String, bool)>> {
+        Box::pin(shell(action))
+    }
+    fn submit(&self, params: Value) -> BoxFuture<'_, Result<(String, String)>> {
+        Box::pin(async move {
+            match &self.queue {
+                Some(queue) => queue.submit_routed_as_owner(params).await,
+                None => bail!("this hub has no work queue; a job with host cannot run"),
+            }
+        })
+    }
+    fn queue_active<'a>(
+        &'a self,
+        job_id: &'a str,
+        last: Option<(&'a str, &'a str)>,
+    ) -> BoxFuture<'a, Result<Option<(String, String, String)>>> {
+        Box::pin(async move {
+            match &self.queue {
+                Some(queue) => queue.job_item_active(job_id, last).await,
+                None => Ok(None),
+            }
+        })
+    }
 }
 impl Runner for Client {
     fn invoke<'a>(&'a self, method: &'a str, params: Value) -> BoxFuture<'a, Result<Value>> {
@@ -924,44 +1032,13 @@ async fn perform(job: &Job, client: &impl Runner) -> Result<String> {
             .to_string()),
         "spawn" => {
             let spawn = &action["spawn"];
-            let mut outputs = Vec::new();
-            if let Some(steps) = spawn["context"].as_array() {
-                for step in steps {
-                    let output = match string(step, "kind") {
-                        "shell" => {
-                            let (out, ok) = client.shell(&step["shell"]).await?;
-                            if !ok && step["ignoreExitCode"] != true {
-                                bail!("shell exited nonzero — output: {}", tail(&out, 1000));
-                            }
-                            out
-                        }
-                        "call" => client
-                            .invoke(
-                                string(&step["call"], "method"),
-                                step["call"].get("params").cloned().unwrap_or(json!({})),
-                            )
-                            .await?
-                            .to_string(),
-                        _ => bail!("unknown context step kind"),
-                    };
-                    let output = output.trim();
-                    if step["skipIfEmpty"] == true && empty_output(output) {
-                        return Err(Skip("no output — nothing to send an agent".into()).into());
-                    }
-                    let pattern = string(step, "skipUnlessMatch");
-                    if !pattern.is_empty() && !go_regex::compile(pattern)?.is_match(output) {
-                        return Err(Skip(format!("output did not match {pattern}")).into());
-                    }
-                    outputs.push(elide(output, 12000));
-                }
-            }
+            let outputs = context_outputs(spawn, client).await?;
             let prompt = fill_prompt(string(spawn, "prompt"), &outputs);
             let mut params = json!({"cwd":spawn["cwd"],"label":job.name,"jobId":job.id});
             // The user's "jobs start with full access" choice (the hub's
             // `agents.jobFullAccess`): the provider's own approval policy,
             // read at fire time so a toggle applies to the next run.
-            let config = client.invoke("config.get", json!({})).await?;
-            let full_access = config["agents"]["jobFullAccess"] == true;
+            let full_access = job_full_access(client).await?;
             if full_access {
                 params["skipPermissions"] = json!(true);
             }
@@ -998,6 +1075,113 @@ async fn perform(job: &Job, client: &impl Runner) -> Result<String> {
             Ok(format!("spawned {id}"))
         }
         _ => bail!("unknown action kind"),
+    }
+}
+async fn job_full_access(client: &impl Runner) -> Result<bool> {
+    let config = client.invoke("config.get", json!({})).await?;
+    Ok(config["agents"]["jobFullAccess"] == true)
+}
+/// A queued run: refuse to overlap this job's previous item, run the context
+/// steps here, render the prompt, then submit one queue item routed by
+/// `job.host`. Returns where it landed and the item id.
+async fn perform_queued(
+    job: &Job,
+    client: &impl Runner,
+    last: Option<(String, String)>,
+) -> Result<(String, String)> {
+    let last_ref = last.as_ref().map(|(h, i)| (h.as_str(), i.as_str()));
+    match client.queue_active(&job.id, last_ref).await {
+        Ok(None) => {}
+        Ok(Some((id, state, host))) => {
+            return Err(Skip(format!(
+                "previous queue item {id} is still {state} on {host}"
+            ))
+            .into());
+        }
+        Err(error) => {
+            let (host, id) = last.unwrap_or_default();
+            return Err(Skip(format!(
+                "cannot check previous queue item {id} on {host} ({error}); treating it as still running"
+            ))
+            .into());
+        }
+    }
+    let action = &job.action;
+    let mut params = json!({
+        "host": job.host,
+        "label": job.name,
+        "priority": job.priority,
+        "source": {"kind": "job", "jobId": job.id},
+    });
+    match string(action, "kind") {
+        "shell" => {
+            params["kind"] = json!("shell");
+            let mut shell = json!({"command": string(&action["shell"], "command")});
+            if !string(&action["shell"], "cwd").is_empty() {
+                shell["cwd"] = action["shell"]["cwd"].clone();
+            }
+            params["shell"] = shell;
+        }
+        "spawn" => {
+            let spawn = &action["spawn"];
+            let outputs = context_outputs(spawn, client).await?;
+            let mut item = json!({
+                "cwd": spawn["cwd"],
+                "prompt": fill_prompt(string(spawn, "prompt"), &outputs),
+            });
+            // Same mapping as an inline spawn job, so a queued spawn launches
+            // identically: full access replaces the permission mode.
+            let full_access = job_full_access(client).await?;
+            if full_access {
+                item["fullAccess"] = json!(true);
+            }
+            for key in ["provider", "model", "effort", "permissionMode"] {
+                if (key != "permissionMode" || !full_access) && !string(spawn, key).is_empty() {
+                    item[key] = spawn[key].clone();
+                }
+            }
+            params["kind"] = json!("spawn");
+            params["spawn"] = item;
+        }
+        _ => bail!("only spawn and shell actions run through the work queue"),
+    }
+    client.submit(params).await
+}
+/// Run a spawn action's context steps, applying their guards.
+async fn context_outputs(spawn: &Value, client: &impl Runner) -> Result<Vec<String>> {
+    {
+        let mut outputs = Vec::new();
+        if let Some(steps) = spawn["context"].as_array() {
+            for step in steps {
+                let output = match string(step, "kind") {
+                    "shell" => {
+                        let (out, ok) = client.shell(&step["shell"]).await?;
+                        if !ok && step["ignoreExitCode"] != true {
+                            bail!("shell exited nonzero — output: {}", tail(&out, 1000));
+                        }
+                        out
+                    }
+                    "call" => client
+                        .invoke(
+                            string(&step["call"], "method"),
+                            step["call"].get("params").cloned().unwrap_or(json!({})),
+                        )
+                        .await?
+                        .to_string(),
+                    _ => bail!("unknown context step kind"),
+                };
+                let output = output.trim();
+                if step["skipIfEmpty"] == true && empty_output(output) {
+                    return Err(Skip("no output — nothing to send an agent".into()).into());
+                }
+                let pattern = string(step, "skipUnlessMatch");
+                if !pattern.is_empty() && !go_regex::compile(pattern)?.is_match(output) {
+                    return Err(Skip(format!("output did not match {pattern}")).into());
+                }
+                outputs.push(elide(output, 12000));
+            }
+        }
+        Ok(outputs)
     }
 }
 async fn send_first_prompt(client: &impl Runner, id: &str, prompt: &str) -> Result<()> {
@@ -1060,7 +1244,7 @@ pub(crate) fn install(
     let Some(path) = options.jobs_file.clone() else {
         return (options, None);
     };
-    let (service, receiver) = Service::open(path, hub);
+    let (service, receiver) = Service::open_with_queue(path, hub, options.work_queue.clone());
     options.jobs_service = Some(service.clone());
     for method in [
         "jobs.list",
@@ -1212,6 +1396,142 @@ mod tests {
                 assert_eq!(runner.calls.lock().unwrap()[3].1["text"], "é");
             }
         }
+    }
+    struct Queueing {
+        calls: Mutex<Vec<(String, Value)>>,
+        active: Result<Option<(String, String, String)>, String>,
+        full_access: bool,
+    }
+    impl Runner for Queueing {
+        fn invoke<'a>(&'a self, method: &'a str, params: Value) -> BoxFuture<'a, Result<Value>> {
+            Box::pin(async move {
+                self.calls.lock().unwrap().push((method.into(), params));
+                Ok(match method {
+                    "config.get" => json!({"agents":{"jobFullAccess":self.full_access}}),
+                    _ => json!({"ok":true}),
+                })
+            })
+        }
+        fn shell<'a>(&'a self, action: &'a Value) -> BoxFuture<'a, Result<(String, bool)>> {
+            Box::pin(async move {
+                self.calls
+                    .lock()
+                    .unwrap()
+                    .push(("shell".into(), action.clone()));
+                Ok(("FAIL: two tests".into(), true))
+            })
+        }
+        fn submit(&self, params: Value) -> BoxFuture<'_, Result<(String, String)>> {
+            Box::pin(async move {
+                self.calls.lock().unwrap().push(("submit".into(), params));
+                Ok(("box".into(), "q_1".into()))
+            })
+        }
+        fn queue_active<'a>(
+            &'a self,
+            job_id: &'a str,
+            last: Option<(&'a str, &'a str)>,
+        ) -> BoxFuture<'a, Result<Option<(String, String, String)>>> {
+            Box::pin(async move {
+                self.calls.lock().unwrap().push((
+                    "active".into(),
+                    json!({"job":job_id,"last":last.map(|(h, i)| [h, i])}),
+                ));
+                self.active.clone().map_err(|e| anyhow!(e))
+            })
+        }
+    }
+    #[test]
+    fn host_and_priority_validate_and_call_actions_refuse_a_host() {
+        let job = |host: &str, priority: i64, kind: &str| -> Job {
+            let action = match kind {
+                "call" => json!({"kind":"call","call":{"method":"sessions.list"}}),
+                _ => json!({"kind":"shell","shell":{"command":"true"}}),
+            };
+            serde_json::from_value(json!({"name":"q","trigger":{"kind":"manual"},"host":host,"priority":priority,"action":action})).unwrap()
+        };
+        for host in ["", "local", "any", "build-box_2"] {
+            validate(&job(host, 3, "shell")).unwrap();
+        }
+        for host in ["hub:box/x", "a b", "box/queue"] {
+            assert!(validate(&job(host, 0, "shell")).is_err(), "{host}");
+        }
+        assert!(validate(&job("local", 2_000_000, "shell")).is_err());
+        let refused = validate(&job("local", 0, "call")).unwrap_err().to_string();
+        assert!(refused.contains("call action"), "{refused}");
+        validate(&job("", 0, "call")).unwrap();
+        assert!(serde_json::from_value::<Job>(json!({"name":"q","priority":"high"})).is_err());
+        // Unset fields stay off the wire, so old specs round-trip unchanged.
+        let plain = json!(job("", 0, "shell"));
+        assert!(plain.get("host").is_none() && plain.get("priority").is_none());
+    }
+    #[tokio::test]
+    async fn queued_spawn_runs_context_here_and_submits_one_item_like_an_inline_launch() {
+        let job: Job = serde_json::from_value(json!({"id":"j1","name":"triage","host":"any","priority":4,"trigger":{"kind":"manual"},"action":{"kind":"spawn","spawn":{"cwd":"/project","provider":"codex","model":"m","permissionMode":"plan","prompt":"Fix {{output}}","context":[{"kind":"shell","shell":{"command":"run tests"},"skipUnlessMatch":"FAIL"}]}}})).unwrap();
+        validate(&job).unwrap();
+        assert!(job.is_queued());
+        for full_access in [false, true] {
+            let runner = Queueing {
+                calls: Mutex::new(vec![]),
+                active: Ok(None),
+                full_access,
+            };
+            let landed = perform_queued(&job, &runner, Some(("box".into(), "q_0".into())))
+                .await
+                .unwrap();
+            assert_eq!(landed, ("box".into(), "q_1".into()));
+            let calls = runner.calls.lock().unwrap();
+            let names: Vec<_> = calls.iter().map(|(n, _)| n.as_str()).collect();
+            assert_eq!(names, ["active", "shell", "config.get", "submit"]);
+            assert_eq!(calls[0].1["last"], json!(["box", "q_0"]));
+            let mut spawn = json!({"cwd":"/project","prompt":"Fix FAIL: two tests","provider":"codex","model":"m"});
+            if full_access {
+                spawn["fullAccess"] = json!(true);
+            } else {
+                spawn["permissionMode"] = json!("plan");
+            }
+            assert_eq!(
+                calls[3].1,
+                json!({"host":"any","label":"triage","priority":4,"source":{"kind":"job","jobId":"j1"},"kind":"spawn","spawn":spawn})
+            );
+        }
+    }
+    #[tokio::test]
+    async fn queued_runs_skip_while_the_previous_item_lives_or_cannot_be_checked() {
+        let job: Job = serde_json::from_value(json!({"id":"j1","name":"build","host":"box","trigger":{"kind":"manual"},"action":{"kind":"shell","shell":{"command":"make","cwd":"/src"}}})).unwrap();
+        for (active, expected) in [
+            (
+                Ok(Some(("q_0".into(), "running".into(), "box".into()))),
+                "previous queue item q_0 is still running on box",
+            ),
+            (
+                Err("no answer from box within 10 s".into()),
+                "cannot check previous queue item q_0 on box (no answer from box within 10 s); treating it as still running",
+            ),
+        ] {
+            let runner = Queueing {
+                calls: Mutex::new(vec![]),
+                active,
+                full_access: false,
+            };
+            let error = perform_queued(&job, &runner, Some(("box".into(), "q_0".into())))
+                .await
+                .unwrap_err();
+            assert!(error.downcast_ref::<Skip>().is_some());
+            assert_eq!(error.to_string(), expected);
+            assert_eq!(runner.calls.lock().unwrap().len(), 1, "nothing submitted");
+        }
+        let runner = Queueing {
+            calls: Mutex::new(vec![]),
+            active: Ok(None),
+            full_access: true,
+        };
+        perform_queued(&job, &runner, None).await.unwrap();
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(
+            calls.last().unwrap().1,
+            json!({"host":"box","label":"build","priority":0,"source":{"kind":"job","jobId":"j1"},"kind":"shell","shell":{"command":"make","cwd":"/src"}})
+        );
     }
     fn owner() -> Caller {
         Caller {

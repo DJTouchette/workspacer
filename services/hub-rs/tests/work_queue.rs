@@ -563,3 +563,107 @@ async fn any_places_on_the_best_eligible_host_and_explains_it() {
     hubs.local.shutdown().unwrap();
     hubs.remote.shutdown().unwrap();
 }
+
+#[tokio::test]
+async fn a_job_with_host_local_enqueues_and_records_where_it_went() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut options = Options::default();
+    options.work_queue_file = Some(directory.path().join("queue.json"));
+    options.jobs_file = Some(directory.path().join("jobs.json"));
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let client = Client::connect(&hub.handle()).await.unwrap();
+    client
+        .call("queue.setConfig", open_gate(json!({"maxShell":0})))
+        .await
+        .unwrap();
+    let job = client
+        .call(
+            "jobs.upsert",
+            json!({"name":"queued build","enabled":true,"host":"local","priority":3,
+                "trigger":{"kind":"manual"},
+                "action":{"kind":"shell","shell":{"command":"echo built"}}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(job["host"], "local");
+    assert_eq!(job["priority"], 3);
+    let history = |client: Client, id: Value| async move {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let runs =
+                    client.call("jobs.history", json!({"id":id})).await.unwrap()["runs"].clone();
+                if runs.as_array().is_some_and(|r| !r.is_empty()) {
+                    return runs;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap()
+    };
+    client
+        .call("jobs.run", json!({"id":job["id"]}))
+        .await
+        .unwrap();
+    let runs = history(client.clone(), job["id"].clone()).await;
+    assert_eq!(runs[0]["status"], "ok");
+    let detail = runs[0]["detail"].as_str().unwrap();
+    let id = detail
+        .strip_prefix("queued ")
+        .and_then(|rest| rest.strip_suffix(" on local"))
+        .unwrap_or_else(|| panic!("{detail}"));
+    let queued = item(&client, &json!(id)).await;
+    assert_eq!(queued["state"], "queued");
+    assert_eq!(queued["priority"], 3);
+    assert_eq!(
+        queued["source"],
+        json!({"kind":"job","jobId":job["id"],"origin":""})
+    );
+    // While that item waits, the next run is skipped rather than stacked.
+    client
+        .call("jobs.run", json!({"id":job["id"]}))
+        .await
+        .unwrap();
+    let skipped = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let runs = client
+                .call("jobs.history", json!({"id":job["id"]}))
+                .await
+                .unwrap()["runs"]
+                .clone();
+            if runs.as_array().unwrap().len() >= 2 {
+                return runs[0].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(skipped["status"], "skipped");
+    assert!(
+        skipped["detail"].as_str().unwrap().contains(id),
+        "{skipped}"
+    );
+    // Once it runs to the end, the job may queue again.
+    client
+        .call("queue.setConfig", json!({"maxShell":2}))
+        .await
+        .unwrap();
+    assert_eq!(
+        wait_state(&client, &json!(id), "done").await["detail"],
+        "built"
+    );
+    // A call action refuses a host.
+    assert!(
+        client
+            .call(
+                "jobs.upsert",
+                json!({"name":"bad","host":"local","trigger":{"kind":"manual"},
+                    "action":{"kind":"call","call":{"method":"sessions.list"}}}),
+            )
+            .await
+            .is_err()
+    );
+    hub.shutdown().unwrap();
+}

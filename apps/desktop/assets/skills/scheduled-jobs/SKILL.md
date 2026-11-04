@@ -29,6 +29,26 @@ from it, not from memory.
    `skipUnlessMatch` so a quiet run spends no model.
 4. Call `propose_job` with the spec.
 
+## Where it runs: `host` and `priority`
+
+By default a spawn or shell job runs inline on this hub the moment it fires.
+Two optional top-level fields send it through the host work queue instead,
+which starts it only when that machine has a free slot and is not under
+memory, CPU or disk pressure:
+
+- `host`: `"local"` (this machine, queued), a federation peer name (that
+  machine; it must be connected and dispatch-enabled), or `"any"` (the best
+  eligible host). Leave it out unless the user asked for queueing or for
+  another machine, and ask which machine rather than guessing a peer name.
+  A `call` action cannot take `host`.
+- `priority`: an integer, default 0, higher runs first. Only used with `host`.
+
+Context steps still run here first; their output goes into the prompt before
+the item is queued. A remote `cwd` must be one of that machine's directories.
+A shell job on a peer runs only if that peer was paired with its own host
+credential. A run's history reads `queued <item id> on <host>`, and a fire
+while the job's previous item is still queued or running is skipped.
+
 ## Change an existing job
 
 1. `list_jobs` and find the job; `job_history` if the change is about how it

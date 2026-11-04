@@ -108,6 +108,8 @@ fn canonical_spec_fields_and_kinds_remain_documented() {
         action: json!({"kind":"call","call":{"method":"sessions.list"}}),
         proposed_by: "author".into(),
         replaces: "target".into(),
+        host: "any".into(),
+        priority: 1,
         created_at: 1,
         updated_at: 1,
     };

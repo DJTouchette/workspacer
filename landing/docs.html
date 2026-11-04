@@ -885,6 +885,9 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
   "proposedBy": "",               // set by the hub on an agent's proposal;
                                   // while non-empty the job never runs
   "replaces": "",                 // on a proposal: the id of the job it would change
+  "host": "",                     // "" runs inline; local | any | a peer name
+                                  // submits a work-queue item (spawn/shell only)
+  "priority": 0,                  // queue priority, higher first; only with host
   "trigger": {
     "kind": "interval",           // interval | daily | once | manual
     "everyMinutes": 60,           // interval: >= 1
@@ -919,9 +922,14 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <p>Fill in only the branch you're using: one <code>trigger.kind</code> and its fields, one <code>action.kind</code> and its payload. A context step likewise carries <em>either</em> <code>shell</code> or <code>call</code>, matching its own <code>kind</code>. The rules the hub enforces:</p>
 <ul>
 <li>a job needs a <code>name</code>; a spawn needs <code>cwd</code> and <code>prompt</code>; a shell needs a <code>command</code>; a call needs a <code>method</code>;</li>
-<li>a <code>call</code>, as an action or as a context step, may not target <code>jobs.*</code> (that would recurse into the job system itself) or <code>hub:&lt;peer&gt;/</code> (a job must not execute on another machine; job state doesn't federate);</li>
-<li>at most four context steps, and a <code>skipUnlessMatch</code> that doesn't compile is rejected.</li>
+<li>a <code>call</code>, as an action or as a context step, may not target <code>jobs.*</code> (that would recurse into the job system itself) or <code>hub:&lt;peer&gt;/</code> (job state doesn't federate; to run a spawn or shell job on another machine, set <code>host</code> as described <a href="#jobs-queue">below</a>);</li>
+<li>at most four context steps, and a <code>skipUnlessMatch</code> that doesn't compile is rejected;</li>
+<li><code>host</code> is <code>""</code>, <code>local</code>, <code>any</code> or a federation peer name (letters, digits, <code>-</code>, <code>_</code>), <code>priority</code> is an integer, and a <code>call</code> action may not carry a <code>host</code>.</li>
 </ul>
+
+<h3 id="jobs-queue">running a job through the work queue</h3>
+<p>By default a job runs <em>inline</em>, the moment it fires. Set <code>host</code> on a spawn or shell job and it goes through the host <strong>work queue</strong> instead, which starts work only when a slot of its kind is free and the machine is not under memory, CPU or disk pressure. <code>"host": "local"</code> queues it on this machine; a peer name queues it on that federation peer (it must be configured, connected and dispatch-enabled); <code>"any"</code> picks the best eligible host, the same way <code>queue.targets</code> ranks them. <code>priority</code> (default 0) orders it in that queue, higher first.</p>
+<p>Context steps still run here, first, and their output is rendered into the prompt before the item is submitted, so the guards still cost nothing when there is nothing to do. The run's history row then reads <code>queued &lt;item id&gt; on &lt;host&gt;</code>; the item itself is followed in the Hosts view. While an item this job submitted is still queued or running, the next fire records <strong>skipped</strong>, and if the peer holding it cannot be asked, that counts as still running. A submission whose outcome is unknown (the peer dropped mid-call) is reported as an error and is never retried by itself. A shell job queued on a peer is accepted there only when that peer was paired with its own host credential.</p>
 <p>Specs are stored by the hub at <code><em>&lt;config-dir&gt;</em>/workspacer-hub/jobs.json</code>, mode <code>0600</code>, with run history beside it in <code>jobs-history.json</code>. They do <em>not</em> live in your library or your layout. See <a href="#configuration">where everything goes</a> for why the hub keeps its own directory. To install a spec written elsewhere: have an agent propose it, run <code>workspacer jobs add -f &lt;file&gt;</code>, or edit <code>jobs.json</code> yourself, which is the next section.</p>
 
 <h3>editing jobs.json by hand</h3>
