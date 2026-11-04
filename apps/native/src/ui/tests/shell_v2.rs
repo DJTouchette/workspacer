@@ -330,6 +330,9 @@ fn the_model_chip_opens_a_popover_not_a_page(cx: &mut TestAppContext) {
     open_v2(&workspace, &mut visual, view, Design::V2);
     // An unknown access mode is not shown, nor offered.
     assert!(visual.debug_bounds("title-access").is_none());
+    // r3-composer: "a" waits on a decision, which holds the composer's
+    // slot; "Reply instead…" opens the composer and its model chip.
+    click(&mut visual, "composer-reply");
     click(&mut visual, "composer-model");
     assert!(visual.debug_bounds("model-popover").is_some());
     assert!(visual.debug_bounds("popover-access-unknown").is_none());

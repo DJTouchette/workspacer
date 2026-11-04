@@ -84,9 +84,10 @@ fn inside(visual: &mut VisualTestContext, inner: &'static str, outer: &'static s
     a.top() >= b.top() && a.bottom() <= b.bottom() && a.left() >= b.left() && a.right() <= b.right()
 }
 
-/// The approval is the "waiting on you" card above the composer (r2): a
-/// question headline and where/why line, its buttons keep their selectors
-/// and card binding, the number keys pick them, and the composer yields.
+/// The approval is the "waiting on you" card in the composer's slot (R3.2):
+/// a question headline and where/why line, its buttons keep their
+/// selectors and card binding, the number keys pick them, and the composer
+/// collapses to one "Reply instead…" line that opens into the field.
 #[gpui::test]
 fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
@@ -95,18 +96,37 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
     show(&workspace, &mut visual, bash_approval());
     effects(&mut commands);
     assert!(visual.debug_bounds("approval-card").is_some());
-    assert!(!inside(&mut visual, "approval-card", "chat-composer"));
     assert!(inside(&mut visual, "approve", "approval-card"));
     assert!(inside(&mut visual, "headline-code", "approval-card"));
     assert!(inside(&mut visual, "waiting-context", "approval-card"));
+    // One input at most: the composer is the reply line, under the card.
+    assert!(visual.debug_bounds("chat-composer").is_none());
+    let (card, reply) = (
+        visual.debug_bounds("approval-card").unwrap(),
+        visual.debug_bounds("composer-reply").unwrap(),
+    );
+    assert!(reply.top() >= card.bottom());
     workspace.read_with(&visual, |this, _| {
         assert_eq!(
             this.composer_ui.placeholder,
-            Some(super::super::composer_v2::composer_placeholder(Some(
-                super::super::composer_v2::Decision::Approval
-            )))
+            Some(super::super::composer_v2::REPLY_INSTEAD)
         )
     });
+    // Always allow says its scope (this session); Deny's menu holds the note.
+    tap(&mut visual, "deny-menu");
+    assert!(visual.debug_bounds("deny-with-note").is_some());
+    tap(&mut visual, "deny-with-note");
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.extras.deny_open);
+        assert!(!this.composer_ui.deny_menu);
+    });
+    visual.update(|_, cx| {
+        workspace.update(cx, |this, cx| {
+            this.extras.deny_open = false;
+            cx.notify()
+        })
+    });
+    visual.run_until_parked();
     // No v1 hint row or notch; the card says what is waited on.
     assert!(visual.debug_bounds("composer-send-hint").is_none());
     assert!(visual.debug_bounds("composer-notch").is_none());
@@ -163,7 +183,33 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
         [Action::DenyWithNote(note, Some(card))] if note == "only the session tests" && card == "req-1"));
 }
 
-/// Details lists where, who and why, not the raw tool input.
+/// "Reply instead…" opens the composer under the card, and it stays open
+/// (its chips usable) while the same decision waits, even unfocused.
+#[gpui::test]
+fn reply_instead_opens_the_composer_under_a_decision(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(800.)));
+    v2(&workspace, &mut visual);
+    show(&workspace, &mut visual, bash_approval());
+    effects(&mut commands);
+    focus_root(&workspace, &mut visual);
+    visual.update(|window, _| window.refresh());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("chat-composer").is_none());
+    tap(&mut visual, "composer-reply");
+    assert!(visual.debug_bounds("chat-composer").is_some());
+    focus_root(&workspace, &mut visual);
+    visual.update(|window, _| window.refresh());
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.composer_ui.reply_open.is_some())
+    });
+    assert!(visual.debug_bounds("composer-model").is_some());
+}
+
+/// R3.2: what the request would run shows inline, with no Details toggle:
+/// a short command is the headline, the folder the context line, and what
+/// they cannot show whole sits in the inset as facts, not raw input.
 #[gpui::test]
 fn approval_details_read_as_facts(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
@@ -171,20 +217,28 @@ fn approval_details_read_as_facts(cx: &mut TestAppContext) {
     v2(&workspace, &mut visual);
     show(&workspace, &mut visual, bash_approval());
     effects(&mut commands);
+    assert!(visual.debug_bounds("approval-toggle").is_none());
     assert!(visual.debug_bounds("approval-details").is_none());
-    tap(&mut visual, "approval-toggle");
-    assert!(visual.debug_bounds("approval-details").is_some());
-    // Command, Folder, Host, Agent, Reason.
-    for ix in 0..5 {
-        let selector: &'static str = Box::leak(format!("approval-fact-{ix}").into_boxed_str());
-        assert!(visual.debug_bounds(selector).is_some(), "{selector}");
-    }
-    assert!(visual.debug_bounds("approval-fact-5").is_none());
+    show(
+        &workspace,
+        &mut visual,
+        with(
+            json!({"pendingRequestId":"req-2","pendingApproval":{"toolName":"Bash",
+            "toolInput":{"command":"cargo test --locked \\\n  --features ui-tests","timeout":120000},
+            "requestId":"req-2"}}),
+        ),
+    );
+    assert!(inside(&mut visual, "approval-details", "approval-card"));
+    // Command (two lines), Timeout.
+    assert!(visual.debug_bounds("approval-fact-0").is_some());
+    assert!(visual.debug_bounds("approval-fact-1").is_some());
+    assert!(visual.debug_bounds("approval-fact-2").is_none());
 }
 
-/// Send when idle; while working, Queue and a split Send now whose menu
-/// holds Steer (and Queue again), and Tab no longer queues from inside the
-/// text.
+/// R3.2: one primary in one place whose label changes. Send when idle;
+/// while working Stop · Esc with nothing drafted, then Queue (the send key:
+/// after the current step) with Send now and After this turn in its menu.
+/// Tab stays in the text.
 #[gpui::test]
 fn the_send_button_sends_now_while_working_and_its_menu_steers(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
@@ -198,9 +252,16 @@ fn the_send_button_sends_now_while_working_and_its_menu_steers(cx: &mut TestAppC
     show(&workspace, &mut visual, working);
     effects(&mut commands);
     workspace.read_with(&visual, |this, _| assert!(this.composer_busy()));
-    assert!(visual.debug_bounds("composer-send-menu").is_some());
+    // Nothing drafted: the primary is Stop, and Esc stops.
     assert!(visual.debug_bounds("composer-stop").is_some());
+    assert!(visual.debug_bounds("composer-send-menu").is_none());
+    draft(&workspace, &mut visual, "");
+    visual.simulate_keystrokes("escape");
+    assert!(matches!(acts(&mut commands).as_slice(), [Action::Stop]));
     draft(&workspace, &mut visual, "after this turn");
+    visual.update(|window, _| window.refresh());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("composer-send-menu").is_some());
     visual.simulate_keystrokes("tab");
     assert!(
         acts(&mut commands).is_empty(),
@@ -213,18 +274,15 @@ fn the_send_button_sends_now_while_working_and_its_menu_steers(cx: &mut TestAppC
         [Action::Queue(Op::Add(text))] if text == "after this turn"));
     workspace.read_with(&visual, |this, _| assert!(!this.composer_ui.send_menu));
     draft(&workspace, &mut visual, "look now");
-    tap(&mut visual, "composer-send");
+    tap(&mut visual, "composer-send-menu");
+    tap(&mut visual, "composer-send-now");
     assert!(matches!(acts(&mut commands).as_slice(),
         [Action::SendNow(text)] if text == "look now"));
+    // Queue itself is the send key's steer: it runs after the current step.
     draft(&workspace, &mut visual, "steer it");
-    tap(&mut visual, "composer-send-menu");
-    tap(&mut visual, "composer-steer");
+    tap(&mut visual, "composer-send");
     assert!(matches!(acts(&mut commands).as_slice(),
         [Action::Send(text)] if text == "steer it"));
-    draft(&workspace, &mut visual, "later");
-    tap(&mut visual, "composer-queue-button");
-    assert!(matches!(acts(&mut commands).as_slice(),
-        [Action::Queue(Op::Add(text))] if text == "later"));
 }
 
 /// A plan waiting while the account is out of its window: ONE card (r2)

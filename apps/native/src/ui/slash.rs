@@ -254,8 +254,9 @@ impl Workspace {
                             .text_color(rgb(p.roles.text_secondary))
                             .child(description),
                     )
+                    // R3.2: the one faint keycap hint, never a filled key.
                     .when(ix == highlight, |d| {
-                        d.child(super::primitives::kbd("Tab", &p))
+                        d.child(super::primitives::keycap_hint("Tab", false, &p))
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.slash_insert(&command, window, cx)

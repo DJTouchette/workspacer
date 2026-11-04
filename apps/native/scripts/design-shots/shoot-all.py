@@ -96,14 +96,19 @@ def shots():
         [("click", "SIDEBAR_ROW_CHILD"), ("sleep", 1.5)])
     add("background-tasks", "Background tasks panel (dev server log, deploy, failed tests)",
         [("move", "TITLE_PILL"), ("click", "TITLE_TASKS_BADGE"), ("sleep", 2)])
-    add("approval-details", "Bash permission prompt with its details expanded",
-        [("click", "APPROVAL_DETAILS")])
+    # r3-composer: v2 shows the details inline (no toggle); the shot opens
+    # Deny's split menu instead.
+    add("approval-details", "Bash permission prompt with its details expanded (v2: Deny's menu open)",
+        [("design", [("click", "APPROVAL_DETAILS")], [("click", "APPROVAL_DENY_MENU"), ("sleep", 0.5)])])
     add("question-prompt", "Pending AskUserQuestion picker (three questions)", fixture="questions")
     add("plan-and-limit", "ExitPlanMode plan approval plus spent 5-hour usage window", fixture="plan")
     add("task-log", "Background task log: the dev server's output",
         [("move", "TITLE_PILL"), ("click", "TITLE_TASKS_BADGE"), ("sleep", 2), ("click", "TASK_ROW_DEV"), ("sleep", 2)])
-    add("deny-with-note", "Approval dock: Deny with note", [("click", "APPROVAL_DENY_NOTE"), ("sleep", 0.5),
-        ("type", "Run only the session tests, not the whole suite.")])
+    # r3-composer: v2's Deny with note lives in Deny's split menu.
+    add("deny-with-note", "Approval dock: Deny with note",
+        [("design", [("click", "APPROVAL_DENY_NOTE")],
+          [("click", "APPROVAL_DENY_MENU"), ("sleep", 0.5), ("click", "APPROVAL_DENY_NOTE")]),
+         ("sleep", 0.5), ("type", "Run only the session tests, not the whole suite.")])
     add("file-viewer", "File viewer with README.md open from a transcript link",
         [("click", "README_LINK"), ("sleep", 2)])
     add("terminal", "Session terminal panel", [("key", "Escape"), ("key", "ctrl+grave"), ("sleep", 2)])
@@ -137,8 +142,11 @@ def shots():
     add("settings-tokyo-night", "Settings: Appearance, Tokyo Night", nav("s"), theme="tokyo-night")
     # Shell & navigation (design v2 surfaces; v1 shows its own equivalents).
     add("title-hover", "Title capsule hovered: model chip, access, background work", [("move", "TITLE_PILL")])
+    # r3-composer: under v2 the pending approval holds the composer's slot,
+    # so "Reply instead…" opens the composer (and its model chip) first.
     add("model-popover", "Model, effort and access from the title's model chip",
-        [("move", "TITLE_PILL"), ("click", "TITLE_MODEL"), ("sleep", 1.5)])
+        [("design", [("move", "TITLE_PILL")], [("click", "COMPOSER_REPLY"), ("sleep", 0.5)]),
+         ("click", "TITLE_MODEL"), ("sleep", 1.5)])
     add("shortcuts", "Keyboard cheat sheet (? in Normal mode)", [("key", "Escape"), ("key", "question"), ("sleep", 0.8)])
     add("sidebar-compact", "Compact session list (28px rows)", settings={"sidebar_compact": True})
     add("sidebar-row-hover", "A session row's actions on hover", [("move", "SIDEBAR_ROW_BUS")])
@@ -205,6 +213,18 @@ def shots():
     add("transcript-tools", "Transcript: a turn's tool calls as one-line event rows",
         [("design", [("wheel", 6, 1000, 400)],
           [("key", "Escape"), ("key", "ctrl+o"), ("sleep", 1.0), ("wheel", 14, 1000, 400)])])
+    # r3-composer: the decision holds the composer's slot; "Reply instead…"
+    # opens it, a typed answer turns the question's Send primary, and while
+    # the agent works a draft makes the primary Queue (its menu open).
+    add("composer-reply-open", "Approval pending: the composer opened from Reply instead…",
+        [("click", "COMPOSER_REPLY"), ("sleep", 0.5), ("type", "Run only the UI tests first")])
+    add("composer-question-answered", "The release question with an answer typed (Send enabled)",
+        [("click", "SIDEBAR_ROW_QUESTION"), ("sleep", 2), ("click", "QUESTION_ANSWER"), ("type", "release/0.9")])
+    add("composer-queue-menu", "Agent working with a draft: Queue and its menu (Send now, After this turn)",
+        [("click", "SIDEBAR_ROW_BUS"), ("sleep", 1.5)]
+        + send("Try a bounded queue per subscriber and re-run the bus tests.")
+        # (Fast: the fixture's reply streams for about three seconds.)
+        + [("type", "Also", 10), ("click", "COMPOSER_SEND_MENU")], capture_after=0.2)
     return s
 
 
@@ -427,7 +447,12 @@ LANDMARKS = {
     "TITLE_TASKS_BADGE": lambda shot: (1160 if shot.get("v2") else 1078, 30),  # background work
     # v1: the approval card above the composer; v2: the strip on the composer.
     "APPROVAL_DETAILS": lambda shot: (1289, 805) if shot["v2"] else (1361, 749),  # r2-systems: the approval is a card above the composer
-    "APPROVAL_DENY_NOTE": lambda shot: (1032, 869) if shot["v2"] else (910, 795),
+    # r3-composer: v2's Deny with note is the first item of Deny's menu.
+    "APPROVAL_DENY_NOTE": lambda shot: (860, 960) if shot["v2"] else (910, 795),
+    "APPROVAL_DENY_MENU": lambda shot: (948, 920),   # r3-composer: Deny's chevron (v2)
+    "COMPOSER_REPLY": lambda shot: (466, 970),       # r3-composer: "Reply instead…" under the card (v2)
+    "QUESTION_ANSWER": lambda shot: (900, 884),      # r3-composer: the release question's answer field (v2)
+    "COMPOSER_SEND_MENU": lambda shot: (1482, 960),  # r3-composer: Queue's chevron while working (v2)
     "RAIL_FIRST_MARK": lambda shot: (35, 205 if shot.get("v2") else 219),  # first session in the rail
     "README_LINK": lambda shot: (651, 629) if shot["v2"] else (591, 497),  # README.md link, last assistant message
     "TALL_README_LINK": lambda shot: (228, 1229) if shot["v2"] else (169, 1097),  # same link, 1000x1600 tall layout

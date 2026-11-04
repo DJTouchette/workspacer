@@ -403,3 +403,16 @@ header), `files_width`, `slide_ms`, `terminal_line` and `cursor_alpha`.
 | Composer | While a decision waits it yields: `wash.yielded` opacity until focused or typed in, placeholder from `composer_placeholder`, send drops to secondary. Idle: "Send". Working: "Queue" (secondary, Tab) and a split "Send now" whose menu holds Steer (Enter) and Queue with explanations. The slash menu floats in a popover above the composer (deferred), never between a decision and the input. The model chip shows the human name, raw id on hover |
 | Welcome | One 24px question ("What should we work on in workspacer?"), no wordmark or "Your sessions" capsule. Agents read `Workspace::agent_setup` (`AgentSetup`: Ready / Needs sign-in / Not installed / Not checked), the same source and words as Setup, with the next step and a copyable install or sign-in command |
 | Syntax | `syntax_v2` keeps every token ≥ 24 RGB units from the four status roles (`v2_syntax_never_borrows_a_status_colour`) |
+
+### Round 3: composer and decisions (r3-composer)
+
+Supersedes the Approval and Composer rows above.
+
+| | |
+|---|---|
+| Decision in the composer slot | `Workspace::decision_takes_composer` (approval, plan, or a structured question set; a usage limit alone does not). The card sits where the composer was; the composer collapses to one line, "Reply instead…" (`composer-reply`), that opens into the field. It stays open for that session and decision set (`ComposerUi::reply_open`) or while focused or holding a draft. Never a second input under a card |
+| Approval | Allow Primary, each "Always allow" Secondary with its exact scope (`always_copy`: `Bash(cargo test:*)` → "Always allow cargo test commands this session", tooltip says until when and what matches), Deny a Secondary split (`render_deny_split`, chevron `deny-menu`) whose menu holds "Deny with note…" (`deny-with-note`, key 4). Keys are trailing `keycap_hint`s. No Details toggle: the context line is reason · whole folder; `approval_facts` adds only what the headline cannot show whole (multi-line/long commands, other inputs). No "on Workspace hub" |
+| Questions | Options lead with a radio / check box and trail their number as a `keycap_hint`. Next / Send answer are Primary and enabled as soon as an answer is chosen or typed |
+| Primary slot | `send_slot(working, steering, deciding, draft)` → `SendSlot::{Send, Queue, Stop}`: "Send" idle; "Queue" (tooltip "Runs after the current step", the send key) with Send now and After this turn in its menu; "Stop · Esc" while working with nothing drafted (`stop_on_escape`, from `normal_mode`; not with modal keys on, where Esc means Normal mode and the hint is dropped). A reply under a decision sends as Secondary |
+| Context | `gauge::context_text_v2`: "Context 42%" in tertiary text, amber from 80%, red at 100% (`level_color`); same `context-meter` id |
+| Slash menu | Highlighted row's Tab is a `keycap_hint` |
