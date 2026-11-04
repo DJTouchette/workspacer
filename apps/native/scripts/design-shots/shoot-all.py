@@ -225,6 +225,16 @@ def shots():
         + send("Try a bounded queue per subscriber and re-run the bus tests.")
         # (Fast: the fixture's reply streams for about three seconds.)
         + [("type", "Also", 10), ("click", "COMPOSER_SEND_MENU")], capture_after=0.2)
+    # r3-fleet: the Fleet view (Ctrl+Shift+F, design v2): every live session
+    # as a tile. The grid with the focus moved onto a working tile, the
+    # approval tile focused (its Allow is the one primary, key 1), nothing
+    # waiting on the user, and Light.
+    fleet = [("key", "ctrl+shift+f"), ("sleep", 1.5)]
+    add("fleet-grid", "Fleet: the live sessions as a grid, focus moved to a working tile",
+        fleet + [("key", "Down"), ("sleep", 0.5)])
+    add("fleet-focused-approval", "Fleet: the approval tile focused, Allow 1 / Always allow 2 / Deny 3", fleet)
+    add("fleet-all-clear", "Fleet: nothing waits on the user, only working tiles", fleet, fixture="clear")
+    add("fleet-light", "Fleet, Light theme", fleet, theme="light")
     return s
 
 

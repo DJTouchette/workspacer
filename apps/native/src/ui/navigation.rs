@@ -21,6 +21,9 @@ pub(super) enum Screen {
     Handoff,
     /// The session's linked pull request and its review threads.
     PullRequest,
+    // r3-fleet
+    /// Every live session as a grid of tiles (design v2).
+    Fleet,
 }
 
 impl Workspace {
@@ -431,13 +434,17 @@ impl Workspace {
                     viewer,
                     self.vim() && self.focus.is_focused(window), // r2-shell
                     self.design().is_v2(),
+                    self.fleet_keys(window), // r3-fleet
                 ) {
-                    (true, _, _) => "FileViewer",
-                    (false, true, false) => "Workspace VimNormal",
-                    (false, false, false) => "Workspace",
+                    (true, _, _, _) => "FileViewer",
+                    (false, true, false, _) => "Workspace VimNormal",
+                    (false, false, false, _) => "Workspace",
                     // area-shell: v2's keys (`g n`, `?`) bind under `DesignV2`.
-                    (false, true, true) => "Workspace VimNormal DesignV2",
-                    (false, false, true) => "Workspace DesignV2",
+                    (false, true, true, false) => "Workspace VimNormal DesignV2",
+                    (false, false, true, false) => "Workspace DesignV2",
+                    // r3-fleet: the grid's keys bind under `Fleet`.
+                    (false, true, true, true) => "Workspace VimNormal DesignV2 Fleet",
+                    (false, false, true, true) => "Workspace DesignV2 Fleet",
                 },
             )
             .track_focus(&self.focus)
@@ -477,6 +484,8 @@ impl Workspace {
             // area-composer: number keys on a v2 approval strip.
             .on_key_down(cx.listener(Self::decision_keys))
             .on_key_down(cx.listener(Self::shell_keys))
+            // r3-fleet
+            .map(|shell| self.fleet_actions(shell, cx))
             .on_action(cx.listener(Self::send))
             .on_action(cx.listener(Self::send_now))
             .on_action(cx.listener(Self::queue_message))

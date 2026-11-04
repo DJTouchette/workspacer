@@ -122,6 +122,8 @@ pub(super) fn fuzzy(query: &str, text: &str) -> Option<(i32, Vec<Range<usize>>)>
 enum Act {
     NewSession,
     NextNeedsYou,
+    // r3-fleet
+    Fleet,
     Changes,
     Files,
     Terminal,
@@ -316,6 +318,15 @@ impl Workspace {
                 Some("Alt N"),
                 IconName::ArrowRight,
                 "inbox approval question waiting jump",
+                true,
+            ),
+            // r3-fleet
+            (
+                Act::Fleet,
+                "Fleet: every session at a glance",
+                Some(m("Ctrl Shift F", "⌘ Shift F")),
+                IconName::Bot,
+                "grid overview supervise agents tiles dashboard all",
                 true,
             ),
             (
@@ -663,6 +674,7 @@ impl Workspace {
             Target::Action(act) => match act {
                 Act::NewSession => self.show_new_session(window, cx),
                 Act::NextNeedsYou => self.next_needs_you(window, cx),
+                Act::Fleet => self.open_fleet(window, cx),
                 Act::Changes => self.open_feature(Screen::Changes, window, cx),
                 Act::Files => self.open_selected_editor(window, cx),
                 Act::Terminal => self.toggle_terminal(window, cx),

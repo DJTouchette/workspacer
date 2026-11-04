@@ -66,6 +66,8 @@ mod shell;
 mod palette;
 // area-transcript
 mod transcript_v2;
+// r3-fleet
+mod fleet;
 use chrome::ControlTextStyle;
 pub(crate) use chrome::custom_caption;
 use gpui::{
@@ -782,6 +784,31 @@ pub fn bind_keys(cx: &mut App) {
             palette::PaletteClose,
             Some("CommandPalette > Input"),
         ),
+        // r3-fleet: Ctrl+Shift+F opens the Fleet anywhere under v2; its grid
+        // keys hold only while it is on screen with nothing else focused
+        // (the shell adds `Fleet` then), after the modal keys so they win.
+        KeyBinding::new(
+            "ctrl-shift-f",
+            fleet::ShowFleet,
+            Some("Workspace && DesignV2"),
+        ),
+        KeyBinding::new(
+            "cmd-shift-f",
+            fleet::ShowFleet,
+            Some("Workspace && DesignV2"),
+        ),
+        KeyBinding::new("left", fleet::FleetLeft, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("h", fleet::FleetLeft, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("right", fleet::FleetRight, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("l", fleet::FleetRight, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("up", fleet::FleetUp, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("k", fleet::FleetUp, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("down", fleet::FleetDown, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("j", fleet::FleetDown, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("enter", fleet::FleetOpen, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("1", fleet::FleetKey1, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("2", fleet::FleetKey2, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("3", fleet::FleetKey3, Some(fleet::KEY_CONTEXT)),
     ]);
 }
 
@@ -933,6 +960,9 @@ pub struct Workspace {
     // area-composer
     /// The v2 composer's split menu and other dock state.
     composer_ui: composer_v2::ComposerUi,
+    // r3-fleet
+    /// The Fleet view's focused tile and filter.
+    fleet: fleet::FleetUi,
 }
 
 impl Workspace {
@@ -1231,6 +1261,7 @@ impl Workspace {
             rendered_rows: Default::default(),
             // area-composer
             composer_ui: Default::default(),
+            fleet: Default::default(),
         }
     }
 
@@ -2130,7 +2161,11 @@ impl Render for Workspace {
                 | Screen::PullRequest => self.render_feature(window, cx).into_any_element(),
                 Screen::Projects => self.render_projects(window, cx).into_any_element(),
                 Screen::Settings => self.render_settings(window, cx).into_any_element(),
-                Screen::Conversation => self
+                // r3-fleet: v2 only; v1 never opens it.
+                Screen::Fleet if self.design().is_v2() => {
+                    self.render_fleet(window, cx).into_any_element()
+                }
+                Screen::Fleet | Screen::Conversation => self
                     .render_conversation(narrow, compact, window, cx)
                     .into_any_element(),
             }

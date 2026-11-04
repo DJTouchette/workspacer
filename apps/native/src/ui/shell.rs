@@ -322,7 +322,7 @@ impl Workspace {
     }
 
     /// What a session row shows as its status (stalled is a fault).
-    fn session_kind(&self, session: &Session, now: i64) -> StatusKind {
+    pub(super) fn session_kind(&self, session: &Session, now: i64) -> StatusKind {
         if !self.view.connected {
             return StatusKind::Idle;
         }
@@ -867,6 +867,20 @@ impl Workspace {
                     d.on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx)))
                 }),
             )
+            // r3-fleet: every live session as a grid of tiles.
+            .child(self.destination_to(
+                "nav-fleet",
+                IconName::Bot,
+                "Fleet",
+                Some(if cfg!(target_os = "macos") {
+                    "⌘ Shift F"
+                } else {
+                    "Ctrl Shift F"
+                }),
+                Screen::Fleet,
+                None,
+                cx,
+            ))
             .child(self.destination_to(
                 "nav-projects",
                 IconName::Folder,
@@ -1591,7 +1605,7 @@ impl Workspace {
 
     /// How long a working session has been at its turn: the turn clock
     /// when this window keeps one, else since it started.
-    fn working_elapsed(&self, session: &Session, now: i64) -> Option<String> {
+    pub(super) fn working_elapsed(&self, session: &Session, now: i64) -> Option<String> {
         self.turn_clocks
             .get(&session.id)
             .and_then(|clock| clock.elapsed_label(now))
@@ -2475,6 +2489,15 @@ impl Workspace {
                     }),
                 )
             })
+            // r3-fleet
+            .child(self.nav_icon(
+                "fleet-rail",
+                IconName::Bot,
+                "Fleet",
+                Some(if mac { "⌘ Shift F" } else { "Ctrl Shift F" }),
+                Screen::Fleet,
+                cx,
+            ))
             .child(self.nav_icon(
                 "projects-rail",
                 IconName::Folder,
@@ -2662,6 +2685,11 @@ impl Workspace {
                     ),
                     ("Keyboard shortcuts", m("Ctrl /", "⌘ /")),
                     ("Next session that needs you", "Alt N"),
+                    // r3-fleet
+                    (
+                        "Fleet: every session at a glance",
+                        m("Ctrl Shift F", "⌘ Shift F"),
+                    ),
                     ("Next / previous session", "Alt ↓, Alt ↑"),
                     ("New session", m("Ctrl N", "⌘ N")),
                     ("Projects", m("Ctrl P", "⌘ P")),

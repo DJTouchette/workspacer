@@ -416,3 +416,20 @@ Supersedes the Approval and Composer rows above.
 | Primary slot | `send_slot(working, steering, deciding, draft)` → `SendSlot::{Send, Queue, Stop}`: "Send" idle; "Queue" (tooltip "Runs after the current step", the send key) with Send now and After this turn in its menu; "Stop · Esc" while working with nothing drafted (`stop_on_escape`, from `normal_mode`; not with modal keys on, where Esc means Normal mode and the hint is dropped). A reply under a decision sends as Secondary |
 | Context | `gauge::context_text_v2`: "Context 42%" in tertiary text, amber from 80%, red at 100% (`level_color`); same `context-meter` id |
 | Slash menu | Highlighted row's Tab is a `keycap_hint` |
+
+## Fleet (r3-fleet, R3.7)
+
+`ui/fleet.rs`, tests in `ui/tests/fleet.rs`. Design v2 only.
+
+| | |
+|---|---|
+| Reach | Sidebar destination **Fleet** (`nav-fleet`, rail `fleet-rail`), palette "Fleet: every session at a glance", **Ctrl+Shift+F** / ⌘ Shift F (`fleet::ShowFleet`, `Workspace && DesignV2`). `Screen::Fleet`; Esc goes back like any page |
+| Data | The sidebar's own: `visible_sessions`, `session_bucket`, `session_kind`, `inbox_reason`, `native_children`, `tasks`, `telemetry.last_tool_*`, `plan`, `context`. No new hub calls. A session that is not open has no transcript here, so its event lines are what its row reports |
+| Order | Needs you (oldest wait first), Working (hub order), then Idle and Ended (most recent first). The default filter, **Active**, shows Needs you + Working; **All** adds the rest (segmented control with neutral `count_badge`s) |
+| Grid | `fleet::columns(room, tile_min, space.lg, columns_max)`: 3 / 2 / 1 columns (3×2, 3×3 at 1600×1000 with the sidebar open), capped at `fleet().grid_max`. `Tokens::fleet()`: `tile_min`, `tile_height` (rows stretch to their tallest), `columns_max` 3, `grid_max`, `event_lines` 3, `event_row` |
+| Tile | Title (14/600, truncates) + time (elapsed while Working, else age); `StatusBadge` · project · model · "Context 42%" (amber from 80%); up to 3 `EventRow`s (named faults first: a subagent not responding, a failed command; then the last tool, the plan step, subagents working, background tasks); the ask under a hairline. Waiting tiles are `attention_frame`s; the rest a `card_border` hairline on `surface` |
+| Ask | Approval: `approval_headline` + its description, `keyed_button`s Allow 1 · Always allow 2 (scope in its tooltip, `always_copy`) · Deny 3 (`strip_keys`, no note). Plan: "Review plan 1"; question: "Answer 1" (both open the session). Only the **focused** tile's first action is Primary, so the one filled button is where 1 goes |
+| Keys | Under the `Fleet` key context, which the shell adds only while the Fleet is on screen and the root has focus (fields keep their letters): ← → ↑ ↓ / h j k l (`fleet::step`, no wrap), Enter opens, 1 / 2 / 3 answer the focused tile. Focus is kept by session id (`FleetUi::focus`) and drawn as the `roles.focus` ring |
+| Acting | The hub acts on the selected session only, so a tile's decision sends `Select(id)` then `Act { id, … }` with the tile's card; the Fleet stays on screen |
+| Empty | No Needs you: a quiet "All clear · nothing is waiting on you" line over the working tiles (`fleet-all-clear`); nothing active: `empty_state` "All clear" with "Show all n" (`fleet-empty`) |
+| Shots | `fleet-grid`, `fleet-focused-approval`, `fleet-all-clear`, `fleet-light` |
