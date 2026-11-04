@@ -199,6 +199,7 @@
     "push.test",
     "queue.config",
     "queue.list",
+    "queue.targets",
     "remote.pairingInfo",
     "remote.sharingInfo",
     "replay.close",

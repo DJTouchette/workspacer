@@ -16,7 +16,7 @@ use std::{
 };
 use tokio::task::JoinSet;
 
-pub const FORWARD_TOPICS: [&str; 2] = ["agent.*", "workflow.*"];
+pub const FORWARD_TOPICS: [&str; 4] = ["agent.*", "workflow.*", "host.*", "queue.*"];
 
 pub fn load_peers(path: &std::path::Path) -> Result<Vec<Peer>> {
     let bytes = match std::fs::read(path) {
@@ -526,6 +526,26 @@ mod tests {
         assert!(forwarded.id.is_empty());
         assert!(forward_event("other", forwarded).is_none());
         assert!(forward_event("worker", Event::new("layout.changed", "hub", json!({}))).is_none());
+        // The forwarded set is pinned: a topic joins it only on purpose.
+        assert_eq!(
+            FORWARD_TOPICS,
+            ["agent.*", "workflow.*", "host.*", "queue.*"]
+        );
+        for topic in ["host.resources", "queue.changed"] {
+            let forwarded = forward_event("worker", Event::new(topic, "queue", json!({}))).unwrap();
+            assert_eq!(
+                forwarded.hub, "worker",
+                "{topic} carries the configured peer name"
+            );
+        }
+        for topic in [
+            "hub.peer.connected",
+            "jobs.changed",
+            "notify.post",
+            "config.changed",
+        ] {
+            assert!(forward_event("worker", Event::new(topic, "hub", json!({}))).is_none());
+        }
     }
     #[test]
     fn peer_marker_cannot_be_shadowed_by_existing_query_or_fragment() {

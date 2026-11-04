@@ -320,6 +320,10 @@ async fn submit_stamps_identity_and_cancel_honours_the_submitter() {
             hub.handle(),
             Arc::new(Monitor::new(directory.path().into())),
             Limits::Memory(Mutex::new(json!({}))),
+            Wiring {
+                host_fingerprint: "host-fp".into(),
+                execution: None,
+            },
         )
         .unwrap()
     };
@@ -341,9 +345,36 @@ async fn submit_stamps_identity_and_cancel_honours_the_submitter() {
     assert_eq!(remote.source.job_id, "nightly");
     assert_eq!(remote.source.origin, "laptop");
     assert_eq!(remote.submitter, "peer-fp");
-    // Shell is owner-only; a federated host token is not the owner.
+    // Shell is host code: a federated operator token is refused...
     let shell = json!({"kind":"shell","shell":{"command":"true"}});
-    assert!(queue.submit_local(&peer, &shell).is_err());
+    let refused = queue.submit_local(&peer, &shell).unwrap_err().to_string();
+    assert!(refused.contains("host credential"), "{refused}");
+    // ...and so is full access for a spawn.
+    let mut full = spawn.clone();
+    full["spawn"]["fullAccess"] = json!(true);
+    assert!(queue.submit_local(&peer, &full).is_err());
+    // A peer paired with this hub's own host credential may submit both.
+    let mut paired = peer.clone();
+    paired.token_id = "host-fp".into();
+    assert!(queue.is_host_credential(&paired));
+    let hosted = queue.submit_local(&paired, &shell).unwrap();
+    assert_eq!(hosted.source.kind, "remote");
+    assert_eq!(hosted.submitter, "host-fp");
+    queue.submit_local(&paired, &full).unwrap();
+    // The fingerprint alone is not enough: it must be a federated operator.
+    let mut local_host = paired.clone();
+    local_host.federated = false;
+    assert!(!queue.is_host_credential(&local_host));
+    let mut viewer = paired.clone();
+    viewer.trusted = false;
+    viewer.scope = "view".into();
+    assert!(!queue.is_host_credential(&viewer));
+    assert!(queue.submit_local(&viewer, &shell).is_err());
+    assert!(
+        queue
+            .submit_local(&caller(true, false, "operator"), &full)
+            .is_ok()
+    );
     assert!(
         queue
             .submit_local(&caller(false, false, "view"), &spawn)
@@ -369,16 +400,43 @@ async fn submit_stamps_identity_and_cancel_honours_the_submitter() {
             .is_err(),
         "already cancelled"
     );
-    // Placement is not here yet.
+    // Routing lives in the async dispatcher; a peer never routes onward.
     let mut elsewhere = shell.clone();
     elsewhere["host"] = json!("laptop");
     assert!(
         queue
-            .call(&caller(true, false, "operator"), "queue.submit", elsewhere)
-            .unwrap_err()
-            .to_string()
-            .contains("remote placement not available yet")
+            .call(
+                &caller(true, false, "operator"),
+                "queue.submit",
+                elsewhere.clone()
+            )
+            .is_err()
     );
+    let onward = queue
+        .clone()
+        .dispatch(paired.clone(), "queue.submit", elsewhere)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(onward.contains("second hop"), "{onward}");
+    let unknown = queue
+        .clone()
+        .dispatch(
+            caller(true, false, "operator"),
+            "queue.submit",
+            json!({"host":"nowhere","kind":"shell","shell":{"command":"true"}}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(unknown.contains("unknown federation peer"), "{unknown}");
+    // Every stored change bumps updatedAt.
+    let cancelled = queue
+        .snapshot()
+        .into_iter()
+        .find(|i| i.id == remote.id)
+        .unwrap();
+    assert!(cancelled.updated_at >= cancelled.enqueued_at && cancelled.updated_at > 0);
     // Persisted 0600 and reloaded as-is.
     #[cfg(unix)]
     {
@@ -420,6 +478,7 @@ async fn resources_report_slots_and_the_gate_from_the_latest_sample() {
         hub.handle(),
         monitor.clone(),
         Limits::Memory(Mutex::new(json!({}))),
+        Wiring::default(),
     )
     .unwrap();
     let open = queue.resources();
@@ -465,4 +524,23 @@ fn spawn_parameters_carry_only_ordinary_launch_fields() {
     );
     item.source.kind = "prompt".into();
     assert!(spawn_params(&item).get("jobId").is_none());
+    // permissionMode passes through unchanged (bypass included), and the
+    // context window rides along, so a queued launch matches a direct one.
+    let item = model::parse_submit(&json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go","permissionMode":"bypassPermissions","contextWindow":1000000}})).unwrap();
+    let params = spawn_params(&item);
+    assert_eq!(params["permissionMode"], "bypassPermissions");
+    assert_eq!(params["contextWindow"], 1_000_000);
+    assert!(params.get("skipPermissions").is_none());
+    // fullAccess maps like an inline job's agents.jobFullAccess.
+    let item = model::parse_submit(&json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go","permissionMode":"plan","fullAccess":true}})).unwrap();
+    let params = spawn_params(&item);
+    assert_eq!(params["skipPermissions"], true);
+    assert!(params.get("permissionMode").is_none());
+    for bad in [
+        json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go","contextWindow":0}}),
+        json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go","contextWindow":"big"}}),
+        json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go","fullAccess":"yes"}}),
+    ] {
+        assert!(model::parse_submit(&bad).is_err(), "{bad}");
+    }
 }

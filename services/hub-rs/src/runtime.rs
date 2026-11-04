@@ -2386,10 +2386,11 @@ async fn run(
     let (configured, thresholds, mut threshold_task) =
         crate::services::thresholds::install(options, handle.clone());
     options = configured;
-    let (configured, mut jobs_task) = crate::services::jobs::install(options, handle.clone());
-    options = configured;
+    // The queue first: queued jobs submit through it.
     let (configured, mut work_queue_task) =
         crate::services::work_queue::install(options, handle.clone())?;
+    options = configured;
+    let (configured, mut jobs_task) = crate::services::jobs::install(options, handle.clone());
     options = configured;
     let (configured, mut nodes_owner) =
         crate::services::nodes::install(options, handle.clone()).await?;
@@ -2412,6 +2413,9 @@ async fn run(
     let fixed_peers = std::mem::take(&mut options.federation_peers);
     federation_peers.extend(fixed_peers.clone());
     let mut federation = crate::federation::Manager::start(handle.clone(), federation_peers)?;
+    if let Some(queue) = &options.work_queue {
+        queue.attach_federation(federation.routes());
+    }
     let (configured, mut remote_observer) = crate::services::remote_dispatch::runtime::install(
         options,
         handle.clone(),

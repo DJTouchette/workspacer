@@ -43,6 +43,7 @@
     "queue.list",
     "queue.setConfig",
     "queue.submit",
+    "queue.targets",
     "remote.pairingInfo",
     "remote.setSharing",
     "remote.sharingInfo",

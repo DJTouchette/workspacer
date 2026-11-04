@@ -625,6 +625,7 @@ pub(crate) fn passive_request(method: &str, params: Option<&Value>) -> bool {
             | "host.resources"
             | "queue.list"
             | "queue.config"
+            | "queue.targets"
             | "push.key"
             | "git.status"
             | "git.diff"

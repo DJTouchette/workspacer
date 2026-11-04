@@ -44,6 +44,15 @@ pub struct SpawnSpec {
     pub effort: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub permission_mode: String,
+    /// Requested context window (tokens), passed to `agents.spawn` as is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    /// Launch with the provider's own approval policy (`skipPermissions`)
+    /// instead of `permissionMode`: the job scheduler's
+    /// `agents.jobFullAccess`. Only the owner, or a peer paired with the host
+    /// credential, may set it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub full_access: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -71,6 +80,8 @@ pub struct Item {
     pub enqueued_at: i64,
     pub started_at: i64,
     pub finished_at: i64,
+    /// Bumped on every change, so clients can order a list against events.
+    pub updated_at: i64,
     pub session_id: String,
     pub exit_code: Option<i32>,
     pub detail: String,
@@ -224,6 +235,8 @@ const SPAWN_FIELDS: &[&str] = &[
     "model",
     "effort",
     "permissionMode",
+    "contextWindow",
+    "fullAccess",
 ];
 const SHELL_FIELDS: &[&str] = &["command", "cwd", "timeoutSec"];
 const SOURCE_FIELDS: &[&str] = &["kind", "jobId", "origin"];
@@ -321,6 +334,17 @@ pub fn parse_submit(params: &Value) -> Result<Item> {
                 model: text(spawn, "model", "spawn")?.trim().into(),
                 effort: text(spawn, "effort", "spawn")?.trim().into(),
                 permission_mode: text(spawn, "permissionMode", "spawn")?.trim().into(),
+                context_window: match spawn.get("contextWindow") {
+                    None | Some(Value::Null) => None,
+                    Some(value) => Some(value.as_u64().filter(|w| *w > 0).ok_or_else(|| {
+                        anyhow!("spawn.contextWindow must be a positive integer")
+                    })?),
+                },
+                full_access: match spawn.get("fullAccess") {
+                    None | Some(Value::Null) => false,
+                    Some(Value::Bool(full)) => *full,
+                    Some(_) => bail!("spawn.fullAccess must be a boolean"),
+                },
             };
             if spec.cwd.is_empty() || spec.prompt.trim().is_empty() {
                 bail!("a spawn item needs spawn.cwd and spawn.prompt");
@@ -469,6 +493,7 @@ pub fn recover(items: &mut [Item], now: i64) -> bool {
         item.state = UNKNOWN.into();
         item.detail = "hub restarted while running".into();
         item.finished_at = now;
+        item.updated_at = now;
         item.wait_reason.clear();
         changed = true;
     }

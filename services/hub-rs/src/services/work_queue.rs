@@ -18,28 +18,39 @@
 //! (unverified, display-only) label, while `submitter` keeps the credential
 //! fingerprint that may later cancel the item.
 //!
-//! Placement (`queue.targets`, `host: "<peer>" | "any"`) and the peer
-//! fan-out of `queue.list` belong to a follow-up; they build on
-//! `WorkQueue::{submit_local, snapshot, resources, list}`.
+//! Shell items are host code: only the server owner may submit one, or a
+//! federation peer whose credential is this hub's own host credential (the
+//! owner deliberately paired that peer with the host token). An operator or
+//! scoped token never qualifies, federated or not.
+//!
+//! Placement (`queue.targets`, `host: "<peer>" | "any"`), the peer fan-out of
+//! `queue.list` and remote cancel live in `routing`; scoring is the pure
+//! `placement::evaluate`.
 mod model;
+pub mod placement;
+mod routing;
 mod spawn_watch;
 #[cfg(test)]
 mod tests;
 
 use super::host_resources::{self, Monitor};
-use crate::{Caller, Handle, Options, client::Client, protocol::Event};
+use crate::{
+    Caller, Handle, Options, client::Client, federation::Routes, protocol::Event,
+    services::remote_dispatch::Execution,
+};
 use anyhow::{Result, anyhow, bail};
 pub use model::{
     CANCELLED, DONE, FAILED, Item, QUEUED, QueueConfig, RUNNING, ShellSpec, Source, SpawnSpec,
     UNKNOWN,
 };
+pub use routing::{Host, parse_host, peer_name_shaped};
 use serde_json::{Value, json};
 use spawn_watch::Signal;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, Instant},
 };
 
 const PUBLISH_EVERY: Duration = Duration::from_secs(15);
@@ -106,6 +117,18 @@ struct State {
     gate_open: Option<bool>,
 }
 
+/// What the queue learns about its hub beyond the file and the monitor.
+#[derive(Default)]
+pub(crate) struct Wiring {
+    /// `auth::fingerprint` of this hub's host token (empty when the hub has
+    /// none). A federated caller presenting exactly this credential is the
+    /// owner's own pairing and may submit shell items.
+    pub host_fingerprint: String,
+    /// The remote-dispatch readiness probe, for this host's provider logins
+    /// and directory choices in `queue.targets`.
+    pub execution: Option<Arc<dyn Execution>>,
+}
+
 pub struct WorkQueue {
     path: PathBuf,
     hub: Handle,
@@ -113,6 +136,13 @@ pub struct WorkQueue {
     limits: Limits,
     state: Mutex<State>,
     wake: tokio::sync::Notify,
+    host_fingerprint: String,
+    execution: Option<Arc<dyn Execution>>,
+    /// Set once the federation manager has started (it starts after the
+    /// queue is installed).
+    federation: OnceLock<Routes>,
+    /// The latest `host.resources` each peer published, with when it arrived.
+    peer_resources: Mutex<BTreeMap<String, (Instant, Value)>>,
 }
 
 impl WorkQueue {
@@ -124,6 +154,7 @@ impl WorkQueue {
         hub: Handle,
         monitor: Arc<Monitor>,
         limits: Limits,
+        wiring: Wiring,
     ) -> Result<Arc<Self>> {
         let parsed = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
@@ -163,6 +194,10 @@ impl WorkQueue {
                 gate_open: None,
             }),
             wake: tokio::sync::Notify::new(),
+            host_fingerprint: wiring.host_fingerprint,
+            execution: wiring.execution,
+            federation: OnceLock::new(),
+            peer_resources: Mutex::new(BTreeMap::new()),
         });
         if recovered {
             queue.persist(&queue.state.lock().unwrap())?;
@@ -170,6 +205,21 @@ impl WorkQueue {
         Ok(queue)
     }
 
+    /// Give the queue the federation routes once the manager is running.
+    pub(crate) fn attach_federation(&self, routes: Routes) {
+        let _ = self.federation.set(routes);
+    }
+    /// A federation peer presenting this hub's own host credential: the owner
+    /// paired that peer with the host token on purpose. Not the owner (the
+    /// caller is still federated), but trusted with host code.
+    pub fn is_host_credential(&self, caller: &Caller) -> bool {
+        caller.federated
+            && caller.trusted
+            && caller.scope == "operator"
+            && caller.plugin_id.is_empty()
+            && !self.host_fingerprint.is_empty()
+            && caller.token_id == self.host_fingerprint
+    }
     /// This hub's name on the wire.
     pub fn host(&self) -> &str {
         self.monitor.host()
@@ -220,14 +270,22 @@ impl WorkQueue {
     /// item's kind and stamps `source` from the caller's identity.
     pub fn submit_local(&self, caller: &Caller, params: &Value) -> Result<Item> {
         let mut item = model::parse_submit(params)?;
+        let host_code = is_owner(caller) || self.is_host_credential(caller);
         match item.kind.as_str() {
-            "shell" if !is_owner(caller) => {
-                bail!("queue.submit of a shell item requires the server owner")
+            "shell" if !host_code => {
+                bail!(
+                    "queue.submit of a shell item requires the server owner (or a federation peer paired with this hub's own host credential)"
+                )
             }
             "spawn" if !may_spawn(caller) => {
                 bail!("queue.submit of a spawn item requires the authority to call agents.spawn")
             }
             _ => {}
+        }
+        if item.spawn.as_ref().is_some_and(|s| s.full_access) && !host_code {
+            bail!(
+                "spawn.fullAccess requires the server owner (or a federation peer paired with this hub's own host credential)"
+            );
         }
         model::check_local_paths(&item)?;
         if caller.federated {
@@ -241,6 +299,7 @@ impl WorkQueue {
         }
         item.id = format!("q_{}", &uuid::Uuid::new_v4().simple().to_string()[..20]);
         item.enqueued_at = now();
+        item.updated_at = item.enqueued_at;
         {
             let mut state = self.state.lock().unwrap();
             state.items.push(item.clone());
@@ -258,18 +317,7 @@ impl WorkQueue {
     /// submitters whose own owner check already ran (the job scheduler: only
     /// the owner can store or approve a job).
     pub fn submit_as_owner(&self, params: &Value) -> Result<Item> {
-        let owner = Caller {
-            call_id: 0,
-            activity_seq: 0,
-            federated: false,
-            connection_id: 0,
-            authenticated_host: true,
-            trusted: true,
-            scope: "operator".into(),
-            plugin_id: String::new(),
-            token_id: String::new(),
-        };
-        self.submit_local(&owner, params)
+        self.submit_local(&owner_caller(), params)
     }
     /// Cancel a queued item. The owner may cancel anything; a federation peer
     /// may cancel only the remote items its own credential submitted.
@@ -297,6 +345,7 @@ impl WorkQueue {
         let item = &mut state.items[index];
         item.state = CANCELLED.into();
         item.finished_at = now();
+        item.updated_at = item.finished_at;
         item.wait_reason.clear();
         item.detail = "cancelled".into();
         let item = item.clone();
@@ -335,11 +384,8 @@ impl WorkQueue {
             "queue.config" => Ok(self.config().wire()),
             "queue.setConfig" => Ok(self.set_config(caller, &params)?.wire()),
             "queue.submit" => {
-                match params.get("host") {
-                    None | Some(Value::Null) => {}
-                    Some(Value::String(host)) if host.is_empty() || host == "local" => {}
-                    Some(Value::String(_)) => bail!("remote placement not available yet"),
-                    Some(_) => bail!("host must be a string"),
+                if parse_host(&params)? != Host::Local {
+                    bail!("host routing needs the async dispatcher (WorkQueue::dispatch)");
                 }
                 let item = self.submit_local(caller, &params)?;
                 Ok(json!({"host": self.host(), "item": item.wire()}))
@@ -349,15 +395,55 @@ impl WorkQueue {
                     .as_str()
                     .filter(|id| !id.is_empty())
                     .ok_or_else(|| anyhow!("queue.cancel requires {{id}}"))?;
-                match params.get("host") {
-                    None | Some(Value::Null) => {}
-                    Some(Value::String(host)) if host.is_empty() || host == "local" => {}
-                    Some(_) => bail!("remote cancellation not available yet"),
+                if parse_host(&params)? != Host::Local {
+                    bail!("host routing needs the async dispatcher (WorkQueue::dispatch)");
                 }
                 Ok(json!({"ok": true, "item": self.cancel(caller, id)?.wire()}))
             }
             _ => bail!("unknown queue method {method}"),
         }
+    }
+    /// One RPC as the bus handlers run it: host routing and peer fan-out are
+    /// async; everything else is the blocking `call` off the async workers.
+    pub async fn dispatch(
+        self: Arc<Self>,
+        caller: Caller,
+        method: &str,
+        params: Value,
+    ) -> Result<Value> {
+        let params = if params.is_null() { json!({}) } else { params };
+        match method {
+            "queue.submit" => self.submit_routed(&caller, params).await,
+            "queue.cancel" => self.cancel_routed(&caller, params).await,
+            "queue.targets" => self.targets(&caller, &params).await,
+            "queue.list" if params["includePeers"] == true => {
+                Ok(self.list_with_peers(&caller).await)
+            }
+            _ => {
+                let method = method.to_owned();
+                tokio::task::spawn_blocking(move || self.call(&caller, &method, params)).await?
+            }
+        }
+    }
+    /// `submit_routed` with the server owner's authority, for the job
+    /// scheduler (only the owner can store or approve a job). Returns where it
+    /// landed (`local` or the peer name) and the item's id.
+    pub async fn submit_routed_as_owner(
+        self: &Arc<Self>,
+        params: Value,
+    ) -> Result<(String, String)> {
+        let result = self.submit_routed(&owner_caller(), params).await?;
+        let host = match result["host"].as_str() {
+            Some(host) if host == self.host() => "local".to_owned(),
+            Some(host) => host.to_owned(),
+            None => "local".to_owned(),
+        };
+        let id = result["item"]["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| anyhow!("queue.submit returned no item id"))?
+            .to_owned();
+        Ok((host, id))
     }
 
     fn persist(&self, state: &State) -> Result<()> {
@@ -385,6 +471,7 @@ impl WorkQueue {
         let mut state = self.state.lock().unwrap();
         let item = state.items.iter_mut().find(|i| i.id == id)?;
         update(item);
+        item.updated_at = now().max(item.updated_at + 1);
         let item = item.clone();
         if item.is_terminal() {
             state.watches.remove(id);
@@ -431,12 +518,14 @@ impl WorkQueue {
             if plan.start.contains(&item.id) {
                 item.state = RUNNING.into();
                 item.started_at = at;
+                item.updated_at = at.max(item.updated_at + 1);
                 item.wait_reason.clear();
                 changed.push(item.clone());
             } else {
                 let reason = plan.waits.get(&item.id).cloned().unwrap_or_default();
                 if item.wait_reason != reason {
                     item.wait_reason = reason;
+                    item.updated_at = at.max(item.updated_at + 1);
                     changed.push(item.clone());
                 }
             }
@@ -593,7 +682,10 @@ impl WorkQueue {
         let client = Client::connect_service(&self.hub).await?;
         let mut events = client.events();
         client
-            .topics(BTreeSet::from(["agent.snapshot".to_owned()]))
+            .topics(BTreeSet::from([
+                "agent.snapshot".to_owned(),
+                "host.resources".to_owned(),
+            ]))
             .await?;
         let mut tasks = tokio::task::JoinSet::new();
         let mut sample = tokio::time::interval(host_resources::SAMPLE_EVERY);
@@ -627,7 +719,12 @@ impl WorkQueue {
                 event = events.recv() => {
                     match event {
                         Ok(event) => {
-                            if event.topic == "agent.snapshot" && let Some(row) = event.data {
+                            if event.topic == "host.resources" {
+                                // A peer's sample, forwarded by federation.
+                                if let Some(value) = event.data {
+                                    self.note_peer_resources(&event.hub, value);
+                                }
+                            } else if event.topic == "agent.snapshot" && let Some(row) = event.data {
                                 let queue = self.clone();
                                 tokio::task::spawn_blocking(move || queue.observe(&row)).await?;
                             }
@@ -652,6 +749,21 @@ impl WorkQueue {
 
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+/// The identity of hub-internal submitters whose own owner check already ran.
+fn owner_caller() -> Caller {
+    Caller {
+        call_id: 0,
+        activity_seq: 0,
+        federated: false,
+        connection_id: 0,
+        authenticated_host: true,
+        trusted: true,
+        scope: "operator".into(),
+        plugin_id: String::new(),
+        token_id: String::new(),
+    }
 }
 
 /// Run a shell item like a jobs shell action: `/bin/sh -c` (`cmd /C` on
@@ -697,13 +809,22 @@ async fn run_shell(spec: &ShellSpec) -> Result<(String, Option<i32>, bool)> {
 fn spawn_params(item: &Item) -> Value {
     let spec = item.spawn.clone().unwrap_or_default();
     let mut params = json!({"cwd": spec.cwd, "label": item.label, "message": spec.prompt});
+    // `fullAccess` is the job scheduler's `agents.jobFullAccess`, mapped the
+    // way an inline spawn job maps it: the provider's own approval policy
+    // instead of the item's permission mode.
+    if spec.full_access {
+        params["skipPermissions"] = json!(true);
+    }
+    if let Some(window) = spec.context_window {
+        params["contextWindow"] = json!(window);
+    }
     for (key, value) in [
         ("provider", &spec.provider),
         ("model", &spec.model),
         ("effort", &spec.effort),
         ("permissionMode", &spec.permission_mode),
     ] {
-        if !value.is_empty() {
+        if !value.is_empty() && !(key == "permissionMode" && spec.full_access) {
             params[key] = json!(value);
         }
     }
@@ -789,7 +910,11 @@ pub(crate) fn install(
         Some(config) => Limits::Shared(config),
         None => Limits::Memory(Mutex::new(json!({}))),
     };
-    let queue = WorkQueue::open(path, hub, monitor, limits)?;
+    let wiring = Wiring {
+        host_fingerprint: crate::auth::fingerprint(&options.token),
+        execution: options.remote_dispatch_execution.clone(),
+    };
+    let queue = WorkQueue::open(path, hub, monitor, limits, wiring)?;
     options.work_queue = Some(queue.clone());
     for method in [
         "host.resources",
@@ -798,13 +923,11 @@ pub(crate) fn install(
         "queue.cancel",
         "queue.config",
         "queue.setConfig",
+        "queue.targets",
     ] {
         let queue = queue.clone();
         options = options.handler(method, move |caller, params| {
-            let queue = queue.clone();
-            async move {
-                tokio::task::spawn_blocking(move || queue.call(&caller, method, params)).await?
-            }
+            queue.clone().dispatch(caller, method, params)
         });
     }
     Ok((options, Some(tokio::spawn(queue.run()))))

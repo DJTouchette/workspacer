@@ -154,6 +154,7 @@
     "queue.list",
     "queue.setConfig",
     "queue.submit",
+    "queue.targets",
     "remote.pairingInfo",
     "remote.setSharing",
     "remote.sharingInfo",
@@ -1032,7 +1033,8 @@
       "sessions.mcpStatus",
       "host.resources",
       "queue.list",
-      "queue.config"
+      "queue.config",
+      "queue.targets"
     ],
     "view": [
       "remote.sharingInfo",
@@ -1066,7 +1068,8 @@
       "sessions.mcpStatus",
       "host.resources",
       "queue.list",
-      "queue.config"
+      "queue.config",
+      "queue.targets"
     ]
   },
   "spawnKeys": [

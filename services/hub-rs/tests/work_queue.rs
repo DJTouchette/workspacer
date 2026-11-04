@@ -320,3 +320,246 @@ async fn only_the_owner_submits_shell_work_or_changes_limits() {
     );
     hub.shutdown().unwrap();
 }
+
+/// A remote hub serving the queue with its own host token, and a local hub
+/// linked to it three times: `box` (host token, dispatch), `ops` (an operator
+/// token, dispatch) and `quiet` (host token, dispatch off).
+struct TwoHubs {
+    local: Hub,
+    remote: Hub,
+    owner: Client,
+    remote_owner: Client,
+    _dir: tempfile::TempDir,
+}
+async fn two_hubs() -> TwoHubs {
+    use workspacer_hub::{
+        auth::{self, Scope},
+        federation::Peer,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let tokens = dir.path().join("tokens.json");
+    let operator = auth::mint(&tokens, Scope::Operator, "paired operator").unwrap();
+    let mut options = Options::default();
+    options.listen = Some("127.0.0.1:0".parse().unwrap());
+    options.token = "remote-host-token".into();
+    options.scoped_tokens = Some(tokens);
+    std::fs::create_dir(dir.path().join("remote")).unwrap();
+    options.work_queue_file = Some(dir.path().join("remote/queue.json"));
+    let remote = Hub::start(options).unwrap();
+    let address = remote.ready().await.unwrap().unwrap();
+    let remote_owner = Client::connect(&remote.handle()).await.unwrap();
+    remote_owner
+        .call("queue.setConfig", open_gate(json!({})))
+        .await
+        .unwrap();
+    let peer = |name: &str, token: &str, dispatch: bool| Peer {
+        name: name.into(),
+        url: format!("ws://{address}/bus"),
+        token: token.into(),
+        dispatch,
+    };
+    let mut options = Options::default();
+    std::fs::create_dir(dir.path().join("local")).unwrap();
+    options.work_queue_file = Some(dir.path().join("local/queue.json"));
+    options.federation_peers = vec![
+        peer("box", "remote-host-token", true),
+        peer("ops", &operator.token, true),
+        peer("quiet", "remote-host-token", false),
+    ];
+    let local = Hub::start(options).unwrap();
+    local.ready().await.unwrap();
+    let owner = Client::connect(&local.handle()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let peers = owner.call("federation.peers", json!({})).await.unwrap();
+            if peers
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|p| p["connected"] == true)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    TwoHubs {
+        local,
+        remote,
+        owner,
+        remote_owner,
+        _dir: dir,
+    }
+}
+
+#[tokio::test]
+async fn shell_work_lands_on_a_host_token_peer_and_runs_there() {
+    let hubs = two_hubs().await;
+    let owner = &hubs.owner;
+    owner
+        .call("queue.setConfig", open_gate(json!({})))
+        .await
+        .unwrap();
+    let watcher = Client::connect(&hubs.local.handle()).await.unwrap();
+    let mut events = watcher.events();
+    watcher
+        .topics(BTreeSet::from(["queue.changed".to_owned()]))
+        .await
+        .unwrap();
+    let mut job = shell("echo ran on the peer");
+    job["host"] = json!("box");
+    job["label"] = json!("remote shell");
+    let landed = owner.call("queue.submit", job).await.unwrap();
+    assert_eq!(landed["host"], "box");
+    assert_eq!(landed["item"]["source"]["kind"], "remote");
+    assert!(
+        landed["item"]["source"]["origin"]
+            .as_str()
+            .is_some_and(|o| !o.is_empty())
+    );
+    let id = landed["item"]["id"].clone();
+    // It runs on the peer, not here.
+    let done = wait_state(&hubs.remote_owner, &id, "done").await;
+    assert_eq!(done["detail"], "ran on the peer");
+    assert!(done["updatedAt"].as_i64().unwrap() >= done["finishedAt"].as_i64().unwrap());
+    assert_eq!(item(owner, &id).await, Value::Null);
+    // Its events reach this hub under the configured peer name.
+    let forwarded = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event.data.as_ref().unwrap()["item"]["id"] == id {
+                return event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(["box", "ops", "quiet"].contains(&forwarded.hub.as_str()));
+    // queue.list fans out: one row per configured peer, by its name.
+    let list = owner
+        .call("queue.list", json!({"includePeers":true}))
+        .await
+        .unwrap();
+    let peers = list["peers"].as_array().unwrap();
+    let names: Vec<_> = peers.iter().map(|p| p["peer"].as_str().unwrap()).collect();
+    assert_eq!(names, ["box", "ops", "quiet"]);
+    let box_row = &peers[0];
+    assert_eq!(box_row["ok"], true);
+    assert!(
+        box_row["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["id"] == id)
+    );
+    assert_eq!(
+        owner.call("queue.list", json!({})).await.unwrap()["peers"],
+        json!([])
+    );
+    // An operator-token pairing is not the host: shell is refused there,
+    // and the refusal is a definite one.
+    let mut refused = shell("echo nope");
+    refused["host"] = json!("ops");
+    let error = owner
+        .call("queue.submit", refused)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("peer ops refused"), "{error}");
+    assert!(error.contains("host credential"), "{error}");
+    // Peers that are not dispatch-enabled or not configured are refused here.
+    for (host, expected) in [
+        ("quiet", "not dispatch-enabled"),
+        ("nowhere", "unknown federation peer"),
+    ] {
+        let mut attempt = shell("echo nope");
+        attempt["host"] = json!(host);
+        let error = owner
+            .call("queue.submit", attempt)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{host}: {error}");
+    }
+    // Remote cancel goes to the peer with this hub's credential.
+    hubs.remote_owner
+        .call("queue.setConfig", json!({"maxShell":0}))
+        .await
+        .unwrap();
+    let mut held = shell("echo held");
+    held["host"] = json!("box");
+    let held = owner.call("queue.submit", held).await.unwrap();
+    let cancelled = owner
+        .call(
+            "queue.cancel",
+            json!({"id":held["item"]["id"],"host":"box"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancelled["item"]["state"], "cancelled");
+    hubs.local.shutdown().unwrap();
+    hubs.remote.shutdown().unwrap();
+}
+
+#[tokio::test]
+async fn any_places_on_the_best_eligible_host_and_explains_it() {
+    let hubs = two_hubs().await;
+    let owner = &hubs.owner;
+    // This machine's gate is open: a tie with the peers goes local.
+    owner
+        .call("queue.setConfig", open_gate(json!({})))
+        .await
+        .unwrap();
+    let targets = owner
+        .call("queue.targets", json!({"kind":"shell"}))
+        .await
+        .unwrap();
+    let rows = targets["targets"].as_array().unwrap();
+    let hosts: Vec<_> = rows.iter().map(|t| t["host"].as_str().unwrap()).collect();
+    assert_eq!(hosts, ["local", "box", "ops", "quiet"]);
+    assert_eq!(targets["best"], "local");
+    assert_eq!(rows[3]["eligible"], false);
+    assert!(
+        rows[3]["reasons"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("dispatch is not enabled for this peer"))
+    );
+    assert!(rows[1]["resources"]["queue"]["shellSlots"].is_u64());
+    // A cwd only this machine has keeps local eligible; peers do not
+    // advertise it, and that does not fail placement.
+    let directory = tempfile::tempdir().unwrap();
+    let mut here = shell("pwd");
+    here["host"] = json!("any");
+    here["shell"]["cwd"] = json!(directory.path());
+    let landed = owner.call("queue.submit", here).await.unwrap();
+    assert_ne!(landed["host"], "box");
+    let ran = wait_state(owner, &landed["item"]["id"], "done").await;
+    assert!(
+        ran["detail"]
+            .as_str()
+            .unwrap()
+            .ends_with(directory.path().file_name().unwrap().to_str().unwrap())
+    );
+    // Close this machine's gate: the first-named eligible peer wins.
+    owner
+        .call("queue.setConfig", json!({"minFreeDiskMb":1_073_741_824u64}))
+        .await
+        .unwrap();
+    let targets = owner
+        .call("queue.targets", json!({"kind":"shell"}))
+        .await
+        .unwrap();
+    assert_eq!(targets["best"], "box");
+    let local_reasons = targets["targets"][0]["reasons"].to_string();
+    assert!(local_reasons.contains("gate closed"), "{local_reasons}");
+    let mut anywhere = shell("echo placed");
+    anywhere["host"] = json!("any");
+    let landed = owner.call("queue.submit", anywhere).await.unwrap();
+    assert_eq!(landed["host"], "box");
+    wait_state(&hubs.remote_owner, &landed["item"]["id"], "done").await;
+    hubs.local.shutdown().unwrap();
+    hubs.remote.shutdown().unwrap();
+}
