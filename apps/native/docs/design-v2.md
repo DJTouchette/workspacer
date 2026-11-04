@@ -198,3 +198,19 @@ The Jobs page is the worked example: `ui/jobs.rs` (`jobs_page_v2`,
    `Design::V1`/`V2` (`this.force_design(Some(design))`), and shoot it with
    `scripts/design-shots/shoot-all.py --setting design_v2=true --only <slug>`
    in dark, light and one more theme.
+
+## Transcript (area-transcript)
+
+The v2 conversation lives in `ui/transcript_v2.rs`; the v1 renderers
+(`transcript.rs`, `work.rs`, `tools.rs`, `children.rs`, `fleet_card.rs`,
+`plan.rs`, `session_tools.rs` thinking) branch into it once.
+
+| | |
+|---|---|
+| Reading width | `Settings.reading_width: ReadingWidth::{Comfortable, Wide, Full}` (`"comfortable"`…), Settings → Chat → Reading width (v2 only). `Workspace::reading_column()` / `reading_frame()` give the transcript and dock one column (v1: `chat_column` / `chat_frame`); it gives way to the floating tool rail |
+| Tokens | `p.tokens.transcript()` → `TranscriptTokens`: `user_max` 0.7, `tool_row` 28, `visible_steps` 4, `row_gap`, `turn_gap`, `details_max`, `brief_max`, `prose_line_height`, `paragraph_gap`, `heading_steps`, image preview size |
+| Tool rows | `tool_line`: status indicator · verb · mono target · +/− · `tool_result_meta` ("3 lines", "1 match") · duration (≥ 1s) · chevron on hover |
+| Cards | Subagent/workflow calls, subagent overviews and pending fleet wakes are `transcript_card` + `CardHead` + `StatusBadge`; resolved wakes collapse to one line (`fleet_eyebrow`: "Decision made", "2 agents finished") |
+| Markdown | `left_align_text_columns` re-marks non-numeric right/centre table columns as left; code blocks on `code_block` (= surface) with a `card_border` hairline; inline code and bullets neutral |
+| Syntax | `syntax_v2(appearance)`: one calm set per theme, nothing purple (`v2_syntax_reads_on_the_card_surface_and_is_never_purple`) |
+| Shots | `shoot-all.py --only transcript-` (earlier, start, fleet, wide, full); the rig's `("wheel", notches, x, y)` step scrolls the chat |
