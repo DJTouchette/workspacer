@@ -309,7 +309,7 @@ impl Workspace {
             )
             .when(card.local, |d| {
                 d.child(
-                    self.quiet_button(
+                    self.pquiet(
                         "host-limits",
                         "Limits",
                         IconName::Settings2,
@@ -531,7 +531,7 @@ impl Workspace {
             )
             .when(item.cancellable(), |d| {
                 d.child(
-                    self.quiet_button(
+                    self.pquiet(
                         SharedString::from(format!("queue-cancel-{card}-{row}")),
                         "Cancel",
                         IconName::Close,
@@ -655,7 +655,7 @@ impl Workspace {
                     .flex()
                     .gap_2()
                     .child(
-                        self.primary_button(
+                        self.pprimary(
                             "host-limits-save",
                             if busy { "Saving…" } else { "Save limits" },
                             !busy && self.view.connected,
@@ -666,7 +666,7 @@ impl Workspace {
                         }),
                     )
                     .child(
-                        self.button("host-limits-close", "Close", !busy)
+                        self.pbutton("host-limits-close", "Close", !busy)
                             .when(!busy, |d| {
                                 d.on_click(cx.listener(|this, _, _, cx| {
                                     this.extras.limits_open = false;

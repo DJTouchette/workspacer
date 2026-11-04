@@ -799,7 +799,7 @@ impl Workspace {
         };
         let trailing = match self.screen {
             Screen::Recent => Some(
-                self.quiet_button(
+                self.pquiet(
                     "history-refresh",
                     "Refresh",
                     IconName::Redo,
@@ -811,7 +811,7 @@ impl Workspace {
                 .into_any_element(),
             ),
             Screen::Jobs => Some(
-                self.quiet_button(
+                self.pquiet(
                     "jobs-refresh",
                     "Refresh",
                     IconName::Redo,
@@ -826,7 +826,7 @@ impl Workspace {
                 .into_any_element(),
             ),
             Screen::Hosts => Some(
-                self.quiet_button(
+                self.pquiet(
                     "hosts-refresh",
                     "Refresh",
                     IconName::Redo,
@@ -839,7 +839,7 @@ impl Workspace {
                 .into_any_element(),
             ),
             Screen::Scratch => Some(
-                self.quiet_button(
+                self.pquiet(
                     "scratch-refresh",
                     "Refresh",
                     IconName::Redo,
@@ -854,7 +854,7 @@ impl Workspace {
                 let can_check = self.view.connected
                     && !self.view.requests.get("setup").is_some_and(|s| s.loading);
                 Some(
-                    self.quiet_button("setup-refresh", "Recheck", IconName::Redo, can_check)
+                    self.pquiet("setup-refresh", "Recheck", IconName::Redo, can_check)
                         .debug_selector(|| "setup-refresh".into())
                         .when(can_check, |d| {
                             d.on_click(cx.listener(|this, _, _, cx| {
@@ -1075,7 +1075,7 @@ impl Workspace {
             .min_w_0()
             .text_size(px(chrome::scale::META))
             .text_color(rgb(p.muted))
-            .child(chrome::model_badge(s, p, 12.).font_weight(FontWeight::MEDIUM))
+            .child(self.page_model(s, 12.).font_weight(FontWeight::MEDIUM))
             .when_some(effort, |d, effort| d.child(sep()).child(effort))
             .when_some(s.context_window, |d, tokens| {
                 d.child(sep())
@@ -1169,7 +1169,7 @@ impl Workspace {
                                 .child(Input::new(&self.extras.name)),
                         )
                         .child(
-                            self.button("save-session-name", "Save", true)
+                            self.pbutton("save-session-name", "Save", true)
                                 .debug_selector(|| "save-session-name".into())
                                 .flex_shrink_0()
                                 .py(px(6.))
@@ -1201,7 +1201,8 @@ impl Workspace {
         .flatten()
         .collect::<Vec<_>>()
         .join(" · ");
-        let details = chrome::card(p)
+        let details = self
+            .page_card()
             .debug_selector(|| "session-details-card".into())
             .px_4()
             .pt_4()
@@ -1217,7 +1218,7 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .min_w_0()
-                    .child(chrome::model_badge(s, p, 12.).flex_shrink_0())
+                    .child(self.page_model(s, 12.).flex_shrink_0())
                     .when(!agent_detail.is_empty(), |d| {
                         d.child(
                             div()
@@ -1229,7 +1230,7 @@ impl Workspace {
                     })
                     .into_any_element(),
                 model_enabled.then(|| {
-                    self.quiet_button("session-change-model", "Change…", IconName::Settings, true)
+                    self.pquiet("session-change-model", "Change…", IconName::Settings, true)
                         .debug_selector(|| "session-change-model".into())
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_feature(Screen::Model, window, cx)
@@ -1294,7 +1295,7 @@ impl Workspace {
         let mut carry_on: Vec<AnyElement> = Vec::new();
         if s.stopped() && self.supported_session() {
             carry_on.push(
-                self.primary_button("resume-session", "Resume session…", !busy)
+                self.pprimary("resume-session", "Resume session…", !busy)
                     .debug_selector(|| "resume-session".into())
                     .when(!busy, |d| {
                         d.on_click(cx.listener(move |this, _, window, cx| {
@@ -1309,7 +1310,7 @@ impl Workspace {
             .filter(|_| self.view.connected)
         {
             carry_on.push(
-                self.button(
+                self.pbutton(
                     "handoff-session",
                     format!(
                         "Continue with {}…",
@@ -1331,7 +1332,7 @@ impl Workspace {
         if wks_native::handoff::targets(s).is_ok() && self.view.connected {
             let fresh = s.clone();
             carry_on.push(
-                self.button("fresh-session", "Start fresh from a summary…", !busy)
+                self.pbutton("fresh-session", "Start fresh from a summary…", !busy)
                     .debug_selector(|| "fresh-session".into())
                     .when(!busy, |d| {
                         d.on_click(cx.listener(move |this, _, window, cx| {
@@ -1352,7 +1353,8 @@ impl Workspace {
             action_row(title, text, Some(control), p)
         };
         let has_carry_on = !carry_on.is_empty();
-        let actions = chrome::card(p)
+        let actions = self
+            .page_card()
             .debug_selector(|| "session-actions-card".into())
             .px_4()
             .pt_4()
@@ -1386,7 +1388,7 @@ impl Workspace {
                             "Hides it from the list in every client of this hub. It keeps running."
                         }
                     },
-                    self.button(
+                    self.pbutton(
                         "archive-session",
                         if archived {
                             "Restore from archive"
@@ -1408,7 +1410,7 @@ impl Workspace {
                     if confirming {
                         div().into_any_element()
                     } else {
-                        self.danger_button("end-session", "End session…", !busy)
+                        self.pdanger("end-session", "End session…", !busy)
                             .debug_selector(|| "end-session".into())
                             .when(!busy, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
@@ -1443,7 +1445,7 @@ impl Workspace {
                                 .flex()
                                 .gap_2()
                                 .child(
-                                    self.button("cancel-end", "Keep running", true)
+                                    self.pbutton("cancel-end", "Keep running", true)
                                         .debug_selector(|| "cancel-end".into())
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.extras.confirm_end = None;
@@ -1451,7 +1453,7 @@ impl Workspace {
                                         })),
                                 )
                                 .child(
-                                    self.danger_button("confirm-end", "End session", !busy)
+                                    self.pdanger("confirm-end", "End session", !busy)
                                         .debug_selector(|| "confirm-end".into())
                                         .when(!busy, |d| {
                                             d.on_click(cx.listener(|this, _, _, cx| {
@@ -1504,22 +1506,17 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .child(
-                        self.quiet_button(
-                            "older-history",
-                            "Previous",
-                            IconName::ChevronLeft,
-                            page > 0,
-                        )
-                        .when(page > 0, |d| {
-                            d.on_click(cx.listener(|this, _, _, cx| {
-                                this.extras.history_page =
-                                    this.extras.history_page.saturating_sub(1);
-                                this.extras
-                                    .history_scroll
-                                    .set_offset(gpui::point(px(0.), px(0.)));
-                                cx.notify();
-                            }))
-                        }),
+                        self.pquiet("older-history", "Previous", IconName::ChevronLeft, page > 0)
+                            .when(page > 0, |d| {
+                                d.on_click(cx.listener(|this, _, _, cx| {
+                                    this.extras.history_page =
+                                        this.extras.history_page.saturating_sub(1);
+                                    this.extras
+                                        .history_scroll
+                                        .set_offset(gpui::point(px(0.), px(0.)));
+                                    cx.notify();
+                                }))
+                            }),
                     )
                     .child(
                         div()
@@ -1528,7 +1525,7 @@ impl Workspace {
                             .child(format!("Page {} of {}", page + 1, pages)),
                     )
                     .child(
-                        self.quiet_button(
+                        self.pquiet(
                             "newer-history",
                             "Next",
                             IconName::ChevronRight,
@@ -1683,27 +1680,47 @@ impl Workspace {
                             .child(if claude { "Claude Code" } else { "Codex CLI" }),
                     ),
             )
-            .child(
-                div()
-                    .debug_selector(move || format!("setup-installed-{provider}"))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .px(px(10.))
-                    .py_1()
-                    .rounded_full()
-                    .bg(gpui::Hsla::from(rgb(installed)).opacity(0.12))
-                    .text_size(px(chrome::scale::CAPTION))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(installed))
-                    .child(status_dot(installed))
-                    .child(match found {
-                        Some(true) => "Installed",
-                        Some(false) => "Not found",
-                        None => "Not checked",
-                    }),
-            );
+            .when_some(self.v2_palette(), |d, v2| {
+                // v2: the shared status vocabulary, no pill.
+                d.child(
+                    div()
+                        .debug_selector(move || format!("setup-installed-{provider}"))
+                        .flex_shrink_0()
+                        .child(
+                            match found {
+                                Some(true) => StatusBadge::new(StatusKind::Done).label("Installed"),
+                                Some(false) => {
+                                    StatusBadge::new(StatusKind::NeedsYou).label("Not found")
+                                }
+                                None => StatusBadge::new(StatusKind::Idle).label("Not checked"),
+                            }
+                            .render(&v2),
+                        ),
+                )
+            })
+            .when(!self.design().is_v2(), |d| {
+                d.child(
+                    div()
+                        .debug_selector(move || format!("setup-installed-{provider}"))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .px(px(10.))
+                        .py_1()
+                        .rounded_full()
+                        .bg(gpui::Hsla::from(rgb(installed)).opacity(0.12))
+                        .text_size(px(chrome::scale::CAPTION))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(rgb(installed))
+                        .child(status_dot(installed))
+                        .child(match found {
+                            Some(true) => "Installed",
+                            Some(false) => "Not found",
+                            None => "Not checked",
+                        }),
+                )
+            });
         // How to install and sign in, with the terminal command set apart.
         let (install, command) = if claude {
             ("Install Claude Code, then sign in by running", "claude")
@@ -1756,7 +1773,7 @@ impl Workspace {
                     .child(description),
             )
             .child(
-                self.button(
+                self.pbutton(
                     if claude {
                         "setup-claude"
                     } else {
@@ -1782,7 +1799,7 @@ impl Workspace {
                     }))
                 }),
             );
-        chrome::card(p)
+        self.page_card()
             .p_4()
             .flex()
             .flex_col()
@@ -1882,7 +1899,7 @@ impl Workspace {
                 ))
             })
             .child(
-                chrome::card(p)
+                self.page_card()
                     .debug_selector(|| "model-card".into())
                     .p_4()
                     .flex()
@@ -1919,7 +1936,7 @@ impl Workspace {
                                     .child(MODEL_APPLY_NOTE),
                             )
                             .child(
-                                self.primary_button("apply-model", "Apply", !busy)
+                                self.pprimary("apply-model", "Apply", !busy)
                                     .debug_selector(|| "apply-model".into())
                                     .flex_shrink_0()
                                     .when(!busy, |d| {
@@ -2030,7 +2047,7 @@ impl Workspace {
                 chrome::Tone::Warning,
             ),
         };
-        chrome::card(p)
+        self.page_card()
             .debug_selector(|| "access-card".into())
             .p_4()
             .flex()
@@ -2064,7 +2081,7 @@ impl Workspace {
                             "Codex can plan before it acts in its next turns, keeping the approvals above."
                         },
                         Some(
-                            self.button(
+                            self.pbutton(
                                 "live-plan-mode",
                                 if plan { "Leave plan mode" } else { "Plan mode" },
                                 enabled,
@@ -2246,39 +2263,22 @@ impl Workspace {
         self.design().is_v2().then(|| self.palette())
     }
 
-    /// A small v2 button, or `None` under v1 so the caller falls back to its
-    /// shipped control: `self.v2_button(…).unwrap_or_else(|| self.button(…))`.
-    pub(super) fn v2_button(
-        &self,
-        id: impl Into<SharedString>,
-        label: impl Into<SharedString>,
-        icon: Option<IconName>,
-        variant: ButtonVariant,
-        enabled: bool,
-    ) -> Option<Stateful<Div>> {
-        let p = self.v2_palette()?;
-        Some(primitives::button(
-            id.into(),
-            label,
-            icon,
-            variant,
-            ButtonSize::Small,
-            enabled,
-            &p,
-        ))
-    }
-
-    /// The card surface for the design in use.
+    /// The card surface for the design in use: `chrome::card` under v1; the
+    /// v2 card's surface, edge and lift (no padding or layout, which the
+    /// caller sets as it did for v1) under v2.
     pub(super) fn page_card(&self) -> Div {
         match self.v2_palette() {
-            Some(p) => primitives::card(&p),
+            Some(p) => {
+                let t = p.tokens;
+                div()
+                    .rounded(px(t.radius.panel))
+                    .bg(rgb(p.surface))
+                    .border(px(t.stroke.hairline))
+                    .border_color(rgb(p.roles.card_border))
+                    .shadow(primitives::elevation(&p, t.elevation.raised))
+            }
             None => chrome::card(self.palette()),
         }
-    }
-
-    /// A notice line under v2: the same tones, on the v2 palette.
-    pub(super) fn page_notice(&self, text: impl Into<SharedString>, tone: chrome::Tone) -> Div {
-        chrome::notice_line(text, tone, self.palette())
     }
 
     /// Every feature page under v2: back link, title, one-line description
@@ -2432,11 +2432,7 @@ impl Workspace {
             Screen::Session => self
                 .selected_session()
                 .map(|s| {
-                    let badge = if self.view.connected {
-                        session_badge_v2(self.status_of(s, p).0)
-                    } else {
-                        StatusBadge::new(StatusKind::Idle).label("Offline")
-                    };
+                    let badge = self.session_status_v2(s);
                     div()
                         .debug_selector(|| "session-status".into())
                         .child(badge.render(&p))
@@ -2557,5 +2553,157 @@ impl Workspace {
         if self.extras.pages.menu.take().is_some() {
             cx.notify();
         }
+    }
+}
+
+// area-pages: design-aware buttons for the migrated pages. Under v1 each one
+// is exactly the shipped control; under v2 the shared primitive in the
+// matching variant (one primary per region, destructive as ghost-danger).
+impl Workspace {
+    /// `self.button` / a v2 secondary button.
+    pub(super) fn pbutton(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        enabled: bool,
+    ) -> Stateful<Div> {
+        let id: SharedString = id.into();
+        match self.v2_palette() {
+            Some(p) => primitives::button(
+                id,
+                label,
+                None,
+                ButtonVariant::Secondary,
+                ButtonSize::Small,
+                enabled,
+                &p,
+            ),
+            None => self.button(id, label, enabled),
+        }
+    }
+
+    /// `self.primary_button` / a v2 primary button.
+    pub(super) fn pprimary(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        enabled: bool,
+    ) -> Stateful<Div> {
+        let id: SharedString = id.into();
+        match self.v2_palette() {
+            Some(p) => primitives::button(
+                id,
+                label,
+                None,
+                ButtonVariant::Primary,
+                ButtonSize::Small,
+                enabled,
+                &p,
+            ),
+            None => self.primary_button(id, label, enabled),
+        }
+    }
+
+    /// `self.danger_button` / a v2 ghost-danger button.
+    pub(super) fn pdanger(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        enabled: bool,
+    ) -> Stateful<Div> {
+        let id: SharedString = id.into();
+        match self.v2_palette() {
+            Some(p) => primitives::button(
+                id,
+                label,
+                None,
+                ButtonVariant::DangerGhost,
+                ButtonSize::Small,
+                enabled,
+                &p,
+            ),
+            None => self.danger_button(id, label, enabled),
+        }
+    }
+
+    /// `self.quiet_button` / a v2 ghost button with its icon.
+    pub(super) fn pquiet(
+        &self,
+        id: impl Into<SharedString>,
+        label: &'static str,
+        icon: IconName,
+        enabled: bool,
+    ) -> Stateful<Div> {
+        let id: SharedString = id.into();
+        match self.v2_palette() {
+            Some(p) => primitives::button(
+                id,
+                label,
+                Some(icon),
+                ButtonVariant::Ghost,
+                ButtonSize::Small,
+                enabled,
+                &p,
+            ),
+            None => self.quiet_button(id, label, icon, enabled),
+        }
+    }
+
+    /// `self.icon_button` / a v2 ghost icon button with a tooltip.
+    pub(super) fn picon(
+        &self,
+        id: impl Into<SharedString>,
+        label: &'static str,
+        icon: IconName,
+        enabled: bool,
+    ) -> Stateful<Div> {
+        let id: SharedString = id.into();
+        match self.v2_palette() {
+            Some(p) => primitives::icon_button(id, icon, label, ButtonVariant::Ghost, enabled, &p),
+            None => self.icon_button(id, label, icon, enabled),
+        }
+    }
+}
+
+// area-pages: neutral provider identity on the pages (v2 keeps brand colour
+// for the composer's model chip only).
+impl Workspace {
+    /// A session's provider mark and model: `chrome::model_badge` under v1;
+    /// tertiary grey under v2.
+    pub(super) fn page_model(&self, s: &Session, size: f32) -> Div {
+        let p = self.palette();
+        let Some(v2) = self.v2_palette() else {
+            return chrome::model_badge(s, p, size);
+        };
+        let t = v2.tokens;
+        let glyph = match s.provider.as_str() {
+            "claude" => Some("brand/claude.svg"),
+            "codex" => Some("brand/openai.svg"),
+            _ => None,
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(t.space.xs))
+            .text_color(rgb(v2.roles.provider))
+            .when_some(glyph, |d, path| {
+                d.child(
+                    gpui::svg()
+                        .path(path)
+                        .size(px(t.icon.xs))
+                        .flex_shrink_0()
+                        .text_color(rgb(v2.roles.provider)),
+                )
+            })
+            .child(s.display_model())
+    }
+
+    /// A session's status as the shared v2 badge (Offline while
+    /// disconnected).
+    pub(super) fn session_status_v2(&self, s: &Session) -> StatusBadge {
+        if !self.view.connected {
+            return StatusBadge::new(StatusKind::Idle).label("Offline");
+        }
+        session_badge_v2(self.status_of(s, self.palette()).0)
     }
 }

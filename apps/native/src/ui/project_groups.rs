@@ -353,7 +353,7 @@ impl Workspace {
                     .child(super::projects::section_label("PROJECTS", p))
                     .child(
                         // One editor at a time: New project rests while one is open.
-                        self.quiet_button(
+                        self.pquiet(
                             "new-project-group",
                             "New project",
                             IconName::Plus,
@@ -562,14 +562,14 @@ impl Workspace {
                             .gap_1()
                             .child(
                                 if compact {
-                                    self.icon_button(
+                                    self.picon(
                                         format!("project-group-new-agent-{ix}"),
                                         "New agent in this project",
                                         IconName::Plus,
                                         can_spawn,
                                     )
                                 } else {
-                                    self.quiet_button(
+                                    self.pquiet(
                                         format!("project-group-new-agent-{ix}"),
                                         "New agent",
                                         IconName::Plus,
@@ -590,7 +590,7 @@ impl Workspace {
                                 ),
                             )
                             .child(
-                                self.icon_button(
+                                self.picon(
                                     format!("project-group-edit-{ix}"),
                                     "Edit project: name, icon, colour and folders",
                                     IconName::Settings,
@@ -720,7 +720,7 @@ impl Workspace {
                         .child(folder.clone()),
                 )
                 .child(
-                    self.icon_button(
+                    self.picon(
                         format!("group-folder-remove-{ix}"),
                         "Remove from this project (the folder itself is untouched)",
                         IconName::Close,
@@ -876,7 +876,7 @@ impl Workspace {
                             .child(Input::new(&self.extras.group_folder).disabled(!enabled)),
                     )
                     .child(
-                        self.button("group-folder-add", "Add folder", enabled)
+                        self.pbutton("group-folder-add", "Add folder", enabled)
                             .debug_selector(|| "group-folder-add".into())
                             .when(enabled, |d| {
                                 d.on_click(cx.listener(|this, _, window, cx| {
@@ -921,7 +921,7 @@ impl Workspace {
                     .gap_1()
                     .when(existing, |d| {
                         d.child(
-                            self.danger_button("project-group-delete", delete_label, enabled)
+                            self.pdanger("project-group-delete", delete_label, enabled)
                                 .debug_selector(|| "project-group-delete".into())
                                 .when(enabled, |d| {
                                     d.on_click(cx.listener(|this, _, _, cx| this.delete_group(cx)))
@@ -942,7 +942,7 @@ impl Workspace {
                     })
                     .child(div().flex_1())
                     .child(
-                        self.button("project-group-cancel", "Cancel", !busy)
+                        self.pbutton("project-group-cancel", "Cancel", !busy)
                             .debug_selector(|| "project-group-cancel".into())
                             .when(!busy, |d| {
                                 d.on_click(
@@ -951,7 +951,7 @@ impl Workspace {
                             }),
                     )
                     .child(
-                        self.primary_button("project-group-save", "Save project", enabled)
+                        self.pprimary("project-group-save", "Save project", enabled)
                             .debug_selector(|| "project-group-save".into())
                             .when(enabled, |d| {
                                 d.on_click(cx.listener(|this, _, _, cx| this.save_group(cx)))

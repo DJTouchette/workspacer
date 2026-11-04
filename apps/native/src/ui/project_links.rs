@@ -22,9 +22,16 @@ impl Workspace {
             .flex()
             .items_center()
             .justify_between()
-            .child(projects::section_label("Projects", p))
+            .child(projects::section_label(
+                if self.design().is_v2() {
+                    "Projects on other machines"
+                } else {
+                    "Projects"
+                },
+                p,
+            ))
             .child(
-                self.quiet_button(
+                self.pquiet(
                     "projects-refresh",
                     "Refresh",
                     IconName::Redo,
@@ -130,12 +137,17 @@ impl Workspace {
                     .opacity(0.8)
                     .child(project.remote.clone().unwrap_or_else(|| "no remote".into())),
             );
-        let mut cells = div().flex().flex_wrap().gap_2();
+        let mut cells = if self.design().is_v2() {
+            // Equal columns, one per machine, filling the card.
+            div().flex().gap(px(p.tokens.space.md))
+        } else {
+            div().flex().flex_wrap().gap_2()
+        };
         for (col, cell) in project.peers.iter().enumerate() {
             let view = CellView::new(project, cell, links);
             cells = cells.child(self.render_link_cell(row, col, project, cell, &view, cx));
         }
-        chrome::card(p)
+        self.page_card()
             .debug_selector(move || format!("project-row-{row}"))
             .p_4()
             .flex()
@@ -187,8 +199,22 @@ impl Workspace {
                 .text_color(rgb(p.muted))
                 .child(text)
         };
+        let v2 = self.design().is_v2();
         let mut body = div().flex().flex_col().gap_1().min_w_0();
         match &view.state {
+            // v2: the path, then how it is linked as a quiet line; no pills.
+            CellState::Linked(path) if v2 => {
+                body = body.child(mono(path.clone())).child(
+                    muted("Linked".into())
+                        .debug_selector(move || format!("link-linked-{row}-{col}")),
+                );
+            }
+            CellState::Matched { path, via } if v2 => {
+                body = body.child(mono(path.clone())).child(
+                    muted(format!("Found · {}", via.label()))
+                        .debug_selector(move || format!("link-matched-{row}-{col}")),
+                );
+            }
             CellState::Linked(path) => {
                 body = body.child(
                     div()
@@ -237,7 +263,7 @@ impl Workspace {
                                     .child(muted(format!("suggested · {}", suggestion.label()))),
                             )
                             .child(
-                                self.quiet_button(
+                                self.pquiet(
                                     SharedString::from(format!("link-accept-{row}-{col}-{ix}")),
                                     "Accept",
                                     IconName::Check,
@@ -278,7 +304,7 @@ impl Workspace {
         if !cell.choices.is_empty() {
             let key = (project.path.clone(), cell.peer.clone());
             actions = actions.child(
-                self.quiet_button(
+                self.pquiet(
                     SharedString::from(format!("link-choose-{row}-{col}")),
                     "Choose…",
                     IconName::Folder,
@@ -304,7 +330,7 @@ impl Workspace {
                 peer: cell.peer.clone(),
             });
             actions = actions.child(
-                self.quiet_button(
+                self.pquiet(
                     SharedString::from(format!("link-unlink-{row}-{col}")),
                     "Unlink",
                     IconName::Close,
@@ -344,7 +370,13 @@ impl Workspace {
         }
         div()
             .debug_selector(move || format!("link-cell-{row}-{col}"))
-            .w(px(280.))
+            .map(|d| {
+                if v2 {
+                    d.flex_1().flex_basis(px(0.)).min_w_0()
+                } else {
+                    d.w(px(280.))
+                }
+            })
             .p_2()
             .rounded(px(p.control_radius))
             .border_1()
@@ -365,9 +397,10 @@ impl Workspace {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(cell.peer.clone()),
                     )
-                    .when(view.offline, |d| {
+                    .when(view.offline && !v2, |d| {
                         d.child(super::hosts::pill("offline".into(), p.muted, p))
-                    }),
+                    })
+                    .when(view.offline && v2, |d| d.child(muted("Offline".into()))),
             )
             .child(body)
             .child(actions)

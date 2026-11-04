@@ -959,21 +959,21 @@ impl Workspace {
                         .justify_end()
                         .gap_2()
                         .child(
-                            self.danger_button("project-identity-reset", "Reset", can_write)
+                            self.pdanger("project-identity-reset", "Reset", can_write)
                                 .when(can_write, |d| {
                                     d.on_click(cx.listener(|this, _, _, cx| {
                                         this.save_identity(true, cx)
                                     }))
                                 }),
                         )
-                        .child(self.button("project-identity-cancel", "Cancel", true).on_click(
+                        .child(self.pbutton("project-identity-cancel", "Cancel", true).on_click(
                             cx.listener(|this, _, _, cx| {
                                 this.projects.editor = None;
                                 cx.notify();
                             }),
                         ))
                         .child(
-                            self.primary_button("project-identity-save", "Save", can_write)
+                            self.pprimary("project-identity-save", "Save", can_write)
                                 .debug_selector(|| "project-identity-save".into())
                                 .when(can_write, |d| {
                                     d.on_click(cx.listener(|this, _, _, cx| {
@@ -1137,7 +1137,7 @@ impl Workspace {
                     ),
             )
             .child(
-                self.icon_button(
+                self.picon(
                     "launch-project-pin",
                     if pinned { "Unpin folder" } else { "Pin folder" },
                     IconName::Star,
@@ -1152,7 +1152,7 @@ impl Workspace {
                 }),
             )
             .child(
-                self.button("launch-project-change", "Change", !busy)
+                self.pbutton("launch-project-change", "Change", !busy)
                     .debug_selector(|| "launch-project-change".into())
                     .flex_shrink_0()
                     .when(!busy, |d| {
@@ -1202,7 +1202,7 @@ impl Workspace {
                     ),
             )
             .child(
-                self.quiet_button(
+                self.pquiet(
                     "launch-project-browse",
                     browse_label,
                     IconName::FolderOpen,
@@ -1215,7 +1215,7 @@ impl Workspace {
             )
             .when(can_cancel, |d| {
                 d.child(
-                    self.quiet_button("launch-project-cancel", "Cancel", IconName::Close, !busy)
+                    self.pquiet("launch-project-cancel", "Cancel", IconName::Close, !busy)
                         .debug_selector(|| "launch-project-cancel".into())
                         .when(!busy, |d| {
                             d.on_click(cx.listener(|this, _, window, cx| {
@@ -1331,7 +1331,7 @@ impl Workspace {
                                 .child(registry_error_notice(&error)),
                         )
                         .child(
-                            self.quiet_button(
+                            self.pquiet(
                                 "launch-project-retry",
                                 "Retry",
                                 IconName::Redo,
@@ -1501,7 +1501,7 @@ impl Workspace {
                         )
                     })
                     .child(
-                        self.icon_button(
+                        self.picon(
                             SharedString::from(format!("launch-project-pin-{ix}")),
                             if pinned { "Unpin folder" } else { "Pin folder" },
                             IconName::Star,
@@ -1550,7 +1550,7 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .child(
-                        self.icon_button("browse-up", "Parent folder", IconName::ArrowUp, can_up)
+                        self.picon("browse-up", "Parent folder", IconName::ArrowUp, can_up)
                             .when(can_up, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
                                     this.browse_to(parent.clone(), cx)
@@ -1558,7 +1558,7 @@ impl Workspace {
                             }),
                     )
                     .child(
-                        self.icon_button(
+                        self.picon(
                             "browse-home",
                             "Home folder",
                             IconName::User,
@@ -1648,7 +1648,7 @@ impl Workspace {
                     .justify_end()
                     .gap_2()
                     .child(
-                        self.button("browse-cancel", "Back to projects", true)
+                        self.pbutton("browse-cancel", "Back to projects", true)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.projects.browsing = false;
                                 this.project_query
@@ -1657,7 +1657,7 @@ impl Workspace {
                             })),
                     )
                     .child(
-                        self.primary_button("browse-use", "Use this folder", can_use)
+                        self.pprimary("browse-use", "Use this folder", can_use)
                             .debug_selector(|| "launch-browse-use".into())
                             .when(can_use, |d| {
                                 d.on_click(cx.listener(move |this, _, window, cx| {
@@ -1700,7 +1700,7 @@ impl Workspace {
                         .child(self.projects.notice.clone())
                         .when(self.projects.fallback.is_some(), |d| {
                             d.child(
-                                self.quiet_button(
+                                self.pquiet(
                                     "keep-on-device",
                                     "Keep on this device",
                                     IconName::Check,
@@ -1809,9 +1809,9 @@ impl Workspace {
             let id = (*id).to_owned();
             let selector = format!("project-git-{}", if id.is_empty() { "auto" } else { &id });
             let button = if selected {
-                self.primary_button(SharedString::from(selector.clone()), *label, can_write)
+                self.pprimary(SharedString::from(selector.clone()), *label, can_write)
             } else {
-                self.button(SharedString::from(selector.clone()), *label, can_write)
+                self.pbutton(SharedString::from(selector.clone()), *label, can_write)
             };
             button
                 .debug_selector(move || selector.clone())

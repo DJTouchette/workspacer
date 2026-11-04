@@ -216,103 +216,109 @@ impl Workspace {
             .flex_col()
             .gap_2()
             .when(self.design().is_v2(), |d| d.child(themes))
-            .when(!self.design().is_v2(), |d| d.child(
-                // Eight palettes: equal tiles that wrap rather than one row
-                // squeezed to unreadable previews in a narrow window.
-                div()
-                    .debug_selector(|| "theme-picker".into())
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .children(Appearance::ALL.into_iter().map(|appearance| {
-                        let colors = appearance.palette_for(self.design());
-                        let active = self.appearance == appearance;
-                        chrome::interactive_control(div().id(appearance.label()), p, true)
-                            .debug_selector(move || format!("theme-{}", appearance.label()))
-                            .w(px(148.))
-                            .flex_shrink_0()
-                            .rounded(px(p.panel_radius))
-                            .overflow_hidden()
-                            .cursor_pointer()
-                            .border_color(if active { rgb(p.accent) } else { gpui::rgba(0) })
-                            .bg(rgb(p.base))
-                            .hover(|style| style.bg(rgb(p.selected)))
-                            .child(
-                                div()
-                                    .m_2()
-                                    .h(px(64.))
-                                    .rounded(px(p.control_radius))
-                                    .bg(rgb(colors.chat))
-                                    .flex()
-                                    .overflow_hidden()
-                                    .child(
-                                        div()
-                                            .w(px(24.))
-                                            .h_full()
-                                            .bg(rgb(colors.base))
-                                            .p_2()
-                                            .child(status_dot(colors.accent)),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .p_2()
-                                            .flex()
-                                            .flex_col()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .h(px(6.))
-                                                    .w(px(36.))
-                                                    .rounded_full()
-                                                    .bg(rgb(colors.text)),
-                                            )
-                                            .child(
-                                                div()
-                                                    .h(px(4.))
-                                                    .w_full()
-                                                    .rounded_full()
-                                                    .bg(rgb(colors.border)),
-                                            )
-                                            .child(
-                                                div()
-                                                    .h(px(14.))
-                                                    .w_full()
-                                                    .rounded(px(4.))
-                                                    .bg(rgb(colors.surface)),
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .px_3()
-                                    .pb_3()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(px(12.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(rgb(if active { p.accent } else { p.text }))
-                                            .child(appearance.label()),
-                                    )
-                                    .when(active, |d| {
-                                        d.child(
-                                            Icon::new(IconName::Check)
-                                                .size(px(14.))
-                                                .text_color(rgb(p.accent)),
+            .when(!self.design().is_v2(), |d| {
+                d.child(
+                    // Eight palettes: equal tiles that wrap rather than one row
+                    // squeezed to unreadable previews in a narrow window.
+                    div()
+                        .debug_selector(|| "theme-picker".into())
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .children(Appearance::ALL.into_iter().map(|appearance| {
+                            let colors = appearance.palette_for(self.design());
+                            let active = self.appearance == appearance;
+                            chrome::interactive_control(div().id(appearance.label()), p, true)
+                                .debug_selector(move || format!("theme-{}", appearance.label()))
+                                .w(px(148.))
+                                .flex_shrink_0()
+                                .rounded(px(p.panel_radius))
+                                .overflow_hidden()
+                                .cursor_pointer()
+                                .border_color(if active { rgb(p.accent) } else { gpui::rgba(0) })
+                                .bg(rgb(p.base))
+                                .hover(|style| style.bg(rgb(p.selected)))
+                                .child(
+                                    div()
+                                        .m_2()
+                                        .h(px(64.))
+                                        .rounded(px(p.control_radius))
+                                        .bg(rgb(colors.chat))
+                                        .flex()
+                                        .overflow_hidden()
+                                        .child(
+                                            div()
+                                                .w(px(24.))
+                                                .h_full()
+                                                .bg(rgb(colors.base))
+                                                .p_2()
+                                                .child(status_dot(colors.accent)),
                                         )
-                                    }),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.choose_theme(appearance, window, cx)
-                            }))
-                    })),
-            ))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .p_2()
+                                                .flex()
+                                                .flex_col()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .h(px(6.))
+                                                        .w(px(36.))
+                                                        .rounded_full()
+                                                        .bg(rgb(colors.text)),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .h(px(4.))
+                                                        .w_full()
+                                                        .rounded_full()
+                                                        .bg(rgb(colors.border)),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .h(px(14.))
+                                                        .w_full()
+                                                        .rounded(px(4.))
+                                                        .bg(rgb(colors.surface)),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .px_3()
+                                        .pb_3()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_size(px(12.))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(rgb(if active {
+                                                    p.accent
+                                                } else {
+                                                    p.text
+                                                }))
+                                                .child(appearance.label()),
+                                        )
+                                        .when(active, |d| {
+                                            d.child(
+                                                Icon::new(IconName::Check)
+                                                    .size(px(14.))
+                                                    .text_color(rgb(p.accent)),
+                                            )
+                                        }),
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.choose_theme(appearance, window, cx)
+                                }))
+                        })),
+                )
+            })
             .when(!self.theme_error.is_empty(), |d| {
                 d.child(
                     div()
@@ -502,7 +508,7 @@ impl Workspace {
             "Inter, JetBrains Mono and 15 px.",
             "default restore fonts",
             Layout::Row,
-            self.quiet_button("reset-fonts", "Reset", IconName::Undo2, true)
+            self.pquiet("reset-fonts", "Reset", IconName::Undo2, true)
                 .on_click(cx.listener(|this, _, window, cx| {
                     let defaults = Settings::default();
                     this.settings.interface_font = defaults.interface_font;
@@ -562,7 +568,7 @@ impl Workspace {
             "Install and connect the agents on your workspace host.",
             "install claude codex providers login connect",
             Layout::Row,
-            self.quiet_button("settings-setup", "Set up", IconName::ArrowRight, true)
+            self.pquiet("settings-setup", "Set up", IconName::ArrowRight, true)
                 .on_click(
                     cx.listener(|this, _, window, cx| this.open_feature(Screen::Setup, window, cx)),
                 ),
@@ -1388,10 +1394,7 @@ impl Workspace {
         } else {
             self.settings_section
         };
-        let ix = all
-            .iter()
-            .position(|s| *s == current)
-            .unwrap_or(0) as isize;
+        let ix = all.iter().position(|s| *s == current).unwrap_or(0) as isize;
         self.enter_settings_section(all[(ix + step).rem_euclid(all.len() as isize) as usize], cx);
         cx.notify();
     }
@@ -1515,9 +1518,11 @@ impl Workspace {
                     .debug_selector(move || format!("{id}-{ix}"))
                     .when(!enabled, |d| d.text_color(rgb(p.roles.text_tertiary)))
                     .when(enabled, |d| {
-                        d.on_click(cx.listener(move |this, _, window, cx| {
-                            on_pick(this, value, window, cx)
-                        }))
+                        d.on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                on_pick(this, value, window, cx)
+                            }),
+                        )
                     })
             }))
     }
@@ -1606,16 +1611,13 @@ impl Workspace {
                                             .child(bar(t.space.xxl, c.roles.text_secondary)),
                                     )
                                     .child(
-                                        div()
-                                            .flex()
-                                            .justify_end()
-                                            .child(
-                                                div()
-                                                    .h(px(t.space.md))
-                                                    .w(px(t.space.xxl))
-                                                    .rounded(px(t.radius.xs))
-                                                    .bg(rgb(c.primary)),
-                                            ),
+                                        div().flex().justify_end().child(
+                                            div()
+                                                .h(px(t.space.md))
+                                                .w(px(t.space.xxl))
+                                                .rounded(px(t.radius.xs))
+                                                .bg(rgb(c.primary)),
+                                        ),
                                     ),
                             ),
                     );
@@ -1690,7 +1692,8 @@ impl Workspace {
             .px(px(t.space.xl))
             .py(px(t.space.lg + t.space.xxs))
             .when(!first, |d| {
-                d.border_t(px(t.stroke.hairline)).border_color(rgb(p.border))
+                d.border_t(px(t.stroke.hairline))
+                    .border_color(rgb(p.border))
             })
             .map(|d| match entry.layout {
                 Layout::Row => d
@@ -1793,68 +1796,69 @@ impl Workspace {
             })
             .collect();
         let current = self.settings_section.v2_home();
-        let rail = div()
-            .debug_selector(|| "settings-rail".into())
-            .w(px(if tight {
-                t.layout.control_height
-            } else {
-                t.layout.settings_rail
-            }))
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.xxs))
-            .children(
-                SettingsSection::V2
-                    .into_iter()
-                    .zip(counts.iter().copied())
-                    .map(|(section, count)| {
-                        let active = !searching && current == section;
-                        let dimmed = searching && count == 0;
-                        let label = section.label();
-                        primitives::list_row(section.label(), active, true, &p)
-                            .debug_selector(move || format!("settings-nav-{}", section.label()))
-                            .h(px(t.layout.control_height_sm + t.space.xs))
-                            .when(tight, |d| {
-                                d.justify_center()
-                                    .tooltip(primitives::tooltip_view(label, None, &p))
-                            })
-                            .font_weight(FontWeight(if active {
-                                t.weight.semibold
-                            } else {
-                                t.weight.medium
-                            }))
-                            .text_color(rgb(if active {
-                                p.text
-                            } else if dimmed {
-                                p.roles.text_tertiary
-                            } else {
-                                p.roles.text_secondary
-                            }))
-                            .child(Icon::new(section.icon()).size(px(t.icon.md)).text_color(
-                                rgb(if active {
-                                    p.text
+        let rail =
+            div()
+                .debug_selector(|| "settings-rail".into())
+                .w(px(if tight {
+                    t.layout.control_height
+                } else {
+                    t.layout.settings_rail
+                }))
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.xxs))
+                .children(
+                    SettingsSection::V2
+                        .into_iter()
+                        .zip(counts.iter().copied())
+                        .map(|(section, count)| {
+                            let active = !searching && current == section;
+                            let dimmed = searching && count == 0;
+                            let label = section.label();
+                            primitives::list_row(section.label(), active, true, &p)
+                                .debug_selector(move || format!("settings-nav-{}", section.label()))
+                                .h(px(t.layout.control_height_sm + t.space.xs))
+                                .when(tight, |d| {
+                                    d.justify_center()
+                                        .tooltip(primitives::tooltip_view(label, None, &p))
+                                })
+                                .font_weight(FontWeight(if active {
+                                    t.weight.semibold
                                 } else {
+                                    t.weight.medium
+                                }))
+                                .text_color(rgb(if active {
+                                    p.text
+                                } else if dimmed {
                                     p.roles.text_tertiary
-                                }),
-                            ))
-                            .when(!tight, |d| d.child(div().flex_1().child(section.label())))
-                            .when(!tight && searching && count > 0, |d| {
-                                d.child(primitives::badge(
-                                    count.to_string(),
-                                    primitives::Intent::Accent,
-                                    &p,
+                                } else {
+                                    p.roles.text_secondary
+                                }))
+                                .child(Icon::new(section.icon()).size(px(t.icon.md)).text_color(
+                                    rgb(if active {
+                                        p.text
+                                    } else {
+                                        p.roles.text_tertiary
+                                    }),
                                 ))
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.enter_settings_section(section, cx);
-                                this.settings_search
-                                    .update(cx, |input, cx| input.set_value("", window, cx));
-                                window.focus(&this.focus);
-                                cx.notify();
-                            }))
-                    }),
-            );
+                                .when(!tight, |d| d.child(div().flex_1().child(section.label())))
+                                .when(!tight && searching && count > 0, |d| {
+                                    d.child(primitives::badge(
+                                        count.to_string(),
+                                        primitives::Intent::Accent,
+                                        &p,
+                                    ))
+                                })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.enter_settings_section(section, cx);
+                                    this.settings_search
+                                        .update(cx, |input, cx| input.set_value("", window, cx));
+                                    window.focus(&this.focus);
+                                    cx.notify();
+                                }))
+                        }),
+                );
         let search = div()
             .debug_selector(|| "settings-search".into())
             .w(px(t.layout.settings_rail + t.layout.status_column))
@@ -2059,13 +2063,14 @@ impl Workspace {
                 StatusBadge::new(StatusKind::Working).label("Checking for updates…"),
                 None,
             )
-        } else if let Some(error) = check_error.clone() {
+        } else if check_error.is_some() {
+            // The raw error stays in the tooltip.
             (
                 StatusBadge::new(StatusKind::Idle).label("Couldn't check for updates"),
-                Some(format!(
-                    "Workspacer couldn't reach GitHub, so it can't tell whether a newer version exists. Check your connection and try again. ({})",
-                    first_line(&error)
-                )),
+                Some(
+                    "Workspacer couldn't reach GitHub, so it can't tell whether a newer version exists. Check your connection and try again."
+                        .to_owned(),
+                ),
             )
         } else {
             match (&status, latest.as_deref()) {
@@ -2086,7 +2091,10 @@ impl Workspace {
                     StatusBadge::new(StatusKind::Idle).label("No release on this channel yet"),
                     None,
                 ),
-                (None, _) => (StatusBadge::new(StatusKind::Idle).label("Not checked yet"), None),
+                (None, _) => (
+                    StatusBadge::new(StatusKind::Idle).label("Not checked yet"),
+                    None,
+                ),
             }
         };
         let can_check = !checking && !downloading;
@@ -2100,11 +2108,7 @@ impl Workspace {
                 "Check for updates"
             },
             Some(IconName::Redo),
-            if available && installable {
-                ButtonVariant::Secondary
-            } else {
-                ButtonVariant::Secondary
-            },
+            ButtonVariant::Secondary,
             ButtonSize::Small,
             can_check,
             &p,
@@ -2137,7 +2141,11 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap(px(t.space.lg))
-                    .child(primitives::avatar_tile_sized("Workspacer", t.layout.avatar_lg, &p))
+                    .child(primitives::avatar_tile_sized(
+                        "Workspacer",
+                        t.layout.avatar_lg,
+                        &p,
+                    ))
                     .child(
                         div()
                             .flex_1()
@@ -2250,12 +2258,6 @@ impl Workspace {
     }
 }
 
-/// The first line of an error, cut short for an inline mention.
-fn first_line(error: &str) -> String {
-    let line = error.lines().next().unwrap_or("").trim();
-    wks_native::format::truncate_end(line, 80).unwrap_or_else(|| line.to_owned())
-}
-
 #[cfg(test)]
 mod v2_tests {
     use super::*;
@@ -2276,11 +2278,5 @@ mod v2_tests {
         for section in SettingsSection::ALL {
             assert!(SettingsSection::V2.contains(&section.v2_home()));
         }
-    }
-
-    #[test]
-    fn first_line_cuts_long_errors() {
-        assert_eq!(first_line("offline\nmore"), "offline");
-        assert!(first_line(&"x".repeat(200)).chars().count() <= 81);
     }
 }

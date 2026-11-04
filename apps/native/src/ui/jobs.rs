@@ -349,7 +349,7 @@ impl Workspace {
         let mut ix = 0;
         while ix < shown.len() {
             let day = days[ix].clone();
-            let mut card = chrome::card(p).flex().flex_col().overflow_hidden();
+            let mut card = self.page_card().flex().flex_col().overflow_hidden();
             let start = ix;
             while ix < shown.len() && days[ix] == day {
                 card = card.child(self.run_row(ix, ix > start, &shown[ix], list, cx));

@@ -576,7 +576,7 @@ impl Workspace {
                     .flex()
                     .justify_center()
                     .child(
-                        self.button(
+                        self.pbutton(
                             "history-load-more",
                             if loading_more {
                                 "Loading older sessions…"
@@ -658,7 +658,7 @@ impl Workspace {
             )
             .when(page.searching, |d| {
                 d.child(
-                    self.quiet_button(
+                    self.pquiet(
                         "history-clear-search",
                         "Clear search",
                         IconName::Close,
@@ -671,7 +671,7 @@ impl Workspace {
             })
             .when(!page.searching && page.groups.len() > 1, |d| {
                 d.child(
-                    self.quiet_button(
+                    self.pquiet(
                         "history-fold-all",
                         if all_folded {
                             "Expand all"
@@ -758,7 +758,7 @@ impl Workspace {
             .when(!page.searching && self.extras.show_archived, |d| {
                 d.child(
                     div().pt_2().child(
-                        self.button("history-show-all", "Show all sessions", true)
+                        self.pbutton("history-show-all", "Show all sessions", true)
                             .debug_selector(|| "history-show-all".into())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.extras.show_archived = false;
@@ -990,7 +990,10 @@ impl Workspace {
                                     .child(entry.title.clone()),
                             )
                             .when(live, |d| {
-                                d.child(div().flex_shrink_0().child(session_badge(s, p, connected)))
+                                d.child(div().flex_shrink_0().child(match self.v2_palette() {
+                                    Some(v2) => self.session_status_v2(s).render(&v2),
+                                    None => session_badge(s, p, connected),
+                                }))
                             })
                             // Under the Hidden filter every row is; the badge would only repeat it.
                             .when(hidden && !self.extras.show_archived, |d| {
@@ -1015,7 +1018,7 @@ impl Workspace {
                             .min_w_0()
                             .text_size(px(chrome::scale::CAPTION))
                             .text_color(rgb(p.muted))
-                            .child(div().flex_shrink_0().child(chrome::model_badge(s, p, 11.)))
+                            .child(div().flex_shrink_0().child(self.page_model(s, 11.)))
                             .when(!place.is_empty(), |d| {
                                 d.child(dot()).child(
                                     div()
@@ -1147,7 +1150,7 @@ impl Workspace {
                         }
                         cx.notify();
                     })),
-                self.danger_button("forget-recent", "Delete for good", enabled)
+                self.pdanger("forget-recent", "Delete for good", enabled)
                     .h(px(28.))
                     .py_0()
                     .flex()

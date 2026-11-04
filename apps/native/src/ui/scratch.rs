@@ -255,7 +255,7 @@ impl Workspace {
                     )
                     .child(
                         div().pt_1().child(
-                            self.button("scratch-retry", "Try again", true)
+                            self.pbutton("scratch-retry", "Try again", true)
                                 .debug_selector(|| "scratch-retry".into())
                                 .on_click(cx.listener(|this, _, _, cx| this.refresh_scratch(cx))),
                         ),
@@ -431,9 +431,9 @@ impl Workspace {
         let copy = folder.to_owned();
         let mut out = vec![
             if compact {
-                self.icon_button(id, "Copy folder path", IconName::Copy, true)
+                self.picon(id, "Copy folder path", IconName::Copy, true)
             } else {
-                self.quiet_button(id, "Copy folder path", IconName::Copy, true)
+                self.pquiet(id, "Copy folder path", IconName::Copy, true)
             }
             .debug_selector(|| "scratch-copy-folder".into())
             .on_click(cx.listener(move |_, _, _, cx| {
@@ -447,9 +447,9 @@ impl Workspace {
                 {
                     let id = SharedString::from(format!("scratch-reveal-folder-{}", folder.len()));
                     if compact {
-                        self.icon_button(id, "Show folder", IconName::FolderOpen, true)
+                        self.picon(id, "Show folder", IconName::FolderOpen, true)
                     } else {
-                        self.quiet_button(id, "Show folder", IconName::FolderOpen, true)
+                        self.pquiet(id, "Show folder", IconName::FolderOpen, true)
                     }
                 }
                 .on_click(
@@ -637,13 +637,30 @@ impl Workspace {
         if let Some(at) = item.modified_at {
             meta = format!("{meta} · {}", jobs::since(at, now_ms()));
         }
-        chrome::card(p)
+        self.page_card()
             .debug_selector(move || format!("scratch-row-{ix}"))
             .flex()
             .flex_col()
-            .when(item.status == Status::Pending, |d| {
-                d.border_color(rgb(p.warning))
-            })
+            .when(
+                item.status == Status::Pending && !self.design().is_v2(),
+                |d| d.border_color(rgb(p.warning)),
+            )
+            // v2: needs-you is a rule down the edge, not a loud outline.
+            .when(
+                item.status == Status::Pending && self.design().is_v2(),
+                |d| {
+                    let t = p.tokens;
+                    d.relative().overflow_hidden().child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(t.stroke.focus + t.stroke.hairline))
+                            .bg(rgb(p.warning)),
+                    )
+                },
+            )
             .child(
                 div()
                     .id(("scratch-row", ix))
@@ -762,9 +779,9 @@ impl Workspace {
             let path = item.path.clone();
             let mark_cwd = cwd.clone();
             let button = if status == Status::Done && item.status == Status::Pending {
-                self.primary_button(format!("scratch-mark-{wire}-{ix}"), label, enabled)
+                self.pprimary(format!("scratch-mark-{wire}-{ix}"), label, enabled)
             } else {
-                self.button(format!("scratch-mark-{wire}-{ix}"), label, enabled)
+                self.pbutton(format!("scratch-mark-{wire}-{ix}"), label, enabled)
             };
             actions = actions.child(
                 button
@@ -783,7 +800,7 @@ impl Workspace {
         let keep = !item.keep;
         // Keeping is a side setting, not a status: quieter than the marks.
         actions = actions.child(
-            self.quiet_button(
+            self.pquiet(
                 format!("scratch-keep-{ix}"),
                 if item.keep { "Stop keeping" } else { "Keep" },
                 IconName::Heart,
@@ -803,7 +820,7 @@ impl Workspace {
         );
         let copy = absolute.clone();
         actions = actions.child(
-            self.quiet_button(
+            self.pquiet(
                 format!("scratch-copy-{ix}"),
                 "Copy path",
                 IconName::Copy,
@@ -817,26 +834,25 @@ impl Workspace {
         if self.extras.local_paths {
             let open = absolute.clone();
             let reveal = absolute;
-            actions = actions
-                .child(
-                    self.quiet_button(format!("scratch-open-{ix}"), "Open", IconName::File, true)
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.open_with_system(std::path::Path::new(&open))
-                        })),
-                )
-                .child(
-                    self.quiet_button(
-                        format!("scratch-reveal-{ix}"),
-                        "Show in folder",
-                        IconName::FolderOpen,
-                        true,
+            actions =
+                actions
+                    .child(
+                        self.pquiet(format!("scratch-open-{ix}"), "Open", IconName::File, true)
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.open_with_system(std::path::Path::new(&open))
+                            })),
                     )
-                    .on_click(
-                        cx.listener(move |_, _, _, cx| {
+                    .child(
+                        self.pquiet(
+                            format!("scratch-reveal-{ix}"),
+                            "Show in folder",
+                            IconName::FolderOpen,
+                            true,
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| {
                             cx.reveal_path(std::path::Path::new(&reveal))
-                        }),
-                    ),
-                );
+                        })),
+                    );
         }
         let save_item = item.clone();
         let save_cwd = cwd.clone();
@@ -850,7 +866,7 @@ impl Workspace {
             .child(Input::new(&self.extras.scratch_note).disabled(!enabled))
             .child(
                 div().flex().child(
-                    self.button(
+                    self.pbutton(
                         format!("scratch-save-{ix}"),
                         "Save purpose and note",
                         enabled,

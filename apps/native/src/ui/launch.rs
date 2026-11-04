@@ -252,15 +252,15 @@ impl Workspace {
                 Some(if resume {
                     "Pick up where you left off, on the same agent and folder.".into()
                 } else {
-                    "Choose where it runs, the project and the agent, then describe the task.".into()
+                    "Choose where it runs, the project and the agent, then describe the task."
+                        .into()
                 }),
                 vec![close.into_any_element()],
                 &p,
             )
             .debug_selector(|| "launch-title".into())
         } else {
-            self
-            .page_header(
+            self.page_header(
                 None,
                 Some(if resume {
                     "CONTINUE A CONVERSATION"
@@ -1783,7 +1783,10 @@ fn host_cards(targets: &hosts::Targets) -> Vec<HostCard> {
                     (StatusBadge::new(StatusKind::Idle).label(label), false)
                 }
             },
-            None => (StatusBadge::new(StatusKind::Idle).label("No sample yet"), false),
+            None => (
+                StatusBadge::new(StatusKind::Idle).label("No sample yet"),
+                false,
+            ),
         }
     };
     let mut cards = Vec::new();
@@ -1964,7 +1967,9 @@ impl Workspace {
                             .debug_selector(|| "launch-auto-place-note".into())
                             .text_size(px(t.text.meta))
                             .text_color(rgb(p.roles.text_secondary))
-                            .child(format!("The hub places it on the best machine. {best_now}.")),
+                            .child(format!(
+                                "The hub places it on the best machine. {best_now}."
+                            )),
                     )
                 })
                 .when(local, |d| {

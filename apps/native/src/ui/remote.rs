@@ -101,7 +101,7 @@ impl Workspace {
                     p.muted,
                 ))
                 .child(
-                    self.quiet_button(
+                    self.pquiet(
                         "tailscale-download",
                         "Get Tailscale",
                         IconName::ExternalLink,
@@ -191,7 +191,7 @@ impl Workspace {
                     .when_some(hint_link, |d, link| {
                         d.child(
                             div().flex().child(
-                                self.quiet_button(
+                                self.pquiet(
                                     "tailscale-hint",
                                     "Open Tailscale admin",
                                     IconName::ExternalLink,
@@ -220,12 +220,12 @@ impl Workspace {
                                 .flex()
                                 .gap_2()
                                 .child(
-                                    self.primary_button("tailscale-reset", "Stop sharing", true)
+                                    self.pprimary("tailscale-reset", "Stop sharing", true)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.remote_action(RemoteAction::Serve(false), cx)
                                         })),
                                 )
-                                .child(self.button("tailscale-keep", "Keep sharing", true).on_click(
+                                .child(self.pbutton("tailscale-keep", "Keep sharing", true).on_click(
                                     cx.listener(|this, _, _, cx| {
                                         this.remote.confirm_reset = false;
                                         cx.notify();
@@ -312,20 +312,20 @@ impl Workspace {
                                     .flex_wrap()
                                     .gap_2()
                                     .child(
-                                        self.quiet_button("pairing-copy", "Copy link", IconName::Copy, true)
+                                        self.pquiet("pairing-copy", "Copy link", IconName::Copy, true)
                                             .on_click(move |_, _, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
                                             }),
                                     )
                                     .child(
-                                        self.quiet_button("pairing-open", "Open here", IconName::ExternalLink, true)
+                                        self.pquiet("pairing-open", "Open here", IconName::ExternalLink, true)
                                             .on_click(move |_, _, cx| cx.open_url(&open)),
                                     ),
                             ),
                     )
             }
             None => div().child(
-                self.primary_button(
+                self.pprimary(
                     "pairing-create",
                     if busy {
                         "Creating…"
@@ -406,7 +406,7 @@ impl Workspace {
                             }),
                     )
                     .child(
-                        self.button(
+                        self.pbutton(
                             format!("pairing-revoke-{ix}"),
                             if confirming {
                                 "Confirm revoke"
