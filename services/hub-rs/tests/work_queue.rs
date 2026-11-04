@@ -289,9 +289,27 @@ async fn only_the_owner_submits_shell_work_or_changes_limits() {
             .await
             .is_err()
     );
+    let link = json!({"localPath":directory.path(),"peer":"mac","peerPath":"/Users/dj/app"});
+    for method in ["projects.setLink", "projects.removeLink"] {
+        let mut params = link.clone();
+        if method == "projects.removeLink" {
+            params.as_object_mut().unwrap().remove("peerPath");
+        }
+        let refused = operator.call(method, params).await.unwrap_err();
+        assert!(
+            refused.to_string().contains("requires the server owner"),
+            "{refused}"
+        );
+    }
     // Reads are open to any authenticated caller, including view tokens.
     let viewer = connect(view.token).await;
-    for method in ["queue.list", "queue.config", "host.resources"] {
+    for method in [
+        "queue.list",
+        "queue.config",
+        "host.resources",
+        "projects.links",
+        "projects.linkMatrix",
+    ] {
         viewer.call(method, json!({})).await.unwrap();
     }
     assert!(
@@ -332,6 +350,11 @@ struct TwoHubs {
     _dir: tempfile::TempDir,
 }
 async fn two_hubs() -> TwoHubs {
+    two_hubs_advertising(None).await
+}
+/// `two_hubs`, with the remote answering `fleet.dispatchCapabilities` with
+/// these directory choices (a hub without an execution host has none).
+async fn two_hubs_advertising(cwds: Option<Value>) -> TwoHubs {
     use workspacer_hub::{
         auth::{self, Scope},
         federation::Peer,
@@ -345,6 +368,17 @@ async fn two_hubs() -> TwoHubs {
     options.scoped_tokens = Some(tokens);
     std::fs::create_dir(dir.path().join("remote")).unwrap();
     options.work_queue_file = Some(dir.path().join("remote/queue.json"));
+    if let Some(cwds) = cwds {
+        options = options.handler("fleet.dispatchCapabilities", move |_, _| {
+            let cwds = cwds.clone();
+            async move {
+                Ok(
+                    json!({"protocol":2,"exactModel":true,"executes":true,"scope":"operator",
+                    "providers":[],"cwds":cwds}),
+                )
+            }
+        });
+    }
     let remote = Hub::start(options).unwrap();
     let address = remote.ready().await.unwrap().unwrap();
     let remote_owner = Client::connect(&remote.handle()).await.unwrap();
@@ -666,4 +700,234 @@ async fn a_job_with_host_local_enqueues_and_records_where_it_went() {
             .is_err()
     );
     hub.shutdown().unwrap();
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+}
+
+/// The same project at different paths on two machines: the peer advertises
+/// its copy with the same origin, a folder with only the same name, and the
+/// owner links the latter by hand (docs/host-work-queue.md, "Project links").
+#[tokio::test]
+async fn project_links_translate_the_cwd_for_named_and_any_submits() {
+    let paths = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(paths.path()).unwrap();
+    let local_app = root.join("home/dj/code/app");
+    let local_web = root.join("home/dj/web");
+    let peer_app = root.join("Users/dj/app");
+    let peer_web = root.join("Users/dj/sites/web");
+    for dir in [&local_app, &local_web, &peer_app, &peer_web] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    git(&local_app, &["init", "-q"]);
+    git(
+        &local_app,
+        &["remote", "add", "origin", "git@GitHub.com:DJ/app.git"],
+    );
+    let s = |p: &Path| p.to_str().unwrap().to_owned();
+    let hubs = two_hubs_advertising(Some(json!([
+        {"path": s(&peer_app), "name": "app", "remote": "github.com/DJ/app", "source": "project", "git": true},
+        // An older peer's row: no name, no remote.
+        {"path": s(&peer_web), "source": "active", "git": false},
+    ])))
+    .await;
+    let owner = &hubs.owner;
+    let watcher = Client::connect(&hubs.local.handle()).await.unwrap();
+    let mut events = watcher.events();
+    watcher
+        .topics(BTreeSet::from(["projects.linksChanged".to_owned()]))
+        .await
+        .unwrap();
+    let pwd_in = |cwd: &Path, host: &str| {
+        let mut item = shell("pwd");
+        item["host"] = json!(host);
+        item["shell"]["cwd"] = json!(cwd);
+        item
+    };
+
+    // Named peer, same origin at another path: the peer's path is used.
+    let landed = owner
+        .call("queue.submit", pwd_in(&local_app, "box"))
+        .await
+        .unwrap();
+    assert_eq!(landed["host"], "box");
+    assert_eq!(landed["item"]["shell"]["cwd"], s(&peer_app));
+    assert_eq!(landed["item"]["source"]["originCwd"], s(&local_app));
+    let ran = wait_state(&hubs.remote_owner, &landed["item"]["id"], "done").await;
+    assert_eq!(ran["detail"], s(&peer_app));
+
+    // queue.targets explains the translation per peer.
+    let targets = owner
+        .call("queue.targets", json!({"kind":"shell","cwd":local_app}))
+        .await
+        .unwrap();
+    let rows = targets["targets"].as_array().unwrap();
+    assert_eq!(rows[0]["host"], "local");
+    assert_eq!(rows[0]["resolvedCwd"], s(&local_app));
+    assert_eq!(rows[1]["host"], "box");
+    assert_eq!(rows[1]["eligible"], true);
+    assert_eq!(rows[1]["resolvedCwd"], s(&peer_app));
+    assert_eq!(rows[1]["resolvedVia"], "remote");
+    assert_eq!(rows[1]["suggestions"], json!([]));
+    assert_eq!(rows[1]["cwds"][0]["remote"], "github.com/DJ/app");
+
+    // `any` with this machine's gate closed: lands on a peer, translated.
+    owner
+        .call(
+            "queue.setConfig",
+            open_gate(json!({"minFreeDiskMb":1_073_741_824u64})),
+        )
+        .await
+        .unwrap();
+    let landed = owner
+        .call("queue.submit", pwd_in(&local_app, "any"))
+        .await
+        .unwrap();
+    assert_eq!(landed["host"], "box");
+    assert_eq!(landed["item"]["shell"]["cwd"], s(&peer_app));
+    assert_eq!(landed["item"]["source"]["originCwd"], s(&local_app));
+    wait_state(&hubs.remote_owner, &landed["item"]["id"], "done").await;
+
+    // Only the folder name matches: refused with a suggestion, both named
+    // and through placement.
+    let expected = format!(
+        "cwd {} has no match on box (suggested: {} — link it in Hosts → Projects)",
+        s(&local_web),
+        s(&peer_web)
+    );
+    let refused = owner
+        .call("queue.submit", pwd_in(&local_web, "box"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains(&expected), "{refused}");
+    let targets = owner
+        .call("queue.targets", json!({"kind":"shell","cwd":local_web}))
+        .await
+        .unwrap();
+    let box_row = &targets["targets"][1];
+    assert_eq!(box_row["eligible"], false);
+    assert_eq!(box_row["resolvedCwd"], Value::Null);
+    assert_eq!(
+        box_row["suggestions"],
+        json!([{"path": s(&peer_web), "why": "name"}])
+    );
+    assert!(
+        box_row["reasons"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(expected))
+    );
+
+    // The owner links it: now it is used, and the change is published.
+    let saved = owner
+        .call(
+            "projects.setLink",
+            json!({"localPath": local_web, "peer": "box", "peerPath": peer_web}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved["links"][0]["localPath"], s(&local_web));
+    assert_eq!(saved["links"][0]["peerPath"], s(&peer_web));
+    let event = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event.topic == "projects.linksChanged" {
+                return event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(event.data.unwrap(), saved);
+    assert_eq!(
+        owner.call("projects.links", json!({})).await.unwrap(),
+        saved
+    );
+    let landed = owner
+        .call("queue.submit", pwd_in(&local_web, "box"))
+        .await
+        .unwrap();
+    assert_eq!(landed["item"]["shell"]["cwd"], s(&peer_web));
+    assert_eq!(
+        wait_state(&hubs.remote_owner, &landed["item"]["id"], "done").await["detail"],
+        s(&peer_web)
+    );
+    let targets = owner
+        .call("queue.targets", json!({"kind":"shell","cwd":local_web}))
+        .await
+        .unwrap();
+    assert_eq!(targets["targets"][1]["resolvedVia"], "link");
+
+    // The matrix: the linked local project against every configured peer.
+    let matrix = owner.call("projects.linkMatrix", json!({})).await.unwrap();
+    let web = matrix["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["path"] == s(&local_web))
+        .unwrap_or_else(|| panic!("{matrix}"));
+    assert_eq!(web["name"], "web");
+    assert_eq!(web["remote"], Value::Null);
+    let peers = web["peers"].as_array().unwrap();
+    let names: Vec<_> = peers.iter().map(|p| p["peer"].as_str().unwrap()).collect();
+    assert_eq!(names, ["box", "ops", "quiet"]);
+    assert_eq!(peers[0]["connected"], true);
+    assert_eq!(
+        peers[0]["resolved"],
+        json!({"path": s(&peer_web), "via": "link"})
+    );
+    assert_eq!(peers[0]["choices"].as_array().unwrap().len(), 2);
+    assert_eq!(peers[0]["choices"][1]["name"], "");
+    // `ops` has no saved link: name-only, so a suggestion.
+    assert_eq!(peers[1]["resolved"], Value::Null);
+    assert_eq!(
+        peers[1]["suggestions"],
+        json!([{"path": s(&peer_web), "why": "name"}])
+    );
+    let removed = owner
+        .call(
+            "projects.removeLink",
+            json!({"localPath": local_web, "peer": "box"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(removed, json!({"links": []}));
+    assert!(
+        owner
+            .call(
+                "projects.setLink",
+                json!({"localPath": local_web, "peer": "box", "peerPath": "relative"})
+            )
+            .await
+            .is_err()
+    );
+    hubs.local.shutdown().unwrap();
+    hubs.remote.shutdown().unwrap();
+}
+
+/// A peer that cannot list its directories (no execution host) still takes
+/// a named submit: the cwd is forwarded as given and the peer decides.
+#[tokio::test]
+async fn a_peer_without_directory_choices_gets_the_cwd_as_given() {
+    let hubs = two_hubs().await;
+    let directory = tempfile::tempdir().unwrap();
+    let mut item = shell("pwd");
+    item["host"] = json!("box");
+    item["shell"]["cwd"] = json!(directory.path());
+    let landed = hubs.owner.call("queue.submit", item).await.unwrap();
+    assert_eq!(landed["item"]["shell"]["cwd"], json!(directory.path()));
+    assert_eq!(
+        landed["item"]["source"]["originCwd"],
+        json!(directory.path())
+    );
+    wait_state(&hubs.remote_owner, &landed["item"]["id"], "done").await;
+    hubs.local.shutdown().unwrap();
+    hubs.remote.shutdown().unwrap();
 }

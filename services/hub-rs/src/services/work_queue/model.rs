@@ -29,6 +29,10 @@ pub struct Source {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub job_id: String,
     pub origin: String,
+    /// The submitter's own cwd before project-link translation, recorded on
+    /// an item forwarded to a peer. Display-only.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub origin_cwd: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -239,7 +243,7 @@ const SPAWN_FIELDS: &[&str] = &[
     "fullAccess",
 ];
 const SHELL_FIELDS: &[&str] = &["command", "cwd", "timeoutSec"];
-const SOURCE_FIELDS: &[&str] = &["kind", "jobId", "origin"];
+const SOURCE_FIELDS: &[&str] = &["kind", "jobId", "origin", "originCwd"];
 
 fn known_keys(value: &Value, what: &str, known: &[&str]) -> Result<()> {
     if let Some(map) = value.as_object() {
@@ -403,6 +407,7 @@ pub fn parse_submit(params: &Value) -> Result<Item> {
             kind: text(source, "kind", "source")?,
             job_id: text(source, "jobId", "source")?,
             origin: clip(text(source, "origin", "source")?.trim(), LABEL_LIMIT),
+            origin_cwd: clip(text(source, "originCwd", "source")?.trim(), 4096),
         };
         if !matches!(
             item.source.kind.as_str(),

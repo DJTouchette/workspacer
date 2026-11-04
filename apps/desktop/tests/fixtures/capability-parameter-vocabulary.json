@@ -77,6 +77,8 @@
     "url": "url",
     "webhook": "url",
     "workdir": "path",
+    "localPath": "path",
+    "peerPath": "path",
     "launchIntegrationGranted": "permission"
   },
   "stems": [

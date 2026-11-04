@@ -175,16 +175,20 @@
     "projectGroups.list": "reads the hub's own project-groups.json in the config directory and returns its groups (name, folder list, colour, icon, timestamps) and revision. No caller values; nothing is opened outside that one hub-owned file and nothing is executed",
     "projectGroups.save": "creates or replaces one named group in the hub's own project-groups.json under the config lock and a revision compare-and-set. `id` selects an existing group (bounded hub-minted id), `name` is a bounded label, `color` a #rrggbb string, `icon` at most 8 characters and `revision` an integer. `folders` are absolute path STRINGS normalised like project_key and stored only as membership labels: the hub never opens, canonicalizes, joins, spawns in or grants anything for them, and a folder already in another group is refused. Never argv, config, policy or a launch input",
     "projectGroups.remove": "deletes one group, selected by its bounded hub-minted `id`, from the hub's own project-groups.json under the config lock and an optional `revision` compare-and-set. The group's folders, their config.yaml settings and their scratch are untouched; nothing is opened, deleted on disk, executed or stopped",
-    "queue.submit": "enqueues one host work-queue item in the hub's own 0600 queue.json. A `shell` item is host code (command, optional absolute cwd, bounded timeoutSec) and requires the actual server owner (the jobs.upsert check, is_owner); a `spawn` item (provider, absolute existing cwd, prompt, model, effort, permissionMode) requires agents.spawn authority and later re-enters agents.spawn over the hub's own bus client with only those ordinary launch fields, inheriting its clamps. `host` may name a configured, connected, dispatch-enabled federation peer (or `any`, resolved by queue.targets placement); the item is then forwarded once over the existing federation link as hub:<peer>/queue.submit with host:local, where the destination re-checks its own authority (shell only from its own host credential) and never routes onward. `source.kind` remote is stamped from the federated caller, never taken from params",
+    "queue.submit": "enqueues one host work-queue item in the hub's own 0600 queue.json. A `shell` item is host code (command, optional absolute cwd, bounded timeoutSec) and requires the actual server owner (the jobs.upsert check, is_owner); a `spawn` item (provider, absolute existing cwd, prompt, model, effort, permissionMode) requires agents.spawn authority and later re-enters agents.spawn over the hub's own bus client with only those ordinary launch fields, inheriting its clamps. `host` may name a configured, connected, dispatch-enabled federation peer (or `any`, resolved by queue.targets placement); the item is then forwarded once over the existing federation link as hub:<peer>/queue.submit with host:local, where the destination re-checks its own authority (shell only from its own host credential) and never routes onward. A forwarded item's cwd is translated into the peer's own path through its advertised directory choices and the owner's saved project links (projects.setLink); the original is recorded as source.originCwd and the peer re-checks that the translated directory exists. `source.kind` remote is stamped from the federated caller, never taken from params",
     "queue.cancel": "marks one QUEUED item, selected by its hub-minted `id`, cancelled in the hub's own queue.json. Owner only, or the federation credential that submitted that remote item. A `host` naming a peer forwards the same cancel over the federation link (owner only). A running item is refused; nothing is executed, killed or deleted",
     "queue.setConfig": "writes bounded numbers (slot counts 0..64, pressure percentages 0..100, MB floors) under the `queue` section of the shared config through the config lock; owner only (is_owner). Unknown keys are refused. They only change when queued work is admitted; no path, argv or permission reaches anything",
+    "projects.setLink": "saves one project link (localPath, peer, peerPath) in the hub's own 0600 project-links.json beside queue.json; owner only (is_owner). localPath is an absolute path STRING canonicalized once as the lookup key, peer a federation-peer-shaped name, peerPath an absolute path STRING on that peer kept as given. All three are stored as data: the hub never opens, lists, joins, spawns in or grants anything for them here. Later, queue.submit/queue.targets and jobs with a peer host use peerPath only as the translated cwd they forward to that peer, where the peer's own queue.submit re-checks that the directory exists and its own authority. No argv, config, permission or local launch input",
+    "projects.removeLink": "deletes the saved link for (localPath, peer) from the hub's own project-links.json; owner only (is_owner). localPath is an absolute path STRING used only as the lookup key and peer a peer-shaped name; nothing is opened, deleted on disk, executed or stopped, and removing an absent link changes nothing",
     "scratch.pending": "reads the hub's own scratch base directory (~/.workspacer/scratch) and each project's index.json and project.json there, bounded to 1,000 project directories, skipping symlinks and damaged indexes, and returns each project key, its recorded root and its count of pending files. No caller values; no file below files/ is opened and nothing is executed"
   },
   "inertMethods": {
     "fleet.dispatchTargets": "Read-only discovery of explicitly enabled paired or linked worker targets. Returns remote protocol, actual provider readiness and remote repository choices, never the pairing credential.",
     "host.resources": "no caller values; returns this host's name, CPU/memory/IO pressure, available memory, free space on the hub state disk, and work-queue slot usage and gate reasons. Nothing is opened beyond /proc/pressure and nothing is executed",
     "queue.list": "returns the hub's own work-queue items (labels, prompts or shell commands, states, timestamps and output tails) as a disclosure; the only parameter is the boolean includePeers. Writes nothing and executes nothing",
-    "queue.targets": "ranks this host and every configured federation peer for one work-queue item. Takes only kind (spawn|shell), provider and cwd STRINGS used as comparison values: the cwd is checked with is_dir locally and compared with each peer's advertised directory choices, never opened, joined or spawned in. Reads host.resources and fleet.dispatchCapabilities (provider login probes) from each peer through the existing federation links; writes nothing and executes nothing beyond those read-only probes",
+    "queue.targets": "ranks this host and every configured federation peer for one work-queue item. Takes only kind (spawn|shell), provider and cwd STRINGS used as comparison values: the cwd is checked with is_dir locally, canonicalized as a lookup key, its repository origin read with a bounded `git config --get remote.origin.url` when it is a repository root, and matched against each peer's advertised directory choices and the owner's saved project links (project-links.json), never opened, joined or spawned in. Reads host.resources and fleet.dispatchCapabilities (provider login probes) from each peer through the existing federation links; writes nothing and executes nothing beyond those read-only probes",
+    "projects.links": "no caller values; returns the owner's saved project links from the hub's own project-links.json as data. Writes nothing and executes nothing",
+    "projects.linkMatrix": "no caller values; lists this host's directory choices (configured projects, live local session cwds and linked local paths, each with its folder name and the origin read by a bounded `git config --get remote.origin.url`) against every configured federation peer's advertised choices, read through the existing federation links within a 10 s budget per peer, and the pure link resolution for each pair. Writes nothing and executes nothing beyond those read-only probes",
     "queue.config": "no caller values; returns the effective queue.* limits read from the shared config. Writes nothing and executes nothing",
     "fleet.dispatches": "Read-only local durable dispatch records. No caller-selected recipient, process, path or credential is accepted; records describe already admitted work.",
     "routing.preferences.get": "No arguments; returns only typed safe policy, defaults, inherited values, source badges, cached catalog and opaque revision. No security fields, paths or writes.",
@@ -708,6 +712,22 @@
         "reason": "an opaque hub-minted work-queue item id, looked up only in the hub's own queue.json; never a path, filename or argv"
       }
     },
+    "projects.setLink": {
+      "localPath": {
+        "kind": "path",
+        "reason": "an absolute path STRING on this host, canonicalized once as the link's lookup key and stored as data in the hub's own project-links.json; never opened, listed, joined, spawned in or granted"
+      },
+      "peerPath": {
+        "kind": "path",
+        "reason": "an absolute path STRING on the named peer, stored as given and never opened locally; it is only forwarded as the cwd of an already-authorized queue item to that peer, whose own queue.submit re-checks that the directory exists and the submitter's authority"
+      }
+    },
+    "projects.removeLink": {
+      "localPath": {
+        "kind": "path",
+        "reason": "an absolute path STRING used only to select which saved link to delete from the hub's own project-links.json; nothing on disk is opened or removed"
+      }
+    },
     "config.save": {
       "agents.binaries": {
         "kind": "executable",
@@ -1114,6 +1134,8 @@
     "paths": "path",
     "configDir": "path",
     "workdir": "path",
+    "localPath": "path",
+    "peerPath": "path",
     "filename": "filename",
     "fileName": "filename",
     "file": "filename",

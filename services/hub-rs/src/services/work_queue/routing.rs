@@ -9,8 +9,13 @@
 use super::{
     QUEUED, RUNNING, WorkQueue, is_owner, may_spawn, model,
     placement::{self, Candidate, ProviderReady, Request},
+    project_links,
 };
-use crate::{Caller, federation::Routes};
+use crate::{
+    Caller,
+    federation::Routes,
+    services::remote_dispatch::{Directory, readiness},
+};
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::{
@@ -66,13 +71,34 @@ pub fn request_for(item: &model::Item) -> Request {
             kind: "spawn".into(),
             provider: spawn.provider.clone(),
             cwd: spawn.cwd.clone(),
+            ..Default::default()
         },
         (_, Some(shell)) => Request {
             kind: "shell".into(),
             provider: String::new(),
             cwd: shell.cwd.clone(),
+            ..Default::default()
         },
         _ => Request::default(),
+    }
+}
+
+/// How a peer submission gets its cwd.
+enum PeerCwd {
+    /// Placement already resolved it (`host: "any"`).
+    Placed(Option<String>),
+    /// A named peer: resolve it here.
+    Resolve,
+}
+
+/// Fill the request's match key (canonical cwd) and the cwd's own origin.
+async fn identify(request: &mut Request) {
+    if request.cwd.is_empty() || !std::path::Path::new(&request.cwd).is_absolute() {
+        return;
+    }
+    request.cwd_key = project_links::local_key(&request.cwd);
+    if std::path::Path::new(&request.cwd_key).join(".git").exists() {
+        request.cwd_remote = readiness::origin_remote(&request.cwd_key).await;
     }
 }
 
@@ -131,14 +157,24 @@ impl WorkQueue {
         }
         match host {
             Host::Local => self.submit_here(caller, params).await,
-            Host::Peer(peer) => self.submit_peer(caller, &peer, params).await,
+            Host::Peer(peer) => {
+                self.submit_peer(caller, &peer, params, PeerCwd::Resolve)
+                    .await
+            }
             Host::Any => {
                 let item = model::parse_submit(&params)?;
                 self.check_origin_authority(caller, &item)?;
                 let (targets, best) = self.place(&request_for(&item), caller).await;
                 match best {
                     Some(best) if best == "local" => self.submit_here(caller, params).await,
-                    Some(peer) => self.submit_peer(caller, &peer, params).await,
+                    Some(peer) => {
+                        let placed = targets
+                            .iter()
+                            .find(|t| !t.local && t.host == peer)
+                            .and_then(|t| t.resolved_cwd.clone());
+                        self.submit_peer(caller, &peer, params, PeerCwd::Placed(placed))
+                            .await
+                    }
                     None => {
                         let why: Vec<String> = targets
                             .iter()
@@ -165,12 +201,15 @@ impl WorkQueue {
     }
 
     /// Forward to `hub:<peer>/queue.submit` after checking the peer is
-    /// configured, connected and dispatch-enabled.
+    /// configured, connected and dispatch-enabled. The item's cwd is
+    /// translated into the peer's own path (project links) and the original
+    /// is kept as `source.originCwd`.
     async fn submit_peer(
         self: &Arc<Self>,
         caller: &Caller,
         peer: &str,
         mut params: Value,
+        cwd: PeerCwd,
     ) -> Result<Value> {
         let item = model::parse_submit(&params)?;
         self.check_origin_authority(caller, &item)?;
@@ -191,6 +230,16 @@ impl WorkQueue {
         params["host"] = json!("local");
         if !params["source"].is_object() {
             params["source"] = json!({});
+        }
+        let request = request_for(&item);
+        if !request.cwd.is_empty() {
+            let translated = match cwd {
+                PeerCwd::Placed(Some(path)) => path,
+                PeerCwd::Placed(None) => request.cwd.clone(),
+                PeerCwd::Resolve => self.resolve_for_peer(routes, peer, request.clone()).await?,
+            };
+            params[request.kind.as_str()]["cwd"] = json!(translated);
+            params["source"]["originCwd"] = json!(request.cwd);
         }
         params["source"]["kind"] = json!("remote");
         if params["source"]["origin"]
@@ -307,13 +356,42 @@ impl WorkQueue {
         Ok(value)
     }
 
+    /// A named peer's path for the request's cwd. Refused when the peer's
+    /// directory choices have no match. When the choices cannot be read
+    /// (an older peer, a probe failure) the saved link, else the cwd as
+    /// given, is forwarded and the peer's own existence check decides.
+    async fn resolve_for_peer(
+        &self,
+        routes: &Routes,
+        peer: &str,
+        mut request: Request,
+    ) -> Result<String> {
+        identify(&mut request).await;
+        let link = self.links.get(request.key_or_cwd(), peer);
+        match self.capabilities(Some(routes), Some(peer)).await {
+            Ok((_, choices)) => {
+                let resolved = project_links::resolve(
+                    request.key_or_cwd(),
+                    request.cwd_remote.as_deref(),
+                    link.as_deref(),
+                    &choices,
+                );
+                match resolved.path.clone() {
+                    Some(path) => Ok(path),
+                    None => bail!("{}", resolved.no_match(&request.cwd, peer)),
+                }
+            }
+            Err(_) => Ok(link.unwrap_or(request.cwd)),
+        }
+    }
+
     /// Provider readiness and directory choices, from the remote-dispatch
     /// readiness probe (`fleet.dispatchCapabilities` on a peer).
     async fn capabilities(
         &self,
         routes: Option<&Routes>,
         peer: Option<&str>,
-    ) -> Result<(Vec<ProviderReady>, Vec<String>)> {
+    ) -> Result<(Vec<ProviderReady>, Vec<Directory>)> {
         let caps: crate::services::remote_dispatch::Capabilities = match (routes, peer) {
             (Some(routes), Some(peer)) => serde_json::from_value(
                 tokio::time::timeout(
@@ -344,7 +422,7 @@ impl WorkQueue {
                     authenticated: p.authenticated,
                 })
                 .collect(),
-            caps.cwds.into_iter().map(|d| d.path).collect(),
+            caps.cwds,
         ))
     }
 
@@ -355,6 +433,9 @@ impl WorkQueue {
         request: &Request,
         caller: &Caller,
     ) -> (Vec<placement::Target>, Option<String>) {
+        let mut request = request.clone();
+        identify(&mut request).await;
+        let request = &request;
         let local = async {
             let mut candidate = Candidate {
                 host: "local".into(),
@@ -385,6 +466,9 @@ impl WorkQueue {
                 host: info.name.clone(),
                 connected: info.connected,
                 dispatch: info.dispatch,
+                link: (!request.cwd.is_empty())
+                    .then(|| self.links.get(request.key_or_cwd(), &info.name))
+                    .flatten(),
                 ..Default::default()
             };
             let Some(routes) = routes.filter(|_| info.connected) else {
@@ -414,6 +498,117 @@ impl WorkQueue {
         placement::evaluate(request, &candidates)
     }
 
+    /// This host's projects for `projects.linkMatrix`: its directory
+    /// choices (configured projects and live local session cwds, with name
+    /// and origin), plus every local path a saved link names.
+    async fn local_projects(&self) -> Vec<Directory> {
+        let probed = match &self.execution {
+            Some(execution) => tokio::time::timeout(CAPABILITIES_BUDGET, execution.directories())
+                .await
+                .ok()
+                .and_then(Result::ok),
+            None => None,
+        };
+        let mut projects = match probed {
+            Some(projects) => projects,
+            None => readiness::describe_directories(&self.limits.shared_config(), &json!([]))
+                .await
+                .unwrap_or_default(),
+        };
+        let linked: Vec<String> = self
+            .links
+            .list()
+            .into_iter()
+            .map(|link| link.local_path)
+            .filter(|path| {
+                !projects
+                    .iter()
+                    .any(|p| project_links::same_path(&p.path, path))
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let linked = futures_util::future::join_all(linked.into_iter().map(|path| async move {
+            let git = std::path::Path::new(&path).join(".git").exists();
+            Directory {
+                name: Directory::name_of(&path),
+                remote: if git {
+                    readiness::origin_remote(&path).await
+                } else {
+                    None
+                },
+                source: "link".into(),
+                git,
+                path,
+            }
+        }))
+        .await;
+        projects.extend(linked);
+        projects.sort_by(|a, b| a.path.cmp(&b.path));
+        projects
+    }
+
+    /// `projects.linkMatrix`: every local project against every configured
+    /// peer, each peer's choices read concurrently within its budget. A
+    /// federated caller sees no peers (work is never routed a second hop).
+    pub async fn link_matrix(self: &Arc<Self>, caller: &Caller) -> Value {
+        let routes = self.routes().filter(|_| !caller.federated);
+        let peers = routes.map(Routes::peers).unwrap_or_default();
+        let fetched = futures_util::future::join_all(peers.into_iter().map(|info| async move {
+            let choices = match routes.filter(|_| info.connected) {
+                None => Err("not connected".to_owned()),
+                Some(routes) => self
+                    .capabilities(Some(routes), Some(&info.name))
+                    .await
+                    .map(|(_, cwds)| cwds)
+                    .map_err(|error| error.to_string()),
+            };
+            (info, choices)
+        }));
+        let (projects, fetched) = futures_util::future::join(self.local_projects(), fetched).await;
+        let rows: Vec<Value> = projects
+            .iter()
+            .map(|project| {
+                let peers: Vec<Value> = fetched
+                    .iter()
+                    .map(|(info, choices)| {
+                        let link = self.links.get(&project.path, &info.name);
+                        let empty = Vec::new();
+                        let list = choices.as_ref().unwrap_or(&empty);
+                        let resolved = project_links::resolve(
+                            &project.path,
+                            project.remote.as_deref(),
+                            link.as_deref(),
+                            list,
+                        );
+                        let mut row = json!({
+                            "peer": info.name,
+                            "connected": info.connected,
+                            "resolved": resolved.path.as_ref().map(|path| json!({
+                                "path": path,
+                                "via": resolved.via.map(project_links::Via::as_str),
+                            })),
+                            "suggestions": resolved.suggestions_wire(),
+                            "choices": list,
+                            "link": link,
+                        });
+                        if let Err(error) = choices {
+                            row["error"] = json!(error);
+                        }
+                        row
+                    })
+                    .collect();
+                json!({
+                    "path": project.path,
+                    "name": project.display_name(),
+                    "remote": project.remote,
+                    "peers": peers,
+                })
+            })
+            .collect();
+        json!({ "projects": rows })
+    }
+
     /// `queue.targets {kind?, provider?, cwd?}`.
     pub async fn targets(self: &Arc<Self>, caller: &Caller, params: &Value) -> Result<Value> {
         if let Some(map) = params.as_object() {
@@ -439,6 +634,7 @@ impl WorkQueue {
             kind: kind.into(),
             provider: text("provider")?,
             cwd: text("cwd")?,
+            ..Default::default()
         };
         let (targets, best) = self.place(&request, caller).await;
         Ok(placement::wire(&targets, best))

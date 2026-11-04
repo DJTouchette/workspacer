@@ -28,6 +28,7 @@
 //! `placement::evaluate`.
 mod model;
 pub mod placement;
+pub mod project_links;
 mod routing;
 mod spawn_watch;
 #[cfg(test)]
@@ -83,6 +84,13 @@ pub(crate) enum Limits {
     Memory(Mutex<Value>),
 }
 impl Limits {
+    /// The shared config document, for its `projects` (empty in memory).
+    fn shared_config(&self) -> Value {
+        match self {
+            Self::Shared(config) => config.get(),
+            Self::Memory(_) => json!({}),
+        }
+    }
     fn get(&self) -> QueueConfig {
         match self {
             Self::Shared(config) => QueueConfig::from_section(&config.get()["queue"]),
@@ -143,6 +151,9 @@ pub struct WorkQueue {
     federation: OnceLock<Routes>,
     /// The latest `host.resources` each peer published, with when it arrived.
     peer_resources: Mutex<BTreeMap<String, (Instant, Value)>>,
+    /// The owner's saved project links (`project-links.json` beside the
+    /// queue file).
+    links: project_links::Links,
 }
 
 impl WorkQueue {
@@ -182,6 +193,7 @@ impl WorkQueue {
         };
         items.retain(|item| !item.id.is_empty());
         let recovered = model::recover(&mut items, now());
+        let links = project_links::Links::open(path.with_file_name("project-links.json"))?;
         let queue = Arc::new(Self {
             path,
             hub,
@@ -198,6 +210,7 @@ impl WorkQueue {
             execution: wiring.execution,
             federation: OnceLock::new(),
             peer_resources: Mutex::new(BTreeMap::new()),
+            links,
         });
         if recovered {
             queue.persist(&queue.state.lock().unwrap())?;
@@ -296,6 +309,7 @@ impl WorkQueue {
                 item.source.kind = "prompt".into();
             }
             item.source.origin.clear();
+            item.source.origin_cwd.clear();
         }
         item.id = format!("q_{}", &uuid::Uuid::new_v4().simple().to_string()[..20]);
         item.enqueued_at = now();
@@ -382,6 +396,26 @@ impl WorkQueue {
                 Ok(self.list())
             }
             "queue.config" => Ok(self.config().wire()),
+            "projects.links" => Ok(project_links::Links::wire(&self.links.list())),
+            "projects.setLink" | "projects.removeLink" => {
+                if !is_owner(caller) {
+                    bail!("{method} requires the server owner");
+                }
+                let (changed, links) = if method == "projects.setLink" {
+                    self.links.set(&params, now())?
+                } else {
+                    self.links.remove(&params)?
+                };
+                let links = project_links::Links::wire(&links);
+                if changed {
+                    let _ = self.hub.publish(Event::new(
+                        "projects.linksChanged",
+                        "queue",
+                        links.clone(),
+                    ));
+                }
+                Ok(links)
+            }
             "queue.setConfig" => Ok(self.set_config(caller, &params)?.wire()),
             "queue.submit" => {
                 if parse_host(&params)? != Host::Local {
@@ -416,6 +450,12 @@ impl WorkQueue {
             "queue.submit" => self.submit_routed(&caller, params).await,
             "queue.cancel" => self.cancel_routed(&caller, params).await,
             "queue.targets" => self.targets(&caller, &params).await,
+            "projects.linkMatrix" => {
+                if !params.as_object().is_some_and(|m| m.is_empty()) {
+                    bail!("projects.linkMatrix takes no parameters");
+                }
+                Ok(self.link_matrix(&caller).await)
+            }
             "queue.list" if params["includePeers"] == true => {
                 Ok(self.list_with_peers(&caller).await)
             }
@@ -924,6 +964,10 @@ pub(crate) fn install(
         "queue.config",
         "queue.setConfig",
         "queue.targets",
+        "projects.links",
+        "projects.linkMatrix",
+        "projects.setLink",
+        "projects.removeLink",
     ] {
         let queue = queue.clone();
         options = options.handler(method, move |caller, params| {

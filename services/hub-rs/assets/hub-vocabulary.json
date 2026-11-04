@@ -141,6 +141,10 @@
     "projectGroups.list",
     "projectGroups.remove",
     "projectGroups.save",
+    "projects.linkMatrix",
+    "projects.links",
+    "projects.removeLink",
+    "projects.setLink",
     "providers.checkAll",
     "providers.listModels",
     "push.key",
@@ -1034,7 +1038,9 @@
       "host.resources",
       "queue.list",
       "queue.config",
-      "queue.targets"
+      "queue.targets",
+      "projects.links",
+      "projects.linkMatrix"
     ],
     "view": [
       "remote.sharingInfo",
@@ -1069,7 +1075,9 @@
       "host.resources",
       "queue.list",
       "queue.config",
-      "queue.targets"
+      "queue.targets",
+      "projects.links",
+      "projects.linkMatrix"
     ]
   },
   "spawnKeys": [
@@ -1322,6 +1330,13 @@
       "Disposition": "guarded-by-capability",
       "Method": "projectGroups.list",
       "Reason": "a bare refetch signal whose only field is the new revision number of the hub's own project-groups.json. It discloses that a project group was created, edited or removed, which is exactly what projectGroups.list discloses, and projectGroups.list is in neither scoped tier, so only a caller that may already list the groups receives it. Publishing it is the hub's own (projectGroups.save and projectGroups.remove publish it after their write; the topic has no provider publisher), so a forged event cannot put a refetch storm or a fake revision in front of a client. It is not in the federation forward list",
+      "Publisher": ""
+    },
+    {
+      "Pattern": "projects.linksChanged",
+      "Disposition": "guarded-by-capability",
+      "Method": "projects.links",
+      "Reason": "the owner's whole saved project-link table ({links:[{localPath, peer, peerPath, createdAt}]}) exactly as projects.links returns it, published after projects.setLink or projects.removeLink changes it. It discloses what projects.links discloses, so only a caller that may already read the links receives it. Only the hub publishes it (the topic has no provider publisher), so a forged event cannot make a client show or act on a link the owner never saved. It is not in the federation forward list: links belong to the origin hub",
       "Publisher": ""
     },
     {

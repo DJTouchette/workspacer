@@ -458,6 +458,26 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'projects.setLink': {
+    reason:
+      "saves one (localPath, peer) -> peerPath row in the hub's own 0600 project-links.json; owner only (is_owner). `localPath` is canonicalized once as the lookup key and `peerPath` is kept as given; both are path STRINGS stored as data. WRITE-THEN-INTERPRET: the only later reader is the origin's own cwd translation, which forwards peerPath as the cwd of an item the submitter was already authorized to queue on that peer (queue.submit / a job with a peer host), and the peer's own queue.submit re-checks that the directory exists and its own authority. WIDEN-THEN-USE: it grants no root, permission mode, argv or approval gate and opens nothing locally; a peerPath that is not among the peer's advertised choices is never used",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['localPath', 'peerPath'],
+      },
+    ],
+  },
+  'projects.removeLink': {
+    reason:
+      "deletes the saved (localPath, peer) row from the hub's own project-links.json; owner only (is_owner). `localPath` only selects the row. It can only SHRINK which peer paths the origin will translate a cwd into: nothing on disk is opened or deleted, nothing is executed or stopped",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['localPath'],
+      },
+    ],
+  },
   'queue.setConfig': {
     reason:
       'writes bounded numbers (slot counts, pressure percentages, MB floors) under the queue section of the shared config through the config lock; owner only. Unknown keys are refused and no path, argv, permission or grant reaches anything; the values only decide when already-authorized queued work is admitted. NOTHING HERE IS MACHINE-CHECKED beyond the Rust tests of the queue',
@@ -1625,6 +1645,25 @@ export const parameterDecisions: Record<
         'shell.command is host code run by /bin/sh -c under the bounded process owner; accepted only from the actual server owner, like a jobs.upsert shell action',
     },
   },
+  'projects.setLink': {
+    localPath: {
+      kind: 'path',
+      reason:
+        "an absolute path STRING on this host, canonicalized once as the link's lookup key and stored in the hub's own project-links.json; never opened, listed, joined, spawned in or granted",
+    },
+    peerPath: {
+      kind: 'path',
+      reason:
+        "an absolute path STRING on the peer, kept as given and never opened locally; only forwarded as the cwd of an already-authorized queue item, which the peer's own queue.submit re-checks",
+    },
+  },
+  'projects.removeLink': {
+    localPath: {
+      kind: 'path',
+      reason:
+        "selects which saved link the hub deletes from its own project-links.json; nothing on disk is opened or removed",
+    },
+  },
   'queue.cancel': {
     id: {
       kind: 'id',
@@ -2206,6 +2245,8 @@ export const actors: string[] = [
   'plugins.prepareLaunch',
   'projectGroups.remove',
   'projectGroups.save',
+  'projects.removeLink',
+  'projects.setLink',
   'providers.listModels',
   'push.revoke',
   'push.subscribe',
