@@ -1937,7 +1937,7 @@ impl Workspace {
             None,
             "Projects",
             Some(
-                "Group the folders that belong together. Every folder the hub knows, pinned or where a session ran, is listed here."
+                "Group the folders that belong together. Every folder you pinned or ran a session in is listed here."
                     .into(),
             ),
             vec![add_folder.into_any_element(), new_project.into_any_element()],
