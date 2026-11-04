@@ -32,6 +32,17 @@ Historical execution, when deliberately requested, uses the separate pinned
 checkout described in [scripts/reference/README.md](../../../scripts/reference/README.md).
 This crosswalk does not certify platform or release gates.
 
+## Queued jobs (`host`, `priority`)
+
+A spawn or shell job with a top-level `host` (`local`, a federation peer name
+or `any`) no longer runs inline: context steps run here, the prompt is
+rendered, and one work-queue item is submitted through the same routing as
+`queue.submit` (history `queued <itemId> on <host>`). While that job's
+previous item is queued or running (or its peer cannot be asked) the next
+fire is `skipped`. `priority` orders the item. `call` actions refuse `host`.
+Approving a `replaces` proposal carries both fields. Details and invariants:
+[hub-work-queue](hub-work-queue.md).
+
 ## Ownership and entry points
 
 The hub owns job validation, storage, scheduling, execution, and history in

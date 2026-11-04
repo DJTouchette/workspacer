@@ -313,8 +313,9 @@ capabilities that cannot act on its machine are hidden rather than failing.
 
 ## Known limitation: a peer's remote nodes are invisible
 
-Federation only forwards two event prefixes, `agent.*` and `workflow.*`
-(`ForwardTopics` in `services/hub/internal/federation/federation.go`), and no
+Federation forwards only `agent.*`, `workflow.*` and (for the host work
+queue, `docs/host-work-queue.md`) `host.*` and `queue.*` (`FORWARD_TOPICS` in
+`services/hub-rs/src/federation.rs`), and no
 client issues a qualified `hub:<peer>/nodes.list` call to a peer hub. A remote
 worker node, such as a Fly node registered in a hub's `nodes.json`, is tracked
 by the hub that owns it, and its state never rides those two event prefixes,

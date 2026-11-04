@@ -39,7 +39,9 @@ This crosswalk does not certify platform or release gates.
 ## One local connection, peer provenance
 
 `services/hub/internal/federation/federation.go` creates outbound bus links to
-named peers. Its forwarding list is `agent.*` and `workflow.*`. Forwarded events
+named peers. Its forwarding list is `agent.*` and `workflow.*` (the Rust
+`FORWARD_TOPICS` adds `host.*` and `queue.*` for the work queue; see
+[hub-work-queue](hub-work-queue.md)). Forwarded events
 receive the peer name on the envelope and a fresh local broker identity; already
 hub-stamped events are dropped rather than relayed again. This is one-hop event
 propagation preventing recursive re-broadcast, not proof the configured peer
