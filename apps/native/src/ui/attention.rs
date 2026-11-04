@@ -86,7 +86,7 @@ pub(crate) fn group(
         }
     }
     // Each group's trees, with when their longest wait began.
-    type Waiting = (Option<i64>, Vec<(usize, usize)>);
+    type Waiting = (Option<i64>, Option<i64>, Vec<(usize, usize)>);
     let mut groups: Vec<(Bucket, Vec<Waiting>)> =
         Bucket::ALL.iter().map(|b| (*b, Vec::new())).collect();
     for members in trees {
@@ -100,19 +100,33 @@ pub(crate) fn group(
             .filter(|&&(ix, _)| bucket_of(ix) == Bucket::NeedsYou)
             .filter_map(|&(ix, _)| waiting_since(ix))
             .min();
-        groups[bucket.index()].1.push((since, members));
+        // r2-shell: the latest activity anywhere in the tree.
+        let latest = members
+            .iter()
+            .filter_map(|&(ix, _)| waiting_since(ix))
+            .max();
+        groups[bucket.index()].1.push((since, latest, members));
     }
     // Oldest wait first; a tree with no known wait keeps its place after them.
     groups[Bucket::NeedsYou.index()]
         .1
-        .sort_by_key(|(since, _)| since.unwrap_or(i64::MAX));
+        .sort_by_key(|(since, _, _)| since.unwrap_or(i64::MAX));
+    // r2-shell: Idle and Ended put the most recent first (unknown last).
+    for quiet in [Bucket::Idle, Bucket::Ended] {
+        groups[quiet.index()]
+            .1
+            .sort_by_key(|(_, latest, _)| std::cmp::Reverse(latest.unwrap_or(i64::MIN)));
+    }
     groups
         .into_iter()
         .filter(|(_, trees)| !trees.is_empty())
         .map(|(bucket, trees)| {
             (
                 bucket,
-                trees.into_iter().flat_map(|(_, members)| members).collect(),
+                trees
+                    .into_iter()
+                    .flat_map(|(_, _, members)| members)
+                    .collect(),
             )
         })
         .collect()
@@ -137,9 +151,315 @@ pub(crate) fn next_needing(
         .or_else(|| needing.first().copied())
 }
 
+// ── r2-shell: the inbox ────────────────────────────────────────────────
+
+/// A running subagent that has gone quiet past the heartbeat threshold:
+/// "Not responding", a fault, never also "Working".
+pub(crate) fn child_stalled(child: &wks_native::child_agents::ChildAgent, now: i64) -> bool {
+    child.running()
+        && wks_native::format::is_stale(
+            child
+                .telemetry
+                .last_activity_ms
+                .or(child.telemetry.started_at_ms),
+            now,
+        )
+}
+
+/// A working session whose last reported activity is past the heartbeat
+/// threshold. Unknown activity is not evidence of a stall.
+pub(crate) fn session_stalled(session: &Session, now: i64) -> bool {
+    session.working()
+        && session
+            .telemetry
+            .last_activity_ms
+            .is_some_and(|at| wks_native::format::is_stale(Some(at), now))
+}
+
+/// What a waiting row offers inline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InboxAction {
+    /// Allow a tool once (the request is named in the reason).
+    Allow,
+    /// Open the session at its question.
+    Answer,
+    /// Open the session (plans, stalls, failures).
+    Open,
+}
+
+impl InboxAction {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Allow => "Allow",
+            Self::Answer => "Answer",
+            Self::Open => "Open",
+        }
+    }
+}
+
+/// Why a session is in Needs you, in a few words, and what to do about it.
+/// `fault` marks reasons drawn in the fault colour (stalls, failures).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Reason {
+    pub text: String,
+    pub action: InboxAction,
+    pub fault: bool,
+}
+
+/// The reason a waiting session gives. `stalled_for` is how long its
+/// quietest stalled subagent (or itself) has been silent, in ms;
+/// `failed_tasks` counts failed background work.
+pub(crate) fn reason(
+    session: &Session,
+    stalled_for: Option<i64>,
+    failed_tasks: usize,
+) -> Option<Reason> {
+    if let Some(approval) = session.approval.as_ref() {
+        let tool = approval
+            .get("toolName")
+            .or_else(|| approval.get("tool"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        if tool == "ExitPlanMode" {
+            return Some(Reason {
+                text: "Plan ready for review".into(),
+                action: InboxAction::Open,
+                fault: false,
+            });
+        }
+        let target = approval
+            .pointer("/toolInput/command")
+            .or_else(|| approval.pointer("/toolInput/file_path"))
+            .or_else(|| approval.pointer("/toolInput/path"))
+            .or_else(|| approval.pointer("/toolInput/url"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| s.lines().next())
+            .map(str::trim)
+            .unwrap_or("");
+        let file = target.rsplit('/').next().unwrap_or(target);
+        let text = match tool {
+            "Bash" | "shell" | "exec" if !target.is_empty() => format!("Run {target}?"),
+            "Edit" | "MultiEdit" | "Write" | "apply_patch" if !file.is_empty() => {
+                format!("Edit {file}?")
+            }
+            "WebFetch" if !target.is_empty() => format!("Open {target}?"),
+            "" => "Approval needed".into(),
+            other if !target.is_empty() => format!("{other}: {target}?"),
+            other => format!("Use {other}?"),
+        };
+        return Some(Reason {
+            text,
+            action: InboxAction::Allow,
+            fault: false,
+        });
+    }
+    if session.questions.is_some() || matches!(session.state.as_str(), "question" | "waiting_input")
+    {
+        let header = session
+            .questions
+            .as_ref()
+            .and_then(|q| q.get(0))
+            .and_then(|q| q.get("question").or_else(|| q.get("header")))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|q| !q.is_empty());
+        return Some(Reason {
+            text: header.map_or_else(|| "Question for you".into(), str::to_owned),
+            action: InboxAction::Answer,
+            fault: false,
+        });
+    }
+    if needs_you(session) {
+        return Some(Reason {
+            text: "Approval needed".into(),
+            action: InboxAction::Open,
+            fault: false,
+        });
+    }
+    if let Some(quiet) = stalled_for {
+        return Some(Reason {
+            text: format!("Not responding · {}", quiet_for(quiet)),
+            action: InboxAction::Open,
+            fault: true,
+        });
+    }
+    if failed_tasks > 0 {
+        return Some(Reason {
+            text: if failed_tasks == 1 {
+                "A background task failed".into()
+            } else {
+                format!("{failed_tasks} background tasks failed")
+            },
+            action: InboxAction::Open,
+            fault: true,
+        });
+    }
+    None
+}
+
+/// "2m", "1h 05m": how long something has been silent.
+pub(crate) fn quiet_for(ms: i64) -> String {
+    let minutes = (ms.max(0) / 60_000).max(1);
+    if minutes < 60 {
+        format!("{minutes}m")
+    } else if minutes < 48 * 60 {
+        format!("{}h {:02}m", minutes / 60, minutes % 60)
+    } else {
+        format!("{}d", minutes / (24 * 60))
+    }
+}
+
+/// The collapsed line for a session's subagents: "4 subagents · 1 stalled",
+/// "2 subagents · 1 working". `None` without any.
+pub(crate) fn children_summary(
+    total: usize,
+    stalled: usize,
+    failed: usize,
+    working: usize,
+) -> Option<String> {
+    if total == 0 {
+        return None;
+    }
+    let mut parts = vec![format!(
+        "{total} {}",
+        if total == 1 { "subagent" } else { "subagents" }
+    )];
+    if stalled > 0 {
+        parts.push(format!("{stalled} stalled"));
+    }
+    if failed > 0 {
+        parts.push(format!("{failed} failed"));
+    }
+    if stalled == 0 && failed == 0 && working > 0 {
+        parts.push(format!("{working} working"));
+    }
+    Some(parts.join(" · "))
+}
+
+/// Tell apart rows whose titles repeat: each title shared by more than one
+/// row gets its age ("3d"), or "#2", "#3" when ages also repeat. `None`
+/// for a unique title.
+pub(crate) fn disambiguate(rows: &[(String, Option<String>)]) -> Vec<Option<String>> {
+    let mut out = vec![None; rows.len()];
+    for (ix, (title, age)) in rows.iter().enumerate() {
+        let same: Vec<usize> = (0..rows.len()).filter(|&j| rows[j].0 == *title).collect();
+        if same.len() < 2 {
+            continue;
+        }
+        let ages_unique = age.is_some() && same.iter().filter(|&&j| rows[j].1 == *age).count() == 1;
+        out[ix] = if ages_unique {
+            age.clone()
+        } else {
+            let rank = same.iter().position(|&j| j == ix).unwrap_or(0) + 1;
+            Some(format!("#{rank}"))
+        };
+    }
+    out
+}
+
+/// Case-insensitive substring ranges of `query` in `text`, for highlights.
+pub(crate) fn match_ranges(text: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let lower = text.to_lowercase();
+    let needle = query.to_lowercase();
+    // Lowercasing can change byte lengths; only highlight when it did not.
+    if lower.len() != text.len() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = lower[from..].find(&needle) {
+        let start = from + at;
+        out.push(start..start + needle.len());
+        from = start + needle.len().max(1);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // r2-shell
+    #[test]
+    fn reasons_name_the_request_and_offer_one_action() {
+        let mut s = Session {
+            approval: Some(serde_json::json!({
+                "toolName": "Bash", "toolInput": {"command": "cargo test\n--more"}
+            })),
+            ..Default::default()
+        };
+        let r = reason(&s, None, 0).unwrap();
+        assert_eq!(r.text, "Run cargo test?");
+        assert_eq!(r.action, InboxAction::Allow);
+        s.approval = Some(serde_json::json!({"toolName": "ExitPlanMode"}));
+        assert_eq!(reason(&s, None, 0).unwrap().action, InboxAction::Open);
+        s.approval = None;
+        s.questions = Some(serde_json::json!([{"question": "Which theme?"}]));
+        let r = reason(&s, None, 0).unwrap();
+        assert_eq!(
+            (r.text.as_str(), r.action),
+            ("Which theme?", InboxAction::Answer)
+        );
+        s.questions = None;
+        s.state = "working".into();
+        let r = reason(&s, Some(7 * 60_000), 0).unwrap();
+        assert_eq!(r.text, "Not responding · 7m");
+        assert!(r.fault);
+        assert!(
+            reason(&s, None, 2)
+                .unwrap()
+                .text
+                .contains("2 background tasks")
+        );
+        assert_eq!(reason(&s, None, 0), None);
+    }
+
+    #[test]
+    fn subagents_fold_into_one_line() {
+        assert_eq!(children_summary(0, 0, 0, 0), None);
+        assert_eq!(
+            children_summary(4, 1, 0, 2).as_deref(),
+            Some("4 subagents · 1 stalled")
+        );
+        assert_eq!(
+            children_summary(1, 0, 0, 1).as_deref(),
+            Some("1 subagent · 1 working")
+        );
+    }
+
+    #[test]
+    fn repeated_titles_are_told_apart() {
+        let rows = [
+            ("Bus".to_owned(), Some("2d".to_owned())),
+            ("Notes".to_owned(), Some("2d".to_owned())),
+            ("Bus".to_owned(), Some("5d".to_owned())),
+            ("Fly".to_owned(), Some("1h".to_owned())),
+            ("Fly".to_owned(), Some("1h".to_owned())),
+        ];
+        assert_eq!(
+            disambiguate(&rows),
+            vec![
+                Some("2d".into()),
+                None,
+                Some("5d".into()),
+                Some("#1".into()),
+                Some("#2".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn matches_are_found_case_insensitively() {
+        assert_eq!(
+            match_ranges("Session Review review", "review"),
+            vec![8..14, 15..21]
+        );
+        assert!(match_ranges("anything", " ").is_empty());
+    }
 
     #[test]
     fn trees_follow_their_most_urgent_member_and_waits_sort_oldest_first() {
@@ -163,6 +483,14 @@ mod tests {
                 (Bucket::Ended, vec![(3, 0)]),
             ]
         );
+    }
+
+    #[test]
+    fn quiet_groups_put_the_most_recent_first() {
+        let tree = [(0, 0), (1, 0), (2, 0)];
+        let at = [Some(100), None, Some(300)];
+        let groups = group(&tree, |_| Bucket::Idle, |ix| at[ix]);
+        assert_eq!(groups[0].1, vec![(2, 0), (0, 0), (1, 0)]);
     }
 
     #[test]

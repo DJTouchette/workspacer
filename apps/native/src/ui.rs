@@ -62,6 +62,8 @@ mod attention;
 mod capsule;
 mod model_popover;
 mod shell;
+// r2-shell
+mod palette;
 // area-transcript
 mod transcript_v2;
 use chrome::ControlTextStyle;
@@ -744,6 +746,25 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("?", ToggleShortcuts, Some("VimNormal && DesignV2")),
         KeyBinding::new("ctrl-/", ToggleShortcuts, Some("Workspace && DesignV2")),
         KeyBinding::new("cmd-/", ToggleShortcuts, Some("Workspace && DesignV2")),
+        // r2-shell: the command palette's list keys, ahead of its input's own.
+        KeyBinding::new("up", palette::PaletteUp, Some("CommandPalette > Input")),
+        KeyBinding::new("down", palette::PaletteDown, Some("CommandPalette > Input")),
+        KeyBinding::new("ctrl-p", palette::PaletteUp, Some("CommandPalette > Input")),
+        KeyBinding::new(
+            "ctrl-n",
+            palette::PaletteDown,
+            Some("CommandPalette > Input"),
+        ),
+        KeyBinding::new(
+            "enter",
+            palette::PaletteEnter,
+            Some("CommandPalette > Input"),
+        ),
+        KeyBinding::new(
+            "escape",
+            palette::PaletteClose,
+            Some("CommandPalette > Input"),
+        ),
     ]);
 }
 
@@ -1954,10 +1975,7 @@ impl Workspace {
         let index = current
             .map(|ix| (ix as isize + step).rem_euclid(rows.len() as isize) as usize)
             .unwrap_or(if step < 0 { rows.len() - 1 } else { 0 });
-        self.sidebar_scroll.scroll_to_item(
-            self.sidebar_session_position(index, cx),
-            gpui::ScrollStrategy::Center,
-        );
+        self.reveal_sidebar_row(index, cx); // r2-shell
         self.command(
             Command::Select(self.view.sessions[rows[index]].id.clone()),
             cx,

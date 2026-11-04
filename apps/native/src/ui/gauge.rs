@@ -400,7 +400,9 @@ impl Workspace {
     /// show at once. A subagent's capsule never carries it, because its
     /// chat has no composer and the gauge belongs to the parent.
     pub(super) fn title_carries_context(&self) -> bool {
-        self.view.child.is_none() && capsule_fits(self.title_base_width)
+        // r2-shell: v2 draws no hairline under the title; the composer keeps
+        // its labelled meter.
+        self.view.child.is_none() && capsule_fits(self.title_base_width) && !self.design().is_v2()
     }
 
     #[cfg(test)]

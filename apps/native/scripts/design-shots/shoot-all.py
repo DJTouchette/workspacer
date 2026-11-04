@@ -78,7 +78,9 @@ def shots():
     add("conversation-light", "Rich conversation, Light theme", theme="light")
     add("sidebar-rail", "Sidebar collapsed to its icon rail", [("click", "RAIL_TOGGLE")])
     add("session-search", "Ctrl+K session search popover from the rail",
-        [("click", "RAIL_TOGGLE"), ("key", "ctrl+k"), ("sleep", 0.8), ("type", "review")])
+        # r2-shell: v2's Ctrl+K is the palette; its session search is the sidebar field.
+        [("design", [("click", "RAIL_TOGGLE"), ("key", "ctrl+k"), ("sleep", 0.8), ("type", "review")],
+          [("click", "SIDEBAR_SEARCH"), ("sleep", 0.5), ("type", "review"), ("sleep", 0.5)])])
     add("tall-layout", "Tall window: rail sidebar, portrait layout", width=1000, height=1600)
     add("tall-file-viewer", "Tall window with a file preview docked below the chat",
         [("click", "TALL_README_LINK"), ("sleep", 2)], width=1000, height=1600)
@@ -173,6 +175,11 @@ def shots():
     # Integration: v2 folds Chat into Appearance; its reading width found by search.
     add("settings-reading-width", "Settings search: the transcript's reading width",
         nav("s") + [("click", 1360, 76), ("sleep", 0.5), ("type", "reading width"), ("sleep", 0.8)])
+    # r2-shell: the command palette (design v2's Ctrl+K).
+    add("command-palette", "Command palette (Ctrl+K): recent sessions and actions",
+        [("key", "ctrl+k"), ("sleep", 0.8)])
+    add("command-palette-actions", "Command palette scoped to actions with `>`",
+        [("key", "ctrl+k"), ("sleep", 0.8), ("type", ">the"), ("sleep", 0.6)])
     return s
 
 
@@ -262,6 +269,8 @@ class Rig:
                 time.sleep(0.3)
             elif kind == "sleep":
                 time.sleep(rest[0])
+            elif kind == "design":  # r2-shell: (v1 steps, v2 steps)
+                self.run_steps(window, rest[1] if shot.get("v2") else rest[0], shot)
             elif kind in ("click", "move"):
                 landmarks = LANDMARKS
                 if len(rest) != 2 and self.design_v2(shot) and rest[0] in LANDMARKS_V2:
@@ -314,6 +323,11 @@ class Rig:
             (config / "native-theme.json").write_text(json.dumps(args.theme or shot.get("theme", "dark")))
             settings = dict(shot.get("settings", {}))
             settings.update(args.settings)  # command-line --setting wins
+            # r2-shell: design v2 starts with modal keys off; shots that drive
+            # them (`g p`, Ctrl+U) turn them on for that run.
+            if settings.get("design_v2") and any(
+                    step[0] in ("keys", "design_keys") for step in shot["steps"]):
+                settings.setdefault("vim_navigation_v2", True)
             if settings:
                 (config / "native-settings.json").write_text(json.dumps(settings))
             env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / "config"),
@@ -372,6 +386,7 @@ class Rig:
 # Kept in one place so a redesign that moves a control only edits here.
 LANDMARKS = {
     "RAIL_TOGGLE": lambda shot: (286, 35),          # sidebar header, rightmost icon
+    "SIDEBAR_SEARCH": lambda shot: (140, 85),       # r2-shell: v2 sidebar search field
     # Design v2 groups the list (Needs you, then Idle): Bus fan-out sits higher.
     "SIDEBAR_ROW_BUS": lambda shot: (110, 411 if shot.get("v2") else 468),
     "SIDEBAR_ROW_CHILD": lambda shot: (110, 212),   # "Inspect transcript parsing"

@@ -51,7 +51,8 @@ impl Workspace {
             return 0.6;
         }
         let height = f32::from(self.header_bounds.size.height);
-        let fade = self.tokens().space.md;
+        // r2-shell: a 32px fade (`layout.fade`) under the capsule.
+        let fade = self.tokens().layout.fade;
         if height <= fade {
             0.6
         } else {
@@ -59,10 +60,14 @@ impl Workspace {
         }
     }
 
+    /// The v2 title: status, the project crumb (it gives way first), the
+    /// session title (primary, truncated last), the access mode once it is
+    /// known, and background work in words. The model lives in the
+    /// composer's chip, the one place it is shown and changed.
     pub(super) fn render_title_bar_v2(
         &self,
         narrow: bool,
-        enabled: bool,
+        _enabled: bool,
         title: &str,
         session: Option<&Session>,
         cx: &mut Context<Self>,
@@ -70,6 +75,7 @@ impl Workspace {
         let p = self.palette();
         let t = p.tokens;
         let height = t.layout.control_height + t.space.xs;
+        let now = timing::now_ms();
         div()
             .id("title-bar")
             .debug_selector(|| "title-bar".into())
@@ -81,7 +87,7 @@ impl Workspace {
             .pr(px(t.space.xs))
             .flex()
             .items_center()
-            .gap(px(t.space.md))
+            .gap(px(t.space.sm))
             .rounded_full()
             .bg(rgb(p.surface))
             .border(px(t.stroke.hairline))
@@ -92,38 +98,53 @@ impl Workspace {
                     StatusKind::Idle
                 } else if self.paused(session) {
                     StatusKind::Paused
+                } else if super::attention::needs_you(session) {
+                    StatusKind::NeedsYou
+                } else if self.stalled_for(session, now).is_some() {
+                    StatusKind::Failed
                 } else {
                     match super::attention::bucket(session, false) {
-                        super::attention::Bucket::NeedsYou => StatusKind::NeedsYou,
                         super::attention::Bucket::Working => StatusKind::Working,
                         _ => StatusKind::Idle,
                     }
                 };
-                let (label, _) = if self.view.connected {
-                    self.status_of(session, p)
+                let label = if !self.view.connected {
+                    "Offline".to_owned()
+                } else if kind == StatusKind::Failed {
+                    "Not responding".to_owned()
                 } else {
-                    ("Offline", p.muted)
+                    self.status_of(session, p).0.to_owned()
                 };
                 d.child(
                     div()
                         .id("title-status")
                         .flex_shrink_0()
-                        .tooltip(tooltip_view(label.to_owned(), None, &p))
+                        .tooltip(tooltip_view(label, None, &p))
                         .child(status_indicator(kind, &p)),
                 )
                 .when(!narrow, |d| {
+                    let project = self.project_name(&session.cwd);
                     d.child(
                         div()
-                            .flex_shrink_0()
+                            .id("title-crumb")
+                            .debug_selector(|| "title-crumb".into())
+                            .min_w_0()
                             .max_w(px(t.layout.menu_width / 2.))
+                            // Gives way long before the title does.
+                            .map(|mut d| {
+                                d.style().flex_shrink = Some(1000.);
+                                d
+                            })
                             .truncate()
-                            .text_size(px(t.text.meta))
+                            .text_size(px(t.text.body))
                             .text_color(rgb(p.roles.text_tertiary))
-                            .child(self.project_name(&session.cwd)),
+                            .tooltip(tooltip_view(project.clone(), None, &p))
+                            .child(project),
                     )
                     .child(
                         div()
-                            .text_size(px(t.text.meta))
+                            .flex_shrink_0()
+                            .text_size(px(t.text.body))
                             .text_color(rgb(p.roles.text_tertiary))
                             .child("/"),
                     )
@@ -137,10 +158,10 @@ impl Workspace {
                     .max_w(px(if narrow {
                         t.layout.menu_width
                     } else {
-                        t.layout.dialog_width - t.space.xl * 5.
+                        t.layout.dialog_width + t.layout.menu_width / 2.
                     }))
                     .truncate()
-                    .text_size(px(t.text.body))
+                    .text_size(px(t.text.subheading))
                     .font_weight(FontWeight(t.weight.semibold))
                     .text_color(rgb(p.text))
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -150,112 +171,54 @@ impl Workspace {
                     .child(title.to_owned()),
             )
             .when_some(session, |d, session| {
-                let model_enabled = enabled && self.supported_session();
-                let open = self.shell.model_popover;
-                let effort = (!session.effort.is_empty())
-                    .then(|| wks_native::launch::effort_label(&session.effort));
-                let model = session.display_model();
-                let model = if model.is_empty() {
-                    "Default model".to_owned()
-                } else {
-                    model
-                };
                 let (access, mode) = access_word(session);
                 let full = mode == Some(Permission::FullAccess);
-                let chip = |id: &'static str| {
-                    chrome::interactive_control(div().id(id), p, model_enabled)
-                        .debug_selector(move || id.into())
-                        .relative()
-                        .flex_shrink_0()
-                        .h(px(t.layout.control_height_sm))
-                        .px(px(t.space.md))
-                        .rounded_full()
-                        .flex()
-                        .items_center()
-                        .gap(px(t.space.xs))
-                        .text_size(px(t.text.meta))
-                        .font_weight(FontWeight(t.weight.medium))
-                        .when(open, |d| d.bg(rgb(p.selected)))
-                        .when(!open && model_enabled, |d| {
-                            d.hover(move |s| s.bg(rgb(p.roles.hover)))
-                        })
-                        .when(model_enabled, |d| {
-                            d.on_click(cx.listener(|this, _, window, cx| {
-                                this.open_model_popover(window, cx)
-                            }))
-                        })
-                };
-                d.when(!narrow, |d| {
-                    d.child(
-                        chip("title-model")
-                            .bg(primitives::tonal(&p, t.wash.rest))
-                            .max_w(px(t.layout.menu_width))
-                            .tooltip(tooltip_view(
-                                "Model, effort and access",
-                                self.settings.vim_navigation.then_some("g m"),
-                                &p,
-                            ))
-                            .child(super::shell::neutral_glyph(session.provider_id(), t.icon.xs, p))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_color(rgb(p.roles.text_secondary))
-                                    .child(model),
+                // Hidden until the agent reports a mode this app offers:
+                // "unknown" is not something to show or choose.
+                d.when_some(
+                    mode.filter(|_| self.supported_session() && !narrow),
+                    |d, mode| {
+                        d.child(
+                            chrome::interactive_control(
+                                div().id("title-access"),
+                                p,
+                                self.supported_session(),
                             )
-                            .when_some(effort, |d, effort| {
-                                d.child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .text_color(rgb(p.roles.text_tertiary))
-                                        .child(format!("· {effort}")),
-                                )
-                            })
-                            .when(model_enabled, |d| {
-                                d.child(
-                                    Icon::new(IconName::ChevronDown)
-                                        .size(px(t.icon.xs))
-                                        .text_color(rgb(p.roles.text_tertiary)),
-                                )
-                            })
-                            .child(chrome::measure(
-                                cx.entity().downgrade(),
-                                |this: &mut Self, bounds, _| {
-                                    let changed = this.shell.model_anchor != bounds;
-                                    this.shell.model_anchor = bounds;
-                                    changed
-                                },
-                            )),
-                    )
-                })
-                // The highest-stakes setting is always in view.
-                .when(self.supported_session(), |d| {
-                    d.child(
-                        chip("title-access")
-                            .tooltip(tooltip_view(
-                                match mode {
-                                    Some(mode) => format!("Access: {} · {}", mode.label(), mode.description()),
-                                    None => "Access: unknown · the agent has not reported a mode this app offers".into(),
-                                },
-                                None,
-                                &p,
-                            ))
+                            .debug_selector(|| "title-access".into())
+                            .flex_shrink_0()
+                            .h(px(t.layout.control_height_sm))
+                            .px(px(t.space.md))
+                            .rounded_full()
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.xs))
+                            .text_size(px(t.text.meta))
+                            .font_weight(FontWeight(t.weight.medium))
                             .text_color(rgb(if full {
                                 p.warning
                             } else {
-                                p.roles.text_tertiary
+                                p.roles.text_secondary
                             }))
-                            .child(
-                                Icon::new(if full {
-                                    IconName::TriangleAlert
-                                } else {
-                                    IconName::Eye
-                                })
-                                .size(px(t.icon.xs)),
-                            )
-                            .child(access),
-                    )
-                })
+                            .hover(move |s| s.bg(rgb(p.roles.hover)))
+                            .tooltip(tooltip_view(
+                                format!(
+                                    "Access: {} · {} · click to change",
+                                    mode.label(),
+                                    mode.description()
+                                ),
+                                None,
+                                &p,
+                            ))
+                            .when(full, |d| {
+                                d.child(Icon::new(IconName::TriangleAlert).size(px(t.icon.xs)))
+                            })
+                            .child(access)
+                            .on_click(cx.listener(
+                                |this, _, window, cx| this.open_model_popover(window, cx),
+                            )),
+                        )
+                    },
+                )
             })
             .children(
                 session
@@ -265,16 +228,36 @@ impl Workspace {
             .children(session.and_then(|s| self.render_tasks_words(s, cx)))
     }
 
-    /// The background-work chip, in words ("3 subagents").
-    fn render_tasks_words(&self, session: &Session, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The background-work chip, in words: neutral while all is well
+    /// ("3 subagents"), the fault colour once something failed ("3 running ·
+    /// 1 failed").
+    pub(super) fn render_tasks_words(
+        &self,
+        session: &Session,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if session.tasks.is_empty() && session.background_tasks == 0 {
             return None;
         }
         let p = self.palette();
         let t = p.tokens;
-        let words = running_words(&session.tasks, session.background_tasks);
-        let running = words.is_some();
-        let label = words.unwrap_or_else(|| "Background tasks".into());
+        let failed = session.tasks.iter().filter(|t| t.failed()).count();
+        let running = bg::running(&session.tasks);
+        let (label, kind) = if failed > 0 {
+            (
+                if running > 0 {
+                    format!("{running} running · {failed} failed")
+                } else {
+                    format!("{failed} failed")
+                },
+                Some(StatusKind::Failed),
+            )
+        } else {
+            match running_words(&session.tasks, session.background_tasks) {
+                Some(words) => (words, Some(StatusKind::Working)),
+                None => ("Background tasks".into(), None),
+            }
+        };
         Some(
             chrome::interactive_control(div().id("title-tasks"), p, true)
                 .debug_selector(|| "title-tasks".into())
@@ -287,14 +270,28 @@ impl Workspace {
                 .gap(px(t.space.xs))
                 .text_size(px(t.text.meta))
                 .font_weight(FontWeight(t.weight.medium))
-                .text_color(rgb(p.roles.text_secondary))
+                .map(super::shell::tabular)
+                .text_color(rgb(if failed > 0 {
+                    p.error
+                } else {
+                    p.roles.text_secondary
+                }))
+                .when(failed > 0, |d| {
+                    d.bg(primitives::wash(p.error, t.wash.tone_rest))
+                })
                 .when(self.tasks.open, |d| d.bg(rgb(p.selected)))
                 .hover(move |s| s.bg(rgb(p.roles.hover)))
-                .when(running, |d| {
-                    d.child(status_indicator(StatusKind::Working, &p))
-                })
+                .children(kind.map(|kind| status_indicator(kind, &p)))
                 .child(label)
-                .tooltip(tooltip_view("Show background tasks", None, &p))
+                .tooltip(tooltip_view(
+                    if failed > 0 {
+                        "Background tasks · one or more failed, open to see why"
+                    } else {
+                        "Show background tasks"
+                    },
+                    None,
+                    &p,
+                ))
                 .on_click(cx.listener(|this, _, window, cx| this.toggle_tasks(window, cx)))
                 .into_any_element(),
         )
@@ -312,7 +309,7 @@ impl Workspace {
         let t = p.tokens;
         let selected = self.view.selected.is_some();
         let model_enabled = enabled && self.supported_session();
-        let vim = self.settings.vim_navigation;
+        let vim = self.vim();
         let handoff_enabled = self.supported_session() && self.view.connected && !self.demo;
         let handoff_label = match self.selected_session().map(|s| s.provider.as_str()) {
             Some("codex") => "Continue with Claude",
@@ -355,6 +352,19 @@ impl Workspace {
             selected,
         )
         .when(selected, |d| d.on_click(page(Screen::Changes)));
+        // r2-shell: badges where there is state.
+        let changed = self
+            .selected_session()
+            .and_then(|s| self.changes_count(&s.cwd))
+            .filter(|n| *n > 0)
+            .map(|n| {
+                if n > 99 {
+                    "99+".to_owned()
+                } else {
+                    n.to_string()
+                }
+            });
+        let changes = tool_badge(changes, changed.filter(|_| floating), &p);
         let files = tool(
             "open-editor",
             IconName::FolderOpen,
@@ -390,6 +400,16 @@ impl Workspace {
                 }
             }))
         });
+        let shell_running = self
+            .view
+            .selected
+            .as_ref()
+            .is_some_and(|id| self.view.terminals.contains_key(id));
+        let terminal = tool_badge(
+            terminal,
+            (floating && shell_running && !self.terminal.open).then(String::new),
+            &p,
+        );
         let history = tool(
             "open-history",
             IconName::BookOpen,
@@ -445,33 +465,59 @@ impl Workspace {
             .child(handoff)
     }
 
-    /// The tools docked to the window's right edge, between the title and
-    /// the composer: a flat strip, not a floating pill.
+    /// The session's tools, docked to the conversation column's right edge
+    /// just under the title (not floating at the window edge). The column's
+    /// measure comes from the transcript (`reading_max`).
     pub(super) fn render_tool_rail_v2(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
+        let column = self.reading_max().min(self.chat_width);
+        let rail = t.layout.icon_button + 2. * t.space.xs + 2. * t.stroke.hairline;
+        // The rail's left edge sits a step outside the column's text edge.
+        let right = ((self.chat_width - column) / 2. + px(t.layout.chat_gutter)
+            - px(t.space.lg + rail))
+        .max(px(t.space.sm));
         div()
             .absolute()
-            .top(self.header_bounds.size.height)
-            .bottom(self.composer_dock_bounds.size.height)
-            .right_0()
-            .flex()
-            .items_center()
+            .top(self.header_bounds.size.height + px(t.space.md))
+            .right(right)
             .child(
                 div()
                     .debug_selector(|| "tool-rail".into())
                     .occlude()
-                    .py(px(t.space.sm))
+                    .py(px(t.space.xs))
                     .px(px(t.space.xs))
-                    .rounded_l(px(t.radius.panel))
-                    .bg(rgb(p.base))
-                    .border_l(px(t.stroke.hairline))
-                    .border_t(px(t.stroke.hairline))
-                    .border_b(px(t.stroke.hairline))
-                    .border_color(rgb(p.border))
+                    .rounded(px(t.radius.panel))
+                    .bg(rgb(p.surface))
+                    .border(px(t.stroke.hairline))
+                    .border_color(rgb(p.roles.card_border))
                     .child(self.chat_actions_v2(enabled, true, cx)),
             )
     }
+}
+
+/// A small count or dot on a tool's top-right corner.
+fn tool_badge(control: Stateful<Div>, badge: Option<String>, p: &Palette) -> Stateful<Div> {
+    let t = p.tokens;
+    control.relative().when_some(badge, |d, badge| {
+        d.child(
+            div()
+                .absolute()
+                .top(-px(t.space.xxs))
+                .right(-px(t.space.xxs))
+                .map(|d| {
+                    if badge.is_empty() {
+                        d.top(px(t.space.xs))
+                            .right(px(t.space.xs))
+                            .size(px(t.layout.status_dot))
+                            .rounded(px(t.radius.full))
+                            .bg(rgb(p.roles.text_secondary))
+                    } else {
+                        d.child(primitives::badge(badge, primitives::Intent::Neutral, p))
+                    }
+                }),
+        )
+    })
 }
 
 #[cfg(test)]

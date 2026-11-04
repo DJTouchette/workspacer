@@ -168,8 +168,12 @@ pub fn avatar_hue(name: &str) -> f32 {
 
 /// A model id for people: "Sonnet 4.6", "GPT-5.6 Luna", the raw id when it
 /// is not recognised. The one formatter for chips, rows and popovers; show
-/// the raw id on hover.
+/// the raw id on hover. An empty id reads "Default model" (r2-shell).
 pub fn model_name(id: &str) -> String {
+    let id = id.trim();
+    if id.is_empty() {
+        return "Default model".into();
+    }
     crate::model::model_display_name(id)
 }
 
@@ -206,6 +210,18 @@ mod tests {
         assert_eq!(avatar_hue("Workspacer "), avatar_hue("workspacer"));
         assert_eq!(model_name("claude-sonnet-4-6"), "Sonnet 4.6");
         assert_eq!(model_name("gpt-5.6-luna"), "GPT-5.6 Luna");
+    }
+
+    // r2-shell
+    #[test]
+    fn model_names_are_human() {
+        assert_eq!(model_name("claude-sonnet-4-6"), "Sonnet 4.6");
+        assert_eq!(model_name("gpt-5.6-luna"), "GPT-5.6 Luna");
+        assert_eq!(model_name("claude-opus-4-1-20250805"), "Opus 4.1");
+        assert_eq!(model_name("anthropic/claude-haiku-4-5[1m]"), "Haiku 4.5");
+        assert_eq!(model_name("opus"), "Opus");
+        assert_eq!(model_name("  "), "Default model");
+        assert_eq!(model_name("my-local-model"), "my-local-model");
     }
 
     // area-shell
