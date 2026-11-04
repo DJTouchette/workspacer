@@ -830,9 +830,20 @@ pub(crate) fn status_dot(intent: Intent, p: &Palette) -> Div {
 }
 
 /// Every state a session, job, host, task or card can show, with one colour
-/// map and one shape (dot + label) everywhere (`docs/design-v2-direction.md`
-/// §2). Attention is amber, running blue and animated, success green (only
-/// for terminal success), error red; the rest is neutral.
+/// AND one shape everywhere (`docs/design-v2-direction.md` R2.1):
+///
+/// | Kind | Role | Shape |
+/// |---|---|---|
+/// | NeedsYou | attention (amber) | filled dot |
+/// | Failed | fault (red) | filled dot |
+/// | Stalled | fault (red) | ring with a bar ("Not responding") |
+/// | Working | working (cyan/teal) | pulsing ring |
+/// | Queued | working | still ring |
+/// | Done | done (muted green) | check |
+/// | Idle | idle (grey) | hollow dot |
+/// | Paused | idle | pause bars |
+///
+/// Blue is never a status: it means "interactive".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum StatusKind {
     /// Waiting on the user: an approval, a question, a proposal.
@@ -844,6 +855,9 @@ pub(crate) enum StatusKind {
     /// Finished successfully.
     Done,
     Failed,
+    /// Should be working but has gone quiet (no heartbeat): a fault, never
+    /// also "Working". Label "Not responding".
+    Stalled,
     /// Switched off by the user.
     Paused,
     /// Accepted, waiting to start.
@@ -851,17 +865,19 @@ pub(crate) enum StatusKind {
 }
 
 impl StatusKind {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::NeedsYou,
         Self::Working,
         Self::Idle,
         Self::Done,
         Self::Failed,
+        Self::Stalled,
         Self::Paused,
         Self::Queued,
     ];
 
-    /// The vocabulary: "Needs you · Working · Idle · Done · Failed".
+    /// The vocabulary: "Needs you · Working · Idle · Done · Failed · Not
+    /// responding".
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::NeedsYou => "Needs you",
@@ -869,57 +885,89 @@ impl StatusKind {
             Self::Idle => "Idle",
             Self::Done => "Done",
             Self::Failed => "Failed",
+            Self::Stalled => "Not responding",
             Self::Paused => "Paused",
             Self::Queued => "Queued",
         }
     }
 
-    /// The indicator's colour.
+    /// The indicator's colour: one of the palette's five status roles.
     pub(crate) fn color(self, p: &Palette) -> u32 {
+        let r = p.roles.status;
         match self {
-            Self::NeedsYou => p.warning,
-            Self::Working | Self::Queued => p.busy,
-            Self::Done => p.success,
-            Self::Failed => p.error,
-            Self::Idle | Self::Paused => p.roles.text_tertiary,
+            Self::NeedsYou => r.attention,
+            Self::Working | Self::Queued => r.working,
+            Self::Done => r.done,
+            Self::Failed | Self::Stalled => r.fault,
+            Self::Idle | Self::Paused => r.idle,
         }
     }
 
     /// The label's colour: states that ask for something carry their hue;
-    /// the rest leave it to the dot.
+    /// the rest leave it to the indicator.
     pub(crate) fn text_color(self, p: &Palette) -> u32 {
+        let r = p.roles.status;
         match self {
-            Self::NeedsYou => p.warning,
-            Self::Failed => p.error,
+            Self::NeedsYou => r.attention,
+            Self::Failed | Self::Stalled => r.fault,
             Self::Working | Self::Done => p.roles.text_secondary,
             Self::Idle | Self::Paused | Self::Queued => p.roles.text_tertiary,
         }
     }
 
-    /// Hollow ring rather than a dot: not running, not finished.
-    fn hollow(self) -> bool {
-        matches!(self, Self::Paused | Self::Queued)
+    /// Whether the user has to act (attention or fault): these belong in
+    /// Needs you.
+    pub(crate) fn needs_attention(self) -> bool {
+        matches!(self, Self::NeedsYou | Self::Failed | Self::Stalled)
     }
 }
 
 /// The status indicator alone, in its fixed `layout.status_box` square so
-/// labels after it share one left edge. Working pulses (held still under
+/// labels after it share one left edge. Each kind has its own shape as well
+/// as its colour (see [`StatusKind`]); Working pulses (held still under
 /// reduced motion).
 pub(crate) fn status_indicator(kind: StatusKind, p: &Palette) -> Div {
     let t = p.tokens;
     let (boxed, dot) = (t.layout.status_box, t.layout.status_dot);
     let color = kind.color(p);
-    let core = if kind.hollow() {
+    let line = t.stroke.hairline + t.stroke.hairline / 2.;
+    let ring = |size: f32, width: f32| {
         div()
-            .size(px(dot + t.space.xxs))
+            .size(px(size))
             .rounded(px(t.radius.full))
-            .border(px(t.stroke.hairline + t.stroke.hairline / 2.))
+            .border(px(width))
             .border_color(rgb(color))
-    } else {
+    };
+    let bar = |w: f32, h: f32| {
         div()
-            .size(px(dot))
+            .w(px(w))
+            .h(px(h))
             .rounded(px(t.radius.full))
             .bg(rgb(color))
+    };
+    let core = match kind {
+        StatusKind::NeedsYou | StatusKind::Failed => div()
+            .size(px(dot))
+            .rounded(px(t.radius.full))
+            .bg(rgb(color)),
+        StatusKind::Working | StatusKind::Queued => ring(dot + t.space.xxs, line),
+        StatusKind::Stalled => ring(boxed - t.space.xxs, line)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(bar(dot - t.space.xxs, line)),
+        StatusKind::Done => div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(rgb(color))
+            .child(Icon::new(IconName::Check).size(px(boxed))),
+        StatusKind::Idle => ring(dot, t.stroke.hairline),
+        StatusKind::Paused => div()
+            .flex()
+            .gap(px(line))
+            .child(bar(line, dot + t.space.xxs))
+            .child(bar(line, dot + t.space.xxs)),
     };
     let frame = div()
         .relative()
