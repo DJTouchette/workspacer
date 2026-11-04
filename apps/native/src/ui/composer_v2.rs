@@ -2,14 +2,16 @@
 //! strip attached to it, and the plan and limit decision cards above it.
 //! Only drawn when `Workspace::design()` is v2; v1 keeps `conversation.rs`.
 //!
-//! Rules (`docs/design-v2-direction.md` §4 and the Round 2 addendum):
+//! Rules (`docs/design-v2-direction.md` §4 and the Round 2 and 3 addenda):
 //! - One primary per region. The composer's send is the primary until a
-//!   decision is open; then the decision owns the primary, the composer
-//!   dims, its placeholder names the block and its send drops to secondary.
-//! - The send button says what it does: "Send" when the agent is idle;
-//!   "Send now" and "Queue" while it works, with Steer (the default Enter)
-//!   in the split menu with a line explaining it. Shortcuts live in
-//!   tooltips, not a hint row.
+//!   decision is open; then the decision card takes the composer's slot
+//!   (R3.2) and the composer collapses to one "Reply instead…" line that
+//!   opens into the field (its send then a secondary).
+//! - One primary button in one place whose label says what it does:
+//!   "Send" when idle; "Queue" while the agent works and there is a draft
+//!   (Enter: it runs after the current step), with Send now and After this
+//!   turn in its split menu; "Stop · Esc" while it works with nothing
+//!   drafted. Shortcuts live in tooltips and faint keycap hints.
 //! - Every decision (approval, plan, usage limit, questions) is the one
 //!   "waiting on you" container (`primitives::waiting_card`): a question
 //!   headline, an always-visible where/why line, and actions in the four
@@ -24,8 +26,13 @@ use serde_json::Value;
 /// The v2 composer's own state.
 #[derive(Default)]
 pub(super) struct ComposerUi {
-    /// The send button's split menu (Steer / Queue) is open.
+    /// Queue's split menu (Send now / After this turn) is open.
     pub send_menu: bool,
+    /// The approval's Deny split menu (Deny with note…) is open.
+    pub deny_menu: bool,
+    /// "Reply instead…" was opened for this session and these decisions:
+    /// the composer stays open (its chips usable) until they change.
+    pub reply_open: Option<(String, Vec<Decision>)>,
     /// The question a multi-question set's stepper shows (0-based).
     pub question_step: usize,
     /// The placeholder last given to the composer, when v2 changed it.
@@ -81,15 +88,14 @@ pub(super) fn approval_summary(approval: &Value) -> (String, String) {
     (tool, summary)
 }
 
-/// What Details shows for an approval, as (label, value, monospace) rows:
-/// the request itself, then where and for whom it would run, then why. No
-/// raw JSON: remaining scalar inputs become their own rows.
-pub(super) fn approval_facts(
-    approval: &Value,
-    cwd: &str,
-    host: &str,
-    agent: &str,
-) -> Vec<(String, String, bool)> {
+/// The facts an approval shows inline under its headline, as (label,
+/// value, monospace) rows (R3.2: nothing hides behind a Details toggle).
+/// The headline already shows a short one-line request, and the context
+/// line the reason and the folder, so a request value is repeated here only
+/// when the headline cannot show it whole (several lines, or long). The
+/// remaining scalar inputs follow, a short line each. No raw JSON.
+pub(super) fn approval_facts(approval: &Value) -> Vec<(String, String, bool)> {
+    const HEADLINE_FITS: usize = 60;
     let input = approval.get("toolInput").unwrap_or(&Value::Null);
     let mut rows = Vec::new();
     let named = [
@@ -103,28 +109,12 @@ pub(super) fn approval_facts(
         if let Some(value) = input
             .get(key)
             .and_then(Value::as_str)
+            .map(str::trim_end)
             .filter(|v| !v.is_empty())
+            .filter(|v| v.contains('\n') || v.chars().count() > HEADLINE_FITS)
         {
-            rows.push((label.to_owned(), value.trim_end().to_owned(), true));
+            rows.push((label.to_owned(), value.to_owned(), true));
         }
-    }
-    if !cwd.is_empty() {
-        rows.push(("Folder".into(), cwd.to_owned(), true));
-    }
-    if !host.is_empty() {
-        rows.push(("Host".into(), host.to_owned(), false));
-    }
-    if !agent.is_empty() {
-        rows.push(("Agent".into(), agent.to_owned(), false));
-    }
-    let reason = input
-        .get("description")
-        .or_else(|| approval.get("reason"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|r| !r.is_empty());
-    if let Some(reason) = reason {
-        rows.push(("Reason".into(), reason.to_owned(), false));
     }
     // Anything else the tool was given, as a short line each.
     if let Some(object) = input.as_object() {
@@ -163,35 +153,139 @@ fn sentence_case(key: &str) -> String {
     words
 }
 
-/// The send button's label and tooltip: "Send now" (it interrupts) while
-/// the agent works, "Send" otherwise.
-pub(super) fn send_copy(steering: bool) -> (&'static str, &'static str) {
-    if steering {
-        (
-            "Send now",
-            "Interrupt: the agent sets its current work aside and reads this at once",
-        )
+/// An "Always allow" grant as its button says it and its tooltip explains
+/// it (R3.2): the exact scope, derived from what the request carries.
+/// Claude's grants are session rules ("Always allow Bash(cargo test:*) this
+/// session"): a `Bash(x:*)` rule allows every command starting with `x`, a
+/// bare `Bash(x)` only that command. Codex says "this command", so the
+/// command is named. Words we cannot read stay as given, plus their scope:
+/// every grant offered here lasts for this session only (`always_options`).
+pub(super) fn always_copy(label: &str, approval: &Value) -> (String, String) {
+    const SESSION: &str = " this session";
+    const UNTIL: &str = "Until this session ends";
+    let label = label.trim();
+    let (_, command) = approval_summary(approval);
+    let quoted = |text: &str| format!("\u{201c}{text}\u{201d}");
+    if label.eq_ignore_ascii_case("Always allow this command for this session")
+        && !command.is_empty()
+    {
+        return (
+            format!("Always allow {}{SESSION}", quoted(&command)),
+            format!("{UNTIL}, exactly {} runs without asking", quoted(&command)),
+        );
+    }
+    let Some(body) = label
+        .strip_suffix(SESSION)
+        .map(|b| b.strip_suffix(" for").unwrap_or(b))
+    else {
+        // The words carry no scope: add the one it has.
+        return (
+            format!("{label}{SESSION}"),
+            format!("{UNTIL}, matching requests run without asking"),
+        );
+    };
+    if let Some(rules) = body.strip_prefix("Always allow ") {
+        let mut said = Vec::new();
+        let mut explained = Vec::new();
+        for rule in rules.split(", ").map(str::trim).filter(|r| !r.is_empty()) {
+            let parsed = rule
+                .strip_suffix(')')
+                .and_then(|r| r.split_once('('))
+                .filter(|(tool, content)| !tool.is_empty() && !content.is_empty());
+            match parsed {
+                Some(("Bash", content)) => match content.strip_suffix(":*") {
+                    Some(prefix) => {
+                        said.push(format!("{prefix} commands"));
+                        explained.push(format!("any command starting with {}", quoted(prefix)));
+                    }
+                    None => {
+                        said.push(quoted(content));
+                        explained.push(format!("exactly {}", quoted(content)));
+                    }
+                },
+                Some((tool, content)) => {
+                    said.push(format!("{tool} {content}"));
+                    explained.push(format!("{tool} on {content}"));
+                }
+                None => {
+                    said.push(rule.to_owned());
+                    explained.push(format!("every {rule} request"));
+                }
+            }
+        }
+        if !said.is_empty() {
+            return (
+                format!("Always allow {}{SESSION}", said.join(", ")),
+                format!("{UNTIL}, {} runs without asking", explained.join(", ")),
+            );
+        }
+    }
+    (
+        label.to_owned(),
+        format!("{UNTIL}, matching requests run without asking"),
+    )
+}
+
+/// What the composer's one primary button does now (R3.2). It stays in one
+/// place; its label changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SendSlot {
+    /// Idle, or a reply written while a decision waits: send it.
+    Send,
+    /// The agent works and there is a draft: it runs after the current step
+    /// (the send key's steer). Send now and After this turn are in its menu.
+    Queue,
+    /// The agent works and nothing is drafted: stop it (Esc).
+    Stop,
+}
+
+/// The slot for the session's state: `working` = mid-turn, `steering` = a
+/// message now would steer it (mid-turn, or one still in flight),
+/// `deciding` = a decision waits, `draft` = there is something to send.
+pub(super) fn send_slot(working: bool, steering: bool, deciding: bool, draft: bool) -> SendSlot {
+    if deciding {
+        SendSlot::Send
+    } else if working && !draft {
+        SendSlot::Stop
+    } else if steering {
+        SendSlot::Queue
     } else {
-        ("Send", "Send this message to the agent")
+        SendSlot::Send
     }
 }
 
-/// What Steer does, for its menu row and tooltip.
-pub(super) const STEER_COPY: &str = "The agent reads this at its next step, without stopping its work. What Enter does while it works.";
+/// The slot's label and tooltip.
+pub(super) fn send_copy(slot: SendSlot) -> (&'static str, &'static str) {
+    match slot {
+        SendSlot::Send => ("Send", "Send this message to the agent"),
+        SendSlot::Queue => ("Queue", QUEUE_COPY),
+        SendSlot::Stop => ("Stop", "Stop the agent"),
+    }
+}
 
-/// What Queue does.
-pub(super) const QUEUE_COPY: &str =
+/// What Queue (the send key while the agent works) does.
+pub(super) const QUEUE_COPY: &str = "Runs after the current step";
+
+/// What Send now does, in Queue's menu.
+pub(super) const SEND_NOW_COPY: &str =
+    "Interrupt: the agent sets its current work aside and reads this at once.";
+
+/// What After this turn does, in Queue's menu.
+pub(super) const AFTER_TURN_COPY: &str =
     "Hold it until this turn ends, then send it as the next message.";
 
+/// The one line the composer collapses to while a decision waits, and the
+/// placeholder of the field it opens into.
+pub(super) const REPLY_INSTEAD: &str = "Reply instead…";
+
 /// The composer's placeholder while a decision waits on the user (the
-/// default otherwise).
+/// default otherwise). While a decision is open the composer is the "Reply
+/// instead…" line it opened from; it never repeats the card.
 pub(super) fn composer_placeholder(decision: Option<Decision>) -> &'static str {
     match decision {
         None => DEFAULT_PLACEHOLDER,
-        Some(Decision::Approval) => "Allow or deny the request above to continue…",
-        Some(Decision::Plan) => "Approve the plan above, or reply to keep planning…",
         Some(Decision::Limit) => "Messages wait until the usage limit resets…",
-        Some(Decision::Questions) => "Answer the questions above, or reply here instead…",
+        Some(Decision::Approval | Decision::Plan | Decision::Questions) => REPLY_INSTEAD,
     }
 }
 
@@ -276,8 +370,10 @@ pub(super) fn approval_headline(approval: &Value, cwd: &str) -> Vec<(String, boo
 }
 
 /// The always-visible where/why line under an approval's headline: the
-/// agent's reason, then where it would run.
-pub(super) fn approval_context(approval: &Value, cwd: &str, host: &str) -> String {
+/// agent's reason, then the whole folder it would run in (the headline has
+/// only its last two parts). No machine name (R3.5: one workspace needs no
+/// "on Workspace hub").
+pub(super) fn approval_context(approval: &Value, cwd: &str) -> String {
     let input = approval.get("toolInput").unwrap_or(&Value::Null);
     let reason = input
         .get("description")
@@ -285,12 +381,7 @@ pub(super) fn approval_context(approval: &Value, cwd: &str, host: &str) -> Strin
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|r| !r.is_empty());
-    let place = match (cwd.is_empty(), host.is_empty()) {
-        (false, false) => Some(format!("{} on {host}", short_path(cwd))),
-        (false, true) => Some(short_path(cwd)),
-        (true, false) => Some(host.to_owned()),
-        (true, true) => None,
-    };
+    let place = Some(cwd.trim().to_owned()).filter(|cwd| !cwd.is_empty());
     [reason.map(str::to_owned), place]
         .into_iter()
         .flatten()
@@ -363,17 +454,111 @@ impl Workspace {
             .is_some_and(|s| matches!(s.provider_id(), "claude" | "codex"))
     }
 
-    fn host_label(&self) -> &'static str {
-        if self.extras.local_paths {
-            "This machine"
-        } else {
-            "Workspace hub"
-        }
+    /// Whether a decision the session waits on takes the composer's slot
+    /// (R3.2): an approval, a plan or a structured question set. A usage
+    /// limit alone does not, and neither does a question the card cannot
+    /// structure (it is answered from the composer).
+    pub(super) fn decision_takes_composer(&self, session: &Session) -> bool {
+        self.decisions(session).iter().any(|d| match d {
+            Decision::Approval | Decision::Plan => true,
+            Decision::Questions => session
+                .questions
+                .as_ref()
+                .is_some_and(|q| !super::questions::question_list(q).is_empty()),
+            Decision::Limit => false,
+        })
     }
 
-    /// The v2 composer: one surface holding the approval strip (when one is
-    /// pending), draft attachments, the slash menu, the input and a toolbar
-    /// of chips, status and the send control.
+    /// Whether Esc stops a working agent (v2). Not with modal keys on: there
+    /// Esc is how the composer is left for Normal mode, and stopping an
+    /// agent must never be a side effect of that.
+    fn escape_stops(&self) -> bool {
+        self.design().is_v2() && !self.settings.vim(self.design())
+    }
+
+    /// Esc while the composer's primary reads "Stop · Esc" (v2): the agent
+    /// is mid-turn and nothing is drafted. Returns whether it stopped it.
+    pub(super) fn stop_on_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.escape_stops()
+            || self.screen != Screen::Conversation
+            || self.new_session
+            || self.view.child.is_some()
+            || !self.view.connected
+            || self.view.busy
+            || self.extras.deny_open
+        {
+            return false;
+        }
+        let working = self.selected_session().is_some_and(Session::working);
+        let composer = self.composer.read(cx);
+        let at_composer =
+            composer.focus_handle(cx).is_focused(window) || self.focus.is_focused(window);
+        if !working || !at_composer || !composer.value().trim().is_empty() || self.uploading() {
+            return false;
+        }
+        let draft = self.draft_files(cx);
+        if !draft.is_empty() {
+            return false;
+        }
+        self.act(Action::Stop, cx);
+        true
+    }
+
+    /// The composer collapsed while a decision holds its slot: one quiet
+    /// line, "Reply instead…", that opens the field (focus it, and it
+    /// stays open until it is left empty).
+    fn render_reply_instead(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let (hover, pressed) = (p.roles.hover, p.roles.pressed);
+        div()
+            .debug_selector(|| "chat-composer-group".into())
+            .w_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.md))
+            .children(self.render_cold_note(cx))
+            .child(
+                chrome::interactive_control(div().id("composer-reply"), p, enabled)
+                    .debug_selector(|| "composer-reply".into())
+                    .occlude()
+                    .w_full()
+                    .h(px(t.layout.control_height_sm))
+                    .px(px(t.space.lg + t.signals().attention_bar))
+                    .flex()
+                    .items_center()
+                    .rounded(px(t.radius.control))
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(if enabled {
+                        p.roles.text_secondary
+                    } else {
+                        p.disabled
+                    }))
+                    .tooltip(primitives::tooltip_view(
+                        "Write to the agent instead of choosing above",
+                        None,
+                        &p,
+                    ))
+                    .when(enabled, |d| {
+                        d.hover(move |s| s.bg(rgb(hover)).text_color(rgb(p.text)))
+                            .active(move |s| s.bg(rgb(pressed)))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.composer_ui.reply_open = this
+                                    .selected_session()
+                                    .map(|s| (s.id.clone(), this.decisions(s)));
+                                this.composer
+                                    .update(cx, |input, cx| input.focus(window, cx));
+                                cx.notify();
+                            }))
+                    })
+                    .child(REPLY_INSTEAD),
+            )
+    }
+
+    /// The v2 composer: one surface holding draft attachments, the slash
+    /// menu, the input and a toolbar of chips, status and the send control.
+    /// While a decision holds its slot it collapses to "Reply instead…".
     pub(super) fn render_composer_v2(
         &mut self,
         layout: ChatLayout,
@@ -402,17 +587,37 @@ impl Workspace {
             .map(|s| self.decisions(s))
             .unwrap_or_default();
         let deciding = !decisions.is_empty();
-        let slash_rows = self.slash_menu(cx);
-        // While something waits on the user the composer yields: its
-        // placeholder names the block, and it dims until it is used.
-        let placeholder = composer_placeholder(decisions.first().copied());
+        // R3.2: an approval, plan or question takes the composer's slot.
+        let takes_slot = selected
+            .as_ref()
+            .is_some_and(|s| self.decision_takes_composer(s));
+        let empty = self.composer.read(cx).value().is_empty();
+        let placeholder = if takes_slot {
+            REPLY_INSTEAD
+        } else {
+            composer_placeholder(decisions.first().copied())
+        };
         if self.composer_ui.placeholder.unwrap_or(DEFAULT_PLACEHOLDER) != placeholder {
             self.composer_ui.placeholder = Some(placeholder);
             self.composer.update(cx, |input, cx| {
                 input.set_placeholder(placeholder, window, cx)
             });
         }
-        let yielded = deciding && !focused && self.composer.read(cx).value().is_empty();
+        // Collapsed to one line until it is opened (focused) or holds a
+        // draft; there is never a second input under the card.
+        let opened = selected.as_ref().is_some_and(|s| {
+            self.composer_ui
+                .reply_open
+                .as_ref()
+                .is_some_and(|(id, open)| *id == s.id && *open == decisions)
+        });
+        if takes_slot && empty && draft_files.is_empty() && !uploading && !focused && !opened {
+            self.composer_ui.send_menu = false;
+            return self.render_reply_instead(enabled, cx);
+        }
+        let slash_rows = self.slash_menu(cx);
+        // A usage limit alone leaves the composer in place, dimmed until used.
+        let yielded = deciding && !takes_slot && !focused && empty;
         let edge = if focused {
             p.roles.focus
         } else {
@@ -507,33 +712,21 @@ impl Workspace {
         let meter = selected
             .as_ref()
             .filter(|_| !self.title_carries_context())
-            .and_then(|s| gauge::context_meter(s, p));
+            .and_then(|s| gauge::context_text_v2(s, p));
 
-        // Toolbar, right: what the session is doing, Stop, and the send control.
+        // Toolbar, right: what the session is doing, then the one primary
+        // in its fixed place (Send / Queue / Stop · Esc).
         let status = self.composer_status_v2(layout, &decisions, narrow);
-        let stop = working.then(|| {
-            chrome::interactive_control(div().id("stop"), p, enabled)
-                .debug_selector(|| "composer-stop".into())
-                .size(px(t.layout.icon_button))
-                .flex()
-                .items_center()
-                .justify_center()
-                .flex_shrink_0()
-                .rounded(px(t.radius.control))
-                .bg(primitives::tonal(&p, t.wash.rest))
-                .tooltip(primitives::tooltip_view("Stop the agent", None, &p))
-                .when(enabled, |d| {
-                    d.hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
-                        .on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx)))
-                })
-                .child(
-                    div()
-                        .size(px(t.icon.xs - t.space.xxs))
-                        .rounded(px(t.space.xxs))
-                        .bg(rgb(if enabled { p.text } else { p.disabled })),
-                )
-        });
-        let send = self.render_send_control(steering, deciding, can_send, narrow, cx);
+        let slot = send_slot(
+            working,
+            steering,
+            deciding,
+            !empty || !draft_files.is_empty(),
+        );
+        if slot != SendSlot::Queue {
+            self.composer_ui.send_menu = false;
+        }
+        let send = self.render_send_control(slot, enabled, can_send, cx);
 
         let toolbar = div()
             .flex()
@@ -560,7 +753,6 @@ impl Workspace {
                     .items_center()
                     .gap(px(t.space.md))
                     .children(status)
-                    .children(stop)
                     .child(send),
             );
 
@@ -629,8 +821,8 @@ impl Workspace {
             .rounded(px(t.radius.composer))
             .shadow(primitives::elevation(&p, t.elevation.floating))
             .child(body);
-        let menu =
-            (self.composer_ui.send_menu && steering).then(|| self.render_send_menu(can_send, cx));
+        let menu = (self.composer_ui.send_menu && slot == SendSlot::Queue)
+            .then(|| self.render_send_menu(can_send, cx));
         div()
             .debug_selector(|| "chat-composer-group".into())
             .w_full()
@@ -709,93 +901,110 @@ impl Workspace {
         )
     }
 
-    /// "Send" (idle) as the composer's one primary. While the agent works:
-    /// a secondary "Queue" and a split "Send now" whose menu holds Steer,
-    /// each with its explanation. While a decision is open, nothing here is
+    /// The composer's one primary, in one place (R3.2): "Send" when idle;
+    /// "Queue" while the agent works and there is a draft (it runs after
+    /// the current step), with Send now and After this turn in its menu;
+    /// "Stop · Esc" while it works and nothing is drafted. A reply written
+    /// while a decision waits sends as a secondary: the card owns the
     /// primary.
     fn render_send_control(
         &self,
-        steering: bool,
-        deciding: bool,
+        slot: SendSlot,
+        enabled: bool,
         can_send: bool,
-        narrow: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = self.palette();
-        let t = p.tokens;
-        let variant = if deciding {
-            ButtonVariant::Secondary
-        } else {
-            ButtonVariant::Primary
-        };
-        let (label, tip) = send_copy(steering);
+        let (label, tip) = send_copy(slot);
         let label = if self.view.busy { "Sending…" } else { label };
-        if !steering {
-            let key = self.send_key();
-            return primitives::button(
-                "send",
-                label,
-                Some(IconName::ArrowUp),
-                variant,
-                ButtonSize::Small,
-                can_send,
-                &p,
-            )
-            .debug_selector(|| "composer-send".into())
-            .tooltip(primitives::tooltip_view(tip, Some(key), &p))
-            .when(can_send, |d| {
-                d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx)))
-            })
-            .into_any_element();
-        }
-        let queue = (!narrow).then(|| {
-            primitives::button(
-                "queue",
-                "Queue",
-                None,
-                ButtonVariant::Secondary,
-                ButtonSize::Small,
-                can_send,
-                &p,
-            )
-            .debug_selector(|| "composer-queue-button".into())
-            .tooltip(primitives::tooltip_view(QUEUE_COPY, Some("Tab"), &p))
-            .when(can_send, |d| {
-                d.on_click(
-                    cx.listener(|this, _, window, cx| this.submit(Submit::Queue, window, cx)),
+        match slot {
+            SendSlot::Stop => {
+                // "Stop · Esc", the key as a faint hint; with modal keys on
+                // Esc means Normal mode, so the hint is not offered.
+                let key = self.escape_stops().then_some("Esc");
+                match key {
+                    Some(key) => primitives::keyed_button(
+                        "stop",
+                        key,
+                        label,
+                        ButtonVariant::Primary,
+                        ButtonSize::Small,
+                        enabled,
+                        &p,
+                    ),
+                    None => primitives::button(
+                        "stop",
+                        label,
+                        None,
+                        ButtonVariant::Primary,
+                        ButtonSize::Small,
+                        enabled,
+                        &p,
+                    ),
+                }
+                .debug_selector(|| "composer-stop".into())
+                .tooltip(primitives::tooltip_view(tip, key, &p))
+                .when(enabled, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx)))
+                })
+                .into_any_element()
+            }
+            SendSlot::Send => {
+                let deciding = self
+                    .selected_session()
+                    .is_some_and(|s| !self.decisions(s).is_empty());
+                primitives::button(
+                    "send",
+                    label,
+                    Some(IconName::ArrowUp),
+                    if deciding {
+                        ButtonVariant::Secondary
+                    } else {
+                        ButtonVariant::Primary
+                    },
+                    ButtonSize::Small,
+                    can_send,
+                    &p,
                 )
-            })
-        });
-        let (main, chevron) = primitives::split_button_parts(
-            "send",
-            label,
-            Some(IconName::ArrowUp),
-            variant,
-            ButtonSize::Small,
-            can_send,
-            &p,
-        );
-        let main = main
-            .debug_selector(|| "composer-send".into())
-            .tooltip(primitives::tooltip_view(tip, Some(self.send_now_key()), &p))
-            .when(can_send, |d| {
-                d.on_click(cx.listener(|this, _, window, cx| this.submit(Submit::Now, window, cx)))
-            });
-        let chevron = chevron
-            .debug_selector(|| "composer-send-menu".into())
-            .when(can_send, |d| {
-                d.on_click(cx.listener(|this, _, _, cx| {
-                    this.composer_ui.send_menu = !this.composer_ui.send_menu;
-                    cx.notify();
-                }))
-            });
-        div()
-            .flex()
-            .items_center()
-            .gap(px(t.space.sm))
-            .children(queue)
-            .child(primitives::split_button(main, chevron, &p))
-            .into_any_element()
+                .debug_selector(|| "composer-send".into())
+                .tooltip(primitives::tooltip_view(tip, Some(self.send_key()), &p))
+                .when(can_send, |d| {
+                    d.on_click(
+                        cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx)),
+                    )
+                })
+                .into_any_element()
+            }
+            SendSlot::Queue => {
+                let (main, chevron) = primitives::split_button_parts(
+                    "send",
+                    label,
+                    Some(IconName::ArrowUp),
+                    ButtonVariant::Primary,
+                    ButtonSize::Small,
+                    can_send,
+                    &p,
+                );
+                let main =
+                    main.debug_selector(|| "composer-send".into())
+                        .tooltip(primitives::tooltip_view(tip, Some(self.send_key()), &p))
+                        .when(can_send, |d| {
+                            d.on_click(cx.listener(|this, _, window, cx| {
+                                this.submit(Submit::Send, window, cx)
+                            }))
+                        });
+                let chevron =
+                    chevron
+                        .debug_selector(|| "composer-send-menu".into())
+                        .when(can_send, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| {
+                                this.composer_ui.send_menu = !this.composer_ui.send_menu;
+                                cx.notify();
+                            }))
+                        });
+                primitives::split_button(main, chevron, &p).into_any_element()
+            }
+        }
     }
 
     /// The keys that send, as tooltip keycaps.
@@ -816,9 +1025,9 @@ impl Workspace {
         }
     }
 
-    /// The split menu over Send now: the other ways to deliver a draft
-    /// mid-turn, each with a line saying what it does. Steer is what the
-    /// send key does while the agent works.
+    /// Queue's menu: the other ways to deliver a draft mid-turn (Send now
+    /// interrupts, After this turn holds it), each with a line saying what
+    /// it does. Queue itself is what the send key does while the agent works.
     fn render_send_menu(&self, can_send: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
@@ -855,12 +1064,11 @@ impl Workspace {
                                         .child(title),
                                 )
                                 .when_some(key, |d, key| {
-                                    d.child(
-                                        div().flex().gap(px(t.space.xxs)).children(
-                                            key.split_whitespace()
-                                                .map(|k| primitives::kbd(k.to_owned(), &p)),
-                                        ),
-                                    )
+                                    d.child(div().flex().gap(px(t.space.xxs)).children(
+                                        key.split_whitespace().map(|k| {
+                                            primitives::keycap_hint(k.to_owned(), false, &p)
+                                        }),
+                                    ))
                                 }),
                         )
                         .child(
@@ -889,26 +1097,27 @@ impl Workspace {
                     }))
                     .child(
                         item(
-                            "composer-steer",
+                            "composer-send-now",
                             IconName::ArrowUp,
-                            "Steer",
-                            STEER_COPY,
-                            Some(self.send_key()),
+                            "Send now",
+                            SEND_NOW_COPY,
+                            Some(self.send_now_key()),
                         )
                         .when(can_send, |d| {
                             d.on_click(cx.listener(|this, _, window, cx| {
                                 this.composer_ui.send_menu = false;
-                                this.submit(Submit::Send, window, cx)
+                                this.submit(Submit::Now, window, cx)
                             }))
                         }),
                     )
                     .child(
+                        // (v2 leaves Tab to the text: no key here.)
                         item(
                             "composer-queue",
                             IconName::Inbox,
-                            "Queue",
-                            QUEUE_COPY,
-                            Some("Tab"),
+                            "After this turn",
+                            AFTER_TURN_COPY,
+                            None,
                         )
                         .when(can_send, |d| {
                             d.on_click(cx.listener(|this, _, window, cx| {
@@ -920,11 +1129,13 @@ impl Workspace {
             )
     }
 
-    /// A pending tool approval as the "waiting on you" container: the
-    /// request as a question ("Run `cargo test` in native?"), where and why
-    /// under it, Details as a tertiary toggle, and the four numbered actions
-    /// in their roles (1 Allow primary, 2 Always allow secondary, 3 Deny
-    /// destructive, 4 Deny with note tertiary).
+    /// A pending tool approval as the "waiting on you" container, in the
+    /// composer's slot (R3.2): the request as a question ("Run `cargo test`
+    /// in native?"), why and the whole folder under it, any fact the
+    /// headline cannot show whole inline, and the numbered actions: 1 Allow
+    /// primary, 2 Always allow (with its scope) secondary, 3 Deny as a
+    /// secondary split whose menu holds 4 Deny with note…. Keys are faint
+    /// trailing hints.
     pub(super) fn render_approval_strip(
         &self,
         approval: &Value,
@@ -935,7 +1146,6 @@ impl Workspace {
         let p = self.palette();
         let t = p.tokens;
         let (compact, enabled) = (layout.compact, layout.enabled);
-        let open = self.extras.approval_details;
         let session = self.selected_session();
         let cwd = session.map(|s| s.cwd.clone()).unwrap_or_default();
         let card = session.and_then(Session::card);
@@ -962,46 +1172,18 @@ impl Workspace {
             &p,
         )
         .debug_selector(|| "approval-summary".into());
-        let context = approval_context(approval, &cwd, self.host_label());
-        let toggle = primitives::button(
-            if compact {
-                "approval-toggle-compact"
-            } else {
-                "approval-toggle"
-            },
-            if open { "Hide details" } else { "Details" },
-            None,
-            ButtonVariant::Tertiary,
-            ButtonSize::Small,
-            true,
-            &p,
-        )
-        .debug_selector(|| "approval-toggle".into())
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.extras.approval_details = !this.extras.approval_details;
-            cx.notify();
-        }))
-        .into_any_element();
+        let context = approval_context(approval, &cwd);
         let head = primitives::waiting_head(
             headline,
             (!context.is_empty()).then(|| context.into()),
             position_label(decisions, Decision::Approval).map(Into::into),
-            vec![toggle],
+            Vec::new(),
             &p,
         );
-        let details = open.then(|| {
-            let agent = session
-                .map(|s| {
-                    let model = s.display_model();
-                    let title = self.session_title(s);
-                    if model.is_empty() {
-                        title
-                    } else {
-                        format!("{title} · {model}")
-                    }
-                })
-                .unwrap_or_default();
-            let facts = approval_facts(approval, &cwd, self.host_label(), &agent);
+        // R3.2: what it would run, where and with what, inline; the facts
+        // the headline and context line cannot show whole sit in an inset.
+        let facts = approval_facts(approval);
+        let details = (!facts.is_empty()).then(|| {
             primitives::inset(&p)
                 .id("approval-details")
                 .debug_selector(|| "approval-details".into())
@@ -1064,15 +1246,17 @@ impl Workspace {
                     }))
                 })
             })
-            // One button per grant the card offers, in the hub's own words:
-            // the user sees exactly what "always" would allow.
+            // One button per grant the card offers, each with its exact
+            // scope (R3.2): the user sees what "always" would allow, and
+            // until when.
             .children(always.into_iter().enumerate().map(|(ix, option)| {
                 let card = card.clone();
                 let enabled = enabled && card.is_some();
+                let (label, scope) = always_copy(&option.label, approval);
                 primitives::keyed_button(
                     SharedString::from(format!("always-option-{ix}")),
                     number(&StripKey::Always(ix)),
-                    option.label.clone(),
+                    label,
                     ButtonVariant::Secondary,
                     ButtonSize::Small,
                     enabled,
@@ -1080,6 +1264,7 @@ impl Workspace {
                 )
                 .debug_selector(move || format!("always-option-{ix}"))
                 .max_w(px(t.layout.dialog_width))
+                .tooltip(primitives::tooltip_view(scope, None, &p))
                 .when(enabled, |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
                         let Some(card) = card.clone() else {
@@ -1096,49 +1281,13 @@ impl Workspace {
                     }))
                 })
             }))
-            .child({
-                let card = card.clone();
-                primitives::keyed_button(
-                    "deny",
-                    number(&StripKey::Deny),
-                    "Deny",
-                    ButtonVariant::Destructive,
-                    ButtonSize::Small,
-                    enabled,
-                    &p,
-                )
-                .debug_selector(|| "deny".into())
-                .when(enabled, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        this.act(Action::Approve(false, card.clone()), cx)
-                    }))
-                })
-            })
-            .when(note, |d| {
-                let card = card.clone();
-                d.child(
-                    primitives::keyed_button(
-                        "deny-with-note",
-                        number(&StripKey::DenyWithNote),
-                        "Deny with note…",
-                        ButtonVariant::Tertiary,
-                        ButtonSize::Small,
-                        enabled,
-                        &p,
-                    )
-                    .debug_selector(|| "deny-with-note".into())
-                    .tooltip(primitives::tooltip_view(
-                        "Deny, and tell the agent what to do instead",
-                        None,
-                        &p,
-                    ))
-                    .when(enabled, |d| {
-                        d.on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_deny_note(card.clone(), window, cx)
-                        }))
-                    }),
-                )
-            });
+            .child(self.render_deny_split(
+                card.clone(),
+                number(&StripKey::Deny),
+                note.then(|| number(&StripKey::DenyWithNote)),
+                enabled,
+                cx,
+            ));
         primitives::waiting_card(compact, &p)
             .debug_selector(|| "approval-card".into())
             .occlude()
@@ -1146,6 +1295,91 @@ impl Workspace {
             .children(details)
             .children(deny_note)
             .child(actions)
+    }
+
+    /// Deny as a Secondary split button (R3.2) with its key as a trailing
+    /// hint; its menu holds "Deny with note…" (and that item's key) where the
+    /// provider takes a note. Without a note there is no chevron.
+    fn render_deny_split(
+        &self,
+        card: Option<String>,
+        key: String,
+        note_key: Option<String>,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let deny = |d: Stateful<Div>| {
+            let card = card.clone();
+            d.debug_selector(|| "deny".into())
+                .child(primitives::keycap_hint(key.clone(), false, &p))
+                .tooltip(primitives::tooltip_view("Deny this request", None, &p))
+                .when(enabled, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        this.act(Action::Approve(false, card.clone()), cx)
+                    }))
+                })
+        };
+        let Some(note_key) = note_key else {
+            return div().child(deny(primitives::button(
+                "deny",
+                "Deny",
+                None,
+                ButtonVariant::Secondary,
+                ButtonSize::Small,
+                enabled,
+                &p,
+            )));
+        };
+        let (main, chevron) = primitives::split_button_parts(
+            "deny",
+            "Deny",
+            None,
+            ButtonVariant::Secondary,
+            ButtonSize::Small,
+            enabled,
+            &p,
+        );
+        let chevron = chevron
+            .debug_selector(|| "deny-menu".into())
+            .when(enabled, |d| {
+                d.on_click(cx.listener(|this, _, _, cx| {
+                    this.composer_ui.deny_menu = !this.composer_ui.deny_menu;
+                    cx.notify();
+                }))
+            });
+        let menu = (self.composer_ui.deny_menu && enabled).then(|| {
+            let card = card.clone();
+            primitives::menu(&p)
+                .debug_selector(|| "deny-menu-list".into())
+                .occlude()
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    this.composer_ui.deny_menu = false;
+                    cx.notify();
+                }))
+                .child(
+                    primitives::menu_item(
+                        "deny-with-note",
+                        "Deny with note…",
+                        None,
+                        false,
+                        true,
+                        &p,
+                    )
+                    .debug_selector(|| "deny-with-note".into())
+                    .child(primitives::keycap_hint(note_key, false, &p))
+                    .tooltip(primitives::tooltip_view(
+                        "Deny, and tell the agent what to do instead",
+                        None,
+                        &p,
+                    ))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.composer_ui.deny_menu = false;
+                        this.open_deny_note(card.clone(), window, cx)
+                    })),
+                )
+        });
+        primitives::split_button_with_menu(deny(main), chevron, menu, &p)
     }
 
     /// Open the note box under a Deny with note / Keep planning.
@@ -1276,6 +1510,7 @@ impl Workspace {
             return;
         };
         cx.stop_propagation();
+        self.composer_ui.deny_menu = false;
         let card = session.card();
         match key {
             StripKey::Allow => self.act(Action::Approve(true, card), cx),
@@ -1606,30 +1841,69 @@ mod tests {
             "timeout": 120000,
             "run_in_background": false,
         }});
-        let facts = approval_facts(
-            &approval,
-            "/home/dev/workspacer",
-            "This machine",
-            "Tests · Sonnet",
-        );
+        // A short command is the headline; the reason and folder are the
+        // context line. What is left shows inline, as words.
+        let facts = approval_facts(&approval);
         let labels: Vec<&str> = facts.iter().map(|(l, _, _)| l.as_str()).collect();
-        assert_eq!(
-            labels,
-            [
-                "Command",
-                "Folder",
-                "Host",
-                "Agent",
-                "Reason",
-                "Timeout",
-                "Run in background"
-            ]
-        );
-        assert_eq!(facts[4].1, "Run the workspace tests");
+        assert_eq!(labels, ["Timeout", "Run in background"]);
         assert!(facts.iter().all(|(_, v, _)| !v.contains('{')));
-        // Nothing known about where or why: only the request itself.
-        let bare = approval_facts(&json!({"toolInput":{"file_path":"a.rs"}}), "", "", "");
-        assert_eq!(bare, vec![("File".into(), "a.rs".into(), true)]);
+        // A command the headline cannot show whole is repeated in full.
+        let long = json!({"toolName":"Bash","toolInput":{"command":"cargo test\n--all"}});
+        assert_eq!(
+            approval_facts(&long),
+            vec![("Command".into(), "cargo test\n--all".into(), true)]
+        );
+        assert!(approval_facts(&json!({"toolInput":{"file_path":"a.rs"}})).is_empty());
+    }
+
+    #[test]
+    fn always_allow_says_its_exact_scope() {
+        let bash = json!({"toolName":"Bash","toolInput":{"command":"cargo test --locked"}});
+        // Claude's prefix rule: every command starting with it.
+        let (label, tip) = always_copy("Always allow Bash(cargo test:*) this session", &bash);
+        assert_eq!(label, "Always allow cargo test commands this session");
+        assert_eq!(
+            tip,
+            "Until this session ends, any command starting with \u{201c}cargo test\u{201d} runs without asking"
+        );
+        // An exact rule names the command.
+        assert_eq!(
+            always_copy("Always allow Bash(npm test) this session", &bash).0,
+            "Always allow \u{201c}npm test\u{201d} this session"
+        );
+        // Codex's "this command" is the request's command.
+        assert_eq!(
+            always_copy("Always allow this command for this session", &bash).0,
+            "Always allow \u{201c}cargo test --locked\u{201d} this session"
+        );
+        // Words without a scope get the one every offered grant has.
+        assert_eq!(
+            always_copy("Always allow cargo test", &bash).0,
+            "Always allow cargo test this session"
+        );
+        // Other grants keep their words.
+        assert_eq!(
+            always_copy("Allow all edits this session", &bash).0,
+            "Allow all edits this session"
+        );
+    }
+
+    #[test]
+    fn one_primary_changes_its_label() {
+        // (working, steering, deciding, draft)
+        assert_eq!(send_slot(false, false, false, false), SendSlot::Send);
+        assert_eq!(send_slot(false, false, false, true), SendSlot::Send);
+        assert_eq!(send_slot(true, true, false, false), SendSlot::Stop);
+        assert_eq!(send_slot(true, true, false, true), SendSlot::Queue);
+        // A message still in flight: nothing to stop yet.
+        assert_eq!(send_slot(false, true, false, false), SendSlot::Queue);
+        // A reply written while a decision waits.
+        assert_eq!(send_slot(false, true, true, true), SendSlot::Send);
+        assert_eq!(
+            send_copy(SendSlot::Queue),
+            ("Queue", "Runs after the current step")
+        );
+        assert_eq!(send_copy(SendSlot::Stop).0, "Stop");
     }
 
     #[test]
@@ -1668,11 +1942,14 @@ mod tests {
 
     #[test]
     fn the_send_button_names_what_it_does() {
-        assert_eq!(send_copy(false).0, "Send");
-        assert_eq!(send_copy(true).0, "Send now");
-        assert!(STEER_COPY.contains("without stopping"));
+        assert_eq!(send_copy(SendSlot::Send).0, "Send");
+        assert!(SEND_NOW_COPY.starts_with("Interrupt"));
         assert_eq!(composer_placeholder(None), DEFAULT_PLACEHOLDER);
-        assert!(composer_placeholder(Some(Decision::Approval)).contains("Allow or deny"));
+        // The composer never repeats the card: it is the reply line.
+        assert_eq!(
+            composer_placeholder(Some(Decision::Approval)),
+            REPLY_INSTEAD
+        );
         assert_eq!(sentence_case("run_in_background"), "Run in background");
         assert_eq!(sentence_case("oldString"), "Old string");
     }
@@ -1690,9 +1967,10 @@ mod tests {
                 ("in apps/native?".to_owned(), false)
             ]
         );
+        // No "on Workspace hub" (R3.5); the whole folder.
         assert_eq!(
-            approval_context(&bash, cwd, "This machine"),
-            "Run the tests before committing · apps/native on This machine"
+            approval_context(&bash, cwd),
+            "Run the tests before committing · /home/dev/src/workspacer/apps/native"
         );
         let edit = json!({"toolName":"Edit","toolInput":{"file_path":"/home/dev/src/workspacer/apps/native/src/ui.rs"}});
         assert_eq!(
@@ -1703,6 +1981,6 @@ mod tests {
             approval_headline(&json!({"toolName":"Mystery"}), ""),
             [("Allow Mystery to run?".to_owned(), false)]
         );
-        assert_eq!(approval_context(&json!({}), "", ""), "");
+        assert_eq!(approval_context(&json!({}), ""), "");
     }
 }

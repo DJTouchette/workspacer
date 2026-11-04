@@ -1009,55 +1009,77 @@ impl Workspace {
             .to_owned();
         let v2 = self.design().is_v2();
         let t = p.tokens;
-        let badge_size = if v2 {
-            t.text.subheading + t.space.xs
-        } else if compact {
-            16.
-        } else {
-            18.
-        };
-        let badge = div()
-            .debug_selector(move || format!("question-{ix}-option-{option_ix}-badge"))
-            .flex_shrink_0()
-            .mt(px(1.))
-            .size(px(badge_size))
-            .rounded(px(if multiple { 4. } else { badge_size / 2. }))
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_size(px(10.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .map(|d| {
-                if chosen {
-                    d.bg(rgb(if interactive { p.primary } else { p.disabled }))
+        let badge_size = if compact { 16. } else { 18. };
+        let badge = if v2 {
+            // R3.2: a radio or a check box leads; the number key trails as
+            // the one faint keycap hint, the same token as the approval's.
+            let fill = if interactive { p.primary } else { p.disabled };
+            div()
+                .debug_selector(move || format!("question-{ix}-option-{option_ix}-badge"))
+                .flex_shrink_0()
+                .mt(px((t.text.body * 1.4 - t.icon.sm) / 2.))
+                .size(px(t.icon.sm))
+                .rounded(px(if multiple {
+                    t.radius.xs
+                } else {
+                    t.icon.sm / 2.
+                }))
+                .flex()
+                .items_center()
+                .justify_center()
+                .border(px(t.stroke.hairline))
+                .map(|d| match (multiple, chosen) {
+                    (true, true) => d
+                        .bg(rgb(fill))
+                        .border_color(rgb(fill))
                         .text_color(rgb(p.on_primary))
-                } else {
-                    d.border_1()
-                        .border_color(gpui::Hsla::from(rgb(p.muted)).opacity(0.5))
-                        .text_color(rgb(p.muted))
-                }
-            })
-            .when(v2, |d| {
-                // A keycap for the number (it is the key), a box for a check.
-                let d = d
-                    .mt(px(t.stroke.hairline))
-                    .rounded(px(if multiple { t.radius.xs } else { t.radius.sm }))
-                    .text_size(px(t.text.overline))
-                    .font_family(mono_font());
-                if chosen {
-                    d
-                } else {
-                    d.border(px(t.stroke.hairline))
-                        .border_color(rgb(p.roles.border_strong))
-                        .bg(rgb(p.surface))
-                        .text_color(rgb(p.roles.text_secondary))
-                }
-            })
-            .map(|d| match (multiple, chosen) {
-                (true, true) => d.child(Icon::new(IconName::Check).size(px(11.))),
-                (true, false) => d,
-                (false, _) => d.child(format!("{}", option_ix + 1)),
-            });
+                        .child(Icon::new(IconName::Check).size(px(t.icon.xs))),
+                    (false, true) => d.border_color(rgb(fill)).child(
+                        div()
+                            .size(px(t.icon.sm / 2.))
+                            .rounded(px(t.icon.sm / 4.))
+                            .bg(rgb(fill)),
+                    ),
+                    (_, false) => d.border_color(rgb(p.roles.border_strong)),
+                })
+        } else {
+            div()
+                .debug_selector(move || format!("question-{ix}-option-{option_ix}-badge"))
+                .flex_shrink_0()
+                .mt(px(1.))
+                .size(px(badge_size))
+                .rounded(px(if multiple { 4. } else { badge_size / 2. }))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(10.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .map(|d| {
+                    if chosen {
+                        d.bg(rgb(if interactive { p.primary } else { p.disabled }))
+                            .text_color(rgb(p.on_primary))
+                    } else {
+                        d.border_1()
+                            .border_color(gpui::Hsla::from(rgb(p.muted)).opacity(0.5))
+                            .text_color(rgb(p.muted))
+                    }
+                })
+                .map(|d| match (multiple, chosen) {
+                    (true, true) => d.child(Icon::new(IconName::Check).size(px(11.))),
+                    (true, false) => d,
+                    (false, _) => d.child(format!("{}", option_ix + 1)),
+                })
+        };
+        let key_hint = (v2 && option_ix < 9).then(|| {
+            div()
+                .flex_shrink_0()
+                .mt(px((t.text.body * 1.4 - t.text.overline * 1.25) / 2.))
+                .child(primitives::keycap_hint(
+                    (option_ix + 1).to_string(),
+                    false,
+                    &p,
+                ))
+        });
         chrome::interactive_control(
             div().id(("question-option", ix * 1000 + option_ix)),
             p,
@@ -1152,6 +1174,7 @@ impl Workspace {
                     )
                 }),
         )
+        .children(key_hint)
         .when(interactive, |d| {
             d.on_click(cx.listener(move |this, _, window, cx| {
                 this.pick_option(ix, option_ix, multiple, window, cx)

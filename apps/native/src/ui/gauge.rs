@@ -323,6 +323,47 @@ pub(super) fn context_meter(session: &Session, p: Palette) -> Option<Stateful<Di
     )
 }
 
+// area-composer (R3.2, R3.5): design v2's composer says "Context 42%" in
+// words, never "ctx" and no track; neutral tertiary text below 80%, amber
+// from 80%, red at 100% (`format::level`). Same id and tooltip as the meter.
+pub(super) fn context_text_v2(session: &Session, p: Palette) -> Option<Stateful<Div>> {
+    let gauge = Gauge::of(session)?;
+    let t = p.tokens;
+    let pct = gauge.pct();
+    let now = cache::now();
+    let cold = cache::cold(session, now).map(|cold| cache::marker_tooltip(cold, now));
+    let tooltip = match &cold {
+        Some(cold) => format!("{}\n{cold}", gauge.explanation()),
+        None => gauge.explanation(),
+    };
+    let color = pct
+        .and_then(|pct| super::primitives::level_color(wks_native::format::level(pct), &p))
+        .unwrap_or(p.roles.text_tertiary);
+    Some(
+        div()
+            .id("context-meter")
+            .debug_selector(|| "context-meter".into())
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(t.space.xs))
+            .px(px(t.space.sm))
+            .h(px(t.layout.icon_button))
+            .text_size(px(t.text.meta))
+            .text_color(rgb(color))
+            .child(super::primitives::tabular(
+                div().child(wks_native::format::context_label(pct)),
+            ))
+            .when(cold.is_some(), |d| {
+                d.child(
+                    cache::marker(p, t.text.meta, false)
+                        .debug_selector(|| "context-meter-cold".into()),
+                )
+            })
+            .tooltip(super::primitives::tooltip_view(tooltip, None, &p)),
+    )
+}
+
 /// How the gauge moves. The fill follows each new reading on a spring, and
 /// the steady glow fades in and out as the share crosses 70%. Like the notice
 /// island, it snaps where it belongs on the first render, on a chat switch,

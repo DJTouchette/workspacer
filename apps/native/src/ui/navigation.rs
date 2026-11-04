@@ -247,6 +247,11 @@ impl Workspace {
             self.back_from_feature(window, cx);
             return;
         }
+        // area-composer (v2): the composer's primary reads "Stop · Esc"
+        // while the agent works and nothing is drafted.
+        if self.stop_on_escape(window, cx) {
+            return;
+        }
         if self.focus.is_focused(window) {
             if self.view.child.is_some() && self.screen == Screen::Conversation && !self.new_session
             {

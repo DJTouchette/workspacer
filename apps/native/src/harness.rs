@@ -817,7 +817,7 @@ impl Fixture {
                             "description": "Run the workspace tests before committing"},
                         "requestId": "fixture-approval",
                         "alwaysOptions": [{"id": "fixture-approval:0",
-                            "label": "Always allow cargo test", "scope": "session",
+                            "label": "Always allow Bash(cargo test:*) this session", "scope": "session",
                             "kind": "addRules"}]})
                 } else {
                     Value::Null
