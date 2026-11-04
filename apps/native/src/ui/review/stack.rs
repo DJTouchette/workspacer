@@ -468,7 +468,10 @@ deleted file mode 100644
                 ));
             }
         }
-        assert_eq!(l.headers, [0, 13]);
+        // File 0: header + pad, hunk 1's five lines, the fold, hunk 2's
+        // three lines (11 slots); a gap; file 1: header + pad, two lines.
+        assert_eq!(l.items.len(), 16);
+        assert_eq!(l.headers, [0, 12]);
         assert_eq!(l.items[0], Item::Header(0));
         assert_eq!(l.items[1], Item::HeaderPad(0));
         // The first hunk starts at line 1: nothing folded before it.
@@ -483,8 +486,9 @@ deleted file mode 100644
                 context: "fn later() {".into(),
             }
         );
-        assert_eq!(l.items[12], Item::Gap);
-        assert_eq!(l.ends, [12, 17]);
+        assert_eq!(l.hunks[1], 7);
+        assert_eq!(l.items[11], Item::Gap);
+        assert_eq!(l.ends, [11, 16]);
         assert_eq!(l.hunks.len(), 3);
     }
 

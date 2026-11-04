@@ -364,8 +364,9 @@ impl Workspace {
 
     // ── Rendering ──────────────────────────────────────────────────────
 
-    /// The title-bar chip: running count, or nothing when the session has no
-    /// background work to show.
+    /// The v1 title-bar chip: running count, or nothing when the session has
+    /// no background work to show. Design v2 uses the capsule's words chip
+    /// (`capsule::render_tasks_words`).
     pub(super) fn render_tasks_chip(
         &self,
         session: &Session,
@@ -380,10 +381,6 @@ impl Workspace {
         } else {
             bg::running(&session.tasks)
         };
-        if self.design().is_v2() {
-            let total = session.tasks.len().max(session.background_tasks as usize);
-            return Some(self.render_tasks_chip_v2(running, total, cx));
-        }
         let open = self.tasks.open;
         let tip: SharedString = match running {
             0 => "Background tasks".into(),

@@ -211,6 +211,7 @@ The Jobs page is the worked example: `ui/jobs.rs` (`jobs_page_v2`,
 | Title capsule, tool rail | `ui/capsule.rs` (`render_title_bar_v2`, `chat_actions_v2`, `render_tool_rail_v2`) |
 | Model popover | `ui/model_popover.rs`; the Model page stays on `g m` and "All model settings" |
 | Keys | `g n` / Alt+N next session that needs you (v1 keeps `g n` for Scratch), `g x` Scratch, `?` / Ctrl+/ cheat sheet |
+
 ## Transcript (area-transcript)
 
 The v2 conversation lives in `ui/transcript_v2.rs`; the v1 renderers
@@ -226,6 +227,7 @@ The v2 conversation lives in `ui/transcript_v2.rs`; the v1 renderers
 | Markdown | `left_align_text_columns` re-marks non-numeric right/centre table columns as left; code blocks on `code_block` (= surface) with a `card_border` hairline; inline code and bullets neutral |
 | Syntax | `syntax_v2(appearance)`: one calm set per theme, nothing purple (`v2_syntax_reads_on_the_card_surface_and_is_never_purple`) |
 | Shots | `shoot-all.py --only transcript-` (earlier, start, fleet, wide, full); the rig's `("wheel", notches, x, y)` step scrolls the chat |
+
 ## Panels (area-panels)
 
 `Tokens::panels` (`src/tokens.rs`) holds the side panels' measures and
@@ -243,7 +245,8 @@ header), `files_width`, `slide_ms`, `terminal_line` and `cursor_alpha`.
   (`Request::DiffSet`, slot `diff-set`) and stacked in one `uniform_list`;
   file headers are drawn by a `UniformListDecoration` so they stick to the
   top. `Settings::review_dock_width` and `Settings::review_split` persist.
-- **Tasks** (`ui/tasks/v2.rs`): a `StatusBadge` per task (`task_kind`),
+- **Tasks** (`ui/tasks/v2.rs`): the title chip is the shell's words chip
+  (`capsule::render_tasks_words`, "3 subagents"); the panel gives a `StatusBadge` per task (`task_kind`),
   Copy for shell commands, Open log and Retry on failed tasks (Retry drafts
   a request in the composer), and Stop behind Keep / Stop task.
 - **File viewer** (`ui/file_viewer/v2.rs`): breadcrumb header, icon

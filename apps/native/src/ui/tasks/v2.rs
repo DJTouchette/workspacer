@@ -3,7 +3,7 @@
 //! "Open log" and "Retry", Stop behind a confirmation, and the log in the
 //! v2 card and code surface.
 use super::*;
-use crate::ui::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind, tonal};
+use crate::ui::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
 
 /// The task's state in the shared status vocabulary.
 pub(super) fn task_kind(task: &bg::Task) -> StatusKind {
@@ -56,56 +56,6 @@ impl Workspace {
             Tone::Info,
         ));
         cx.notify();
-    }
-
-    pub(super) fn render_tasks_chip_v2(
-        &self,
-        running: usize,
-        total: usize,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let p = self.palette();
-        let t = p.tokens;
-        let open = self.tasks.open;
-        let label = if running > 0 {
-            format!("{running} running")
-        } else {
-            format!("{total} task{}", if total == 1 { "" } else { "s" })
-        };
-        let tip = match running {
-            0 => "Background tasks".to_owned(),
-            1 => "1 background task running".to_owned(),
-            n => format!("{n} background tasks running"),
-        };
-        interactive_control(div().id("title-tasks"), p, true)
-            .debug_selector(|| "title-tasks".into())
-            .flex_shrink_0()
-            .h(px(t.layout.icon_button - t.space.xs))
-            .px(px(t.space.md))
-            .rounded(px(t.radius.full))
-            .flex()
-            .items_center()
-            .gap(px(t.space.xs))
-            .text_size(px(t.text.caption))
-            .font_weight(FontWeight(t.weight.medium))
-            .bg(if open {
-                rgb(p.selected).into()
-            } else {
-                tonal(&p, t.wash.rest)
-            })
-            .text_color(rgb(p.roles.text_secondary))
-            .hover(move |s| s.bg(tonal(&p, t.wash.hover)))
-            .map(|d| {
-                if running > 0 {
-                    d.child(primitives::status_indicator(StatusKind::Working, &p))
-                } else {
-                    d.child(Icon::new(IconName::LayoutDashboard).size(px(t.icon.xs)))
-                }
-            })
-            .child(label)
-            .tooltip(primitives::tooltip_view(tip, None, &p))
-            .on_click(cx.listener(|this, _, window, cx| this.toggle_tasks(window, cx)))
-            .into_any_element()
     }
 
     pub(super) fn render_task_row_v2(

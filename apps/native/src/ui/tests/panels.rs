@@ -141,6 +141,7 @@ fn changes_toggles_the_dock_and_v1_keeps_the_page(cx: &mut TestAppContext) {
     v2(&workspace, &mut visual, Design::V2);
     open_changes(&workspace, &mut visual);
     assert!(workspace.read_with(&visual, |this, _| this.review_dock_showing()));
+    let dock = bounds_of(&mut visual, "review-dock");
     open_changes(&workspace, &mut visual);
     assert!(!workspace.read_with(&visual, |this, _| this.review_dock_showing()));
     v2(&workspace, &mut visual, Design::V1);
@@ -149,7 +150,11 @@ fn changes_toggles_the_dock_and_v1_keeps_the_page(cx: &mut TestAppContext) {
         assert_eq!(this.screen, Screen::Changes);
         assert!(!this.review_dock_showing());
     });
-    assert!(visual.debug_bounds("review-dock").is_none());
+    // This gpui never clears a frame's debug bounds, so "review-dock" stays
+    // findable once painted. Instead: the v1 page's file list (painted only
+    // now) runs past where the dock began, so nothing is docked beside it.
+    let files = bounds_of(&mut visual, "review-files");
+    assert!(files.right() > dock.left(), "{files:?} beside {dock:?}");
 }
 
 fn with_tasks() -> View {
