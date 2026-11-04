@@ -181,3 +181,51 @@ restraint**. These rules override anything above that conflicts with them.
 
 ## R2.7 Demo / fixture coherence
 - **Believable fixture data:** realistic, distinct session titles (no "· 2 … · 9" clones), activity times so ages render, consistent counts across surfaces, visible tool calls, one intentionally stalled agent shown correctly, and no impossible states.
+
+---
+
+# Round 3 addendum
+
+Round-2 council average: 6.9 (newcomer 6.7, systems 6.6, power user 7.2, UX lead 7.2, visual 6.8). The reviews converge on one diagnosis: **every state is drawn several ways, everywhere, at the same volume.** Round 3 is about subtraction and structure. Reviews: `scratchpad/council/r2/*.md`.
+
+## R3.1 One signal per state (status language)
+- **Lexicon** (the only words used for state, everywhere): *Working · Needs you · Not responding · Failed · Idle · Done*. Retire "running" for agents, "stalled", "Lost heartbeat", "Check", "Delegating/Delegated" as state words.
+- **Glyph per state** (8px, same everywhere: sidebar, rail, capsule, palette, history, machines, children): Working = ring with rotating arc (static arc under reduce-motion); Needs you = filled amber dot; Not responding = amber/red hollow clock or ring-with-gap; Failed = red ✕ dot; Idle = **no glyph** (age text only); Done = muted check. Machines/jobs map onto these, plus neutral `Paused` (pause glyph) and `Offline` (dash). "Unknown" is never amber.
+- **Amber = blocked on you, nothing else.** Scratch counts, "decision needed" on other sessions, jobs proposed by agents: neutral badges with counts, except the item that is actually waiting on *this user now*.
+- **Red = something broke, always named, always actionable.** Title capsule: "3 running" neutral text; a separate red chip "cargo test failed" (names the item) that opens it and can be acknowledged (then gone). Never paint healthy state red.
+- One "attention" treatment: a 3px inset bar clipped by the container radius plus a neutral border. Sidebar Needs-you row = bar + title + reason line; verb chip appears on hover/selection only.
+
+## R3.2 Components: three button tiers, enforced
+- Primary (filled accent), Secondary (1px border ghost, same height/radius), Tertiary (text). Destructive = Secondary shape with danger text. No bare red text buttons, no grey filled chips as buttons.
+- Approval card: Allow = Primary; Always allow (shows exact scope, e.g. "cargo test in apps/native") = Secondary; Deny = Secondary split button whose menu holds "Deny with note…". Number keys are faint trailing hints from one keycap token, never tinted.
+- **While a decision is pending, the decision card occupies the composer slot** (the composer collapses to a one-line "Reply instead…" affordance). No duplicate placeholder text, no second input.
+- Composer: one primary button in a fixed place whose label changes (Send / Queue / Stop · Esc); secondary send modes live in its dropdown. Context shows as "Context 42%" text, coloured only ≥80%.
+- Every primary-button pair passes 4.5:1 in all themes (Nord/Tokyo Night Allow included); add a test across all themes.
+
+## R3.3 Structure, not floating
+- Title is a real header strip (36–40px) with the transcript scrolling beneath; no content under it.
+- Session tools become a labelled, badged toolbar attached to structure (header or window edge): Changes (+5 −2), Files, Terminal (●), Tasks (3), History, Details, Model. 16px icons, 28px hit areas, tooltips with shortcuts.
+- "Jump to latest" anchors 12px above the composer/decision stack, solid surface + shadow, a ≥32px scrim behind it, shows "↓ N new".
+
+## R3.4 Transcript: one column, one rhythm
+- One content width for prose, tool rows, cards and tables (fluid, capped); durations sit inline with the result ("· 2 matches · 6s"), not on a far right edge.
+- A completed work block collapses to one line by default ("Worked 5m 40s · 6 tools ›"); the agent's reply and the "Changed 2 files · Review" card lead each turn. Short tool output (≤5 lines) shows inline, dimmed mono, under its row; failures inline in red with exit code.
+- Cross-session notices are one-line events ("Release checklist for 0.9 needs you · Go"), never full cards, never internal ids.
+- 8px spacing rhythm: 32px above headings, 12px below, 16px between paragraphs.
+- Failures always offer recovery: task log gets Retry and "Ask agent to fix"; a not-responding subagent offers "View output · Nudge · Stop".
+- Change counts are labelled by scope ("This turn +5 −2" vs "Branch +17 −3"); Review from a turn filters to that turn.
+
+## R3.5 Plain language & honest defaults
+- Jargon pass: no "hub", "ctx", "spawn", "p2", "connection", "title capsule", "demo-NNNN" ids, "Normal ?" footer, tag soup in Scratch. Scratch reads as plain language (or nests under Projects).
+- Model popover always lists known models per provider; "Custom id…" last. Access always shows the effective mode selected.
+- Usage: "Claude 42% of 5-hour limit used · resets 2h 13m", amber ≥80%, red at 100%.
+- Settings descriptions: user outcomes, ≤2 lines, no broken strings.
+
+## R3.6 Density & layout
+- One sidebar row template for all groups (title + time line 1; project/status line 2; compact drops line 2 everywhere); title truncates last.
+- Secondary pages use the width: Jobs/Machines/History as dense left-aligned tables; offline machines collapse to one muted line; no 60%-empty cards.
+- Avatars: curated 8-hue ramp at equal lightness per theme, AA text; no second ring colour; status as corner badge using the R3.1 glyph.
+- Light theme tuned on its own (no peach borders, AA metadata greys); three text greys per theme.
+
+## R3.7 Fleet view (new)
+- A "Fleet" view: a grid of live session tiles (2×2 / 3×2, responsive). Each tile: title, R3.1 status, last event line, and the pending ask with its own approve/answer keys. Click or Enter opens the session; keyboard moves focus between tiles. Reachable from nav, palette and a shortcut. v2 only.
