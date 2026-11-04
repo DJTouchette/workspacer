@@ -83,6 +83,10 @@ fn reviews_a_proposed_change(cx: &mut TestAppContext, design: wks_native::appear
     assert!(approval.get("proposedBy").is_none());
 
     // Removing a job takes a second click; nothing is sent on the first.
+    if design.is_v2() {
+        // v2 keeps Remove in the row's overflow menu.
+        click(&mut visual, "job-1-more");
+    }
     click(&mut visual, "job-remove-1");
     assert!(
         !effects(&mut commands)

@@ -39,6 +39,10 @@ FIXTURES = {
 
 SETTINGS_SECTIONS = ["Appearance", "Typography", "Workspace", "Remote",
                      "Agents", "Chat", "Keyboard", "About"]
+# area-pages: controls design v2 moved (used when --setting design_v2=true).
+LANDMARKS_V2 = {
+    "END_SESSION": lambda shot: (1324, 634),        # Session details "End session..."
+}
 # area-pages: design v2's rail.
 SETTINGS_SECTIONS_V2 = ["Appearance", "Typography", "Workspace", "Remote",
                         "Agents", "Keyboard", "About"]
@@ -198,6 +202,12 @@ class Rig:
         self.xdo("mousemove", int(self.px(width)) - 3, int(self.px(height)) - 3)
         time.sleep(0.2)
 
+    def design_v2(self, shot):
+        """The shot runs with design_v2 on (per shot or from --setting)."""
+        settings = dict(shot.get("settings", {}))
+        settings.update(self.args.settings)
+        return settings.get("design_v2") is True
+
     def run_steps(self, window, steps, shot):
         for step in steps:
             kind, *rest = step
@@ -213,7 +223,10 @@ class Rig:
             elif kind == "sleep":
                 time.sleep(rest[0])
             elif kind in ("click", "move"):
-                x, y = rest if len(rest) == 2 else LANDMARKS[rest[0]](shot)
+                landmarks = LANDMARKS
+                if len(rest) != 2 and self.design_v2(shot) and rest[0] in LANDMARKS_V2:
+                    landmarks = LANDMARKS_V2  # area-pages: v2 moved this control
+                x, y = rest if len(rest) == 2 else landmarks[rest[0]](shot)
                 self.xdo("mousemove", "--window", window, self.px(x), self.px(y))
                 # Hover first: the title capsule springs open under the pointer.
                 time.sleep(0.8)
@@ -224,9 +237,7 @@ class Rig:
                     time.sleep(0.8)
                     self.park(shot["width"], shot["height"])
             elif kind == "settings_section":
-                settings = dict(shot.get("settings", {}))
-                settings.update(self.args.settings)
-                if settings.get("design_v2") is True:
+                if self.design_v2(shot):
                     # area-pages: v2's rail folds Chat into Appearance.
                     name = SETTINGS_SECTIONS[rest[0]]
                     index = SETTINGS_SECTIONS_V2.index(name if name in SETTINGS_SECTIONS_V2 else "Appearance")
