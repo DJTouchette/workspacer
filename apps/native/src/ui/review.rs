@@ -16,6 +16,9 @@ use wks_native::{
     links,
 };
 
+mod stack;
+mod v2;
+
 const EXPLORER_WIDTH: f32 = 300.;
 const ROW_HEIGHT: f32 = 20.;
 const CHANGE_ROW_HEIGHT: f32 = 36.;
@@ -56,6 +59,8 @@ pub(super) struct ReviewUi {
     coloring: Option<gpui::Task<()>>,
     pub scroll: gpui::UniformListScrollHandle,
     list_scroll: gpui::UniformListScrollHandle,
+    /// Design v2: the stacked diff, its dock and its menus.
+    pub(super) v2: v2::StackUi,
 }
 
 struct Status {
@@ -209,6 +214,8 @@ impl Workspace {
     /// Open Changes on the commit list with `hash`'s patch shown, as a
     /// clicked commit link does.
     pub(super) fn open_commit(&mut self, hash: &str, window: &mut Window, cx: &mut Context<Self>) {
+        // Commits live on the full page, never in the dock.
+        self.review.v2.page_once = true;
         self.open_feature(Screen::Changes, window, cx);
         if self.screen != Screen::Changes {
             return;
@@ -263,8 +270,9 @@ impl Workspace {
             }
             Mode::Changed => {}
         }
-        // The diff slot held a commit's patch; put the change back.
-        if was_commits {
+        // The diff slot held a commit's patch; put the change back (v2
+        // stacks every change from its own slot instead).
+        if was_commits && !self.design().is_v2() {
             let changes = self.review_changes();
             let keep = self
                 .review
@@ -344,7 +352,7 @@ impl Workspace {
     /// changed files, so the status (and an open commit list) is re-read
     /// instead of showing what was true before it worked.
     pub(super) fn refresh_review_after_turn(&mut self, next: &View, cx: &mut Context<Self>) {
-        if self.screen != Screen::Changes {
+        if self.screen != Screen::Changes && !self.review_dock_showing() {
             return;
         }
         let Some(id) = next
@@ -371,7 +379,7 @@ impl Workspace {
     /// When the change list arrives, show the first change's diff (or keep
     /// the one being read if it is still changed).
     pub(super) fn sync_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.screen != Screen::Changes {
+        if self.screen != Screen::Changes && !self.review_dock_showing() {
             return;
         }
         self.finish_git_action(window, cx);
@@ -407,6 +415,15 @@ impl Workspace {
             .as_ref()
             .and_then(|s| changes.iter().find(|c| &c.path == s))
             .cloned();
+        if self.design().is_v2() {
+            // Every change at once, stacked; the list only scrolls to one.
+            self.review.selected = keep.or_else(|| changes.first().cloned()).map(|c| c.path);
+            self.request_stack(cx);
+            if self.review.mode == Mode::Files && self.screen == Screen::Changes {
+                self.explore(&root, cx);
+            }
+            return;
+        }
         if self.review.mode == Mode::Commits {
             // The diff slot shows a commit; only remember which change is next.
             self.review.selected = keep.or_else(|| changes.first().cloned()).map(|c| c.path);
@@ -436,6 +453,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<Div> {
+        if self.design().is_v2() {
+            return self.render_review_v2(window, cx);
+        }
         let p = self.palette();
         let short = window.viewport_size().height < px(620.);
         let caption = chrome::custom_caption();

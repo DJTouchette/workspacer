@@ -114,6 +114,12 @@ pub struct Settings {
     pub default_codex_access: crate::launch::Permission,
     /// Bookmarks are scoped to the hub endpoint so remote paths do not cross hosts.
     pub projects: BTreeMap<String, Vec<String>>,
+    // area-panels
+    /// Width of the docked Changes panel (design v2), unzoomed; `None`
+    /// follows the window. Dragging its edge sets it.
+    pub review_dock_width: Option<f32>,
+    /// Changes shows old and new side by side instead of one column (v2).
+    pub review_split: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -143,6 +149,9 @@ impl Default for Settings {
             default_claude_access: crate::launch::Permission::Ask,
             default_codex_access: crate::launch::Permission::Ask,
             projects: BTreeMap::new(),
+            // area-panels
+            review_dock_width: None,
+            review_split: false,
         }
     }
 }

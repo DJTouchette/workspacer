@@ -131,6 +131,9 @@ impl Workspace {
                 return;
             }
         }
+        if self.review_dock_showing() {
+            self.close_review_dock(cx);
+        }
         self.tasks.open = true;
         self.tasks.session = id;
         self.tasks.log = None;
@@ -926,7 +929,10 @@ impl Workspace {
 
     /// Whether the panel takes the slot this frame (the file viewer wins it).
     pub(super) fn tasks_showing(&self) -> bool {
-        self.tasks.open && !self.viewer_in_slot() && self.task_session().is_some()
+        self.tasks.open
+            && !self.viewer_in_slot()
+            && !self.review_dock_showing()
+            && self.task_session().is_some()
     }
 
     /// Wide windows: the panel docks beside the conversation; tall ones,

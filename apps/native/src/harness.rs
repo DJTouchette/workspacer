@@ -496,9 +496,13 @@ impl Fixture {
                 json!({"diff": "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }"})
             }
             "claude.setPermissionMode" => json!({"ok": true, "mode": params["mode"]}),
-            "git.diff" => {
-                json!({"diff": "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }"})
-            }
+            // One diff per file of the `git.status` fixture, so the stacked
+            // Changes view (design v2) has several files and hunks to show.
+            "git.diff" => match params["path"].as_str().unwrap_or_default() {
+                "README.md" => json!({"diff": "diff --git a/README.md b/README.md\nindex 3b18e51..9f2c4d0 100644\n--- a/README.md\n+++ b/README.md\n@@ -12,6 +12,8 @@ ## Running\n Start the hub, then the native client:\n \n     cargo run --bin wks-native\n+\n+Sessions you had open come back where you left them.\n \n ## Themes\n \n"}),
+                "tests/session.rs" => json!({"diff": "diff --git a/tests/session.rs b/tests/session.rs\nnew file mode 100644\n--- /dev/null\n+++ b/tests/session.rs\n@@ -0,0 +1,9 @@\n+use wks_native::workspace::Workspace;\n+\n+#[test]\n+fn restores_the_last_workspace() {\n+    let workspace = Workspace::open_last().expect(\"a saved workspace\");\n+    assert_eq!(workspace.sessions().len(), 3);\n+    assert!(workspace.selected().is_some());\n+}\n+\n"}),
+                _ => json!({"diff": "diff --git a/src/main.rs b/src/main.rs\nindex 1111111..2222222 100644\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }\n@@ -48,9 +49,11 @@ fn restore_workspace() {\n     let saved = settings::load(&path)?;\n     for session in saved.sessions {\n-        open(session.id, false);\n+        open(session.id, session.focused);\n     }\n-    let theme = Theme::default();\n+    let theme = saved.theme.unwrap_or_default();\n     apply(theme);\n+    log::info!(\"restored {} sessions\", saved.sessions.len());\n+    Ok(())\n }\n"}),
+            },
             // A fixture brief path: nothing is written and no provider runs;
             // the successor is the fake spawn above.
             "claude.handoffBrief" | "claude.handoffAgentBrief" | "claude.handoffSummaryBrief" => {

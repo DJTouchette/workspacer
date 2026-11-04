@@ -509,6 +509,11 @@ impl Workspace {
         if self.new_session && screen == Screen::Setup {
             self.extras.return_launch = true;
         }
+        // area-panels: under design v2, Changes opens as a dock beside the
+        // conversation when the window has room.
+        if screen == Screen::Changes && self.open_changes_dock(window, cx) {
+            return;
+        }
         self.show_screen(screen, window, cx);
         self.extras.notice.clear();
         self.extras.confirm_end = None;

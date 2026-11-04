@@ -258,6 +258,43 @@ pub struct Tokens {
     pub stroke: Strokes,
     pub layout: Layout,
     pub motion: Motion,
+    // area-panels
+    pub panels: Panels,
+}
+
+// area-panels
+/// Measures and tints of the side panels: the Changes dock and its diff,
+/// the file viewer and the terminal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Panels {
+    /// One diff line (and one slot of the stacked diff list).
+    pub diff_row: f32,
+    /// Diff line-number gutter, per side.
+    pub diff_gutter: f32,
+    /// The +/− marker column.
+    pub diff_marker: f32,
+    /// The accent bar on a changed line's leading edge.
+    pub diff_bar: f32,
+    /// Background of an added or removed line: its tone at this alpha.
+    pub diff_line_alpha: f32,
+    /// The changed words inside a line (and its gutter): a stronger wash.
+    pub diff_emphasis_alpha: f32,
+    /// Docked side panel: narrowest, default share of the free width, widest.
+    pub dock_min: f32,
+    pub dock_share: f32,
+    pub dock_max: f32,
+    /// The grab strip on a dock's leading edge.
+    pub dock_handle: f32,
+    /// A panel's header bar.
+    pub header_height: f32,
+    /// Terminal line height as a multiple of its font size.
+    pub terminal_line: f32,
+    /// The terminal cursor's fill while focused.
+    pub cursor_alpha: f32,
+    /// The Changes page's file column.
+    pub files_width: f32,
+    /// How long a docked panel takes to slide in, in milliseconds.
+    pub slide_ms: f32,
 }
 
 impl Tokens {
@@ -382,6 +419,26 @@ impl Tokens {
             dialog_width: 440.,
         },
         motion: Motion { pulse_ms: 1600. },
+        // area-panels: v1 draws none of these but `diff_row`,
+        // `diff_gutter`, `diff_marker`, `terminal_line` and `cursor_alpha`
+        // (the shipped review and terminal literals); the rest carry v2.
+        panels: Panels {
+            diff_row: 20.,
+            diff_gutter: 44.,
+            diff_marker: 16.,
+            diff_bar: 2.,
+            diff_line_alpha: 0.14,
+            diff_emphasis_alpha: 0.32,
+            dock_min: 360.,
+            dock_share: 0.5,
+            dock_max: 760.,
+            dock_handle: 6.,
+            header_height: 36.,
+            terminal_line: 1.35,
+            cursor_alpha: 0.55,
+            files_width: 300.,
+            slide_ms: 240.,
+        },
     };
 
     /// The redesign: calm by default, dense on demand (`docs/design-v2-direction.md`).
@@ -501,6 +558,24 @@ impl Tokens {
             dialog_width: 440.,
         },
         motion: Motion { pulse_ms: 1400. },
+        // area-panels
+        panels: Panels {
+            diff_row: 22.,
+            diff_gutter: 40.,
+            diff_marker: 16.,
+            diff_bar: 2.,
+            diff_line_alpha: 0.10,
+            diff_emphasis_alpha: 0.30,
+            dock_min: 420.,
+            dock_share: 0.5,
+            dock_max: 1100.,
+            dock_handle: 6.,
+            header_height: 44.,
+            terminal_line: 1.4,
+            cursor_alpha: 0.7,
+            files_width: 300.,
+            slide_ms: 240.,
+        },
     };
 }
 

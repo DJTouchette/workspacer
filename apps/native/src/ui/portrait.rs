@@ -126,7 +126,8 @@ impl Workspace {
 
     /// The height a docked-below panel takes from the conversation (unzoomed).
     pub(super) fn dock_below_height(&self, window: &Window) -> f32 {
-        let showing = self.viewer_in_slot() || self.tasks_showing();
+        // area-panels: the Changes dock takes the slot too.
+        let showing = self.viewer_in_slot() || self.tasks_showing() || self.review_dock_showing();
         match self.dock(window) {
             Some(Dock::Below { height, .. }) if showing => height,
             _ => 0.,

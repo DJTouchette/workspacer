@@ -115,6 +115,15 @@ def shots():
     add("conversation-nord", "Rich conversation, Nord", theme="nord")
     add("conversation-catppuccin-latte", "Rich conversation, Catppuccin Latte", theme="catppuccin-latte")
     add("settings-tokyo-night", "Settings: Appearance, Tokyo Night", nav("s"), theme="tokyo-night")
+    # area-panels: design v2 opens Changes as a dock beside the chat (`g d`,
+    # the tool rail); its expand button opens the full page.
+    add("changes-docked", "Changes docked beside the conversation (v2; v1 shows the page)", nav("d"))
+    add("changes-docked-split", "Docked Changes, side by side", nav("d"), settings={"review_split": True})
+    add("changes-docked-light", "Docked Changes, Light theme", nav("d"), theme="light")
+    add("changes-page", "Changes full page from the dock's expand button (v2)",
+        nav("d") + [("click", "REVIEW_DOCK_EXPAND"), ("sleep", 1.5)])
+    add("changes-discard", "Docked Changes: a file's overflow menu",
+        nav("d") + [("click", "REVIEW_FILE_MORE"), ("sleep", 0.5)])
     return s
 
 
@@ -305,6 +314,9 @@ LANDMARKS = {
     "MODEL_SELECT": lambda shot: (955, 207),        # Change model page, model select
     "NEW_TASK_FIELD": lambda shot: (1150, 560),     # New agent form, Task box
     "END_SESSION": lambda shot: (1337, 679),        # Session details "End session..."
+    # area-panels: the v2 Changes dock's header and first file header.
+    "REVIEW_DOCK_EXPAND": lambda shot: (1535, 30),  # dock header "Open full page"
+    "REVIEW_FILE_MORE": lambda shot: (1563, 74),    # first file's "More actions"
     # Settings category rail; rows are ~37.7 px apart starting at Appearance.
     "settings_section": lambda shot, index: (570, 114 + round(index * 37.7)),
 }
