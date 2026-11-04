@@ -833,6 +833,7 @@ impl Workspace {
                 cx,
             ),
         ));
+        let v2_keys = self.design().is_v2();
         entries.push(Entry::new(
             S::Keyboard,
             "shortcuts",
@@ -861,7 +862,17 @@ impl Workspace {
                     ("g h / g d", "Session history / changes"),
                     ("g a / g e / g m", "Agent setup / session / model"),
                     ("g j", "Jobs"),
-                    ("g n", "Scratch"),
+                    // Design v2 moved Scratch to g x; g n jumps to the next
+                    // session that needs you (the shell's cheat sheet agrees).
+                    (
+                        "g n",
+                        if v2_keys {
+                            "Next session that needs you"
+                        } else {
+                            "Scratch"
+                        },
+                    ),
+                    ("g x", "Scratch"),
                     ("g s", "Settings"),
                     ("g c", "Conversation"),
                     ("n", "New session in the selected project"),
@@ -887,6 +898,7 @@ impl Workspace {
                     ),
                 ]
                 .into_iter()
+                .filter(|(keys, _)| v2_keys || *keys != "g x")
                 .map(|(keys, label)| {
                     div()
                         .flex()

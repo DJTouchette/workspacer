@@ -147,7 +147,7 @@ def shots():
         theme="nord")
     # area-transcript: the transcript itself, further back and at each reading width.
     add("transcript-earlier", "Transcript further back: tool rows, work cards, user turns",
-        [("wheel", 24, 1000, 400)])
+        [("wheel", 10, 1000, 400)])
     add("transcript-start", "Transcript start: the first turns",
         [("key", "Escape"), ("keys", *(["ctrl+u"] * 12))])
     add("transcript-fleet", "Transcript: supervisor and fleet wakes, subagents",
@@ -169,6 +169,9 @@ def shots():
     # baseline numbering stays stable).
     add("welcome", "First run: no sessions yet, the welcome with setup checklist", fixture="empty")
     add("slash-menu", "Composer `/` menu over the draft", [("key", "ctrl+l"), ("sleep", 0.8), ("type", "/")])
+    # Integration: v2 folds Chat into Appearance; its reading width found by search.
+    add("settings-reading-width", "Settings search: the transcript's reading width",
+        nav("s") + [("click", 1360, 76), ("sleep", 0.5), ("type", "reading width"), ("sleep", 0.8)])
     return s
 
 
@@ -377,11 +380,11 @@ LANDMARKS = {
     "TITLE_MODEL": lambda shot: (880 if shot.get("v2") else 1005, 30),  # "Sonnet" chip
     "TITLE_TASKS_BADGE": lambda shot: (1160 if shot.get("v2") else 1078, 30),  # background work
     # v1: the approval card above the composer; v2: the strip on the composer.
-    "APPROVAL_DETAILS": lambda shot: (1360, 833) if shot["v2"] else (1361, 749),
-    "APPROVAL_DENY_NOTE": lambda shot: (952, 869) if shot["v2"] else (740, 795),
+    "APPROVAL_DETAILS": lambda shot: (1289, 833) if shot["v2"] else (1361, 749),
+    "APPROVAL_DENY_NOTE": lambda shot: (1032, 869) if shot["v2"] else (910, 795),
     "RAIL_FIRST_MARK": lambda shot: (35, 205 if shot.get("v2") else 219),  # first session in the rail
-    "README_LINK": lambda shot: (591, 497),         # README.md link, last assistant message
-    "TALL_README_LINK": lambda shot: (169, 1097),   # same link in the 1000x1600 tall layout
+    "README_LINK": lambda shot: (651, 629) if shot["v2"] else (591, 497),  # README.md link, last assistant message
+    "TALL_README_LINK": lambda shot: (228, 1229) if shot["v2"] else (169, 1097),  # same link, 1000x1600 tall layout
     "TASK_ROW_DEV": lambda shot: (1200, 85),        # "npm run dev" in the tasks panel
     "MODEL_SELECT": lambda shot: (955, 207),        # Change model page, model select
     "NEW_TASK_FIELD": lambda shot: (1150, 560),     # New agent form, Task box
