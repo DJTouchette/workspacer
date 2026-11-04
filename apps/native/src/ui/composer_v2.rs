@@ -356,9 +356,16 @@ impl Workspace {
                 &p,
             ))
             .when(supported, |d| {
-                d.on_click(
-                    cx.listener(|this, _, window, cx| this.open_feature(Screen::Model, window, cx)),
-                )
+                // r2-shell: the model popover hangs from this chip.
+                d.on_click(cx.listener(|this, _, window, cx| this.open_model_popover(window, cx)))
+                    .child(chrome::measure(
+                        cx.entity().downgrade(),
+                        |this: &mut Self, bounds, _| {
+                            let changed = this.shell.model_anchor != bounds;
+                            this.shell.model_anchor = bounds;
+                            changed
+                        },
+                    ))
             })
         });
         let meter = selected

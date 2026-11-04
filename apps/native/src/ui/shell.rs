@@ -1324,14 +1324,24 @@ impl Workspace {
                             .child(count.to_string()),
                     )
                 })
+                .group(SharedString::from(format!("group-{slug}")))
                 .child(
-                    Icon::new(if folded {
-                        IconName::ChevronRight
-                    } else {
-                        IconName::ChevronDown
-                    })
-                    .size(px(t.icon.xs))
-                    .text_color(rgb(p.roles.text_tertiary)),
+                    div()
+                        .when(!folded, |d| {
+                            d.invisible()
+                                .group_hover(SharedString::from(format!("group-{slug}")), |s| {
+                                    s.visible()
+                                })
+                        })
+                        .child(
+                            Icon::new(if folded {
+                                IconName::ChevronRight
+                            } else {
+                                IconName::ChevronDown
+                            })
+                            .size(px(t.icon.xs))
+                            .text_color(rgb(p.roles.text_tertiary)),
+                        ),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.toggle_group(bucket, cx))),
             )
@@ -1823,7 +1833,7 @@ impl Workspace {
                 .gap(px(t.space.sm))
                 .child(status_indicator(kind, &p))
                 .child(title_el)
-                .when(depth == 0, |d| d.child(project_el(0.4)))
+                .when(depth == 0, |d| d.child(project_el(0.3)))
                 .child(marks)
                 .child(trailing)
         };
@@ -1930,8 +1940,10 @@ impl Workspace {
         let meta = div()
             .debug_selector(move || format!("sidebar-child-model-{ix}"))
             .min_w_0()
-            .flex_shrink()
-            .max_w(gpui::relative(0.45))
+            .when(note.is_some(), |d| d.flex_shrink_0())
+            .when(note.is_none(), |d| {
+                d.flex_shrink().max_w(gpui::relative(0.45))
+            })
             .truncate()
             .text_size(px(t.text.meta))
             .map(|d| match &note {

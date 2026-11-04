@@ -424,7 +424,7 @@ impl Workspace {
                     })
                     .unwrap_or_default();
                 format!(
-                    "{} · {} limit · {}%{reset}",
+                    "{} · {} limit · {}% used{reset}",
                     a.title,
                     long_label(w),
                     w.pct.round() as u64
@@ -434,12 +434,12 @@ impl Workspace {
         if shown.is_empty() {
             lines.push("Usage unavailable · click to retry".into());
         }
-        lines.push("How much of each account's rate limit is used. Click for details.".into());
+        lines.push("How much of each account's usage limit is used. Click for details.".into());
         let tip = lines.join("\n");
         Some(
             chrome::interactive_control(div().id("sidebar-usage"), p, true)
                 .debug_selector(|| "sidebar-usage".into())
-                .h(px(t.layout.icon_button))
+                .h(px(t.layout.control_height))
                 .px(px(t.space.sm))
                 .rounded(px(t.radius.control))
                 .flex()
@@ -456,6 +456,7 @@ impl Workspace {
                             .text_color(rgb(p.roles.text_tertiary)),
                     )
                 })
+                // r2-shell: "Claude 42%" and a thin meter per account.
                 .children(shown.iter().map(|(a, w)| {
                     let selector = format!("sidebar-usage-row-{}", a.provider);
                     let hot = w.pct >= 95.;
@@ -463,13 +464,46 @@ impl Workspace {
                         .debug_selector(move || selector.clone())
                         .flex()
                         .items_center()
-                        .gap(px(t.space.xs))
-                        .child(super::shell::neutral_glyph(&a.provider, t.icon.xs, p))
+                        .gap(px(t.space.sm))
+                        .child(super::shell::neutral_glyph(&a.provider, t.icon.sm, p))
                         .child(
                             div()
-                                .text_color(rgb(if hot { p.error } else { p.roles.text_secondary }))
-                                .font_weight(FontWeight(t.weight.medium))
-                                .child(format!("{}%", w.pct.round() as u64)),
+                                .flex()
+                                .flex_col()
+                                .gap(px(t.space.xxs))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(px(t.space.xs))
+                                        .map(super::shell::tabular)
+                                        .child(
+                                            div()
+                                                .text_color(rgb(p.roles.text_secondary))
+                                                .font_weight(FontWeight(t.weight.medium))
+                                                .child(a.title.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_color(rgb(if hot {
+                                                    p.error
+                                                } else {
+                                                    p.roles.text_tertiary
+                                                }))
+                                                .child(format!("{}%", w.pct.round() as u64)),
+                                        ),
+                                )
+                                .child(
+                                    super::primitives::meter(
+                                        (w.pct / 100.) as f32,
+                                        if hot {
+                                            super::primitives::Intent::Danger
+                                        } else {
+                                            super::primitives::Intent::Neutral
+                                        },
+                                        &p,
+                                    )
+                                    .w(px(t.shell().meter_width)),
+                                ),
                         )
                 }))
                 .on_click(cx.listener(|this, _, _, cx| {
