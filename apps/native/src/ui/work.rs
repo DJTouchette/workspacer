@@ -30,7 +30,7 @@ pub(super) fn spinner(size: f32) -> AnyElement {
 }
 
 impl Workspace {
-    fn toggle_tool(&mut self, identity: String, expanded: bool, cx: &mut Context<Self>) {
+    pub(super) fn toggle_tool(&mut self, identity: String, expanded: bool, cx: &mut Context<Self>) {
         if !self
             .view
             .transcript
@@ -271,6 +271,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        if self.design().is_v2() {
+            return self.render_work_card_v2(span, window, cx);
+        }
         let p = self.palette();
         let view = self.view.clone();
         let rows = &view.transcript.rows;

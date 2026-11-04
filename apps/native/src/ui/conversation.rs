@@ -131,6 +131,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.palette();
+        self.note_seen_rows();
         let selected = self.selected_session().cloned();
         let enabled = self.view.connected
             && !self.view.loading
@@ -200,7 +201,13 @@ impl Workspace {
                 self.tools_float(narrow) && selected.is_some() && self.viewed_child().is_none(),
                 |d| d.child(self.render_tool_rail(enabled, cx)),
             )
-            .when(!self.follow, |d| d.child(self.render_jump_latest(cx)))
+            .when(!self.follow, |d| {
+                d.child(if self.design().is_v2() {
+                    self.render_jump_latest_v2(cx)
+                } else {
+                    self.render_jump_latest(cx)
+                })
+            })
             .children(self.render_link_status())
             .child(self.render_dock(layout, selected.as_ref(), window, cx));
         div()
@@ -218,6 +225,9 @@ impl Workspace {
     /// Only where the rail clears the centred chat column, so it never
     /// covers a card's own controls at the column's edge.
     fn tools_float(&self, narrow: bool) -> bool {
+        if self.design().is_v2() {
+            return self.tools_float_v2(narrow);
+        }
         self.settings.tool_rail && !narrow && self.chat_width >= px(CHAT_WIDTH + 2. * RAIL_ROOM)
     }
 
@@ -437,7 +447,8 @@ impl Workspace {
         let composer_docked = selected.is_some() && self.view.child.is_none();
         // Gutters and the gap above the composer stay inside this clip, so
         // card shadows keep their room.
-        let cards = chrome::chat_column()
+        let cards = self
+            .reading_column()
             .id("conversation-dock-cards")
             .debug_selector(|| "conversation-dock-cards".into())
             .flex_shrink_0()
@@ -467,7 +478,8 @@ impl Workspace {
             .children(selected.and_then(|session| {
                 self.render_queue_panel(session, layout.enabled, compact, window, cx)
             }));
-        let composer_layer = chrome::chat_column()
+        let composer_layer = self
+            .reading_column()
             .relative()
             .flex_shrink_0()
             // Room for the status tab on the composer's top edge, while it shows.
@@ -508,7 +520,7 @@ impl Workspace {
             // clips. (Measuring inside a scroll container would count as
             // content: a phantom pt+pb scroll range.)
             .child(
-                chrome::chat_frame()
+                self.reading_frame()
                     .id("conversation-dock")
                     .debug_selector(|| "conversation-dock".into())
                     .relative()

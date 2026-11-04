@@ -180,6 +180,9 @@ impl Workspace {
             lines.next()
         }
         .unwrap_or_default();
+        if self.design().is_v2() {
+            return self.thinking_v2(row, key, (label, preview), open, live, window, cx);
+        }
         let toggle_key = open_key.clone();
         let title = div().flex_shrink_0().child(label);
         div()

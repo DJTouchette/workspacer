@@ -134,13 +134,123 @@ const CATPPUCCIN_LATTE: Syntax = Syntax {
     heading: "#1e66f5",
 };
 
-/// The syntax colours for a theme under a design. V2 shares v1's tables
-/// until the redesign tunes its own (add them here, per theme).
+/// The syntax colours for a theme under a design: v1's published tables, or
+/// v2's calmer sets (area-transcript).
 fn syntax_for(appearance: Appearance, design: Design) -> &'static Syntax {
     match design {
-        Design::V1 | Design::V2 => syntax(appearance),
+        Design::V1 => syntax(appearance),
+        Design::V2 => syntax_v2(appearance),
     }
 }
+
+// area-transcript
+/// V2 syntax: quieter, lower-chroma tokens drawn from each v2 palette, so
+/// code sits in the page instead of shouting over it, and nothing is purple
+/// (`docs/design-v2-direction.md` §1): keywords take the theme's warm red,
+/// functions its blue, types its teal, constants its sand.
+fn syntax_v2(appearance: Appearance) -> &'static Syntax {
+    match appearance {
+        Appearance::Dark => &V2_DARK,
+        Appearance::Light => &V2_LIGHT,
+        Appearance::Nord => &V2_NORD,
+        Appearance::TokyoNight => &V2_TOKYO_NIGHT,
+        Appearance::Catppuccin => &V2_CATPPUCCIN_MOCHA,
+        Appearance::Gruvbox => &GRUVBOX_MATERIAL,
+        Appearance::Everforest => &V2_EVERFOREST,
+        Appearance::CatppuccinLatte => &V2_CATPPUCCIN_LATTE,
+    }
+}
+
+const V2_DARK: Syntax = Syntax {
+    foreground: "#d2d3d7",
+    keyword: "#ef8f80",
+    string: "#9ccf98",
+    escape: "#e3b778",
+    comment: "#80848d",
+    function: "#7fb0f5",
+    constant: "#e6b673",
+    kind: "#6fc3bb",
+    tag: "#ef8f80",
+    heading: "#7fb0f5",
+};
+
+const V2_LIGHT: Syntax = Syntax {
+    foreground: "#2c2c31",
+    keyword: "#b3301f",
+    string: "#2b6b2e",
+    escape: "#8a5300",
+    comment: "#6b6f78",
+    function: "#1f5fd6",
+    constant: "#93520a",
+    kind: "#0d6c66",
+    tag: "#b3301f",
+    heading: "#1f5fd6",
+};
+
+const V2_NORD: Syntax = Syntax {
+    foreground: "#d8dee9",
+    keyword: "#81a1c1",
+    string: "#a3be8c",
+    escape: "#ebcb8b",
+    comment: "#8b95a8",
+    function: "#88c0d0",
+    constant: "#d08770",
+    kind: "#8fbcbb",
+    tag: "#81a1c1",
+    heading: "#88c0d0",
+};
+
+const V2_TOKYO_NIGHT: Syntax = Syntax {
+    foreground: "#c0caf5",
+    keyword: "#f7768e",
+    string: "#9ece6a",
+    escape: "#89ddff",
+    comment: "#737ca8",
+    function: "#7aa2f7",
+    constant: "#ff9e64",
+    kind: "#2ac3de",
+    tag: "#f7768e",
+    heading: "#7aa2f7",
+};
+
+const V2_CATPPUCCIN_MOCHA: Syntax = Syntax {
+    foreground: "#cdd6f4",
+    keyword: "#f38ba8",
+    string: "#a6e3a1",
+    escape: "#94e2d5",
+    comment: "#9399b2",
+    function: "#89b4fa",
+    constant: "#fab387",
+    kind: "#f9e2af",
+    tag: "#f38ba8",
+    heading: "#89b4fa",
+};
+
+const V2_EVERFOREST: Syntax = Syntax {
+    foreground: "#d3c6aa",
+    keyword: "#e67e80",
+    string: "#a7c080",
+    escape: "#dbbc7f",
+    comment: "#9da9a0",
+    function: "#83c092",
+    constant: "#e69875",
+    kind: "#dbbc7f",
+    tag: "#e69875",
+    heading: "#7fbbb3",
+};
+
+const V2_CATPPUCCIN_LATTE: Syntax = Syntax {
+    foreground: "#4c4f69",
+    keyword: "#c50f37",
+    string: "#3d7f26",
+    escape: "#0f7a80",
+    comment: "#6c6f85",
+    function: "#1e66f5",
+    constant: "#b8450a",
+    kind: "#93590a",
+    tag: "#c50f37",
+    heading: "#1e66f5",
+};
 
 fn syntax(appearance: Appearance) -> &'static Syntax {
     match appearance {
@@ -477,6 +587,65 @@ diff --git a/notes.unknown b/notes.unknown
                 let ratio = contrast(hex(color), over(p.selection, p.code_block));
                 assert!(ratio >= 1.8, "{appearance:?} selected {color}: {ratio:.2}");
             }
+        }
+    }
+
+    // area-transcript
+    /// V2 code reads on the v2 card surface in every theme and nothing in it
+    /// is purple.
+    #[test]
+    fn v2_syntax_reads_on_the_card_surface_and_is_never_purple() {
+        let hue_saturation = |color: u32| {
+            let [r, g, b] = [16, 8, 0].map(|s| ((color >> s) & 0xff) as f64 / 255.);
+            let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+            let d = max - min;
+            if d == 0. {
+                return (0., 0.);
+            }
+            let l = (max + min) / 2.;
+            let s = d / (1. - (2. * l - 1.).abs());
+            let h = if max == r {
+                60. * ((g - b) / d).rem_euclid(6.)
+            } else if max == g {
+                60. * ((b - r) / d + 2.)
+            } else {
+                60. * ((r - g) / d + 4.)
+            };
+            (h, s)
+        };
+        for appearance in Appearance::ALL {
+            let p = appearance.palette_for(Design::V2);
+            let s = syntax_for(appearance, Design::V2);
+            for (name, color) in [
+                ("foreground", s.foreground),
+                ("keyword", s.keyword),
+                ("string", s.string),
+                ("escape", s.escape),
+                ("comment", s.comment),
+                ("function", s.function),
+                ("constant", s.constant),
+                ("type", s.kind),
+                ("tag", s.tag),
+                ("heading", s.heading),
+            ] {
+                let floor = match name {
+                    "foreground" => 4.5,
+                    _ => 3.,
+                };
+                for fill in [p.code_block, p.chat] {
+                    let ratio = contrast(hex(color), fill);
+                    assert!(ratio >= floor, "{appearance:?} {name} {color}: {ratio:.2}");
+                }
+                let (hue, saturation) = hue_saturation(hex(color));
+                assert!(
+                    saturation < 0.15 || !(255. ..=320.).contains(&hue),
+                    "{appearance:?} {name} {color} is purple ({hue:.0})"
+                );
+            }
+            let theme = highlight_theme(appearance, Design::V2);
+            let color = |name| theme.style(name).and_then(|s| s.color).unwrap();
+            assert_ne!(color("keyword"), color("string"), "{appearance:?}");
+            assert_ne!(color("function"), color("keyword"), "{appearance:?}");
         }
     }
 }

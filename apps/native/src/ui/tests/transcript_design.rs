@@ -1,0 +1,208 @@
+//! area-transcript: the v2 transcript (compact tool rows, collapsing fleet
+//! wakes, hugging user bubbles, reading widths) keeps the shipped behaviour.
+use super::*;
+use wks_native::appearance::Design;
+use wks_native::navigation::ReadingWidth;
+use wks_native::tokens::Tokens;
+
+fn v2(workspace: &Entity<Workspace>, visual: &mut VisualTestContext, view: View) {
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.force_design(Some(Design::V2));
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+}
+
+fn reads(n: usize) -> View {
+    let mut view = state("a");
+    view.transcript.snapshot(ConversationSnapshot {
+        seq: n as u64,
+        first_seq: 1,
+        items: (0..n)
+            .map(|i| Item {
+                kind: "tool_use".into(),
+                id: format!("call-{i}"),
+                name: "Read".into(),
+                input: serde_json::json!({"file_path":format!("src/file-{i}.rs")}),
+                ..Default::default()
+            })
+            .collect(),
+    });
+    view
+}
+
+#[gpui::test]
+fn v2_tool_calls_are_compact_rows_that_open_in_place(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _) = fixture(cx);
+    v2(&workspace, &mut visual, reads(3));
+    assert!(visual.debug_bounds("tool-activity-group").is_some());
+    let row = visual.debug_bounds("tool-toggle-0").unwrap();
+    // CLI-dense: one small-control-height line per call.
+    assert_eq!(f32::from(row.size.height), Tokens::V2.transcript().tool_row);
+    click(&mut visual, "tool-toggle-0");
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.tool_expansion.get("call:call-0"), Some(&true));
+    });
+    assert!(visual.debug_bounds("tool-details").is_some());
+    // The summary line folds the run.
+    let open = visual
+        .debug_bounds("last-transcript-row")
+        .unwrap()
+        .size
+        .height;
+    click(&mut visual, "work-card-toggle");
+    assert!(
+        visual
+            .debug_bounds("last-transcript-row")
+            .unwrap()
+            .size
+            .height
+            < open
+    );
+    assert!(commands.try_recv().is_err());
+}
+
+#[gpui::test]
+fn v2_folds_older_steps_behind_a_count(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _, _) = fixture(cx);
+    let visible = Tokens::V2.transcript().visible_steps;
+    v2(&workspace, &mut visual, reads(visible + 3));
+    assert!(visual.debug_bounds("work-earlier-steps").is_some());
+    assert!(visual.debug_bounds("tool-toggle-0").is_none());
+    click(&mut visual, "work-earlier-steps");
+    assert!(visual.debug_bounds("tool-toggle-0").is_some());
+}
+
+const BLOCKED_WAKE: &str = "[supervisor] An agent is now blocked on a decision:\n- Native editor · terminal · Git (session:worker-1, approval)\nRun a /supervise pass now.";
+
+fn wake_view(approval: bool) -> View {
+    let mut view = state("manager");
+    let mut sessions = fleet_sessions();
+    if approval {
+        sessions[2].approval = Some(serde_json::json!({"toolName":"Bash"}));
+    }
+    view.sessions = Arc::new(sessions);
+    view.transcript.snapshot(ConversationSnapshot {
+        seq: 1,
+        first_seq: 1,
+        items: vec![Item {
+            kind: "user_message".into(),
+            text: BLOCKED_WAKE.into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            ..Default::default()
+        }],
+    });
+    view
+}
+
+#[gpui::test]
+fn v2_pending_wake_is_a_full_card_with_its_worker_actions(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _) = fixture(cx);
+    v2(&workspace, &mut visual, wake_view(true));
+    assert!(visual.debug_bounds("fleet-card").is_some());
+    assert!(visual.debug_bounds("fleet-card-status").is_some());
+    click(&mut visual, "fleet-entry-open-0");
+    let effect = next_effect(&mut commands);
+    assert!(matches!(&effect, Some(Command::Select(id)) if id == "worker-1"));
+}
+
+#[gpui::test]
+fn v2_resolved_wake_collapses_to_one_line_and_opens_on_click(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _, _) = fixture(cx);
+    v2(&workspace, &mut visual, wake_view(false));
+    let line = visual.debug_bounds("fleet-card").unwrap();
+    assert!(
+        f32::from(line.size.height) <= Tokens::V2.transcript().tool_row + 1.,
+        "one line, not a card: {:?}",
+        line.size
+    );
+    assert!(visual.debug_bounds("fleet-entry-open-0").is_none());
+    click(&mut visual, "fleet-card-header");
+    assert!(visual.debug_bounds("fleet-entry-open-0").is_some());
+    assert!(visual.debug_bounds("fleet-card").unwrap().size.height > line.size.height);
+}
+
+fn user_view(text: &str) -> View {
+    let mut view = state("a");
+    view.transcript.snapshot(ConversationSnapshot {
+        seq: 2,
+        first_seq: 1,
+        items: vec![
+            Item {
+                kind: "user_message".into(),
+                text: text.into(),
+                ..Default::default()
+            },
+            Item {
+                kind: "assistant_text".into(),
+                text: "Done.".into(),
+                ..Default::default()
+            },
+        ],
+    });
+    view
+}
+
+#[gpui::test]
+fn v2_user_bubbles_hug_their_text(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _, _) = fixture(cx);
+    v2(&workspace, &mut visual, user_view("Short ask."));
+    let bubble = visual.debug_bounds("user-bubble").unwrap();
+    let column = visual.debug_bounds("chat-content-column").unwrap();
+    assert!(
+        bubble.size.width < column.size.width * 0.5,
+        "a short message hugs its text: {:?} in {:?}",
+        bubble.size,
+        column.size
+    );
+    // Right-aligned to the column.
+    assert!((bubble.right() - column.right()).abs() < px(2.));
+    let long = "A much longer message that keeps going well past one line of text, so the bubble should reach its cap rather than the full width of the reading column. ".repeat(3);
+    let (workspace, mut visual, _, _) = fixture(cx);
+    v2(&workspace, &mut visual, user_view(&long));
+    let bubble = visual.debug_bounds("user-bubble").unwrap();
+    let column = visual.debug_bounds("chat-content-column").unwrap();
+    assert!(
+        bubble.size.width <= column.size.width * Tokens::V2.transcript().user_max + px(1.),
+        "capped: {:?} in {:?}",
+        bubble.size,
+        column.size
+    );
+}
+
+#[gpui::test]
+fn v2_reading_width_widens_the_column(cx: &mut TestAppContext) {
+    let width_for = |cx: &mut TestAppContext, reading: ReadingWidth| {
+        let (workspace, mut visual, _, _) = fixture(cx);
+        visual.simulate_resize(size(px(1800.), px(900.)));
+        visual
+            .update(|_, cx| workspace.update(cx, |this, _| this.settings.reading_width = reading));
+        v2(&workspace, &mut visual, user_view("Hello"));
+        visual
+            .debug_bounds("chat-content-column")
+            .unwrap()
+            .size
+            .width
+    };
+    let comfortable = width_for(cx, ReadingWidth::Comfortable);
+    let wide = width_for(cx, ReadingWidth::Wide);
+    let full = width_for(cx, ReadingWidth::Full);
+    assert!(f32::from(comfortable) <= Tokens::V2.layout.chat_width + 1.);
+    assert!(comfortable < wide, "{comfortable:?} < {wide:?}");
+    assert!(wide < full, "{wide:?} < {full:?}");
+}
+
+#[test]
+fn reading_width_reads_and_writes_as_a_lowercase_word() {
+    let settings: wks_native::navigation::Settings =
+        serde_json::from_str(r#"{"reading_width":"wide"}"#).unwrap();
+    assert_eq!(settings.reading_width, ReadingWidth::Wide);
+    assert_eq!(
+        wks_native::navigation::Settings::default().reading_width,
+        ReadingWidth::Comfortable
+    );
+    let json = serde_json::to_value(&settings).unwrap();
+    assert_eq!(json["reading_width"], "wide");
+}

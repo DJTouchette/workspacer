@@ -776,6 +776,18 @@ impl Workspace {
                     this.save_settings(cx);
                 })),
         ));
+        // area-transcript
+        if self.design().is_v2() {
+            entries.push(Entry::new(
+                S::Chat,
+                "reading-width",
+                "Reading width",
+                "How wide the conversation reads: a comfortable measure, wide for tables and code, or the whole pane.",
+                "reading width column measure wide full comfortable narrow layout chat",
+                Layout::Row,
+                self.render_reading_width(cx),
+            ));
+        }
 
         entries.push(Entry::new(
             S::Keyboard,

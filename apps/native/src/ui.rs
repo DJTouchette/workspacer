@@ -60,6 +60,8 @@ mod attention;
 mod capsule;
 mod model_popover;
 mod shell;
+// area-transcript
+mod transcript_v2;
 use chrome::ControlTextStyle;
 pub(crate) use chrome::custom_caption;
 use gpui::{
