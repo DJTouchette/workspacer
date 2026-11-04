@@ -1,7 +1,7 @@
 //! A session's pending question set: the picker in the dock, its answers
 //! and their submission.
 use super::*;
-use gpui::AnyElement;
+use gpui::{AnyElement, relative};
 use gpui_component::scroll::ScrollableElement;
 use serde_json::Value;
 use wks_native::elicitation::{Elicitation, Kind};
@@ -443,12 +443,28 @@ impl Workspace {
         let body_max = window.viewport_size().height * if compact { 0.4 } else { 0.46 };
         let elicitation =
             wks_native::elicitation::detect(&list, session.elicitation_server.as_deref());
+        let v2 = self.design().is_v2();
+        let t = p.tokens;
+        let position = v2
+            .then(|| {
+                let decisions = self.decisions(session);
+                let ix = decisions
+                    .iter()
+                    .position(|d| *d == super::composer_v2::Decision::Questions)?;
+                (decisions.len() > 1).then(|| format!("{} of {}", ix + 1, decisions.len()))
+            })
+            .flatten();
         let header = div()
             .flex()
             .items_center()
             .gap_2()
             .text_size(px(12.))
-            .child(status_dot(p.warning))
+            .when(v2, |d| d.gap(px(t.space.sm)).text_size(px(t.text.body)))
+            .child(if v2 {
+                primitives::status_indicator(primitives::StatusKind::NeedsYou, &p)
+            } else {
+                status_dot(p.warning)
+            })
             .child(
                 div()
                     .flex_1()
@@ -478,9 +494,25 @@ impl Workspace {
                         } else {
                             p.muted
                         }))
+                        .when(v2, |d| {
+                            d.text_size(px(t.text.meta))
+                                .text_color(rgb(if answered == total {
+                                    p.text
+                                } else {
+                                    p.roles.text_tertiary
+                                }))
+                        })
                         .child(format!("{answered} of {total} answered")),
                 )
-            });
+            })
+            .children(position.map(|label| {
+                div()
+                    .debug_selector(|| "question-position".into())
+                    .flex_shrink_0()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(label)
+            }));
         let card = div()
             .id("question-choices")
             .debug_selector(|| "question-card".into())
@@ -501,7 +533,15 @@ impl Workspace {
             .border_color(rgb(p.border))
             .flex()
             .flex_col()
-            .gap(px(if compact { 6. } else { 10. }));
+            .gap(px(if compact { 6. } else { 10. }))
+            .when(v2, |d| {
+                d.p(px(if compact { t.space.md } else { t.space.lg }))
+                    .rounded(px(t.radius.panel))
+                    .border(px(t.stroke.hairline))
+                    .border_color(rgb(p.roles.card_border))
+                    .shadow(primitives::elevation(&p, t.elevation.floating))
+                    .gap(px(if compact { t.space.sm } else { t.space.md }))
+            });
         if list.is_empty() {
             // A question the hub could not structure: answer from the composer.
             return card
@@ -625,12 +665,21 @@ impl Workspace {
             None if total > 1 => "Send answers".into(),
             None => "Send answer".into(),
         };
-        let submit = self
-            .primary_button(
+        let submit_enabled = interactive && ready && !self.view.busy;
+        let submit = if v2 {
+            primitives::button(
                 "submit-answers",
                 label,
-                interactive && ready && !self.view.busy,
+                None,
+                primitives::ButtonVariant::Primary,
+                primitives::ButtonSize::Small,
+                submit_enabled,
+                &p,
             )
+        } else {
+            self.primary_button("submit-answers", label, submit_enabled)
+        };
+        let submit = submit
             .debug_selector(|| "submit-answers".into())
             .flex_shrink_0()
             .when(interactive && ready, |d| {
@@ -712,6 +761,12 @@ impl Workspace {
                 .pt(px(8.))
                 .border_t_1()
                 .border_color(rgb(p.border))
+                .when(v2, |d| {
+                    d.pt(px(t.space.md))
+                        .border_color(rgb(p.roles.card_border))
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary))
+                })
                 .flex()
                 .items_center()
                 .gap_2()
@@ -737,6 +792,8 @@ impl Workspace {
         focused: &mut Option<usize>,
     ) {
         let p = self.palette();
+        let v2 = self.design().is_v2();
+        let t = p.tokens;
         let multiple = q["multiSelect"].as_bool().unwrap_or(false);
         let options = q["options"].as_array().cloned().unwrap_or_default();
         let header = q["header"]
@@ -793,8 +850,23 @@ impl Workspace {
                 .text_size(px(chrome::scale::OVERLINE))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(p.muted))
+                .when(v2, |d| {
+                    // Sentence case: card eyebrows are not page sections.
+                    d.text_size(px(t.text.meta))
+                        .font_weight(FontWeight(t.weight.medium))
+                        .text_color(rgb(p.roles.text_secondary))
+                        .when(ix > 0, |d| {
+                            d.mt(px(t.space.xs))
+                                .pt(px(t.space.lg))
+                                .border_color(rgb(p.roles.card_border))
+                        })
+                })
                 .when(!overline.is_empty(), |d| {
-                    d.child(div().min_w_0().truncate().child(overline.to_uppercase()))
+                    d.child(div().min_w_0().truncate().child(if v2 {
+                        overline.clone()
+                    } else {
+                        overline.to_uppercase()
+                    }))
                 })
                 .when(!how.is_empty(), |d| {
                     d.child(
@@ -802,7 +874,15 @@ impl Workspace {
                             .flex_shrink_0()
                             .font_weight(FontWeight::NORMAL)
                             .text_size(px(chrome::scale::CAPTION))
-                            .child(how),
+                            .when(v2, |d| {
+                                d.text_size(px(t.text.meta))
+                                    .text_color(rgb(p.roles.text_tertiary))
+                            })
+                            .child(if v2 && !overline.is_empty() {
+                                format!("· {how}")
+                            } else {
+                                how.to_owned()
+                            }),
                     )
                 })
                 .child(div().flex_1())
@@ -817,6 +897,11 @@ impl Workspace {
                             .text_size(px(chrome::scale::CAPTION))
                             .font_weight(FontWeight::NORMAL)
                             .text_color(rgb(p.success))
+                            // Green is for finished work only.
+                            .when(v2, |d| {
+                                d.text_size(px(t.text.meta))
+                                    .text_color(rgb(p.roles.text_secondary))
+                            })
                             .child(Icon::new(IconName::CircleCheck).size(px(12.)))
                             .child("Answered"),
                     )
@@ -831,6 +916,10 @@ impl Workspace {
                 .line_height(gpui::relative(1.4))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(p.text))
+                .when(v2, |d| {
+                    d.text_size(px(t.text.subheading))
+                        .line_height(relative(t.text.line_height))
+                })
                 .child(text)
                 .into_any_element(),
         );
@@ -909,7 +998,15 @@ impl Workspace {
             .unwrap_or("")
             .trim()
             .to_owned();
-        let badge_size = if compact { 16. } else { 18. };
+        let v2 = self.design().is_v2();
+        let t = p.tokens;
+        let badge_size = if v2 {
+            t.text.subheading + t.space.xs
+        } else if compact {
+            16.
+        } else {
+            18.
+        };
         let badge = div()
             .debug_selector(move || format!("question-{ix}-option-{option_ix}-badge"))
             .flex_shrink_0()
@@ -929,6 +1026,22 @@ impl Workspace {
                     d.border_1()
                         .border_color(gpui::Hsla::from(rgb(p.muted)).opacity(0.5))
                         .text_color(rgb(p.muted))
+                }
+            })
+            .when(v2, |d| {
+                // A keycap for the number (it is the key), a box for a check.
+                let d = d
+                    .mt(px(t.stroke.hairline))
+                    .rounded(px(if multiple { t.radius.xs } else { t.radius.sm }))
+                    .text_size(px(t.text.overline))
+                    .font_family(mono_font());
+                if chosen {
+                    d
+                } else {
+                    d.border(px(t.stroke.hairline))
+                        .border_color(rgb(p.roles.border_strong))
+                        .bg(rgb(p.surface))
+                        .text_color(rgb(p.roles.text_secondary))
                 }
             })
             .map(|d| match (multiple, chosen) {
@@ -957,8 +1070,36 @@ impl Workspace {
         } else {
             rgb(p.base).into()
         })
-        .when(interactive && !chosen, |d| {
+        .when(interactive && !chosen && !v2, |d| {
             d.hover(|s| s.bg(rgb(p.selected)))
+        })
+        .when(v2, |d| {
+            let (hover, ring) = (p.roles.hover, p.roles.card_border);
+            d.px(px(t.space.md))
+                .py(px(if compact { t.space.xs } else { t.space.sm }))
+                .gap(px(t.space.md))
+                .rounded(px(t.radius.control))
+                .map(|d| {
+                    if chosen {
+                        d.bg(primitives::wash(p.accent, t.wash.tone_rest))
+                            .shadow(vec![gpui::BoxShadow {
+                                color: rgb(p.accent).into(),
+                                offset: gpui::point(px(0.), px(0.)),
+                                blur_radius: px(0.),
+                                spread_radius: px(t.stroke.hairline),
+                            }])
+                    } else {
+                        d.bg(rgb(p.chat)).shadow(vec![gpui::BoxShadow {
+                            color: rgb(ring).into(),
+                            offset: gpui::point(px(0.), px(0.)),
+                            blur_radius: px(0.),
+                            spread_radius: px(t.stroke.hairline),
+                        }])
+                    }
+                })
+                .when(interactive && !chosen, move |d| {
+                    d.hover(move |s| s.bg(rgb(hover)))
+                })
         })
         .child(badge)
         .child(
@@ -978,6 +1119,14 @@ impl Workspace {
                             FontWeight::MEDIUM
                         })
                         .text_color(rgb(if interactive { p.text } else { p.muted }))
+                        .when(v2, |d| {
+                            d.text_size(px(t.text.body))
+                                .font_weight(FontWeight(if chosen {
+                                    t.weight.semibold
+                                } else {
+                                    t.weight.medium
+                                }))
+                        })
                         .child(label),
                 )
                 .when(!description.is_empty(), |d| {
@@ -986,6 +1135,10 @@ impl Workspace {
                             .text_size(px(chrome::scale::META))
                             .line_height(gpui::relative(1.4))
                             .text_color(rgb(p.muted))
+                            .when(v2, |d| {
+                                d.text_size(px(t.text.meta))
+                                    .text_color(rgb(p.roles.text_secondary))
+                            })
                             .child(description),
                     )
                 }),

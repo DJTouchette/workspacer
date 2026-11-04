@@ -770,7 +770,13 @@ impl Fixture {
                     json!({"toolName": "ExitPlanMode", "toolInput": {"plan":
                         "## Plan: native review actions\n\n1. **Stage and commit** from the change list\n2. Add a `Commits` tab with each commit's patch\n3. Let the file panel hide\n\nTests: one UI test per action, then the full suite."}})
                 } else if i == 0 && self.pending {
-                    json!({"toolName": "Bash", "toolInput": {"command": "cargo test"}})
+                    json!({"toolName": "Bash",
+                        "toolInput": {"command": "cargo test",
+                            "description": "Run the workspace tests before committing"},
+                        "requestId": "fixture-approval",
+                        "alwaysOptions": [{"id": "fixture-approval:0",
+                            "label": "Always allow cargo test", "scope": "session",
+                            "kind": "addRules"}]})
                 } else {
                     Value::Null
                 },
@@ -1057,6 +1063,13 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
             snapshot["statusLine"] = json!({"contextUsedPct":42.0,"contextWindowSize":200000});
             // A chosen 1M window, so Change model shows its context choices.
             snapshot["requestedSelection"] = json!({"model":"sonnet","contextWindow":1000000});
+            // The composer's `/` menu (design shots type a slash).
+            snapshot["slashCommands"] = json!([
+                {"name":"compact","insert":"/compact","description":"Compact the conversation to free context","kind":"command"},
+                {"name":"code-review","insert":"/code-review","description":"Review the current diff for bugs","kind":"skill"},
+                {"name":"context","insert":"/context","description":"Show what fills the context window","kind":"command"},
+                {"name":"review-pr","insert":"/review-pr","description":"Review a pull request by number","kind":"skill"}
+            ]);
             snapshot["subagents"] = json!([
                 {"id":"fixture-native-review","toolUseId":"subagent-running","type":"Explore","description":"Inspect transcript parsing","status":"running","model":"gpt-5.6-luna","startedAt":1790852400000i64,"toolCalls":4,"tokens":12400,"costUSD":0.018,"lastToolName":"Read","lastToolSummary":"apps/native/src/model.rs"},
                 {"id":"fixture-native-tests","toolUseId":"subagent-running","type":"Test","description":"Check regression coverage","status":"complete","model":"claude-sonnet-4-6","startedAt":1790852400000i64,"completedAt":1790852442000i64,"toolCalls":7,"tokens":28300,"costUSD":0.084},

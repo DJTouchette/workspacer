@@ -177,6 +177,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.palette();
+        let v2 = self.design().is_v2();
+        let t = p.tokens;
         let busy = self.view.busy;
         let remove = |this: &Self, ix: usize, cx: &mut Context<Self>| {
             this.icon_button(
@@ -226,6 +228,11 @@ impl Workspace {
                                     .border_1()
                                     .border_color(rgb(p.border))
                                     .bg(rgb(p.base))
+                                    .when(v2, |d| {
+                                        d.rounded(px(t.radius.control))
+                                            .border(px(t.stroke.hairline))
+                                            .border_color(rgb(p.roles.card_border))
+                                    })
                                     .child(
                                         div()
                                             .id(("attachment-preview", ix))
@@ -270,6 +277,17 @@ impl Workspace {
                                 .rounded_md()
                                 .bg(rgb(p.selected))
                                 .max_w_full()
+                                .when(v2, |d| {
+                                    d.pl(px(t.space.md))
+                                        .pr(px(t.space.xxs))
+                                        .py(px(t.space.xxs))
+                                        .gap(px(t.space.sm))
+                                        .rounded(px(t.radius.control))
+                                        .bg(rgb(p.chat))
+                                        .border(px(t.stroke.hairline))
+                                        .border_color(rgb(p.roles.card_border))
+                                        .text_color(rgb(p.roles.text_secondary))
+                                })
                                 .flex()
                                 .items_center()
                                 .gap_2()

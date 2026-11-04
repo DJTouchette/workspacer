@@ -102,21 +102,21 @@ mod notch_tests {
     }
 }
 
-struct ComposerActivity {
-    label: String,
+pub(super) struct ComposerActivity {
+    pub(super) label: String,
     /// Something is running or pending: shown in the composer's notch.
-    live: bool,
-    animate: bool,
+    pub(super) live: bool,
+    pub(super) animate: bool,
 }
 
 /// What the conversation decided once per frame, for the pieces it builds.
 #[derive(Clone, Copy)]
-struct ChatLayout {
-    narrow: bool,
-    compact: bool,
+pub(super) struct ChatLayout {
+    pub(super) narrow: bool,
+    pub(super) compact: bool,
     /// The selected session can take a message or decision now.
-    enabled: bool,
-    working: bool,
+    pub(super) enabled: bool,
+    pub(super) working: bool,
 }
 
 /// The tool rail's width and its gap from the chat's right edge.
@@ -452,9 +452,17 @@ impl Workspace {
             .when(self.view.child.is_none(), |d| {
                 d.child(self.render_pending(window, cx))
             })
-            .when_some(selected.and_then(|s| s.approval.as_ref()), |d, approval| {
-                d.child(self.render_approval_card(approval, layout, window, cx))
-            })
+            // Design v2 joins a tool approval to the composer instead.
+            .when_some(
+                selected
+                    .and_then(|s| s.approval.as_ref())
+                    .filter(|approval| {
+                        !(self.design().is_v2()
+                            && composer_docked
+                            && composer_v2::plan_text(approval).is_none())
+                    }),
+                |d, approval| d.child(self.render_approval_card(approval, layout, window, cx)),
+            )
             .children(selected.and_then(|session| self.render_limit_card(session, compact, cx)))
             .when_some(selected.filter(|s| s.questions.is_some()), |d, session| {
                 d.child(self.render_questions(session, layout.enabled, compact, window, cx))
@@ -469,7 +477,7 @@ impl Workspace {
             .flex_shrink_0()
             // Room for the status tab on the composer's top edge, while it shows.
             .when(
-                composer_docked && self.composer_activity(layout).live,
+                composer_docked && !self.design().is_v2() && self.composer_activity(layout).live,
                 |d| d.pt(px(notch_height(compact) - if compact { 4. } else { 8. })),
             )
             .pb(px(if compact { 8. } else { 16. }))
@@ -563,6 +571,18 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         use serde_json::Value;
+        if self.design().is_v2() {
+            return match composer_v2::plan_text(approval) {
+                Some(plan) => self.render_plan_card_v2(plan, layout, window, cx),
+                None => {
+                    let decisions = self
+                        .selected_session()
+                        .map(|s| self.decisions(s))
+                        .unwrap_or_default();
+                    self.render_approval_strip(approval, layout, false, &decisions, cx)
+                }
+            };
+        }
         let p = self.palette();
         let (compact, enabled) = (layout.compact, layout.enabled);
         if let Some(plan) = approval
@@ -859,6 +879,9 @@ impl Workspace {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
+        if self.design().is_v2() {
+            return self.render_limit_card_v2(session, compact, cx);
+        }
         let p = self.palette();
         let limits = &session.limits;
         let card = || {
@@ -955,7 +978,12 @@ impl Workspace {
     }
 
     /// The one-line note box under a Deny with note / Keep planning.
-    fn render_deny_note(&self, enabled: bool, send: &'static str, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_deny_note(
+        &self,
+        enabled: bool,
+        send: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Div {
         div()
             .flex()
             .items_center()
@@ -1028,6 +1056,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        if self.design().is_v2() {
+            return self.render_composer_v2(layout, window, cx);
+        }
         let p = self.palette();
         let ChatLayout {
             narrow,
@@ -1263,7 +1294,7 @@ impl Workspace {
 
     /// Draft attachments with their thumbnails (images only; PDFs keep the
     /// file chip). Loading and failure fall back to the name.
-    fn draft_files(&mut self, cx: &mut Context<Self>) -> Vec<attachments::DraftFile> {
+    pub(super) fn draft_files(&mut self, cx: &mut Context<Self>) -> Vec<attachments::DraftFile> {
         self.view
             .selected
             .as_ref()
@@ -1286,7 +1317,7 @@ impl Workspace {
     /// What the selected conversation is doing. Live states (connecting,
     /// loading, sending, working, waiting) ride in the composer's notch; the
     /// rest (a finished turn's summary, Ready) stay on the hint line.
-    fn composer_activity(&self, layout: ChatLayout) -> ComposerActivity {
+    pub(super) fn composer_activity(&self, layout: ChatLayout) -> ComposerActivity {
         let now = timing::now_ms();
         let clock = self
             .view

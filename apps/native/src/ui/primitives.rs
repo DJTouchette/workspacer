@@ -1538,3 +1538,99 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
         )
         .into_any_element()
 }
+
+// area-composer
+
+/// A [`button`] led by the key that also triggers it ("1 Allow"), for
+/// decision strips where number keys pick an action. The keycap is a wash of
+/// the label colour, so it reads on a primary fill as well as a ghost.
+pub(crate) fn keyed_button(
+    id: impl Into<ElementId>,
+    key: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    variant: ButtonVariant,
+    size: ButtonSize,
+    enabled: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    let t = p.tokens;
+    let fg = if !enabled {
+        p.disabled
+    } else if variant == ButtonVariant::Primary {
+        p.on_primary
+    } else {
+        p.roles.text_secondary
+    };
+    let cap = div()
+        .flex_shrink_0()
+        .min_w(px(t.text.overline + t.space.sm))
+        .px(px(t.space.xs))
+        .rounded(px(t.radius.xs))
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(wash(fg, t.wash.tone_rest))
+        .text_size(px(t.text.overline))
+        .font_family(mono_font())
+        .font_weight(FontWeight(t.weight.medium))
+        .text_color(rgb(fg))
+        .child(key.into());
+    let control = interactive_control(div().id(id.into()), *p, enabled)
+        .h(px(size.height(p)))
+        .pl(px(size.padding(p) - t.space.xs))
+        .pr(px(size.padding(p)))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(t.space.sm))
+        .flex_shrink_0()
+        .rounded(px(t.radius.control))
+        .text_size(px(size.text(p)))
+        .font_weight(FontWeight(t.weight.medium))
+        .child(cap)
+        .child(label.into());
+    button_states(control, variant, enabled, p)
+}
+
+/// A quiet chip inside a composer or toolbar: an optional leading element
+/// (icon or glyph), a label and, when it opens something, a chevron. Ghost
+/// at rest, a neutral wash on hover. Add `.on_click` for interactive chips.
+pub(crate) fn toolbar_chip(
+    id: impl Into<ElementId>,
+    leading: Option<AnyElement>,
+    label: impl Into<SharedString>,
+    opens: bool,
+    enabled: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    let t = p.tokens;
+    let (hover, pressed) = (p.roles.hover, p.roles.pressed);
+    interactive_control(div().id(id.into()), *p, enabled && opens)
+        .h(px(t.layout.icon_button))
+        .min_w_0()
+        .px(px(t.space.sm))
+        .flex()
+        .items_center()
+        .gap(px(t.space.xs))
+        .rounded(px(t.radius.control))
+        .text_size(px(t.text.meta))
+        .font_weight(FontWeight(t.weight.medium))
+        .text_color(rgb(if enabled {
+            p.roles.text_secondary
+        } else {
+            p.disabled
+        }))
+        .when(enabled && opens, |d| {
+            d.hover_text_style(move |s| s.bg(rgb(hover)).text_color(rgb(p.text)))
+                .active_text_style(move |s| s.bg(rgb(pressed)))
+        })
+        .children(leading)
+        .child(div().min_w_0().truncate().child(label.into()))
+        .when(opens, |d| {
+            d.child(
+                Icon::new(IconName::ChevronDown)
+                    .size(px(t.icon.xs))
+                    .text_color(rgb(p.roles.text_tertiary)),
+            )
+        })
+}
