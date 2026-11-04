@@ -26,14 +26,20 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 NATIVE = HERE.parent.parent
 
-# Fixture flavors. "rich" is the believable workspace: real-looking projects,
-# jobs, scratch and history (--catalog) with a conversation full of tool
-# calls, subagents, background tasks and an approval (--rich-transcript).
-# "demo" is the stock `wks-native --demo` (100 synthetic sessions).
+# Fixture flavors. "rich" is the believable workspace (--catalog): one
+# developer's fleet of ~30 distinct sessions across workspacer, hub-rs,
+# infra and notes, two needing them (an approval, a question), three
+# working, a stalled subagent and a failed background task, plus
+# real-looking projects, jobs, scratch, hosts and history; the active
+# conversation is a full run of tool calls, subagents and edits
+# (--rich-transcript). "demo" is the stock `wks-native --demo` (100
+# synthetic sessions).
 FIXTURES = {
-    "rich": ["--rich-transcript", "--catalog", "--turns", "120"],
-    "questions": ["--rich-transcript", "--catalog", "--turns", "120", "--pending-questions"],
-    "plan": ["--rich-transcript", "--catalog", "--turns", "120", "--plan-and-limit"],
+    "rich": ["--rich-transcript", "--catalog", "--turns", "0"],
+    "questions": ["--rich-transcript", "--catalog", "--turns", "0", "--pending-questions"],
+    "plan": ["--rich-transcript", "--catalog", "--turns", "0", "--plan-and-limit"],
+    # Nothing waits on the user: no approval or question (an all-clear list).
+    "clear": ["--rich-transcript", "--catalog", "--turns", "0", "--all-clear"],
     # No sessions yet: the first-run welcome (catalog projects to pick from).
     "empty": ["--catalog", "--sessions", "0"],
     "demo": None,
@@ -432,6 +438,8 @@ def main():
         for index, shot in selected:
             print(f"{index:02d}-{shot['slug']}: {shot['desc']}")
         return
+    if not selected:
+        sys.exit(f"no shot slug contains {' or '.join(map(repr, args.only))}; see --list")
     for tool in ("xdotool", "import", "identify"):
         if not shutil.which(tool):
             sys.exit(f"{tool} is required (apt-get install xdotool imagemagick)")
@@ -450,8 +458,8 @@ def main():
 
     xvfb = None
     if not os.environ.get("DISPLAY") or os.environ.get("DESIGN_SHOTS_XVFB"):
-        w = int(max(args.width, *(s.get("width", 0) for _, s in selected)) * args.scale) + 64
-        h = int(max(args.height, *(s.get("height", 0) for _, s in selected)) * args.scale) + 64
+        w = int(max([args.width] + [s.get("width", 0) for _, s in selected]) * args.scale) + 64
+        h = int(max([args.height] + [s.get("height", 0) for _, s in selected]) * args.scale) + 64
         xvfb, display = start_xvfb(w, h)
         os.environ["DISPLAY"] = display
         print(f"Xvfb on {display} ({w}x{h})")
