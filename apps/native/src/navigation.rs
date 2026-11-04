@@ -114,6 +114,40 @@ pub struct Settings {
     pub default_codex_access: crate::launch::Permission,
     /// Bookmarks are scoped to the hub endpoint so remote paths do not cross hosts.
     pub projects: BTreeMap<String, Vec<String>>,
+    // area-transcript
+    /// How wide the transcript reads under design v2 (v1 has one measure).
+    pub reading_width: ReadingWidth,
+}
+// area-transcript
+/// The transcript's reading measure under design v2: Settings -> Chat.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadingWidth {
+    /// A book-like measure (`layout.chat_width`).
+    #[default]
+    Comfortable,
+    /// Room for wide tables and code (`layout.reading_wide`).
+    Wide,
+    /// The whole conversation pane, less its gutters.
+    Full,
+}
+impl ReadingWidth {
+    pub const ALL: [Self; 3] = [Self::Comfortable, Self::Wide, Self::Full];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Comfortable => "Comfortable",
+            Self::Wide => "Wide",
+            Self::Full => "Full",
+        }
+    }
+    /// The column's content width cap in logical px.
+    pub fn measure(self, tokens: &crate::tokens::Tokens) -> f32 {
+        match self {
+            Self::Comfortable => tokens.layout.chat_width,
+            Self::Wide => tokens.layout.reading_wide,
+            Self::Full => tokens.layout.reading_full,
+        }
+    }
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -143,6 +177,8 @@ impl Default for Settings {
             default_claude_access: crate::launch::Permission::Ask,
             default_codex_access: crate::launch::Permission::Ask,
             projects: BTreeMap::new(),
+            // area-transcript
+            reading_width: ReadingWidth::Comfortable,
         }
     }
 }

@@ -39,6 +39,9 @@ fn signature(steps: &[Step]) -> String {
 /// One step: status icon and label, finished steps dimmed. Only the live
 /// list animates its running step; history marks it with a dot.
 pub(super) fn step_row(step: &Step, p: Palette, live: bool) -> Div {
+    if p.tokens.design.is_v2() {
+        return step_row_v2(step, &p, live);
+    }
     let icon = match step.status {
         Status::Completed => Icon::new(IconName::CircleCheck)
             .size(px(13.))
@@ -80,6 +83,49 @@ pub(super) fn step_row(step: &Step, p: Palette, live: bool) -> Div {
                 }))
                 .when(step.status == Status::InProgress, |d| {
                     d.font_weight(FontWeight::MEDIUM)
+                })
+                .child(step.label().to_owned()),
+        )
+}
+
+// area-transcript
+/// A step under v2: the shared status indicator (Working pulses, a step to
+/// do is a hollow ring, a finished one a dot) and its label, finished
+/// steps in the quiet tier.
+fn step_row_v2(step: &Step, p: &Palette, live: bool) -> Div {
+    use super::primitives::{StatusKind, status_indicator};
+    let t = p.tokens;
+    let kind = match step.status {
+        Status::Completed => StatusKind::Done,
+        Status::InProgress if live => StatusKind::Working,
+        Status::InProgress => StatusKind::Idle,
+        Status::Pending => StatusKind::Queued,
+    };
+    let line = t.text.meta * t.text.line_height;
+    div()
+        .flex()
+        .items_start()
+        .gap(px(t.space.md))
+        .text_size(px(t.text.meta))
+        .line_height(gpui::relative(t.text.line_height))
+        .child(
+            div()
+                .h(px(line))
+                .flex()
+                .items_center()
+                .child(status_indicator(kind, p)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_color(rgb(match step.status {
+                    Status::Completed => p.roles.text_tertiary,
+                    Status::InProgress => p.text,
+                    Status::Pending => p.roles.text_secondary,
+                }))
+                .when(step.status == Status::InProgress, |d| {
+                    d.font_weight(FontWeight(t.weight.medium))
                 })
                 .child(step.label().to_owned()),
         )
@@ -149,6 +195,17 @@ impl Workspace {
                 .map(|step| step.label().to_owned())
                 .unwrap_or_else(|| format!("{} to do", total - done))
         };
+        if self.design().is_v2() {
+            return Some(self.pinned_plan_v2(
+                &steps,
+                (done, total),
+                open,
+                summary,
+                compact,
+                window,
+                cx,
+            ));
+        }
         let header = chrome::interactive_control(div().id("pinned-plan-toggle"), p, true)
             .debug_selector(|| "pinned-plan-toggle".into())
             .w_full()
@@ -250,6 +307,9 @@ impl Workspace {
         let open_key = format!("{key}-plan");
         let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
         let toggle_key = open_key.clone();
+        if self.design().is_v2() {
+            return Some(self.plan_marker_v2(&steps, (done, total), open, open_key, cx));
+        }
         Some(
             div()
                 .debug_selector(|| "plan-marker".into())
@@ -304,5 +364,196 @@ impl Workspace {
                     )
                 }),
         )
+    }
+}
+
+// area-transcript
+impl Workspace {
+    /// The pinned task list under v2: one quiet line (status, "Tasks",
+    /// "2 of 5", the running step) that opens to the list, on the raised
+    /// surface with the shared card edge.
+    #[allow(clippy::too_many_arguments)]
+    fn pinned_plan_v2(
+        &self,
+        steps: &[Step],
+        (done, total): (usize, usize),
+        open: bool,
+        summary: String,
+        compact: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        use super::primitives::{StatusKind, elevation, status_indicator, tonal};
+        let p = self.palette();
+        let t = p.tokens;
+        let kind = match (task_plan::active(steps), done == total) {
+            (Some(_), _) => StatusKind::Working,
+            (None, true) => StatusKind::Done,
+            (None, false) => StatusKind::Queued,
+        };
+        let header = chrome::interactive_control(div().id("pinned-plan-toggle"), p, true)
+            .debug_selector(|| "pinned-plan-toggle".into())
+            .w_full()
+            .h(px(t.layout.control_height_sm))
+            .flex()
+            .items_center()
+            .gap(px(t.space.md))
+            .px(px(t.space.md))
+            .rounded(px(t.radius.control))
+            .text_size(px(t.text.meta))
+            .hover(move |s| s.bg(tonal(&p, t.wash.hover)))
+            .child(status_indicator(kind, &p))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .font_weight(FontWeight(t.weight.medium))
+                    .text_color(rgb(p.text))
+                    .child("Tasks"),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "pinned-plan-progress".into())
+                    .flex_shrink_0()
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(format!("{done} of {total}")),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(rgb(p.roles.text_secondary))
+                    .when(!open, |d| d.child(summary)),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(
+                        Icon::new(if open {
+                            IconName::ChevronUp
+                        } else {
+                            IconName::ChevronDown
+                        })
+                        .size(px(t.icon.xs)),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_plan(compact, cx)));
+        let list_max = (window.viewport_size().height * 0.3).min(px(t.layout.dialog_width / 2.));
+        div()
+            .debug_selector(|| "pinned-plan".into())
+            .occlude()
+            .w_full()
+            .max_w(px(t.layout.chat_width * 0.8))
+            .p(px(t.space.xs))
+            .rounded(px(t.radius.panel))
+            .bg(rgb(p.roles.raised))
+            .border(px(t.stroke.hairline))
+            .border_color(rgb(p.roles.card_border))
+            .shadow(elevation(&p, t.elevation.floating))
+            .flex()
+            .flex_col()
+            .child(header)
+            .when(open, |d| {
+                d.child(
+                    div()
+                        .id("pinned-plan-steps")
+                        .debug_selector(|| "pinned-plan-steps".into())
+                        .max_h(list_max)
+                        .overflow_y_scroll()
+                        .px(px(t.space.md))
+                        .pt(px(t.space.xs))
+                        .pb(px(t.space.md))
+                        .flex()
+                        .flex_col()
+                        .gap(px(t.space.xxs))
+                        .children(steps.iter().map(|step| step_row(step, p, true))),
+                )
+            })
+    }
+
+    /// A task-list change in the transcript under v2: one quiet line that
+    /// opens to the list as it was then.
+    fn plan_marker_v2(
+        &self,
+        steps: &[Step],
+        (done, total): (usize, usize),
+        open: bool,
+        open_key: String,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        use super::primitives::tonal;
+        let p = self.palette();
+        let t = p.tokens;
+        let toggle_key = open_key.clone();
+        div()
+            .debug_selector(|| "plan-marker".into())
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xs))
+            .child(
+                chrome::interactive_control(
+                    div().id(SharedString::from(format!("{open_key}-toggle"))),
+                    p,
+                    true,
+                )
+                .debug_selector(|| "plan-marker-toggle".into())
+                .group("plan-line")
+                .h(px(t.transcript().tool_row))
+                .ml(px(-t.space.sm))
+                .px(px(t.space.sm))
+                .flex()
+                .items_center()
+                .gap(px(t.space.md))
+                .rounded(px(t.radius.control))
+                .text_size(px(t.text.meta))
+                .text_color(rgb(p.roles.text_secondary))
+                .hover(move |s| s.bg(tonal(&p, t.wash.hover)))
+                .child(
+                    div()
+                        .size(px(t.layout.status_box))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(Icon::new(IconName::Check).size(px(t.icon.xs))),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .font_weight(FontWeight(t.weight.medium))
+                        .text_color(rgb(p.text))
+                        .child("Task list updated"),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(format!("· {done} of {total} done")),
+                )
+                .when_some(task_plan::active(steps).filter(|_| !open), |d, step| {
+                    d.child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(rgb(p.roles.text_tertiary))
+                            .child(format!("· {}", step.label())),
+                    )
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.toggle_open(toggle_key.clone(), false, cx)
+                })),
+            )
+            .when(open, |d| {
+                d.child(
+                    div()
+                        .pl(px(t.layout.status_box + t.space.md))
+                        .pb(px(t.space.sm))
+                        .flex()
+                        .flex_col()
+                        .gap(px(t.space.xxs))
+                        .children(steps.iter().map(|step| step_row(step, p, false))),
+                )
+            })
     }
 }

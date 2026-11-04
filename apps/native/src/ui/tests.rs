@@ -41,6 +41,8 @@ mod switching;
 mod tables;
 mod task_list;
 mod title;
+// area-transcript
+mod transcript_design;
 mod viewer;
 mod window;
 

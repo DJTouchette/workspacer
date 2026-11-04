@@ -115,6 +115,17 @@ def shots():
     add("conversation-nord", "Rich conversation, Nord", theme="nord")
     add("conversation-catppuccin-latte", "Rich conversation, Catppuccin Latte", theme="catppuccin-latte")
     add("settings-tokyo-night", "Settings: Appearance, Tokyo Night", nav("s"), theme="tokyo-night")
+    # area-transcript: the transcript itself, further back and at each reading width.
+    add("transcript-earlier", "Transcript further back: tool rows, work cards, user turns",
+        [("wheel", 24, 1000, 400)])
+    add("transcript-start", "Transcript start: the first turns",
+        [("key", "Escape"), ("keys", *(["ctrl+u"] * 12))])
+    add("transcript-fleet", "Transcript: supervisor and fleet wakes, subagents",
+        [("wheel", 7, 1000, 400)])
+    add("transcript-wide", "Rich conversation at the wide reading width",
+        settings={"reading_width": "wide"})
+    add("transcript-full", "Earlier transcript at the full reading width",
+        [("key", "Escape"), ("keys", "ctrl+u", "ctrl+u", "ctrl+u")], settings={"reading_width": "full"})
     return s
 
 
@@ -214,6 +225,13 @@ class Rig:
                 self.xdo("click", "1")
                 time.sleep(1.0)
                 self.park(shot["width"], shot["height"])
+            elif kind == "wheel":  # area-transcript: scroll the chat up by n notches
+                notches, x, y = rest
+                self.xdo("mousemove", "--window", window, self.px(x), self.px(y))
+                time.sleep(0.3)
+                self.xdo("click", "--repeat", notches, "--delay", "40", "4")
+                time.sleep(1.0)
+                self.park(shot.get("width", self.args.width), shot.get("height", self.args.height))
             elif kind == "snap":  # debugging: capture an intermediate frame
                 path = Path(self.args.out) / f"_snap-{shot['slug']}-{rest[0]}.png"
                 subprocess.run(["import", "-silent", "-window", window, f"png:{path}"], check=True)

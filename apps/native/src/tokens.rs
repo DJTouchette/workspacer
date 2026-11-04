@@ -504,6 +504,74 @@ impl Tokens {
     };
 }
 
+// area-transcript
+/// Transcript measures: the conversation's own rhythm on top of the shared
+/// scale. Read with `p.tokens.transcript()`; V1 names what the shipped
+/// transcript draws, V2 is the redesign's (compact tool rows, hugging user
+/// bubbles, quieter prose rhythm).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TranscriptTokens {
+    /// User bubbles at most this share of the reading column.
+    pub user_max: f32,
+    /// One tool-call row (v2: CLI-dense, the small control height).
+    pub tool_row: f32,
+    /// Steps a work card shows before folding the rest behind "n earlier steps".
+    pub visible_steps: usize,
+    /// Vertical room around one transcript row (half above, half below).
+    pub row_gap: f32,
+    /// Extra room above a user turn: the turn boundary.
+    pub turn_gap: f32,
+    /// Tallest an opened tool's input/output gets before it scrolls.
+    pub details_max: f32,
+    /// A long dispatch brief's folded height.
+    pub brief_max: f32,
+    /// Prose line height, as a multiple.
+    pub prose_line_height: f32,
+    /// Between Markdown paragraphs, in rems of the reading size.
+    pub paragraph_gap: f32,
+    /// Added to the reading size for Markdown headings h1, h2, h3, h4+.
+    pub heading_steps: [f32; 4],
+    /// Inline image previews.
+    pub image_width: f32,
+    pub image_height: f32,
+}
+
+impl Tokens {
+    /// The transcript's measures for this design.
+    pub const fn transcript(&self) -> TranscriptTokens {
+        match self.design {
+            Design::V1 => TranscriptTokens {
+                user_max: 0.85,
+                tool_row: 32.,
+                visible_steps: 6,
+                row_gap: 8.,
+                turn_gap: 0.,
+                details_max: 520.,
+                brief_max: 132.,
+                prose_line_height: 1.6,
+                paragraph_gap: 0.5,
+                heading_steps: [9., 5., 2., 0.],
+                image_width: 320.,
+                image_height: 180.,
+            },
+            Design::V2 => TranscriptTokens {
+                user_max: 0.7,
+                tool_row: 28.,
+                visible_steps: 4,
+                row_gap: 6.,
+                turn_gap: 16.,
+                details_max: 480.,
+                brief_max: 120.,
+                prose_line_height: 1.6,
+                paragraph_gap: 0.7,
+                heading_steps: [5., 3., 1., 0.],
+                image_width: 360.,
+                image_height: 220.,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,5 +620,15 @@ mod tests {
         assert!(t.layout.chat_width < t.layout.reading_wide);
         assert!(t.layout.reading_wide < t.layout.reading_full);
         assert!(t.layout.status_dot < t.layout.status_box);
+    }
+
+    // area-transcript
+    #[test]
+    fn v2_transcript_is_denser_and_hugs() {
+        let (v1, v2) = (Tokens::V1.transcript(), Tokens::V2.transcript());
+        assert!(v2.user_max <= 0.7 && v2.user_max < v1.user_max);
+        assert_eq!(v2.tool_row, Tokens::V2.layout.control_height_sm);
+        assert!(v2.visible_steps < v1.visible_steps);
+        assert!(v2.heading_steps.windows(2).all(|w| w[0] >= w[1]));
     }
 }

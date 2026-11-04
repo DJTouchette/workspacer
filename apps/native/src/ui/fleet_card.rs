@@ -110,13 +110,13 @@ const DETAIL_INDENT: f32 = 28.;
 const DISCLOSURE_INSET: f32 = 6.;
 
 /// "Structured result — Builder (session:abc):" → "Structured result · Builder".
-fn report_title(title: &str) -> String {
+pub(super) fn report_title(title: &str) -> String {
     let title = title.trim_end_matches(':');
     let title = title.rfind(" (session:").map_or(title, |at| &title[..at]);
     title.replacen(" — ", " · ", 1)
 }
 
-fn short_id(id: &str) -> String {
+pub(super) fn short_id(id: &str) -> String {
     if id.chars().count() > 10 {
         format!("{}…", id.chars().take(8).collect::<String>())
     } else {
@@ -143,7 +143,7 @@ impl Workspace {
 
     /// Opening is offered only for this conversation's own workers (or an
     /// agent with no recorded parent), and rechecked at click time.
-    fn fleet_openable(&self, owner: &str, id: &str) -> bool {
+    pub(super) fn fleet_openable(&self, owner: &str, id: &str) -> bool {
         self.view.connected
             && self.view.sessions.iter().any(|s| {
                 s.id == id && (s.parent_session_id.is_empty() || s.parent_session_id == owner)
@@ -158,6 +158,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        if self.design().is_v2() {
+            return self.render_fleet_card_v2(key, fleet, copy, window, cx);
+        }
         let p = self.palette();
         let owner = self.view.selected.clone().unwrap_or_default();
         let (overline, icon, tone) = kind_face(fleet.kind, p);

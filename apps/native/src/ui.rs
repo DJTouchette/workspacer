@@ -55,6 +55,8 @@ mod updater;
 mod usage;
 mod window_destroy;
 mod work;
+// area-transcript
+mod transcript_v2;
 use chrome::ControlTextStyle;
 pub(crate) use chrome::custom_caption;
 use gpui::{

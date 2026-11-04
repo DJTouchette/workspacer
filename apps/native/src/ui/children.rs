@@ -154,6 +154,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        if self.design().is_v2() {
+            return self.render_children_v2(parent, key, children, window, cx);
+        }
         let p = self.palette();
         let mut body = div()
             .ml_3()
@@ -402,7 +405,7 @@ impl Workspace {
         }
         body
     }
-    fn render_child_transcript(
+    pub(super) fn render_child_transcript(
         &mut self,
         parent: &str,
         agent: &str,
@@ -804,6 +807,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        if self.design().is_v2() {
+            return self.render_overview_v2(session, children, window, cx);
+        }
         let p = self.palette();
         let total = children.len();
         let settled = children.iter().all(ChildAgent::settled);
