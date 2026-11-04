@@ -96,9 +96,7 @@ impl Workspace {
         }
         self.model_choice = value.clone().unwrap_or_default();
         self.context_window = self
-            .catalog_models
-            .iter()
-            .find(|m| m.id == self.model_choice)
+            .catalog_model(&self.model_choice)
             .and_then(|m| m.windows.first())
             .copied();
         if self.model_choice == "__custom" {
@@ -126,10 +124,7 @@ impl Workspace {
     /// The levels the current provider/model accepts and the default it
     /// resolves to, when the catalog reports one.
     pub(super) fn effort_options(&self) -> (Vec<String>, Option<String>) {
-        let model = self
-            .catalog_models
-            .iter()
-            .find(|m| m.id == self.model_choice);
+        let model = self.catalog_model(&self.model_choice);
         let resolved = model.or_else(|| {
             (self.model_choice.is_empty())
                 .then(|| self.catalog_models.iter().find(|m| m.is_default))
@@ -172,34 +167,30 @@ impl Workspace {
 
     // r3-pages
     /// The model picker's rows. Under v2 they match the composer's model
-    /// popover (R3.5): human names, the curated models the catalog does not
-    /// list, and "Custom id…" last.
+    /// popover (R3.5): human names, one row per model (a catalog alias is
+    /// its curated row), the curated models the catalog does not list, and
+    /// "Custom id…" last.
     pub(super) fn picker_models(&self) -> Vec<PickerItem> {
         let mut items = model_items(&self.catalog_models);
         if !self.design().is_v2() {
             return items;
         }
         let custom = items.pop();
-        for item in items.iter_mut().skip(1) {
-            let default = self
-                .catalog_models
-                .iter()
-                .any(|m| m.id == item.id && m.is_default);
-            let name = wks_native::format::model_name(&item.id);
-            item.label = if default {
-                format!("{name} (default)")
-            } else {
-                name
-            };
-        }
+        items.truncate(1);
         items.extend(
             super::model_popover::listed_models(self.provider, &self.catalog_models)
                 .into_iter()
-                .skip(self.catalog_models.len())
-                .map(|m| PickerItem {
-                    label: wks_native::format::model_name(&m.id),
-                    id: m.id,
-                    kind: "model-option",
+                .map(|m| {
+                    let name = wks_native::format::model_name(&m.id);
+                    PickerItem {
+                        label: if m.is_default {
+                            format!("{name} (default)")
+                        } else {
+                            name
+                        },
+                        id: m.id,
+                        kind: "model-option",
+                    }
                 }),
         );
         items.extend(custom.map(|mut c| {
@@ -209,11 +200,38 @@ impl Workspace {
         items
     }
 
+    /// The catalog row behind a model id: that id's own, or under v2 the
+    /// family alias its curated row stands for, so picking "Sonnet 4.6"
+    /// keeps the alias's context windows and effort levels.
+    pub(super) fn catalog_model(&self, id: &str) -> Option<&ModelChoice> {
+        self.catalog_models.iter().find(|m| m.id == id).or_else(|| {
+            if !self.design().is_v2() {
+                return None;
+            }
+            self.catalog_models
+                .iter()
+                .find(|m| super::model_popover::curated_twin(self.provider, &m.id) == Some(id))
+        })
+    }
+
+    /// The picker row that shows the current choice: under v2 a catalog
+    /// alias shows as its curated row (display only; the choice keeps the
+    /// alias until another row is picked).
+    pub(super) fn picker_choice(&self) -> String {
+        if self.design().is_v2()
+            && let Some(twin) =
+                super::model_popover::curated_twin(self.provider, &self.model_choice)
+        {
+            return twin.to_owned();
+        }
+        self.model_choice.clone()
+    }
+
     /// A new launch/provider gets a fresh query and scroll state, not the old
     /// dropdown's filtered list. Replacing the subscription also releases it.
     pub(super) fn reset_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let items = self.picker_models();
-        let choice = self.model_choice.clone();
+        let choice = self.picker_choice();
         let picker = cx.new(|cx| {
             let mut picker =
                 SelectState::new(SearchableVec::new(items), None, window, cx).searchable(true);
@@ -983,10 +1001,12 @@ impl Workspace {
         // Show it as custom rather than silently substituting another model.
         if !self.model_choice.is_empty()
             && self.model_choice != "__custom"
-            && !self
-                .catalog_models
-                .iter()
-                .any(|m| m.id == self.model_choice)
+            && self.catalog_model(&self.model_choice).is_none()
+            && !(self.design().is_v2()
+                && self
+                    .picker_models()
+                    .iter()
+                    .any(|item| item.id == self.model_choice))
         {
             let selected = self.model_choice.clone();
             self.model
@@ -994,9 +1014,10 @@ impl Workspace {
             self.model_choice = "__custom".into();
         }
         let items = self.picker_models();
+        let choice = self.picker_choice();
         self.model_picker.update(cx, |picker, cx| {
             picker.set_items(SearchableVec::new(items), window, cx);
-            picker.set_selected_value(&self.model_choice, window, cx);
+            picker.set_selected_value(&choice, window, cx);
         });
         if self.screen == Screen::Model {
             self.select_exact_model(window, cx);
@@ -1012,12 +1033,15 @@ impl Workspace {
             return;
         }
         let custom = self.model.read(cx).value().trim().to_owned();
-        if custom.is_empty() || !self.catalog_models.iter().any(|m| m.id == custom) {
+        let listed = self.catalog_models.iter().any(|m| m.id == custom)
+            || (self.design().is_v2() && self.picker_models().iter().any(|i| i.id == custom));
+        if custom.is_empty() || !listed {
             return;
         }
         self.model_choice = custom;
+        let choice = self.picker_choice();
         self.model_picker.update(cx, |picker, cx| {
-            picker.set_selected_value(&self.model_choice, window, cx)
+            picker.set_selected_value(&choice, window, cx)
         });
     }
 
@@ -1161,9 +1185,7 @@ impl Workspace {
     pub(super) fn render_context_choice(&self, busy: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let windows = self
-            .catalog_models
-            .iter()
-            .find(|m| m.id == self.model_choice)
+            .catalog_model(&self.model_choice)
             .map(|m| m.windows.clone())
             .unwrap_or_else(|| {
                 // A custom ID's windows are unknown: offer the one chosen and,

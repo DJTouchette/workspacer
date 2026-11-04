@@ -26,17 +26,41 @@ pub(super) struct ListedModel {
     pub(super) window: Option<u64>,
 }
 
-/// The catalog's models, then the known ones it does not already name (by
-/// id or by human name, so an alias that reads the same hides its twin).
-pub(super) fn listed_models(provider: &str, catalog: &[ModelChoice]) -> Vec<ListedModel> {
-    let mut out: Vec<ListedModel> = catalog
+/// The curated model a catalog's bare family alias stands for ("sonnet" →
+/// `claude-sonnet-4-6`), so the alias and its curated twin are one row
+/// (R3.5). `None` for anything but a bare alias of a known family.
+pub(super) fn curated_twin(provider: &str, id: &str) -> Option<&'static str> {
+    let alias = id.trim();
+    if alias.is_empty() || !alias.chars().all(|c| c.is_ascii_lowercase()) {
+        return None;
+    }
+    let infix = format!("-{alias}-");
+    KNOWN_MODELS
         .iter()
-        .map(|m| ListedModel {
-            id: m.id.clone(),
+        .find(|(p, _)| *p == provider)
+        .and_then(|(_, ids)| ids.iter().find(|m| m.contains(&infix)))
+        .copied()
+}
+
+/// The catalog's models, then the known ones it does not already name (by
+/// id or by human name, so an alias that reads the same hides its twin). A
+/// bare family alias becomes its curated row, which keeps the alias's
+/// default flag and context window.
+pub(super) fn listed_models(provider: &str, catalog: &[ModelChoice]) -> Vec<ListedModel> {
+    let mut out: Vec<ListedModel> = Vec::new();
+    for m in catalog {
+        let id = curated_twin(provider, &m.id).unwrap_or(&m.id);
+        if let Some(row) = out.iter_mut().find(|row| row.id == id) {
+            row.is_default |= m.is_default;
+            row.window = row.window.or(m.windows.first().copied());
+            continue;
+        }
+        out.push(ListedModel {
+            id: id.to_owned(),
             is_default: m.is_default,
             window: m.windows.first().copied(),
-        })
-        .collect();
+        });
+    }
     let known = KNOWN_MODELS
         .iter()
         .find(|(p, _)| *p == provider)
@@ -86,6 +110,17 @@ pub(super) fn effective_access(
     choices: &[Permission],
 ) -> Option<Permission> {
     current.or(Some(Permission::Ask).filter(|ask| choices.contains(ask)))
+}
+
+/// The v2 word for an access mode, the same in the popover and on the
+/// Model page.
+pub(super) fn access_word(permission: Permission) -> &'static str {
+    match permission {
+        Permission::Ask => "Ask first",
+        Permission::AcceptEdits => "Can edit",
+        Permission::Plan => "Plan only",
+        Permission::FullAccess => "Full access",
+    }
 }
 
 impl Workspace {
@@ -252,12 +287,7 @@ impl Workspace {
                         // Unreported, the shown default can still be set.
                         let settable = !active || current.is_none();
                         let provider = provider.clone();
-                        let label = match permission {
-                            Permission::Ask => "Ask first",
-                            Permission::AcceptEdits => "Can edit",
-                            Permission::Plan => "Plan only",
-                            Permission::FullAccess => "Full access",
-                        };
+                        let label = access_word(permission);
                         primitives::segment(id.clone(), label, active, &p)
                             .debug_selector(move || id.to_string())
                             .flex_1()
@@ -697,6 +727,29 @@ mod tests {
             ]
         );
         assert!(listed_models("claude", &catalog)[0].is_default);
+    }
+
+    #[test]
+    fn a_catalog_alias_is_its_curated_row_not_a_second_one() {
+        let mut sonnet = choice("sonnet", true);
+        sonnet.windows = vec![200_000, 1_000_000];
+        let catalog = [choice("opus", false), sonnet, choice("fable", false)];
+        let models = listed_models("claude", &catalog);
+        let ids: Vec<_> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "claude-opus-5-5",
+                "claude-sonnet-4-6",
+                "fable",
+                "claude-haiku-4-5"
+            ]
+        );
+        assert!(models[1].is_default);
+        assert_eq!(models[1].window, Some(200_000));
+        assert_eq!(curated_twin("claude", "haiku"), Some("claude-haiku-4-5"));
+        assert_eq!(curated_twin("claude", "claude-sonnet-4-6"), None);
+        assert_eq!(curated_twin("codex", "gpt"), None);
     }
 
     #[test]

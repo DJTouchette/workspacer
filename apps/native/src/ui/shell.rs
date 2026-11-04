@@ -2703,6 +2703,8 @@ impl Workspace {
                     ("Send", m("Ctrl Enter", "⌘ Enter")),
                     ("Files and editor", m("Ctrl Shift E", "⌘ Shift E")),
                     ("Terminal", m("Ctrl `", "⌘ `")),
+                    // r3-integration: Ctrl+O (R3.4) toggles every work block.
+                    ("Expand / collapse all work", m("Ctrl O", "⌘ O")),
                     ("Model popover: choose, apply, close", "↑ ↓, Enter, Esc"),
                     ("Refresh", m("Ctrl R", "⌘ R")),
                     ("Zoom in / out", m("Ctrl +, Ctrl -", "⌘ +, ⌘ -")),

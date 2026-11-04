@@ -2084,9 +2084,7 @@ impl Workspace {
         // A model with a single context window offers no choice: say which
         // it is rather than draw a one-option switch.
         let only_window = self
-            .catalog_models
-            .iter()
-            .find(|m| m.id == self.model_choice)
+            .catalog_model(&self.model_choice)
             .and_then(|m| match m.windows.as_slice() {
                 [only] => Some(*only),
                 _ => None,
@@ -2192,6 +2190,14 @@ impl Workspace {
         };
         let provider = session.provider_id().to_owned();
         let current = Permission::from_wire(&provider, session.access_mode());
+        let v2 = self.design().is_v2();
+        // R3.5 (v2): the effective mode is always shown selected, as in the
+        // model popover; until the agent reports one, that is "Ask first".
+        let shown = if v2 {
+            super::model_popover::effective_access(current, Permission::choices(&provider))
+        } else {
+            current
+        };
         let switching = self.view.busy && self.extras.access_switching;
         // One segmented control, the current mode chosen. The chosen mode is
         // not clickable, so it is never sent again.
@@ -2211,8 +2217,9 @@ impl Workspace {
                     .copied()
                     .map(|permission| {
                         let id = SharedString::from(format!("live-access-{}", permission.label()));
-                        let active = current == Some(permission);
-                        let enabled = !busy && !active;
+                        let active = shown == Some(permission);
+                        // Unreported (v2), the shown default can still be set.
+                        let enabled = !busy && (!active || (v2 && current.is_none()));
                         let provider = provider.clone();
                         chrome::interactive_control(div().id(id.clone()), p, enabled)
                             .debug_selector(move || id.to_string())
@@ -2231,7 +2238,11 @@ impl Workspace {
                                 (false, false) => p.muted,
                             }))
                             .when(active, |d| d.bg(rgb(p.selected)))
-                            .child(permission.label())
+                            .child(if v2 {
+                                super::model_popover::access_word(permission)
+                            } else {
+                                permission.label()
+                            })
                             .when(enabled, |d| {
                                 d.hover(move |s| s.text_color(rgb(p.text)))
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -2262,6 +2273,11 @@ impl Workspace {
                 } else {
                     chrome::Tone::Info
                 },
+            ),
+            (false, None) if v2 && session.permission_mode.is_empty() => (
+                "Not reported yet, so it asks first, the agents' default. Choosing one sets it."
+                    .to_owned(),
+                chrome::Tone::Info,
             ),
             (false, None) if session.permission_mode.is_empty() => (
                 "The provider has not reported this session’s mode yet. Choosing one sets it."

@@ -794,8 +794,8 @@ impl Tokens {
 pub struct FleetTokens {
     /// A tile is never narrower than this: the grid drops a column first.
     pub tile_min: f32,
-    /// Every tile is at least this tall, so a row of them lines up whether
-    /// or not one carries an ask.
+    /// Every tile is at least this tall; past that a tile is as tall as its
+    /// content (rows do not stretch a short tile to an approval's height).
     pub tile_height: f32,
     /// At most this many columns (3×3 at the widest).
     pub columns_max: usize,

@@ -701,6 +701,10 @@ impl Workspace {
                         .w_full()
                         .grid()
                         .grid_cols(cols as u16)
+                        // Each tile is as tall as what it says (at least
+                        // `tile_height`), so a short tile beside an approval
+                        // is not padded out with an empty middle.
+                        .items_start()
                         .gap(px(t.space.lg))
                         .children(
                             tiles

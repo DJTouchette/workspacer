@@ -1164,3 +1164,38 @@ fn model_page_switches_a_running_sessions_access_live(cx: &mut TestAppContext) {
     assert!(matches!(effects(&mut commands).as_slice(),
         [Command::Act { action: Action::SetPermission { mode, .. }, .. }] if mode == "yolo"));
 }
+
+// r3-integration
+#[gpui::test]
+fn model_page_shows_ask_first_until_the_agent_reports_a_mode_under_v2(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(900.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            this.force_design(Some(wks_native::appearance::Design::V2));
+            let mut view = state("a");
+            Arc::make_mut(&mut view.sessions)[0].provider = "claude".into();
+            Arc::make_mut(&mut view.sessions)[0].permission_mode = String::new();
+            this.update_view(Arc::new(view), window, cx);
+            this.open_feature(Screen::Model, window, cx);
+        })
+    });
+    visual.run_until_parked();
+    effects(&mut commands);
+    // The effective default is shown selected and, unreported, can still be
+    // set (as in the model popover).
+    workspace.read_with(&visual, |this, _| {
+        let session = this.selected_session().unwrap();
+        assert_eq!(
+            super::super::model_popover::effective_access(
+                Permission::from_wire("claude", session.access_mode()),
+                Permission::choices("claude"),
+            ),
+            Some(Permission::Ask)
+        );
+    });
+    click(&mut visual, "live-access-Ask to approve");
+    assert!(matches!(effects(&mut commands).as_slice(),
+        [Command::Act { action: wks_native::controller::Action::SetPermission { mode, .. }, .. }] if mode == "default"));
+}
