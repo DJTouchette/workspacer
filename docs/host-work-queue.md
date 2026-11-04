@@ -220,6 +220,78 @@ definite refusal by the peer says `peer <name> refused …`; a timeout or a
 dropped link while the call was in flight says **the outcome is unknown** and
 is never retried (check `hub:<peer>/queue.list` first).
 
+## Project links: the same project on different machines
+
+Paths differ between machines (`/home/dj/code/app` versus `/Users/dj/code/app`),
+so the origin translates the submitter's local cwd into each peer's own path
+before checking eligibility or forwarding.
+
+**Directory identity.** Each directory choice a host advertises (the
+`fleet.dispatchCapabilities` cwds, and `queue.targets[].cwds`) gains:
+
+```json
+{ "path": "/Users/dj/code/app", "name": "app", "remote": "github.com/dj/app", "git": true, "source": "project" }
+```
+
+- `name` is the final path component.
+- `remote` is the normalized `origin` URL, or `null` when there is none.
+  Normalizing lowercases the host, drops the scheme, `user@` and a trailing
+  `.git` or `/`, and turns scp form `git@host:owner/repo` into
+  `host/owner/repo`. So `git@github.com:DJ/app.git` and
+  `https://github.com/DJ/app` are equal. The owner/repo case is kept.
+- Older peers send no `name` or `remote`; the client derives `name` from the
+  path and treats `remote` as unknown.
+
+`queue.targets[].cwds` becomes an array of these objects. Clients must still
+accept a plain string array from older hubs.
+
+**Resolution** of a local cwd `C` for peer `P`, first match wins. A pure
+function returns `{ "path", "via": "exact" | "link" | "remote" | null, "suggestions": [...] }`:
+
+1. `link`: the owner saved a link for (`C`, `P`), and that path is still among
+   P's directory choices. A saved link whose path vanished is reported in
+   `reasons` and resolution continues.
+2. `exact`: `C` itself is among P's choices.
+3. `remote`: `C` has a remote, and exactly one of P's choices has the same
+   normalized remote. That path is used automatically. If two or more match,
+   the result is ambiguous: none is used, and all of them are listed as
+   suggestions.
+4. Otherwise nothing is used. `suggestions` lists P's choices with the same
+   `name`, with `"why": "name"`, plus ambiguous remote matches with
+   `"why": "remote"`. A name match is never used without a saved link.
+
+Placement (`any`) and named-peer submits (`host: "<peer>"`, including jobs)
+resolve the cwd this way. They forward the **translated** path. For spawn the
+translated path goes in `spawn.cwd`, for shell in `shell.cwd`. The original
+local path is recorded as `source.originCwd`. An ineligible peer's `reasons`
+reads `cwd /a/app has no match on mac (suggested: /Users/dj/app — link it in
+Hosts → Projects)`. Local items never translate. A named-peer submit with no
+resolution is refused with that same message. The peer still re-checks that
+the folder exists.
+
+`queue.targets` with a `cwd` returns, per target, `resolvedCwd`,
+`resolvedVia` and `suggestions` alongside `eligible`, `score` and `reasons`.
+
+**Storage.** Links are stored on the origin hub, in `project-links.json`
+next to `queue.json`, written atomically with mode 0600:
+
+```json
+{ "links": [ { "localPath": "/home/dj/code/app", "peer": "mac", "peerPath": "/Users/dj/code/app", "createdAt": 0 } ] }
+```
+
+The key is (`localPath`, `peer`). Paths are stored canonicalized and as given.
+
+**RPCs**
+
+| Method | Auth | Params → Result |
+|---|---|---|
+| `projects.links` | authenticated | `{}` → `{ "links": [...] }` |
+| `projects.linkMatrix` | authenticated | `{}` → `{ "projects": [ { "path", "name", "remote", "peers": [ { "peer", "connected", "resolved": { "path", "via" } \| null, "suggestions": [ { "path", "why" } ], "choices": [ {directory…} ] } ] } ] }` for every local project (configured projects plus live local cwds) against every configured peer. The 10 s per-peer budget applies; an unreachable peer has `connected: false` and an empty `choices`. |
+| `projects.setLink` | owner | `{ "localPath", "peer", "peerPath" }` → `{ "links": [...] }`. `peerPath` must be absolute; it is not required to be among the peer's current choices (the peer may be offline). |
+| `projects.removeLink` | owner | `{ "localPath", "peer" }` → `{ "links": [...] }` |
+
+Event `projects.linksChanged`: `{ "links": [...] }`.
+
 ## Federation
 
 `FORWARD_TOPICS` gains `host.*` and `queue.*`. Forwarded events carry the
