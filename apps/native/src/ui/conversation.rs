@@ -11,6 +11,19 @@ fn notch_height(compact: bool) -> f32 {
     if compact { 18. } else { 26. }
 }
 
+/// The gap above the dock's first card, inside the dock's measured bounds
+/// (so card shadows keep their room).
+pub(super) fn dock_cards_top(compact: bool) -> f32 {
+    if compact { 8. } else { 12. }
+}
+
+/// How far below the dock's measured top its first visible surface sits:
+/// the top padding, then either the card gap after the (usually empty)
+/// pending block or the padding above the composer, which are equal.
+pub(super) fn dock_first_surface(compact: bool) -> f32 {
+    dock_cards_top(compact) + if compact { 4. } else { 8. }
+}
+
 type Point = gpui::Point<gpui::Pixels>;
 
 /// The tab's sides and top as segments from its left foot to its right foot:
@@ -201,15 +214,16 @@ impl Workspace {
                 self.tools_float(narrow) && selected.is_some() && self.viewed_child().is_none(),
                 |d| d.child(self.render_tool_rail(enabled, cx)),
             )
-            .when(!self.follow, |d| {
-                d.child(if self.design().is_v2() {
-                    self.render_jump_latest_v2(cx)
-                } else {
-                    self.render_jump_latest(cx)
-                })
+            .when(!self.follow && !self.design().is_v2(), |d| {
+                d.child(self.render_jump_latest(cx))
             })
             .children(self.render_link_status())
-            .child(self.render_dock(layout, selected.as_ref(), window, cx));
+            .child(self.render_dock(layout, selected.as_ref(), window, cx))
+            // r3-shell: v2's pill reaches into the dock's top padding, so it
+            // paints after the dock.
+            .when(!self.follow && self.design().is_v2(), |d| {
+                d.child(self.render_jump_latest_v2(compact, cx))
+            });
         div()
             .flex_1()
             .min_w_0()
@@ -226,7 +240,8 @@ impl Workspace {
     /// covers a card's own controls at the column's edge.
     fn tools_float(&self, narrow: bool) -> bool {
         if self.design().is_v2() {
-            return self.tools_float_v2(narrow);
+            // r3-shell: the tools live on the header strip, not a rail.
+            return false;
         }
         self.settings.tool_rail && !narrow && self.chat_width >= px(CHAT_WIDTH + 2. * RAIL_ROOM)
     }
@@ -269,6 +284,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        if self.design().is_v2() {
+            return self.render_chat_header_v2(layout, selected, window, cx);
+        }
         let p = self.palette();
         let title = selected
             .map(|s| self.session_title(s))
@@ -460,7 +478,7 @@ impl Workspace {
             .flex_shrink_0()
             .max_h(self.dock_cards_budget(selected, compact, window))
             .overflow_y_scroll()
-            .pt(px(if compact { 8. } else { 12. }))
+            .pt(px(dock_cards_top(compact)))
             .pb(px(match (composer_docked, compact) {
                 (false, _) => 0.,
                 (true, true) => 4.,

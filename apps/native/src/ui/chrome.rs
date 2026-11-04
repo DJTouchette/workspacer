@@ -376,37 +376,23 @@ pub(super) fn project_label(path: &str) -> &str {
 }
 
 impl Workspace {
-    /// Compact floating title pill: status, project / title, model chip and
-    /// icon actions, sized to its content rather than the whole chat width.
-    /// The title capsule and its transient notices as one surface: notices
-    /// grow the capsule downward, like an island, instead of floating loose
-    /// beneath it. With nothing to say it stays the plain capsule. `status`
-    /// is the conversation notice (local first, then the hub's).
-    /// `actions` are the capsule's secondary actions, shown on hover or
-    /// focus (see `island.rs`); a subagent's capsule has none.
-    pub(super) fn render_title_island(
+    /// The title's notices, each with what it says (so the island can move
+    /// it and fade its words out once it goes): the connection, status,
+    /// feature, context, sandbox, refresh and omitted-history rows that are
+    /// not dismissed. `carried`: the capsule carries the context gauge.
+    pub(super) fn title_notice_rows(
         &mut self,
-        bar: Stateful<Div>,
-        actions: Option<Div>,
         status: String,
-        window: &Window,
+        carried: bool,
+        compact: bool,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let p = self.palette();
-        let compact = unzoom(window.viewport_size().height) < 300.;
+    ) -> Vec<(Notice, AnyElement)> {
         let omitted = if self.view.transcript.omitted && !self.view.transcript.has_older {
             OMITTED_NOTICE
         } else {
             ""
         };
         let feature = self.extras.notice.clone();
-        // The context gauge rides the main capsule unless it is too narrow
-        // (then the composer keeps its meter); a subagent's capsule has none.
-        let carried = actions.is_some() && self.title_carries_context();
-        let gauge = self
-            .selected_session()
-            .filter(|_| carried)
-            .and_then(Gauge::of);
         let context = self
             .selected_session()
             .filter(|_| carried)
@@ -623,6 +609,38 @@ impl Workspace {
                 row,
             ));
         }
+        rows
+    }
+
+    /// Compact floating title pill: status, project / title, model chip and
+    /// icon actions, sized to its content rather than the whole chat width.
+    /// The title capsule and its transient notices as one surface: notices
+    /// grow the capsule downward, like an island, instead of floating loose
+    /// beneath it. With nothing to say it stays the plain capsule. `status`
+    /// is the conversation notice (local first, then the hub's).
+    /// `actions` are the capsule's secondary actions, shown on hover or
+    /// focus (see `island.rs`); a subagent's capsule has none.
+    pub(super) fn render_title_island(
+        &mut self,
+        bar: Stateful<Div>,
+        actions: Option<Div>,
+        status: String,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let compact = unzoom(window.viewport_size().height) < 300.;
+        // The context gauge rides the main capsule unless it is too narrow
+        // (then the composer keeps its meter); a subagent's capsule has none.
+        let carried = actions.is_some() && self.title_carries_context();
+        let gauge = self
+            .selected_session()
+            .filter(|_| carried)
+            .and_then(Gauge::of);
+        let rows = self.title_notice_rows(status, carried, compact, cx);
+        let has = |slot: &str| rows.iter().any(|(n, _)| n.slot == slot);
+        let (show_status, show_feature, show_omitted) =
+            (has("status"), has("feature"), has("omitted"));
         let now = std::time::Instant::now();
         let motion = !self.settings.reduce_motion;
         let (notices, mut elements): (Vec<Notice>, Vec<AnyElement>) = rows.into_iter().unzip();

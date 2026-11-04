@@ -129,6 +129,7 @@ enum Act {
     Model,
     Tasks,
     History,
+    Handoff,
     Projects,
     Jobs,
     Machines,
@@ -291,6 +292,11 @@ impl Workspace {
             });
         }
         let selected = self.view.selected.is_some();
+        let handoff = match self.selected_session().map(|s| s.provider.as_str()) {
+            Some("codex") => "Continue with Claude",
+            Some("claude" | "") => "Continue with Codex",
+            _ => "Continue with another agent",
+        };
         let theme_light = matches!(
             self.appearance,
             Appearance::Light | Appearance::CatppuccinLatte
@@ -314,7 +320,7 @@ impl Workspace {
             ),
             (
                 Act::Changes,
-                "Open changes",
+                "Changes",
                 vim.then_some("g d"),
                 IconName::Replace,
                 "diff review git",
@@ -322,7 +328,7 @@ impl Workspace {
             ),
             (
                 Act::Files,
-                "Open files and editor",
+                "Files and editor",
                 Some(m("Ctrl Shift E", "⌘ Shift E")),
                 IconName::FolderOpen,
                 "explorer tree",
@@ -333,7 +339,7 @@ impl Workspace {
                 if self.terminal.open {
                     "Hide terminal"
                 } else {
-                    "Open terminal"
+                    "Terminal"
                 },
                 Some(m("Ctrl `", "⌘ `")),
                 IconName::SquareTerminal,
@@ -342,15 +348,15 @@ impl Workspace {
             ),
             (
                 Act::Tasks,
-                "Show background tasks",
+                "Tasks",
                 None,
                 IconName::LoaderCircle,
-                "jobs running processes logs",
+                "background running processes logs subagents",
                 selected,
             ),
             (
                 Act::Details,
-                "Session details",
+                "Details",
                 vim.then_some("g e"),
                 IconName::Info,
                 "rename end stop",
@@ -358,7 +364,7 @@ impl Workspace {
             ),
             (
                 Act::Model,
-                "Change model, effort or access",
+                "Model, effort and access",
                 vim.then_some("g m"),
                 IconName::Settings2,
                 "permission mode",
@@ -366,11 +372,19 @@ impl Workspace {
             ),
             (
                 Act::History,
-                "Session history",
+                "History",
                 vim.then_some("g h"),
                 IconName::BookOpen,
-                "archived recent past",
+                "archived recent past sessions conversations",
                 true,
+            ),
+            (
+                Act::Handoff,
+                handoff,
+                None,
+                IconName::ArrowRight,
+                "handoff continue switch agent provider",
+                selected && self.supported_session() && self.view.connected && !self.demo,
             ),
             (
                 Act::Projects,
@@ -654,6 +668,7 @@ impl Workspace {
                 Act::Terminal => self.toggle_terminal(window, cx),
                 Act::Tasks => self.toggle_tasks(window, cx),
                 Act::Details => self.open_feature(Screen::Session, window, cx),
+                Act::Handoff => self.open_feature(Screen::Handoff, window, cx),
                 Act::Model => {
                     self.screen = Screen::Conversation;
                     self.new_session = false;
