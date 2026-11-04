@@ -344,7 +344,7 @@ fn outcome_notice(outcome: &serde_json::Value) -> String {
 
 /// Unsaved-edit notices mention "saved", so the shared classifier would call
 /// them successes.
-fn update_tone(notice: &str) -> chrome::Tone {
+pub(super) fn update_tone(notice: &str) -> chrome::Tone {
     if notice.starts_with("Updated to ") {
         chrome::Tone::Success
     } else if notice.contains("failed") || notice.contains("could not") {

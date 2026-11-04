@@ -39,6 +39,9 @@ FIXTURES = {
 
 SETTINGS_SECTIONS = ["Appearance", "Typography", "Workspace", "Remote",
                      "Agents", "Chat", "Keyboard", "About"]
+# area-pages: design v2's rail.
+SETTINGS_SECTIONS_V2 = ["Appearance", "Typography", "Workspace", "Remote",
+                        "Agents", "Keyboard", "About"]
 
 
 def nav(letter):
@@ -123,6 +126,10 @@ def shots():
     add("settings-remote-light", "Settings: Remote, Light theme", nav("s") + [("settings_section", 3)],
         theme="light")
     add("projects-nord", "Projects, Nord", nav("p"), theme="nord")
+    add("settings-about-offline", "Settings: About after an offline update check",
+        nav("s") + [("settings_section", 7), ("sleep", 8)])
+    add("new-session-nord", "New session form, Nord", [("key", "Escape"), ("key", "ctrl+n"), ("sleep", 2)],
+        theme="nord")
     return s
 
 
@@ -217,7 +224,15 @@ class Rig:
                     time.sleep(0.8)
                     self.park(shot["width"], shot["height"])
             elif kind == "settings_section":
-                x, y = LANDMARKS["settings_section"](shot, rest[0])
+                settings = dict(shot.get("settings", {}))
+                settings.update(self.args.settings)
+                if settings.get("design_v2") is True:
+                    # area-pages: v2's rail folds Chat into Appearance.
+                    name = SETTINGS_SECTIONS[rest[0]]
+                    index = SETTINGS_SECTIONS_V2.index(name if name in SETTINGS_SECTIONS_V2 else "Appearance")
+                    x, y = LANDMARKS["settings_section_v2"](shot, index)
+                else:
+                    x, y = LANDMARKS["settings_section"](shot, rest[0])
                 self.xdo("mousemove", "--window", window, self.px(x), self.px(y))
                 self.xdo("click", "1")
                 time.sleep(1.0)
@@ -318,6 +333,8 @@ LANDMARKS = {
     "JOB_OVERFLOW": lambda shot: (1366, 420),       # Jobs: first scheduled job's "..."
     # Settings category rail; rows are ~37.7 px apart starting at Appearance.
     "settings_section": lambda shot, index: (570, 114 + round(index * 37.7)),
+    # area-pages: the design v2 rail (Chat folds into Appearance).
+    "settings_section_v2": lambda shot, index: (476, 158 + round(index * 34.4)),
 }
 
 

@@ -642,6 +642,13 @@ impl Workspace {
         let icon = project
             .and_then(|p| p.icon_file.as_ref())
             .and_then(|file| self.projects.icons.get(file).cloned().flatten());
+        if self.design().is_v2() && icon.is_none() {
+            // area-pages: v2 marks are monogram tiles, never emoji.
+            let name = project
+                .map(|p| p.title().to_owned())
+                .unwrap_or_else(|| projects::basename(path).to_owned());
+            return primitives::avatar_tile_sized(&name, size, &p);
+        }
         if let Some(image) = icon {
             return div()
                 .size(px(size))
@@ -1718,6 +1725,15 @@ pub(super) fn registry_error_notice(error: &str) -> String {
 }
 
 pub(super) fn section_label(label: &'static str, p: Palette) -> Div {
+    if p.tokens.design.is_v2() {
+        // area-pages: a card's title, sentence case.
+        let t = p.tokens;
+        return div()
+            .text_size(px(t.text.subheading))
+            .font_weight(FontWeight(t.weight.semibold))
+            .text_color(rgb(p.text))
+            .child(label);
+    }
     div()
         .text_size(px(chrome::scale::CAPTION))
         .font_weight(FontWeight::SEMIBOLD)

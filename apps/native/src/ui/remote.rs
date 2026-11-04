@@ -69,6 +69,9 @@ impl Workspace {
 
     /// Tailscale status and the HTTPS switch.
     pub(super) fn render_remote_sharing(&self, cx: &mut Context<Self>) -> Div {
+        if self.design().is_v2() && self.remote_unavailable() {
+            return self.remote_unavailable_v2();
+        }
         let p = self.palette();
         let busy = self.remote_busy();
         let state = self.remote_state();

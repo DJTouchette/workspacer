@@ -233,6 +233,13 @@ pub struct Layout {
     pub menu_width: f32,
     /// Dialog width.
     pub dialog_width: f32,
+    // area-pages
+    /// Settings: the category rail's width and the whole page's max width
+    /// (rail plus a content column as wide as `page_width`).
+    pub settings_rail: f32,
+    pub settings_width: f32,
+    /// Settings → Appearance: a theme preview tile's minimum width.
+    pub theme_tile: f32,
 }
 
 /// Durations of looping indicators, in milliseconds.
@@ -380,6 +387,10 @@ impl Tokens {
             row_height: 30.,
             menu_width: 240.,
             dialog_width: 440.,
+            // area-pages: `settings.rs` (rail 200, page 920, tiles 148).
+            settings_rail: 200.,
+            settings_width: 920.,
+            theme_tile: 148.,
         },
         motion: Motion { pulse_ms: 1600. },
     };
@@ -499,6 +510,10 @@ impl Tokens {
             row_height: 32.,
             menu_width: 240.,
             dialog_width: 440.,
+            // area-pages
+            settings_rail: 192.,
+            settings_width: 1104.,
+            theme_tile: 160.,
         },
         motion: Motion { pulse_ms: 1400. },
     };
