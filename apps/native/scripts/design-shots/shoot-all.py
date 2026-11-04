@@ -147,11 +147,11 @@ def shots():
         theme="nord")
     # area-transcript: the transcript itself, further back and at each reading width.
     add("transcript-earlier", "Transcript further back: tool rows, work cards, user turns",
-        [("wheel", 10, 1000, 400)])
+        [("wheel", 3, 1000, 400)])
     add("transcript-start", "Transcript start: the first turns",
         [("key", "Escape"), ("keys", *(["ctrl+u"] * 12))])
     add("transcript-fleet", "Transcript: supervisor and fleet wakes, subagents",
-        [("wheel", 7, 1000, 400)])
+        [("wheel", 2, 1000, 400)])
     add("transcript-wide", "Rich conversation at the wide reading width",
         settings={"reading_width": "wide"})
     add("transcript-full", "Earlier transcript at the full reading width",

@@ -222,6 +222,8 @@ pub(super) struct EventRow {
     pub failed: bool,
     /// Regular-weight verb (child rows, whose title is not a verb).
     pub quiet: bool,
+    /// Controls after the status (Check / Stop, Review).
+    pub trailing: Vec<AnyElement>,
 }
 
 impl EventRow {
@@ -242,6 +244,7 @@ impl EventRow {
             disclosure: None,
             failed: false,
             quiet: false,
+            trailing: Vec::new(),
         }
     }
 }
@@ -359,12 +362,16 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
             ),
             EventEnd::Badge(badge) => d.child(badge.render(&p)),
         })
-        .when_some(row.disclosure, |d, open| {
-            d.child(
-                div()
-                    .flex_shrink_0()
-                    .text_color(rgb(p.roles.text_tertiary))
-                    .when(!open, |d| {
+        .children(row.trailing)
+        // The chevron's slot is always kept, so every row's right edge
+        // (durations, states) lines up down the log.
+        .child(
+            div()
+                .w(px(t.icon.xs))
+                .flex_shrink_0()
+                .text_color(rgb(p.roles.text_tertiary))
+                .when_some(row.disclosure, |d, open| {
+                    d.when(!open, |d| {
                         d.opacity(0.).group_hover("event-row", |s| s.opacity(1.))
                     })
                     .child(
@@ -374,9 +381,9 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
                             IconName::ChevronRight
                         })
                         .size(px(t.icon.xs)),
-                    ),
-            )
-        })
+                    )
+                }),
+        )
 }
 
 /// The hairline guide that holds a group's rows under its header, from the
@@ -980,7 +987,7 @@ impl Workspace {
             EventEnd::Badge(StatusBadge::new(StatusKind::Failed))
         } else if running {
             EventEnd::Badge(StatusBadge::new(StatusKind::Working).label("Running"))
-        } else if let Some(badge) = children_badge(&views) {
+        } else if let Some(badge) = (views.len() > 1).then(|| children_badge(&views)).flatten() {
             EventEnd::Badge(badge)
         } else {
             duration.map_or(EventEnd::Nothing, EventEnd::Quiet)
@@ -1322,6 +1329,23 @@ impl Workspace {
             event.target = Some(file.path.clone().into());
             event.mono = Some(mono.clone());
         }
+        event.trailing.push(
+            primitives::button(
+                "turn-changes",
+                "Review",
+                Some(IconName::ArrowRight),
+                ButtonVariant::Ghost,
+                ButtonSize::Small,
+                connected,
+                &p,
+            )
+            .when(connected, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| {
+                    this.open_feature(Screen::Changes, window, cx)
+                }))
+            })
+            .into_any_element(),
+        );
         let header = event_row(event, &p)
             .tooltip(primitives::tooltip_view(
                 if estimated {
@@ -1332,22 +1356,6 @@ impl Workspace {
                 None,
                 &p,
             ))
-            .child(
-                primitives::button(
-                    "turn-changes",
-                    "Review",
-                    Some(IconName::ArrowRight),
-                    ButtonVariant::Ghost,
-                    ButtonSize::Small,
-                    connected,
-                    &p,
-                )
-                .when(connected, |d| {
-                    d.on_click(cx.listener(|this, _, window, cx| {
-                        this.open_feature(Screen::Changes, window, cx)
-                    }))
-                }),
-            )
             .cursor_default();
         let shown = files.len().min(tt.visible_steps);
         div()
@@ -2202,7 +2210,6 @@ impl Workspace {
             event.quiet = true;
             event.target = (!context.is_empty()).then(|| context.into());
             event.summary = last_tool.map(Into::into);
-            event.disclosure = enabled.then_some(false);
             event.end = match view.kind {
                 _ if view.stalled => EventEnd::Badge(StatusBadge::new(view.kind).label(view.word.clone())),
                 StatusKind::Failed | StatusKind::NeedsYou => {
@@ -2291,6 +2298,7 @@ impl Workspace {
                         )
                     })
             });
+            event.trailing.extend(actions.map(IntoElement::into_any_element));
             let row = chrome::interactive_control(event_row(event, &p), p, enabled)
                 .px(px(t.space.sm - t.stroke.focus))
                 .debug_selector(move || {
@@ -2308,7 +2316,6 @@ impl Workspace {
                         "provider-child-icon".into()
                     }
                 }))
-                .children(actions)
                 .when(enabled, |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| open(this, cx)))
                 })
