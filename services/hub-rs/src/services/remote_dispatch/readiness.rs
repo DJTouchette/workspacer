@@ -104,13 +104,16 @@ async fn login(binary: &str, provider: &str) -> Option<bool> {
     login_from_output(provider, &bytes, output.success)
 }
 async fn git(repo: &str, args: &[&str]) -> Result<Output> {
+    git_within(repo, args, Duration::from_secs(15)).await
+}
+async fn git_within(repo: &str, args: &[&str], timeout: Duration) -> Result<Output> {
     let mut command = tokio::process::Command::new("git");
     command.current_dir(repo).arg("--no-replace-objects");
     for option in GIT_NO_EXEC {
         command.args(["-c", option]);
     }
     command.args(["-c", "core.hooksPath=/dev/null"]).args(args);
-    capture(&mut command, Duration::from_secs(15), 1024 * 1024).await
+    capture(&mut command, timeout, 1024 * 1024).await
 }
 async fn git_text(repo: &str, args: &[&str]) -> Result<String> {
     let output = git(repo, args).await?;
@@ -118,6 +121,43 @@ async fn git_text(repo: &str, args: &[&str]) -> Result<String> {
         bail!("execution-host Git operation failed")
     };
     Ok(String::from_utf8(output.stdout)?.trim().into())
+}
+/// Budget for one `origin` probe: a local config read, never the network.
+const REMOTE_PROBE: Duration = Duration::from_secs(3);
+/// The normalized `origin` URL of a repository root, or `None` when it has
+/// none, Git fails, or the probe overruns. Bounded; never an error.
+pub async fn origin_remote(path: &str) -> Option<String> {
+    let output = git_within(
+        path,
+        &["config", "--get", "remote.origin.url"],
+        REMOTE_PROBE,
+    )
+    .await
+    .ok()
+    .filter(|output| output.success)?;
+    super::normalize_remote(std::str::from_utf8(&output.stdout).ok()?)
+}
+/// Fill `remote` for every repository root (`git: true`) concurrently. A
+/// directory inside a repository is not that repository's identity (it would
+/// make its root ambiguous), so only roots report one.
+pub async fn with_remotes(mut directories: Vec<Directory>) -> Vec<Directory> {
+    let remotes = futures_util::future::join_all(directories.iter().map(|d| async move {
+        if d.git {
+            origin_remote(&d.path).await
+        } else {
+            None
+        }
+    }))
+    .await;
+    for (directory, remote) in directories.iter_mut().zip(remotes) {
+        directory.remote = remote;
+    }
+    directories
+}
+/// This host's directory choices with their identities: configured
+/// projects and live local session cwds, each with `name` and `remote`.
+pub async fn describe_directories(config: &Value, sessions: &Value) -> Result<Vec<Directory>> {
+    Ok(with_remotes(directory_choices(config, sessions)?).await)
 }
 fn directory_choices(config: &Value, sessions: &Value) -> Result<Vec<Directory>> {
     let rows = sessions
@@ -149,10 +189,15 @@ fn directory_choices(config: &Value, sessions: &Value) -> Result<Vec<Directory>>
     }
     Ok(directories
         .into_iter()
-        .map(|(path, source)| Directory {
-            git: path.join(".git").exists(),
-            path: path.to_string_lossy().into_owned(),
-            source,
+        .map(|(path, source)| {
+            let path = path.to_string_lossy().into_owned();
+            Directory {
+                git: Path::new(&path).join(".git").exists(),
+                name: Directory::name_of(&path),
+                remote: None,
+                path,
+                source,
+            }
         })
         .collect())
 }
@@ -190,10 +235,10 @@ impl Execution for Native {
                         }
                         .into(),
                     }
-                }))
-                .await;
-            let sessions = self.sessions().await?;
-            let cwds = directory_choices(&config, &sessions)?;
+                }));
+            // Login probes and the directory/origin probes run side by side.
+            let (providers, cwds) = futures_util::future::join(providers, self.directories()).await;
+            let cwds = cwds?;
             Ok(Capabilities {
                 protocol: PROTOCOL,
                 exact_model: true,
@@ -203,6 +248,13 @@ impl Execution for Native {
                 cwds,
                 unsupported_reason: None,
             })
+        })
+    }
+    fn directories(&self) -> Operation<'_, Vec<Directory>> {
+        Box::pin(async move {
+            let config = self.config.get();
+            let sessions = self.sessions().await?;
+            describe_directories(&config, &sessions).await
         })
     }
     fn canonical_directory<'a>(&'a self, cwd: &'a str) -> Operation<'a, String> {
@@ -379,6 +431,59 @@ mod readiness_tests {
             );
         }
     }
+    #[tokio::test]
+    async fn repository_roots_advertise_their_normalized_origin() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temp.path()).unwrap();
+        let init = |name: &str, origin: Option<&str>| {
+            let dir = root.join(name);
+            std::fs::create_dir(&dir).unwrap();
+            let run = |args: &[&str]| {
+                assert!(
+                    std::process::Command::new("git")
+                        .current_dir(&dir)
+                        .args(args)
+                        .output()
+                        .unwrap()
+                        .status
+                        .success()
+                )
+            };
+            run(&["init", "-q"]);
+            if let Some(origin) = origin {
+                run(&["remote", "add", "origin", origin]);
+            }
+            dir
+        };
+        let app = init("app", Some("https://dj:secret@GitHub.com/DJ/app.git/"));
+        init("bare-origin", None);
+        std::fs::create_dir(app.join("sub")).unwrap();
+        std::fs::create_dir(root.join("plain")).unwrap();
+        let config = json!({"projects":{
+            (app.to_str().unwrap()):{},
+            (root.join("bare-origin").to_str().unwrap()):{},
+            (app.join("sub").to_str().unwrap()):{},
+            (root.join("plain").to_str().unwrap()):{},
+        }});
+        let described = describe_directories(&config, &json!([])).await.unwrap();
+        let by_name = |name: &str| described.iter().find(|d| d.name == name).unwrap();
+        assert_eq!(by_name("app").remote.as_deref(), Some("github.com/DJ/app"));
+        assert!(by_name("app").git);
+        assert_eq!(by_name("bare-origin").remote, None);
+        // Inside a repository is not the repository: no identity.
+        assert_eq!(by_name("sub").remote, None);
+        assert_eq!(by_name("plain").remote, None);
+        assert_eq!(
+            origin_remote(root.join("missing").to_str().unwrap()).await,
+            None
+        );
+        // The credential in the configured URL never leaves the host.
+        assert!(
+            !serde_json::to_string(&described)
+                .unwrap()
+                .contains("secret")
+        );
+    }
     #[test]
     fn cwd_menu_excludes_shells_stopped_and_remote_rows_and_keeps_project_precedence() {
         let temp = tempfile::tempdir().unwrap();
@@ -404,6 +509,8 @@ mod readiness_tests {
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0].path, root.join("active").to_str().unwrap());
         assert_eq!(selected[0].source, "active");
+        assert_eq!(selected[0].name, "active");
+        assert_eq!(selected[0].remote, None);
         assert!(!selected[0].git);
         assert_eq!(selected[1].source, "project");
         assert!(selected[1].git);

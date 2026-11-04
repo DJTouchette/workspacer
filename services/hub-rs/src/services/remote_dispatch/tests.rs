@@ -97,6 +97,7 @@ impl Execution for FakeExecution {
                     path: "Q:\\remote-only\\repo".into(),
                     source: "fixture".into(),
                     git: true,
+                    ..Default::default()
                 }],
                 unsupported_reason: None,
             })

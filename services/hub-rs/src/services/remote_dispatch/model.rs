@@ -151,11 +151,87 @@ pub struct Provider {
     pub authenticated: Option<bool>,
     pub note: String,
 }
-#[derive(Clone, Serialize, Deserialize, Debug)]
+/// One directory choice a host advertises (`fleet.dispatchCapabilities`
+/// cwds, `queue.targets[].cwds`). `name` and `remote` identify the same
+/// project across machines (docs/host-work-queue.md, "Project links"); older
+/// peers send neither, so both default.
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
 pub struct Directory {
     pub path: String,
+    /// The final path component. Empty from an older peer: use
+    /// [`Directory::display_name`].
+    #[serde(default)]
+    pub name: String,
+    /// The normalized `origin` URL ([`normalize_remote`]); `None` when there
+    /// is none or the host could not tell (older peers).
+    #[serde(default)]
+    pub remote: Option<String>,
     pub source: String,
     pub git: bool,
+}
+impl Directory {
+    /// The final component of `path`, with either separator (a peer may run
+    /// another OS than this hub).
+    pub fn name_of(path: &str) -> String {
+        path.trim_end_matches(['/', '\\'])
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("")
+            .to_owned()
+    }
+    /// `name`, or the final path component when an older peer sent none.
+    pub fn display_name(&self) -> String {
+        if self.name.is_empty() {
+            Self::name_of(&self.path)
+        } else {
+            self.name.clone()
+        }
+    }
+}
+/// Normalize a Git remote URL into a machine-independent project identity:
+/// the host lowercased, the scheme, `user@` (and any password) dropped, a
+/// trailing `.git` or `/` dropped, and scp form `git@host:owner/repo` turned
+/// into `host/owner/repo`. A port is kept. Owner/repo case is kept. Local
+/// remotes (`file://`, plain paths) name a place on one machine, not a
+/// project, so they have no identity: `None`.
+pub fn normalize_remote(url: &str) -> Option<String> {
+    let url = url.trim();
+    if url.is_empty() || url.chars().any(char::is_control) {
+        return None;
+    }
+    let (authority, path) = if let Some((scheme, rest)) = url.split_once("://") {
+        if scheme.is_empty() || scheme.eq_ignore_ascii_case("file") {
+            return None;
+        }
+        rest.split_once('/').unwrap_or((rest, ""))
+    } else {
+        // scp form: `[user@]host:path`, where nothing before the first `:`
+        // is a path separator. A single letter is a Windows drive (`C:\\x`).
+        let (authority, path) = url.split_once(':')?;
+        let host = authority.rsplit('@').next().unwrap_or("");
+        if authority.contains(['/', '\\']) || host.len() <= 1 {
+            return None;
+        }
+        (authority, path)
+    };
+    let host = authority
+        .rsplit('@')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if host.is_empty() || host.starts_with(':') {
+        return None;
+    }
+    let path = path.trim_matches('/');
+    let path = path
+        .strip_suffix(".git")
+        .unwrap_or(path)
+        .trim_end_matches('/');
+    let path: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    if path.is_empty() {
+        return None;
+    }
+    Some(format!("{host}/{}", path.join("/")))
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -235,4 +311,110 @@ pub struct OriginRecord {
     pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_schema: Option<Value>,
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn remotes_normalize_to_one_identity_across_spellings() {
+        let same = "github.com/DJ/app";
+        for url in [
+            "git@github.com:DJ/app.git",
+            "git@github.com:DJ/app",
+            "git@GitHub.com:DJ/app.git/",
+            "github.com:DJ/app.git",
+            "https://github.com/DJ/app",
+            "https://github.com/DJ/app.git",
+            "https://github.com/DJ/app/",
+            "https://GITHUB.COM/DJ/app.git/",
+            "http://github.com/DJ/app",
+            "https://dj@github.com/DJ/app.git",
+            "https://dj:secret-token@github.com/DJ/app.git",
+            "ssh://git@github.com/DJ/app.git",
+            "ssh://github.com/DJ/app",
+            "git://github.com/DJ/app.git",
+            "git+ssh://git@github.com/DJ/app.git",
+            "  https://github.com//DJ/app.git  ",
+        ] {
+            assert_eq!(normalize_remote(url).as_deref(), Some(same), "{url}");
+        }
+    }
+
+    #[test]
+    fn owner_case_ports_and_nesting_are_kept() {
+        for (url, want) in [
+            ("git@github.com:dj/app.git", "github.com/dj/app"),
+            (
+                "ssh://git@git.corp:2222/team/app.git",
+                "git.corp:2222/team/app",
+            ),
+            (
+                "https://git.corp:8443/Group/Sub/app.git",
+                "git.corp:8443/Group/Sub/app",
+            ),
+            ("ssh://git@[::1]:22/team/app.git", "[::1]:22/team/app"),
+            (
+                "https://dev.azure.com/org/proj/_git/app",
+                "dev.azure.com/org/proj/_git/app",
+            ),
+        ] {
+            assert_eq!(normalize_remote(url).as_deref(), Some(want), "{url}");
+        }
+        assert_ne!(
+            normalize_remote("git@github.com:DJ/app.git"),
+            normalize_remote("git@github.com:dj/app.git")
+        );
+    }
+
+    #[test]
+    fn local_and_malformed_remotes_have_no_identity() {
+        for url in [
+            "",
+            "   ",
+            "/srv/git/app.git",
+            "../app",
+            "file:///srv/git/app.git",
+            "FILE:///srv/git/app.git",
+            "C:\\repos\\app",
+            "C:/repos/app",
+            "https://github.com",
+            "https://github.com/",
+            "https:///DJ/app",
+            "git@github.com:",
+            "git@github.com:.git",
+            "://github.com/DJ/app",
+            "https://github.com/DJ/app\n.git",
+            "dir/sub:thing",
+        ] {
+            assert_eq!(normalize_remote(url), None, "{url:?}");
+        }
+    }
+
+    #[test]
+    fn directories_parse_from_older_peers_and_name_themselves() {
+        let old: Directory = serde_json::from_value(
+            json!({"path":"/Users/dj/code/app","source":"project","git":true}),
+        )
+        .unwrap();
+        assert_eq!(old.name, "");
+        assert_eq!(old.remote, None);
+        assert_eq!(old.display_name(), "app");
+        let new = serde_json::to_value(Directory {
+            path: "/a/app".into(),
+            name: "app".into(),
+            remote: None,
+            source: "active".into(),
+            git: false,
+        })
+        .unwrap();
+        assert_eq!(
+            new,
+            json!({"path":"/a/app","name":"app","remote":null,"source":"active","git":false})
+        );
+        assert_eq!(Directory::name_of("C:\\Users\\dj\\app\\"), "app");
+        assert_eq!(Directory::name_of("/home/dj/app/"), "app");
+        assert_eq!(Directory::name_of("/"), "");
+    }
 }

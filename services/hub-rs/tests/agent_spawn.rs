@@ -541,6 +541,7 @@ impl workspacer_hub::services::remote_dispatch::Execution for RemoteExecution {
                     path: self.cwd.clone(),
                     source: "fixture".into(),
                     git: true,
+                    ..Default::default()
                 }],
                 unsupported_reason: None,
             })

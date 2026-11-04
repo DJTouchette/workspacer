@@ -94,11 +94,13 @@ impl Execution for Fixture {
                         path: self.repo.to_string_lossy().into_owned(),
                         source: "project".into(),
                         git: true,
+                        ..Default::default()
                     },
                     Directory {
                         path: self.non_repo.to_string_lossy().into_owned(),
                         source: "project".into(),
                         git: false,
+                        ..Default::default()
                     },
                 ],
                 unsupported_reason: None,

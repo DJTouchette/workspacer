@@ -49,6 +49,11 @@ impl RemoteAdmission {
 }
 pub trait Execution: Send + Sync + 'static {
     fn capabilities(&self) -> Operation<'_, Capabilities>;
+    /// Just the directory choices (with `name`/`remote`), without provider
+    /// login probes. Defaults to the `capabilities` cwds.
+    fn directories(&self) -> Operation<'_, Vec<super::Directory>> {
+        Box::pin(async move { Ok(self.capabilities().await?.cwds) })
+    }
     fn canonical_directory<'a>(&'a self, cwd: &'a str) -> Operation<'a, String>;
     fn allocate<'a>(&'a self, repo: &'a str, cwd: &'a str, branch: &'a str) -> Operation<'a, ()>;
     /// Must refuse active or modified worktrees. Only generated unclaimed

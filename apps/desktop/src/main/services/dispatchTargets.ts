@@ -27,6 +27,11 @@ export interface DispatchCwdChoice {
   path: string;
   source: string;
   git: boolean;
+  /** Final path component. Absent from older hubs: derive it from `path`. */
+  name?: string;
+  /** Normalized `origin` URL (`github.com/owner/repo`); null when there is
+   *  none, absent from older hubs (docs/host-work-queue.md, Project links). */
+  remote?: string | null;
 }
 
 export interface DispatchTarget {
