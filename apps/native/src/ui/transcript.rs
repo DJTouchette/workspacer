@@ -707,7 +707,7 @@ impl Workspace {
         let v2 = self.design().is_v2();
         let v2_you = v2 && row.role == "You";
         // v2 gives your turn its controls beneath the bubble, not a header.
-        let receipt_v2 = receipt.clone().filter(|_| v2_you);
+        let receipt_v2 = receipt.filter(|_| v2_you);
         let (actions, actions_v2) = if v2_you {
             (Vec::new(), actions)
         } else {
