@@ -366,6 +366,34 @@ impl Workspace {
                 })
                 .child(label)
         };
+        // r3-pages: v2 uses the shared segmented control.
+        let ways_v2 = self.design().is_v2().then(|| {
+            let way = |id: &'static str, label: String, value: bool| {
+                super::primitives::segment(id, label, fresh == value, &p)
+                    .debug_selector(move || id.into())
+                    .when(!busy && fresh != value, |d| {
+                        d.on_click(cx.listener(move |this, _, window, cx| {
+                            if let Some(source) = this.selected_session().cloned() {
+                                this.seed_handoff(&source, value, window, cx);
+                            }
+                            cx.notify();
+                        }))
+                    })
+            };
+            div().flex().child(
+                super::primitives::segmented(&p)
+                    .child(way(
+                        "handoff-way-other",
+                        format!("Continue with {}", handoff::provider_name(other)),
+                        false,
+                    ))
+                    .child(way(
+                        "handoff-way-fresh",
+                        format!("Start a fresh {source_name}"),
+                        true,
+                    )),
+            )
+        });
         let ways = div().flex().child(
             div()
                 .p(px(2.))
@@ -385,6 +413,14 @@ impl Workspace {
                     true,
                 )),
         );
+        let ways = ways_v2.unwrap_or(ways);
+        // r3-pages (R3.5): v2 says where agents run, not "the hub".
+        let v2 = self.design().is_v2();
+        let host = if v2 {
+            "the machine that runs your agents"
+        } else {
+            "the hub’s machine"
+        };
 
         let detection = match (checking, found) {
             (true, _) => chrome::notice_line(
@@ -393,17 +429,23 @@ impl Workspace {
                 p,
             ),
             (_, Some(true)) => chrome::notice_line(
-                format!("{name} is installed on the hub’s machine."),
+                format!("{name} is installed on {host}."),
                 chrome::Tone::Success,
                 p,
             ),
             (_, Some(false)) => chrome::notice_line(
-                format!("{name} isn’t installed on the hub’s machine. Set it up to continue."),
+                format!("{name} isn’t installed on {host}. Set it up to continue."),
                 chrome::Tone::Warning,
                 p,
             ),
             (_, None) => chrome::notice_line(
-                format!("Couldn’t confirm {name} is installed; the hub refuses the launch if not."),
+                if v2 {
+                    format!("Couldn’t confirm {name} is installed; the launch fails if it isn’t.")
+                } else {
+                    format!(
+                        "Couldn’t confirm {name} is installed; the hub refuses the launch if not."
+                    )
+                },
                 chrome::Tone::Info,
                 p,
             ),
@@ -524,7 +566,11 @@ impl Workspace {
                             ),
                     )
             };
-        let fallback = "If that fails, the hub uses the quick summary and says so.";
+        let fallback = if self.design().is_v2() {
+            "If that fails, Workspacer uses the quick summary and says so."
+        } else {
+            "If that fails, the hub uses the quick summary and says so."
+        };
         let brief_card = self
             .page_card()
             .p_4()
@@ -565,13 +611,16 @@ impl Workspace {
                     .child(choice(
                         "handoff-brief-quick",
                         "Quick summary".into(),
-                        if stopped {
-                            "The hub summarizes this agent’s retained conversation right away."
-                                .into()
-                        } else {
-                            "The hub summarizes the retained conversation right away. Nothing is \
-                             sent to this agent."
-                                .into()
+                        {
+                            let who = if self.design().is_v2() { "Workspacer" } else { "The hub" };
+                            if stopped {
+                                format!("{who} summarizes this agent’s retained conversation right away.")
+                            } else {
+                                format!(
+                                    "{who} summarizes the retained conversation right away. Nothing is \
+                                     sent to this agent."
+                                )
+                            }
                         },
                         Brief::Mechanical,
                         !busy,

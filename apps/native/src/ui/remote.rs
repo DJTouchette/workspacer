@@ -89,7 +89,11 @@ impl Workspace {
                 .gap_1()
                 .child(self.note(remote.error.clone(), p.warning))
                 .child(self.note(
-                    "Remote sharing is managed by the machine that owns this hub.",
+                    if self.design().is_v2() {
+                        "Remote sharing is managed on the machine that runs your agents."
+                    } else {
+                        "Remote sharing is managed by the machine that owns this hub."
+                    },
                     p.muted,
                 )),
             Some(remote) if !remote.available => div()
@@ -251,7 +255,11 @@ impl Workspace {
         }
         if !remote.can_manage_tokens {
             return div().child(self.note(
-                "Only the machine that owns this hub can create pairing links.",
+                if self.design().is_v2() {
+                    "Only the machine that runs your agents can create pairing links."
+                } else {
+                    "Only the machine that owns this hub can create pairing links."
+                },
                 p.muted,
             ));
         }

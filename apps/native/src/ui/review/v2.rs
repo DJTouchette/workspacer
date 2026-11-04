@@ -35,6 +35,8 @@ pub(in crate::ui) struct StackUi {
     collapsed: BTreeSet<String>,
     collapsed_rev: u64,
     menu: Option<ReviewMenu>,
+    /// r3-pages: the dock header's "…" menu (changes, refresh, full page).
+    header_menu: bool,
     /// A discard waiting for its confirmation dialog.
     confirm: Option<DiscardTarget>,
     /// A drag of the dock's leading edge: pointer x and width at start.
@@ -494,12 +496,15 @@ fn file_header(
         });
     let stage = data.stage.clone().map(|(stage, action)| {
         let view = view.clone();
-        primitives::button(
+        primitives::icon_button(
             ("stack-stage", f),
+            if stage {
+                IconName::Plus
+            } else {
+                IconName::Minus
+            },
             if stage { "Stage" } else { "Unstage" },
-            None,
             ButtonVariant::Tertiary,
-            ButtonSize::Small,
             !busy,
             p,
         )
@@ -563,11 +568,16 @@ fn file_header(
         .border_b(px(t.stroke.hairline))
         .border_color(rgb(p.border))
         .child(toggle)
-        .children(
-            data.badges
+        // r3-pages: one status pill per file ("Modified · Staged").
+        .when(!data.badges.is_empty(), |d| {
+            let label = data
+                .badges
                 .iter()
-                .map(|(label, intent)| primitives::pill(*label, *intent, p)),
-        )
+                .map(|(label, _)| *label)
+                .collect::<Vec<_>>()
+                .join(" · ");
+            d.child(primitives::pill(label, data.badges[0].1, p).flex_shrink_0())
+        })
         .child(counts)
         .children(stage)
         .children(open)
@@ -1033,6 +1043,128 @@ impl Workspace {
         ))
     }
 
+    /// Unified / Split (the dock header; the page adds the hunk jumps).
+    fn stack_mode(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let split = self.settings.review_split;
+        let mode = |id: &'static str, label: &'static str, on: bool| {
+            primitives::segment(id, label, on == split, &p)
+                .debug_selector(move || id.into())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.settings.review_split != on {
+                        this.settings.review_split = on;
+                        this.save_settings(cx);
+                        cx.notify();
+                    }
+                }))
+        };
+        div().flex_shrink_0().child(
+            primitives::segmented(&p)
+                .child(mode("review-unified", "Unified", false))
+                .child(mode("review-split", "Split", true)),
+        )
+    }
+
+    // r3-pages
+    /// The dock header's "…": previous / next change, refresh and the full
+    /// page, with their keys, so the header keeps one quiet control.
+    fn review_header_menu(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let open = self.review.v2.header_menu;
+        let close = |this: &mut Workspace| this.review.v2.header_menu = false;
+        let trigger = primitives::overflow_trigger("review-dock-more", &p)
+            .debug_selector(|| "review-dock-more".into())
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.review.v2.header_menu = !this.review.v2.header_menu;
+                cx.notify();
+            }));
+        let item = |id: &'static str, label: &'static str, icon: IconName, enabled: bool| {
+            primitives::menu_item(id, label, Some(icon), false, enabled, &p)
+                .debug_selector(move || id.into())
+        };
+        let menu = primitives::menu(&p)
+            .debug_selector(|| "review-dock-menu".into())
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.review.v2.header_menu = false;
+                cx.notify();
+            }))
+            .child(
+                item(
+                    "review-prev-hunk",
+                    "Previous change  [ c",
+                    IconName::ChevronUp,
+                    true,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    close(this);
+                    this.jump_hunk(false, cx)
+                })),
+            )
+            .child(
+                item(
+                    "review-next-hunk",
+                    "Next change  ] c",
+                    IconName::ChevronDown,
+                    true,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    close(this);
+                    this.jump_hunk(true, cx)
+                })),
+            )
+            .child(primitives::menu_separator(&p))
+            .child(
+                item(
+                    "review-dock-refresh",
+                    "Refresh",
+                    IconName::Redo,
+                    self.view.connected,
+                )
+                .when(self.view.connected, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        close(this);
+                        if let Some((cwd, _)) = this.review_paths() {
+                            this.request(Request::Changes { cwd }, cx);
+                        }
+                        cx.notify();
+                    }))
+                }),
+            )
+            .child(
+                item(
+                    "review-dock-expand",
+                    "Open full page (files, tree, commits)",
+                    IconName::Maximize,
+                    true,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    close(this);
+                    // The dock stays open underneath: Back to chat finds it.
+                    this.review.v2.page_once = true;
+                    this.review.mode = Mode::Changed;
+                    this.open_feature(Screen::Changes, window, cx);
+                })),
+            );
+        div()
+            .relative()
+            .flex_shrink_0()
+            .child(trigger)
+            .when(open, |d| {
+                d.child(
+                    gpui::deferred(
+                        div()
+                            .absolute()
+                            .top(px(t.layout.icon_button + t.space.xs))
+                            .right_0()
+                            .child(menu),
+                    )
+                    .with_priority(1),
+                )
+            })
+    }
+
     /// Unified / Split, and the hunk jumps.
     fn stack_controls(&self, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
@@ -1365,42 +1497,33 @@ impl Workspace {
                         primitives::truncated("review-dock-meta", meta, &p)
                             .text_color(rgb(p.roles.text_tertiary)),
                     )
-                    .when(added + removed > 0, |d| d.child(counts(added, removed, &p))),
+                    // r3-pages (R3.4): the scope is named, to pair with the
+                    // transcript's "This turn +5 −2".
+                    .when(added + removed > 0, |d| {
+                        d.child(
+                            div()
+                                .id("review-dock-scope")
+                                .debug_selector(|| "review-dock-scope".into())
+                                .flex_shrink_0()
+                                .flex()
+                                .items_center()
+                                .gap(px(t.space.xs))
+                                .tooltip(primitives::tooltip_view(
+                                    "Every uncommitted change on this branch",
+                                    None,
+                                    &p,
+                                ))
+                                .child(
+                                    div()
+                                        .text_color(rgb(p.roles.text_secondary))
+                                        .child("Branch"),
+                                )
+                                .child(counts(added, removed, &p)),
+                        )
+                    }),
             )
-            .child(self.stack_controls(cx))
-            .child(
-                primitives::icon_button(
-                    "review-dock-refresh",
-                    IconName::Redo,
-                    "Refresh",
-                    ButtonVariant::Tertiary,
-                    self.view.connected,
-                    &p,
-                )
-                .debug_selector(|| "review-dock-refresh".into())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if let Some((cwd, _)) = this.review_paths() {
-                        this.request(Request::Changes { cwd }, cx);
-                    }
-                })),
-            )
-            .child(
-                primitives::icon_button(
-                    "review-dock-expand",
-                    IconName::Maximize,
-                    "Open full page (files, tree and commits)",
-                    ButtonVariant::Tertiary,
-                    true,
-                    &p,
-                )
-                .debug_selector(|| "review-dock-expand".into())
-                .on_click(cx.listener(|this, _, window, cx| {
-                    // The dock stays open underneath: Back to chat finds it.
-                    this.review.v2.page_once = true;
-                    this.review.mode = Mode::Changed;
-                    this.open_feature(Screen::Changes, window, cx);
-                })),
-            )
+            .child(self.stack_mode(cx))
+            .child(self.review_header_menu(cx))
             .child(
                 primitives::icon_button(
                     "review-dock-close",
