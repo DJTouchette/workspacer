@@ -107,10 +107,9 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
             )))
         )
     });
-    // No v1 hint row; the status says what the composer waits on.
+    // No v1 hint row or notch; the card says what is waited on.
     assert!(visual.debug_bounds("composer-send-hint").is_none());
     assert!(visual.debug_bounds("composer-notch").is_none());
-    assert!(visual.debug_bounds("composer-status").is_some());
 
     tap(&mut visual, "approve");
     assert!(matches!(acts(&mut commands).as_slice(),

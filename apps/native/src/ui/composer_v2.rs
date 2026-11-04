@@ -163,16 +163,6 @@ fn sentence_case(key: &str) -> String {
     words
 }
 
-/// What the composer says it is waiting on while a decision is open.
-pub(super) fn waiting_label(decision: Decision) -> &'static str {
-    match decision {
-        Decision::Approval => "Waiting for your approval",
-        Decision::Plan => "Waiting for you to approve the plan",
-        Decision::Limit => "Waiting for the usage limit to reset",
-        Decision::Questions => "Waiting for your answers",
-    }
-}
-
 /// The send button's label and tooltip: "Send now" (it interrupts) while
 /// the agent works, "Send" otherwise.
 pub(super) fn send_copy(steering: bool) -> (&'static str, &'static str) {
@@ -675,12 +665,10 @@ impl Workspace {
                 .max_w(px(t.layout.menu_width))
         };
         let connected = self.view.connected;
-        if connected
-            && !self.view.loading
-            && !self.view.busy
-            && let Some(first) = decisions.first()
-        {
-            return Some(badge(StatusKind::NeedsYou, waiting_label(*first).into()));
+        if connected && !self.view.loading && !self.view.busy && !decisions.is_empty() {
+            // r2-systems: the decision card and the placeholder already say
+            // what is waited on; the toolbar does not repeat it.
+            return None;
         }
         if activity.live {
             let kind = if !connected {
@@ -1446,6 +1434,8 @@ impl Workspace {
             .child(head)
             .child(
                 primitives::inset(&p)
+                    // Markdown lays out as a block, not a flex column.
+                    .block()
                     .id("plan-body")
                     .debug_selector(|| "plan-body".into())
                     .max_h(px(if compact {
@@ -1674,10 +1664,6 @@ mod tests {
         assert_eq!(send_copy(false).0, "Send");
         assert_eq!(send_copy(true).0, "Send now");
         assert!(STEER_COPY.contains("without stopping"));
-        assert_eq!(
-            waiting_label(Decision::Approval),
-            "Waiting for your approval"
-        );
         assert_eq!(composer_placeholder(None), DEFAULT_PLACEHOLDER);
         assert!(composer_placeholder(Some(Decision::Approval)).contains("Allow or deny"));
         assert_eq!(sentence_case("run_in_background"), "Run in background");
