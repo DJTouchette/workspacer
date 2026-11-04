@@ -121,7 +121,11 @@ async fn unnamed_native_launch_is_titled_by_the_hub_with_the_configured_model() 
     let calls: Vec<Value> = std::fs::read_to_string(root.join("titler-calls.jsonl"))
         .unwrap()
         .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        // The hub's provider-readiness probe (`codex login status`, run when
+        // the client reads `queue.targets` on connect) shares this fake
+        // binary; only `exec` invocations are titling calls.
+        .filter(|call| call["argv"][0] != "login")
         .collect();
     assert_eq!(calls.len(), 1);
     assert!(
