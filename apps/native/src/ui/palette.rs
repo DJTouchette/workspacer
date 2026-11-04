@@ -10,6 +10,17 @@ use std::ops::Range;
 
 gpui::actions!(native, [PaletteUp, PaletteDown, PaletteEnter, PaletteClose]);
 
+/// One action entry: what it does, title, key hint, icon, search aliases,
+/// and whether it is offered right now.
+type ActionRow = (
+    Act,
+    &'static str,
+    Option<&'static str>,
+    IconName,
+    &'static str,
+    bool,
+);
+
 /// Window-local palette state.
 #[derive(Default)]
 pub(super) struct PaletteUi {
@@ -78,7 +89,7 @@ pub(super) fn fuzzy(query: &str, text: &str) -> Option<(i32, Vec<Range<usize>>)>
                 .is_some_and(char::is_alphanumeric);
         let score =
             1000 - at as i32 + if word_start { 200 } else { 0 } + if at == 0 { 300 } else { 0 };
-        return Some((score, vec![at..at + lower_query.len()]));
+        return Some((score, std::iter::once(at..at + lower_query.len()).collect()));
     }
     let mut ranges: Vec<Range<usize>> = Vec::new();
     let mut score = 0;
@@ -284,14 +295,7 @@ impl Workspace {
             self.appearance,
             Appearance::Light | Appearance::CatppuccinLatte
         );
-        let mut actions: Vec<(
-            Act,
-            &str,
-            Option<&'static str>,
-            IconName,
-            &'static str,
-            bool,
-        )> = vec![
+        let mut actions: Vec<ActionRow> = vec![
             (
                 Act::NewSession,
                 "New session",

@@ -101,7 +101,10 @@ pub(crate) fn group(
             .filter_map(|&(ix, _)| waiting_since(ix))
             .min();
         // r2-shell: the latest activity anywhere in the tree.
-        let latest = members.iter().filter_map(|&(ix, _)| waiting_since(ix)).max();
+        let latest = members
+            .iter()
+            .filter_map(|&(ix, _)| waiting_since(ix))
+            .max();
         groups[bucket.index()].1.push((since, latest, members));
     }
     // Oldest wait first; a tree with no known wait keeps its place after them.
@@ -120,7 +123,10 @@ pub(crate) fn group(
         .map(|(bucket, trees)| {
             (
                 bucket,
-                trees.into_iter().flat_map(|(_, _, members)| members).collect(),
+                trees
+                    .into_iter()
+                    .flat_map(|(_, _, members)| members)
+                    .collect(),
             )
         })
         .collect()
@@ -380,10 +386,12 @@ mod tests {
     // r2-shell
     #[test]
     fn reasons_name_the_request_and_offer_one_action() {
-        let mut s = Session::default();
-        s.approval = Some(serde_json::json!({
-            "toolName": "Bash", "toolInput": {"command": "cargo test\n--more"}
-        }));
+        let mut s = Session {
+            approval: Some(serde_json::json!({
+                "toolName": "Bash", "toolInput": {"command": "cargo test\n--more"}
+            })),
+            ..Default::default()
+        };
         let r = reason(&s, None, 0).unwrap();
         assert_eq!(r.text, "Run cargo test?");
         assert_eq!(r.action, InboxAction::Allow);

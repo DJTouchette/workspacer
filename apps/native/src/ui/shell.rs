@@ -155,7 +155,7 @@ pub(super) fn highlighted(text: String, query: &str, p: &Palette) -> StyledText 
     let style = HighlightStyle {
         color: Some(rgb(p.text).into()),
         font_weight: Some(FontWeight(p.tokens.weight.semibold)),
-        background_color: Some(primitives::wash(p.warning, p.tokens.wash.tone_rest).into()),
+        background_color: Some(primitives::wash(p.warning, p.tokens.wash.tone_rest)),
         ..Default::default()
     };
     StyledText::new(text).with_highlights(ranges.into_iter().map(|r| (r, style)))
