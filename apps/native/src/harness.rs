@@ -10,6 +10,9 @@ use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
 mod catalog;
 
+/// The `--catalog` fleet's size: one row per distinct live session.
+pub const CATALOG_SESSIONS: usize = catalog::LIVE_SESSIONS;
+
 type Socket = WebSocketStream<TcpStream>;
 
 /// The client went away (or sent something unreadable): the connection ends.
@@ -85,6 +88,8 @@ pub struct Options {
     /// under fixture paths (`/home/dev/...`), with the live sessions running
     /// in those folders. Off: the fixture is unchanged.
     pub catalog: bool,
+    /// Nothing waits on the user: no approval, plan or question.
+    pub all_clear: bool,
 }
 
 /// One connection's fixture hub: what it serves and remembers between frames.
@@ -119,6 +124,9 @@ struct Fixture {
     finish_at: Instant,
     finished_parent: Option<Value>,
     catalog: Option<catalog::Catalog>,
+    /// When the connection opened (epoch ms): fixed times count back from
+    /// it, so every read of a transcript carries the same timestamps.
+    epoch: i64,
 }
 
 impl Fixture {
@@ -162,7 +170,7 @@ impl Fixture {
             items,
             active_id: "demo-0000".to_owned(),
             history: BTreeMap::new(),
-            pending: !options.pending_questions,
+            pending: !options.pending_questions && !options.all_clear,
             answered: BTreeSet::new(),
             streaming: false,
             remaining: 0,
@@ -175,7 +183,15 @@ impl Fixture {
             due: Vec::new(),
             finish_at: Instant::now() + Duration::from_secs(4),
             finished_parent: None,
-            catalog: options.catalog.then(|| catalog::Catalog::new(now)),
+            epoch: now,
+            catalog: options.catalog.then(|| {
+                let catalog = catalog::Catalog::new(now);
+                if options.sessions == 0 {
+                    catalog.first_run()
+                } else {
+                    catalog
+                }
+            }),
         }
     }
 
@@ -517,9 +533,10 @@ impl Fixture {
                     "path": "/fixture/home/.workspacer/handoffs/20261005-120000-fixture.md",
                 })
             }
+            // Both agents are installed: Codex's usage is measured too.
             "providers.checkAll" => json!([
                 {"provider": "claude", "found": true},
-                {"provider": "codex", "found": false},
+                {"provider": "codex", "found": true},
             ]),
             "desktop.providerReadiness" => json!({"state": "unchecked"}),
             "claude.setModel" => json!({"ok": true, "disposition": "queued"}),
@@ -538,10 +555,11 @@ impl Fixture {
                 } else if let Some((items, seq)) = self.history.get(id) {
                     page(items, *seq, limit)
                 } else {
-                    page(&self.seed, self.seed.len() as u64, limit)
+                    let (items, seq) = self.opening(id);
+                    page(&items, seq, limit)
                 }
             }
-            "usage.report" => usage_report(),
+            "usage.report" => usage_report(self.options.plan_and_limit),
             "agents.sendMessage" => {
                 self.send_message(socket, id, &params["text"]).await;
                 json!({"ok": true})
@@ -640,8 +658,8 @@ impl Fixture {
             json!({
                 "sessionId": "demo-0000",
                 "provider": "claude",
-                "name": "Native client experiment",
-                "cwd": "/workspaces/project-0",
+                "name": "Restore sessions on launch",
+                "cwd": "/workspaces/native",
                 "mode": "input",
                 "transport": "stream",
                 "updatedAt": now,
@@ -649,8 +667,8 @@ impl Fixture {
             json!({
                 "sessionId": "past-session",
                 "provider": "codex",
-                "name": "Yesterday’s investigation",
-                "cwd": "/workspaces/project-1",
+                "name": "Bus reconnect jitter",
+                "cwd": "/workspaces/hub",
                 "mode": "stopped",
                 "transport": "stream",
                 "updatedAt": now - 26 * 3_600_000,
@@ -663,21 +681,21 @@ impl Fixture {
                 "hist-01",
                 "claude",
                 "Sidebar polish pass",
-                "/home/demo/.workspacer/worktrees/project-0/sidebar-polish",
+                "/home/demo/.workspacer/worktrees/native/sidebar-polish",
                 0.4,
             ),
             (
                 "hist-02",
                 "codex",
                 "Payments API retries",
-                "/workspaces/project-1/api",
+                "/workspaces/hub/api",
                 3.,
             ),
             (
                 "hist-03",
                 "claude",
                 "Flaky watcher test",
-                "/workspaces/project-0/.claude/worktrees/flaky-watcher",
+                "/workspaces/native/.claude/worktrees/flaky-watcher",
                 7.,
             ),
             (
@@ -691,14 +709,14 @@ impl Fixture {
                 "hist-05",
                 "codex",
                 "Migrate config loader",
-                "/workspaces/project-1",
+                "/workspaces/hub",
                 30.,
             ),
             (
                 "hist-06",
                 "claude",
                 "Profile startup",
-                "/workspaces/project-0",
+                "/workspaces/native",
                 50.,
             ),
             (
@@ -712,7 +730,7 @@ impl Fixture {
                 "hist-08",
                 "claude",
                 "Theme contrast audit",
-                "/home/demo/.workspacer/worktrees/project-0/theme-audit",
+                "/home/demo/.workspacer/worktrees/native/theme-audit",
                 120.,
             ),
             (
@@ -749,36 +767,50 @@ impl Fixture {
 
     fn snapshots(&self) -> Value {
         let catalog = self.options.catalog;
+        let now = chrono::Utc::now().timestamp_millis();
         let fixed = (0..self.options.sessions).map(|i| {
             let id = format!("demo-{i:04}");
-            let snapshot = json!({
+            let (provider, model) = if catalog {
+                catalog::live_agent(i)
+            } else {
+                ("claude", "sonnet")
+            };
+            let state = catalog.then(|| catalog::live_state(i));
+            let mut snapshot = json!({
                 "sessionId": id,
-                "label": if i == 0 {
-                    "Native client experiment".into()
-                } else if catalog {
+                "label": if catalog {
                     catalog::live_label(i)
                 } else {
-                    format!("Worker {i}")
+                    demo_title(i)
                 },
                 "cwd": if catalog {
                     catalog::live_cwd(i).to_owned()
                 } else {
-                    format!("/workspaces/project-{}", i % 8)
+                    demo_cwd(i)
                 },
                 "parentSessionId": if i == 1 { "demo-0000" } else { "" },
-                "provider": "claude",
-                "model": "sonnet",
+                "provider": provider,
+                "model": model,
                 "transport": "stream",
+                "lastActivity": if state == Some(catalog::Live::Working) {
+                    now
+                } else if catalog {
+                    catalog::live_activity(i, self.epoch)
+                } else {
+                    demo_activity(i, self.epoch)
+                },
                 "mode": if self.streaming && self.active_id == id {
                     "responding"
-                } else if catalog && catalog::live_stopped(i) {
+                } else if state == Some(catalog::Live::Ended) {
                     "stopped"
+                } else if state == Some(catalog::Live::Working) {
+                    "responding"
                 } else {
                     "input"
                 },
                 "pendingApproval": if i == 0 && self.pending && self.options.plan_and_limit {
                     json!({"toolName": "ExitPlanMode", "toolInput": {"plan":
-                        "## Plan: native review actions\n\n1. **Stage and commit** from the change list\n2. Add a `Commits` tab with each commit's patch\n3. Let the file panel hide\n\nTests: one UI test per action, then the full suite."}})
+                        "## Plan: restore sessions on launch\n\n1. **Read the saved workspace** before `start()`\n2. Reopen each session, focusing the one that had focus\n3. Log how many sessions came back\n\nTests: a regression test for the restore, then the full suite."}})
                 } else if i == 0 && self.pending {
                     json!({"toolName": "Bash",
                         "toolInput": {"command": "cargo test",
@@ -791,11 +823,21 @@ impl Fixture {
                     Value::Null
                 },
             });
-            let mut snapshot = if self.options.rich {
-                rich_snapshot(i, snapshot)
-            } else {
-                snapshot
-            };
+            // The fleet's question (the release branch name) waits on the
+            // user unless everything is clear; the question fixture asks
+            // its own sets below.
+            if state == Some(catalog::Live::Question)
+                && !self.options.all_clear
+                && !self.options.pending_questions
+                && !self.answered.contains(&id)
+                && let Some(questions) = fixture_questions(3)
+            {
+                snapshot["pendingQuestions"] = questions;
+                snapshot["mode"] = json!("question");
+            }
+            if self.options.rich {
+                snapshot = rich_snapshot(i, snapshot);
+            }
             if i == 0 && self.options.plan_and_limit {
                 let reset = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -815,6 +857,7 @@ impl Fixture {
                 snapshot = row.clone();
             }
             if self.options.pending_questions
+                && !self.options.all_clear
                 && !self.answered.contains(&id)
                 && let Some(questions) = fixture_questions(i)
             {
@@ -826,23 +869,40 @@ impl Fixture {
         Value::Array(fixed.chain(self.spawned.iter().cloned()).collect())
     }
 
+    /// A session's transcript before anything is sent to it. The catalog's
+    /// rich fleet gives each live session its own short conversation (its
+    /// opening request and where it stands); otherwise every session reads
+    /// as the seed.
+    fn opening(&self, id: &str) -> (Vec<Value>, u64) {
+        let index = id
+            .strip_prefix("demo-")
+            .and_then(|n| n.parse::<usize>().ok())
+            .filter(|&i| i > 0 && i < self.options.sessions);
+        match index {
+            Some(index) if self.options.rich && self.options.catalog => {
+                let items = catalog_opening(index, self.epoch);
+                let seq = items.len() as u64;
+                (items, seq)
+            }
+            _ => (self.seed.clone(), self.seed.len() as u64),
+        }
+    }
+
     /// A message to any session makes it the active one and streams a reply.
     async fn send_message(&mut self, socket: &mut Socket, id: &str, text: &Value) {
         if self.active_id != id {
-            let (next, next_seq) = self
-                .history
-                .remove(id)
-                .unwrap_or_else(|| (self.seed.clone(), self.seed.len() as u64));
+            let (next, next_seq) = self.history.remove(id).unwrap_or_else(|| self.opening(id));
             let previous = std::mem::replace(&mut self.items, next);
             self.history
                 .insert(std::mem::take(&mut self.active_id), (previous, self.seq));
             self.seq = next_seq;
             self.active_id = id.to_owned();
         }
+        let at = chrono::Utc::now().to_rfc3339();
         self.items
-            .push(json!({"kind": "user_message", "text": text}));
+            .push(json!({"kind": "user_message", "text": text, "timestamp": at}));
         self.items
-            .push(json!({"kind": "assistant_text", "text": "Message received."}));
+            .push(json!({"kind": "assistant_text", "text": "Message received.", "timestamp": at}));
         self.seq += 2;
         self.streaming = true;
         self.remaining = 30;
@@ -955,7 +1015,9 @@ fn fixture_echo(cwd: &str, line: &mut String, bytes: &[u8]) -> Vec<u8> {
 }
 
 /// Two Claude logins (one needing sign-in) and Codex, shaped like `usage.report`.
-fn usage_report() -> Value {
+/// `spent`: the default Claude login's 5-hour window is used up, matching the
+/// status line of the plan-and-limit fixture (both sources agree).
+fn usage_report(spent: bool) -> Value {
     let now = chrono::Utc::now().timestamp();
     let window = |pct: f64, reset_in: i64, pace: &str, expected: f64| {
         json!({"used_percent":{"state":"ok","value":pct},"resets_at":now+reset_in,"is_current":true,
@@ -967,7 +1029,7 @@ fn usage_report() -> Value {
     json!({"generated_at":now,"evaluated_at":now,"valid_until":now+60,"providers":[
         {"provider":"claude","accounts":[
             {"account":"","label":"default","is_default":true,"fresh":true,"windows":{
-                "five_hour":window(42.,8_040,"on_track",45.),
+                "five_hour":if spent { window(100.,2*3_600+14*60,"overspending",45.) } else { window(42.,8_040,"on_track",45.) },
                 "seven_day":window(76.,3*86_400+4*3_600,"overspending",58.),
                 "monthly":off}},
             // A second login whose token expired: listed with its state,
@@ -1003,38 +1065,286 @@ pub fn event(topic: &str, data: Value) -> Message {
 }
 
 /// Mixed-provider presentation fixture; useful in real-window smoke and tests.
+/// One coherent run: the user asks the native client to restore open
+/// sessions on launch; the agent searches, reads, edits, builds, tests,
+/// starts a reviewer session and subagents, handles two fleet wakes, and
+/// ends on a run of tool calls and a short summary, with `cargo test`
+/// waiting for approval. Item times spread over the last ~25 minutes.
 pub fn rich_items() -> Vec<Value> {
-    let card = json!({"v":1,"title":"Review complete","bodyHtml":"<table><tr><th>Check</th><th>Result</th></tr><tr><td>Native transcript</td><td>Ready for review</td></tr></table>","fallback":"The native transcript is ready for review.","actions":[{"kind":"fill_composer","label":"Continue","text":"Please continue with the next task."},{"kind":"view_diff","label":"main.rs","path":"src/main.rs"},{"kind":"open_worker","label":"Worker 1","sessionId":"demo-0001"}]});
+    let card = json!({"v":1,"title":"Restore on launch","bodyHtml":"<table><tr><th>Check</th><th>Result</th></tr><tr><td>cargo check</td><td>Pass</td></tr><tr><td>Session test</td><td>Pass</td></tr></table>","fallback":"Restore on launch builds and its test passes.","actions":[{"kind":"fill_composer","label":"Continue","text":"Please continue with the next task."},{"kind":"view_diff","label":"main.rs","path":"src/main.rs"},{"kind":"open_worker","label":"Session creation review","sessionId":"demo-0001"}]});
+    let root = "/home/dev/src/workspacer/apps/native";
+    let tool = |id: &str, name: &str, input: Value| json!({"kind":"tool_use","id":id,"name":name,"input":input});
+    let result =
+        |id: &str, content: &str| json!({"kind":"tool_result","tool_use_id":id,"content":content});
+    let text = |text: &str| json!({"kind":"assistant_text","text":text});
+    let user = |text: &str| json!({"kind":"user_message","text":text});
     let mut items = vec![
-        json!({"kind":"user_message","text":"Keep **this literal**, including <tags>. Review the attached screenshot.\n[Image: /workspaces/project-0/screen.png]"}),
-        json!({"kind":"assistant_text","text":"I’ll review the implementation and its tests."}),
-        json!({"kind":"tool_use","id":"read-1","name":"Read","input":{"file_path":"/workspaces/project-0/src/main.rs"}}),
-        json!({"kind":"tool_result","tool_use_id":"read-1","content":"1 fn main() {\n2     start();\n3 }"}),
-        json!({"kind":"tool_use","id":"edit-1","name":"Edit","input":{"file_path":"src/main.rs","old_string":"    start();","new_string":"    restore_workspace();\n    start();"}}),
-        json!({"kind":"tool_result","tool_use_id":"edit-1","content":"File updated."}),
-        json!({"kind":"assistant_text","text":"Now I’ll confirm nothing else calls the old entry point."}),
-        json!({"kind":"tool_use","id":"search-1","name":"Grep","input":{"pattern":"restore_workspace","path":"src","description":"Find workspace restoration call sites"}}),
-        json!({"kind":"tool_result","tool_use_id":"search-1","content":"src/main.rs:2: restore_workspace();"}),
-        json!({"kind":"tool_use","id":"skill-1","name":"Skill","input":{"skill":"review","args":"Check the transcript"}}),
-        json!({"kind":"tool_result","tool_use_id":"skill-1","content":"Review completed."}),
-        json!({"kind":"assistant_text","text":format!("Implemented the change in [main.rs](src/main.rs:2).\n\n```wks-html-card\n{card}\n```\n")}),
-        json!({"kind":"tool_use","id":"workspacer-spawn","name":"mcp__workspacer__spawn_agent","input":{"message":"Review session creation and model selection","label":"Session creation review","trackTask":false}}),
-        json!({"kind":"tool_result","tool_use_id":"workspacer-spawn","content":"{\"sessionId\":\"demo-0001\",\"messageQueued\":true,\"taskTracking\":false}"}),
+        user(&format!(
+            "Sessions I had open don’t come back after I restart the app. Restore them on launch, and keep focus on the one I was in. This is what I see after a restart:\n[Image: {root}/screen.png]"
+        )),
+        text("I’ll find where the client starts and how it saves the workspace."),
+        tool(
+            "search-0",
+            "Grep",
+            json!({"pattern":"fn start|fn restore|settings::load","path":"src","output_mode":"content"}),
+        ),
+        result(
+            "search-0",
+            "src/main.rs:1:fn main() {\nsrc/main.rs:5:fn start() {\nsrc/settings.rs:22:pub fn load(path: &Path) -> Result<Saved> {",
+        ),
+        tool(
+            "read-1",
+            "Read",
+            json!({"file_path":format!("{root}/src/main.rs")}),
+        ),
+        result(
+            "read-1",
+            "1 fn main() {\n2     start();\n3 }\n4 \n5 fn start() {\n6     let window = Window::open(Theme::default());\n7     window.run();\n8 }",
+        ),
+        tool(
+            "read-2",
+            "Read",
+            json!({"file_path":format!("{root}/src/settings.rs"),"offset":14,"limit":20}),
+        ),
+        result(
+            "read-2",
+            "14 pub struct Saved {\n15     pub sessions: Vec<SavedSession>,\n16     pub theme: Option<Theme>,\n17 }\n18 \n19 pub struct SavedSession {\n20     pub id: SessionId,\n21     pub focused: bool,\n22 }",
+        ),
+        text(
+            "`main` calls `start()` straight away, so nothing reads the saved sessions back. `settings::load` already returns them, each with a `focused` flag, so I’ll restore them before `start()`.",
+        ),
+        tool(
+            "edit-1",
+            "Edit",
+            json!({"file_path":"src/main.rs","old_string":"    start();","new_string":"    restore_workspace();\n    start();"}),
+        ),
+        result("edit-1", "The file src/main.rs has been updated."),
+        tool(
+            "edit-2",
+            "Edit",
+            json!({"file_path":"src/main.rs","old_string":"fn start() {","new_string":"fn restore_workspace() -> Result<()> {\n    let saved = settings::load(&settings::path())?;\n    for session in saved.sessions {\n        open(session.id, session.focused);\n    }\n    Ok(())\n}\n\nfn start() {"}),
+        ),
+        result("edit-2", "The file src/main.rs has been updated."),
+        tool(
+            "bash-1",
+            "Bash",
+            json!({"command":"cargo check","description":"Check that it builds"}),
+        ),
+        result(
+            "bash-1",
+            "    Checking wks-native v0.9.0 (/home/dev/src/workspacer/apps/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.81s",
+        ),
+        text(&format!(
+            "It builds. Restoring happens in [main.rs](src/main.rs:2) before the window opens.\n\n```wks-html-card\n{card}\n```\n"
+        )),
+        user(
+            "Nice. Add a test for it, and get a second pair of eyes on session creation while you’re at it.",
+        ),
+        text(
+            "I’ll add a regression test, and start a reviewer for session creation in the workspacer repository.",
+        ),
+        tool(
+            "write-1",
+            "Write",
+            json!({"file_path":"tests/session.rs","content":"use wks_native::workspace::Workspace;\n\n#[test]\nfn restores_the_last_workspace() {\n    let workspace = Workspace::open_last().expect(\"a saved workspace\");\n    assert_eq!(workspace.sessions().len(), 3);\n    assert!(workspace.selected().is_some());\n}\n"}),
+        ),
+        result("write-1", "File created successfully at: tests/session.rs"),
+        tool(
+            "workspacer-spawn",
+            "mcp__workspacer__spawn_agent",
+            json!({"message":"Review session creation and model selection for regressions","label":"Session creation review","cwd":"/home/dev/src/workspacer","trackTask":false}),
+        ),
+        result(
+            "workspacer-spawn",
+            "{\"sessionId\":\"demo-0001\",\"messageQueued\":true,\"taskTracking\":false}",
+        ),
+        tool(
+            "bash-2",
+            "Bash",
+            json!({"command":"cargo test --test session","description":"Run the new session test"}),
+        ),
+        result(
+            "bash-2",
+            "running 1 test\ntest restores_the_last_workspace ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; finished in 0.04s",
+        ),
+        tool(
+            "subagent-running",
+            "Agent",
+            json!({"description":"Check the restore against focus handling and tests","prompt":"Check the session-restore change in apps/native.\n\n1. Trace every path that opens a session on launch.\n2. Confirm the focused session keeps focus after restore.\n3. Look for regression tests that cover restore and focus.\n4. Run the session tests and report failures verbatim.\n\nDo not edit files; report findings only."}),
+        ),
+        text(
+            "Two subagents are checking the restore paths and the regression coverage. While they run:\n\n## Where things stand\n\n- **Restore** runs before the window opens, one session at a time.\n- The focused session keeps focus; the others open in the background.\n- A missing or unreadable settings file starts an empty workspace, as before.\n\n| Step | Status | Notes |\n|:--|:-:|--:|\n| Restore on launch | Done | `restore_workspace` |\n| Regression test | Done | `tests/session.rs` |\n| Review | Running | 2 subagents, 1 session |\n\n> Restoring never blocks the window: a session that fails to open\n> is skipped and logged, and the rest still come back.\n\n```rust\nlet saved = settings::load(&settings::path())?;\nfor session in saved.sessions {\n    open(session.id, session.focused);\n}\n```",
+        ),
         // Fleet wakes arrive as user turns; native renders them as worker cards.
-        json!({"kind":"user_message","text":"[supervisor] An agent is now blocked on a decision:\n- Session creation review (session:demo-0001, approval)\nRun a /supervise pass now."}),
-        json!({"kind":"user_message","text":"[fleet] Worker finished:\n- Session creation review (session:demo-0001, cwd /workspaces/project-1) — last reply: Reviewed session creation; two follow-ups noted.\n- Model selection audit (session:demo-0002, cwd /workspaces/project-2) — FAILED: Credit balance is too low\n\nStructured result — Session creation review (session:demo-0001):\n{\"commit\":\"abc1234\",\"checksRun\":[\"cargo test\"]}\n\nReview each result."}),
-        json!({"kind":"tool_use","id":"subagent-running","name":"Agent","input":{"description":"Review chat rendering and regression coverage","prompt":"Review the native chat rendering pass.\n\n1. Read apps/native/src/ui/markdown.rs and the vendored text renderer.\n2. Compare tables, blockquotes and code fences with the desktop renderer.\n3. Check every theme (Dark, Light, Nord) for contrast regressions.\n4. Run the ui-tests suite and report failures verbatim.\n5. Note anything that looks unpolished, with file and line.\n\nDo not edit files; report findings only."}}),
-        json!({"kind":"assistant_text","text":"## Ready for review\n\nThe conversation is easier to scan, with quieter controls and a little more room to read.\n\n- **Clear hierarchy** for headings and paragraphs.\n- Round bullets, comfortable spacing, and `inline code`.\n- File links open a preview in this workspace.\n\n| Area | Status | Notes |\n|:--|:-:|--:|\n| Tables | Done | Header, stripes, wrapping |\n| Blockquotes | Done | Accent rail |\n| Work cards | Done | `Skill` and `Agent` too |\n\n> Quotes read as asides: a slim rail and muted italic copy,\n> so they never compete with the answer.\n\nSee [README.md](README.md:12) or the [session tests](tests/session.rs).\n\n```rust\nlet workspace = connect().await?;\nworkspace.restore_session();\n```"}),
+        user(
+            "[supervisor] An agent is now blocked on a decision:\n- Release checklist for 0.9 (session:demo-0003, question)\nRun a /supervise pass now.",
+        ),
+        user(
+            "[fleet] Worker finished:\n- Usage meter rounding (session:demo-0012, cwd /home/dev/src/workspacer) — last reply: Rounded the meter down; it reads 100% only once the window is spent.\n- Queue priority ordering (session:demo-0014, cwd /home/dev/src/hub-rs) — FAILED: Credit balance is too low\n\nStructured result — Usage meter rounding (session:demo-0012):\n{\"commit\":\"abc1234\",\"checksRun\":[\"cargo test\"]}\n\nReview each result.",
+        ),
+        text(
+            "The release checklist is waiting on you for a branch name. The usage meter fix landed; the queue ordering worker ran out of credit, so I’ll pick it up after this. Back to the restore change.",
+        ),
+        tool(
+            "skill-1",
+            "Skill",
+            json!({"skill":"code-review","args":"src/main.rs tests/session.rs"}),
+        ),
+        result(
+            "skill-1",
+            "No correctness issues. One nit: log how many sessions were restored.",
+        ),
+        tool(
+            "edit-3",
+            "Edit",
+            json!({"file_path":"src/main.rs","old_string":"    for session in saved.sessions {","new_string":"    log::info!(\"restoring {} sessions\", saved.sessions.len());\n    for session in saved.sessions {"}),
+        ),
+        result("edit-3", "The file src/main.rs has been updated."),
+        tool(
+            "read-3",
+            "Read",
+            json!({"file_path":format!("{root}/README.md"),"offset":10,"limit":8}),
+        ),
+        result(
+            "read-3",
+            "10 ## Running\n11 \n12 Start the hub, then the native client:\n13 \n14     cargo run --bin wks-native\n15 \n16 ## Themes",
+        ),
+        tool(
+            "edit-4",
+            "Edit",
+            json!({"file_path":"README.md","old_string":"    cargo run --bin wks-native\n","new_string":"    cargo run --bin wks-native\n\nSessions you had open come back where you left them.\n"}),
+        ),
+        result("edit-4", "The file README.md has been updated."),
+        tool(
+            "search-1",
+            "Grep",
+            json!({"pattern":"restore_workspace","path":"src","description":"Find workspace restoration call sites"}),
+        ),
+        result(
+            "search-1",
+            "src/main.rs:2:    restore_workspace();\nsrc/main.rs:6:fn restore_workspace() -> Result<()> {",
+        ),
+        tool(
+            "bash-3",
+            "Bash",
+            json!({"command":"cargo clippy --all-targets -- -D warnings","description":"Lint the change"}),
+        ),
+        result(
+            "bash-3",
+            "    Checking wks-native v0.9.0 (/home/dev/src/workspacer/apps/native)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.40s",
+        ),
+        tool(
+            "bash-4",
+            "Bash",
+            json!({"command":"git diff --stat","description":"Summarise the change"}),
+        ),
+        result(
+            "bash-4",
+            " README.md        |  2 ++\n src/main.rs      | 10 ++++++++++\n tests/session.rs |  8 ++++++++\n 3 files changed, 20 insertions(+)",
+        ),
+        text(
+            "## Ready for review\n\nOpen sessions now come back on launch, and the one you were in keeps focus. Clippy is clean and the session test passes.\n\nSee [README.md](README.md:12) or the [session tests](tests/session.rs). Next I’ll run the full test suite before committing.",
+        ),
     ];
-    let start = chrono::Utc::now().timestamp_millis() - 60_000;
+    // A tool's result lands a few seconds after its call; everything else
+    // moves the clock on, so the run spans ~23 minutes.
+    let mut at = chrono::Utc::now().timestamp_millis() - 28 * 60_000;
+    let step = 23 * 60_000 / items.len() as i64 * 2;
     for (index, item) in items.iter_mut().enumerate() {
+        at += if item["kind"] == "tool_result" {
+            1_500 + (index as i64 * 1_700) % 6_000
+        } else {
+            step
+        };
         item["timestamp"] = json!(
-            chrono::DateTime::from_timestamp_millis(start + index as i64 * 80)
+            chrono::DateTime::from_timestamp_millis(at)
                 .unwrap()
                 .to_rfc3339()
         );
     }
     items
+}
+
+/// A live catalog session's own short conversation: its opening request,
+/// a search, and where it stands now.
+fn catalog_opening(index: usize, epoch: i64) -> Vec<Value> {
+    let label = catalog::live_label(index);
+    let state = catalog::live_state(index);
+    let at = catalog::live_activity(index, epoch);
+    let key = label
+        .split_whitespace()
+        .find(|w| w.len() > 4)
+        .unwrap_or("session")
+        .to_lowercase();
+    let last = match state {
+        catalog::Live::Working => {
+            "Found it. I’m making the change now and will run the checks when it builds."
+        }
+        catalog::Live::Question => {
+            "The checklist is done up to the branch cut. I need one decision from you first."
+        }
+        catalog::Live::Ended => "Done: the change is committed and the checks pass.",
+        _ => "Done: the change is in and the checks pass. Anything else?",
+    };
+    let id = format!("open-{index}");
+    let mut items = vec![
+        json!({"kind":"user_message","text":catalog::live_prompt(index)}),
+        json!({"kind":"assistant_text","text":"I’ll start by finding the code involved."}),
+        json!({"kind":"tool_use","id":id,"name":"Grep","input":{"pattern":key,"path":catalog::live_cwd(index)}}),
+        json!({"kind":"tool_result","tool_use_id":id,"content":"Found 4 files"}),
+        json!({"kind":"assistant_text","text":last}),
+    ];
+    let count = items.len() as i64;
+    for (n, item) in items.iter_mut().enumerate() {
+        item["timestamp"] = json!(
+            chrono::DateTime::from_timestamp_millis(at - (count - 1 - n as i64) * 50_000)
+                .unwrap()
+                .to_rfc3339()
+        );
+    }
+    items
+}
+
+/// The stock `--demo` fleet's titles: distinct, ordinary engineering work
+/// (10 verbs x 11 areas, so the first 110 never repeat).
+fn demo_title(index: usize) -> String {
+    const VERBS: [&str; 10] = [
+        "Fix", "Profile", "Review", "Refactor", "Test", "Document", "Speed up", "Audit",
+        "Simplify", "Harden",
+    ];
+    const AREAS: [&str; 11] = [
+        "session restore",
+        "sidebar scrolling",
+        "bus reconnects",
+        "settings search",
+        "terminal paste",
+        "the job scheduler",
+        "usage meters",
+        "the model picker",
+        "scratch indexing",
+        "peer handshakes",
+        "diff rendering",
+    ];
+    format!(
+        "{} {}",
+        VERBS[index % VERBS.len()],
+        AREAS[index % AREAS.len()]
+    )
+}
+
+/// The stock `--demo` fleet's folders: eight ordinary repositories.
+fn demo_cwd(index: usize) -> String {
+    const REPOS: [&str; 8] = [
+        "native", "hub", "web", "api", "infra", "docs", "mobile", "billing",
+    ];
+    format!("/workspaces/{}", REPOS[index % REPOS.len()])
+}
+
+/// The stock `--demo` fleet's last activity: minutes ago for the first
+/// rows, days ago for the last.
+fn demo_activity(index: usize, now: i64) -> i64 {
+    let index = index as i64;
+    now - (index * index * 3 + index * 2) * 60_000
 }
 
 /// Rich-only child metadata. Keep load/benchmark fixtures unchanged.
@@ -1080,24 +1390,30 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
                 {"name":"context","insert":"/context","description":"Show what fills the context window","kind":"command"},
                 {"name":"review-pr","insert":"/review-pr","description":"Review a pull request by number","kind":"skill"}
             ]);
-            snapshot["subagents"] = json!([
-                {"id":"fixture-native-review","toolUseId":"subagent-running","type":"Explore","description":"Inspect transcript parsing","status":"running","model":"gpt-5.6-luna","startedAt":1790852400000i64,"toolCalls":4,"tokens":12400,"costUSD":0.018,"lastToolName":"Read","lastToolSummary":"apps/native/src/model.rs"},
-                {"id":"fixture-native-tests","toolUseId":"subagent-running","type":"Test","description":"Check regression coverage","status":"complete","model":"claude-sonnet-4-6","startedAt":1790852400000i64,"completedAt":1790852442000i64,"toolCalls":7,"tokens":28300,"costUSD":0.084},
-                // No spawning call in view: lands in a timeline overview card.
-                {"id":"fixture-native-audit","type":"Explore","description":"Audit settings search","status":"running","model":"claude-haiku-4-5","startedAt":chrono::Utc::now().timestamp_millis() - 59_000,"toolCalls":3}
-            ]);
-            // Background work beside the turn (stream transport): a dev
-            // server with a proven pid, a deploy that redirects its output
-            // into a file, the running audit child, and two finished tasks.
-            // Logs are answered by `sessions.taskOutput`.
+            // Subagents: one checking regression coverage finished, one
+            // still running (no dispatch call in view: a timeline card), and
+            // one deliberately stalled: still "running", but its last beat
+            // was seven minutes ago (past `HEARTBEAT_STALE_MS`), so the UI
+            // must show it as not responding rather than working.
             let now = chrono::Utc::now().timestamp_millis();
+            snapshot["subagents"] = json!([
+                {"id":"fixture-native-review","toolUseId":"subagent-running","type":"Explore","description":"Trace session restore paths","status":"running","model":"gpt-5.6-luna","startedAt":now - 11 * 60_000,"lastActivity":now - 7 * 60_000,"toolCalls":4,"tokens":12400,"costUSD":0.018,"lastToolName":"Read","lastToolSummary":"apps/native/src/settings.rs"},
+                {"id":"fixture-native-tests","toolUseId":"subagent-running","type":"Test","description":"Check regression coverage","status":"complete","model":"claude-sonnet-4-6","startedAt":now - 11 * 60_000,"completedAt":now - 10 * 60_000 + 18_000,"toolCalls":7,"tokens":28300,"costUSD":0.084},
+                // No spawning call in view: lands in a timeline overview card.
+                {"id":"fixture-native-audit","type":"Explore","description":"Check focus after restore","status":"running","model":"claude-haiku-4-5","startedAt":now - 59_000,"lastActivity":now - 4_000,"toolCalls":3,"lastToolName":"Grep","lastToolSummary":"focus_session"}
+            ]);
+            // Background work beside the turn (stream transport): the
+            // fixture hub the client is tested against, with a proven pid, a
+            // release build that redirects its output into a file, the
+            // running focus check, a failed test run and a finished one.
+            // Logs are answered by `sessions.taskOutput`.
             snapshot["background_tasks"] = json!(3);
             snapshot["background_task_list"] = json!([
-                {"id":"bdevsrv01","taskType":"local_bash","status":"running","description":"npm run dev -- --port 5173","startedAt":now - 754_000,"hasOutput":true,"pid":48213,"toolUseId":"fixture-bg-dev"},
-                {"id":"bdeploy04","taskType":"local_bash","status":"running","description":"$log = \"$env:USERPROFILE\\scratch\\deploy.log\"; & .\\infra\\deploy.ps1 backend *> $log; \"rc=$LASTEXITCODE\"","startedAt":now - 212_000,"hasOutput":true,"redirectFile":"deploy.log","toolUseId":"fixture-bg-deploy"},
-                {"id":"fixture-native-audit","taskType":"local_agent","status":"running","description":"Audit settings search","startedAt":now - 59_000,"subagentId":"fixture-native-audit","usage":{"totalTokens":9100,"toolUses":3,"durationMs":59000},"lastToolName":"Grep","summary":"Running Search settings labels"},
+                {"id":"bdevsrv01","taskType":"local_bash","status":"running","description":"cargo run --bin native-harness -- serve --catalog","startedAt":now - 754_000,"hasOutput":true,"pid":48213,"toolUseId":"fixture-bg-dev"},
+                {"id":"bdeploy04","taskType":"local_bash","status":"running","description":"cargo build --release --bin wks-native > build.log 2>&1; echo rc=$?","startedAt":now - 212_000,"hasOutput":true,"redirectFile":"build.log","toolUseId":"fixture-bg-deploy"},
+                {"id":"fixture-native-audit","taskType":"local_agent","status":"running","description":"Check focus after restore","startedAt":now - 59_000,"subagentId":"fixture-native-audit","usage":{"totalTokens":9100,"toolUses":3,"durationMs":59000},"lastToolName":"Grep","summary":"Searching focus_session"},
                 {"id":"btestwch2","taskType":"local_bash","status":"failed","description":"cargo test --locked -- --test-threads=1","startedAt":now - 1_900_000,"endedAt":now - 1_640_000,"hasOutput":true,"summary":"Background command \"cargo test --locked -- --test-threads=1\" failed with exit code 101"},
-                {"id":"wfrelease3","taskType":"local_workflow","status":"completed","description":"Release checklist","workflowName":"release-checklist","startedAt":now - 3_600_000,"endedAt":now - 3_420_000,"hasOutput":true}
+                {"id":"wfrelease3","taskType":"local_workflow","status":"completed","description":"Pre-commit checks","workflowName":"pre-commit","startedAt":now - 3_600_000,"endedAt":now - 3_420_000,"hasOutput":true}
             ]);
         }
         1 => {
@@ -1106,7 +1422,9 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
             snapshot["model"] = json!("gpt-5.6-sol");
             snapshot["mode"] = json!("responding");
             snapshot["ambientState"] = json!("streaming");
-            snapshot["startedAt"] = json!(1790852400000i64);
+            let now = chrono::Utc::now().timestamp_millis();
+            snapshot["startedAt"] = json!(now - 9 * 60_000);
+            snapshot["lastActivity"] = json!(now - 2_000);
             snapshot["lastToolName"] = json!("Read");
             snapshot["lastToolSummary"] = json!("apps/native/src/launch.rs");
             snapshot["usage"] = json!({"inputTokens":15800,"outputTokens":2400,"costUSD":0.046,"contextTokens":183000,"contextLimit":200000});
@@ -1125,14 +1443,13 @@ fn rich_task_output(session: &str, params: &Value) -> Value {
         // The deploy's task file stays empty; its output is in the file.
         ("bdeploy04", false) => String::new(),
         ("bdeploy04", true) => [
-            "Building backend handlers",
-            "C:\\work\\backend\\Handlers\\FileStore\\src\\FileStore",
-            "Success",
-            "C:\\work\\backend\\Handlers\\JobRunner\\src\\JobRunner",
-            "Success",
-            "C:\\work\\backend\\Handlers\\LabPoller\\src\\LabPoller",
-            "Success",
-            "Packaging lambdas (3/9)",
+            "   Compiling serde v1.0.219",
+            "   Compiling tokio v1.47.1",
+            "   Compiling gpui v0.2.0",
+            "   Compiling gpui-component v0.3.0",
+            "   Compiling claudemon v0.9.0 (/home/dev/src/workspacer/services/claudemon)",
+            "   Compiling wks-native v0.9.0 (/home/dev/src/workspacer/apps/native)",
+            "    Building [=======================> ] 412/431: wks-native(bin)",
         ]
         .join("\n")
             + "\n",
@@ -1142,28 +1459,29 @@ fn rich_task_output(session: &str, params: &Value) -> Value {
         (task, false) => match task {
         "bdevsrv01" => {
             let mut lines = vec![
-                "> project@0.4.0 dev".to_owned(),
-                "> vite --port 5173".to_owned(),
-                String::new(),
-                "  VITE v6.2.1  ready in 412 ms".to_owned(),
-                String::new(),
-                "  ➜  Local:   http://localhost:5173/".to_owned(),
-                "  ➜  Network: use --host to expose".to_owned(),
+                "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s".to_owned(),
+                "     Running `target/debug/native-harness serve --catalog`".to_owned(),
+                "Fixture hub: ws://127.0.0.1:7896/bus".to_owned(),
             ];
             for i in 0..36 {
                 lines.push(format!(
-                    "{:02}:{:02}:{:02} [vite] hmr update /src/{}.tsx",
+                    "{:02}:{:02}:{:02} {}",
                     9 + i / 30,
                     (12 + i * 7) % 60,
                     (i * 13) % 60,
-                    ["App", "Sidebar", "TaskPanel", "routes/index"][i % 4]
+                    [
+                        "client connected (operator)",
+                        "call sessions.snapshots -> 30 rows",
+                        "call sessions.conversation demo-0000",
+                        "client disconnected",
+                    ][i % 4]
                 ));
             }
-            lines.push("10:41:07 [vite] page reload src/main.tsx".to_owned());
+            lines.push("10:41:07 call usage.report".to_owned());
             lines.join("\n") + "\n"
         }
         "btestwch2" => "running 214 tests\ntest ui::tests::title::chip ... ok\ntest model::merge ... FAILED\n\nfailures:\n    model::merge\n\ntest result: FAILED. 213 passed; 1 failed\n\n[exited with code 101]\n".to_owned(),
-        "wfrelease3" => "step 1/3 changelog ... done\nstep 2/3 version bump ... done\nstep 3/3 tag ... done\n".to_owned(),
+        "wfrelease3" => "step 1/3 cargo fmt --check ... done\nstep 2/3 clippy ... done\nstep 3/3 unit tests ... done\n".to_owned(),
         _ => return json!({"ok": false, "error": "background task not found for that session"}),
         },
     };
@@ -1201,7 +1519,7 @@ fn rich_task_output(session: &str, params: &Value) -> Value {
 /// replay is byte-identical.
 fn finished_rich_parent() -> Value {
     let base = json!({
-        "sessionId":"demo-0000","label":"Native client experiment","cwd":"/workspaces/project-0",
+        "sessionId":"demo-0000","label":"Restore sessions on launch","cwd":"/workspaces/native",
         "parentSessionId":"","provider":"claude","model":"sonnet","transport":"stream",
         "mode":"input","pendingApproval":Value::Null
     });
@@ -1227,11 +1545,11 @@ fn rich_subagent_conversation(session: &str, agent: &str) -> Value {
     }
     let complete = agent == "fixture-native-tests";
     let items = vec![
-        json!({"kind":"user_message","text":if complete {"Check the native regression tests."} else {"Inspect the native transcript parser."}}),
+        json!({"kind":"user_message","text":if complete {"Check the regression tests that cover restore and focus."} else {"Trace every path that opens a session on launch."}}),
         json!({"kind":"assistant_text","text":"I’m checking the relevant source and focused regression coverage."}),
-        json!({"kind":"tool_use","id":"child-read","name":"Read","input":{"file_path":"apps/native/src/model.rs"}}),
-        json!({"kind":"tool_result","tool_use_id":"child-read","content":"The transcript keeps tool results paired with their tool IDs."}),
-        json!({"kind":"assistant_text","text":if complete {"Regression checks passed. Tool output stays literal and child rows attach to their dispatch tool."} else {"The tool/result boundary looks correct. I’m checking replay handling next."}}),
+        json!({"kind":"tool_use","id":"child-read","name":"Read","input":{"file_path":"apps/native/src/settings.rs"}}),
+        json!({"kind":"tool_result","tool_use_id":"child-read","content":"Saved sessions are reopened in order; the focused one is opened last."}),
+        json!({"kind":"assistant_text","text":if complete {"Regression checks passed: tests/session.rs covers restore, and focus is kept."} else {"Launch opens sessions in one place. I’m checking how focus is restored next."}}),
     ];
     json!({"session_id":session,"agent_id":agent,"seq":items.len(),"first_seq":1,"items":items})
 }

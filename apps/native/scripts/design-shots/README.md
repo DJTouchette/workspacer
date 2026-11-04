@@ -1,6 +1,6 @@
 # Native design shots
 
-One command captures the whole native (GPUI) app as it looks today: about 44
+One command captures the whole native (GPUI) app as it looks today: about 74
 PNGs covering every page, panel, prompt and settings section, in Dark plus
 Light, Nord, Catppuccin Latte and Tokyo Night. It is for before/after
 comparisons when the design changes. Nothing is checked in except the rig. The
@@ -37,7 +37,7 @@ the rig uses it; otherwise (or with `DESIGN_SHOTS_XVFB=1`) it starts its own
 Xvfb sized for the largest shot.
 
 Timing on a 4-core container: first debug build about 10 minutes; a full
-44-shot run about 7.5 minutes at scale 2 (each shot is a fresh app launch,
+74-shot run about 13 minutes at scale 2 (each shot is a fresh app launch,
 4 s settle plus its steps).
 
 ## How it works
@@ -48,12 +48,23 @@ Timing on a 4-core container: first debug build about 10 minutes; a full
   preferences and credentials are never read or touched.
 - Data comes from `native-harness serve` (the same in-process fixture `--demo`
   uses, `src/harness.rs`), started per shot on a free port with
-  `--rich-transcript --catalog` so pages hold believable projects, jobs,
-  scratch, hosts and history, and the conversation holds work cards,
-  subagents, background tasks and a pending approval. Two variants add
-  `--pending-questions` and `--plan-and-limit`. Shot 01 is the stock
-  `wks-native --demo` (whose plain data is too repetitive for the rest, and
-  which disables session creation). No agents, models or network are used.
+  `--rich-transcript --catalog --turns 0`. That tells one story: a developer
+  supervising about 30 distinct sessions across workspacer (and its native
+  client), hub-rs, infra and notes. Two need them (the active session's
+  `cargo test` approval and a release checklist's question), three are mid-turn,
+  five are idle and the rest ended over five days, each with its own activity
+  time. The active conversation is one run of Grep, Read, Edit, Write, Bash,
+  Skill and spawn calls with results, three subagents (one stalled: no
+  heartbeat for 7 minutes), fleet wakes and a failed background test run.
+  Counts are kept consistent: the hosts queue's running items are the working
+  sessions, both agents are installed (Codex usage is measured), and a
+  `--sessions 0` first run has no pending scratch, jobs or history. The
+  catalog fleet's table is `LIVE` in `src/harness/catalog.rs`. Variants add
+  `--pending-questions`, `--plan-and-limit` (whose usage report agrees that the
+  5-hour window is spent) and `--all-clear` (nothing waits on the user). Shot
+  01 is the stock `wks-native --demo` (100 sessions with distinct generated
+  titles and a plain transcript; it disables session creation). No agents,
+  models or network are used.
 - Input is real X input through `xdotool` (vim `g <letter>` jumps, Ctrl+K,
   clicks). Capture is ImageMagick `import` of the window; a shot that paints
   fewer than 16 colors fails.

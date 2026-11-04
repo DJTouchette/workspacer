@@ -47,8 +47,10 @@ enum Command {
     Serve {
         #[arg(long, default_value = "127.0.0.1:7896")]
         bind: String,
-        #[arg(long, default_value_t = 100)]
-        sessions: usize,
+        /// Live sessions (default 100; with --catalog, the catalog's own
+        /// fleet of distinct sessions).
+        #[arg(long)]
+        sessions: Option<usize>,
         #[arg(long, default_value_t = 1000)]
         turns: usize,
         /// Include image, tool/diff, skill, and response-card examples.
@@ -74,6 +76,10 @@ enum Command {
         /// those project folders.
         #[arg(long)]
         catalog: bool,
+        /// Nothing waits on the user: no approval, plan or question (an
+        /// "all clear" sidebar).
+        #[arg(long)]
+        all_clear: bool,
     },
     /// Measure the real turn-footer summary path, excluding GPUI layout/GPU work.
     BenchTurnSummary {
@@ -183,13 +189,20 @@ async fn main() -> Result<()> {
             child_lifecycle,
             plan_and_limit,
             catalog,
+            all_clear,
         } => {
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("Fixture hub: ws://{}/bus", listener.local_addr()?);
             wks_native::harness::serve_feedback_fixture(
                 listener,
                 wks_native::harness::Options {
-                    sessions: sessions.min(10000),
+                    sessions: sessions
+                        .unwrap_or(if catalog {
+                            wks_native::harness::CATALOG_SESSIONS
+                        } else {
+                            100
+                        })
+                        .min(10000),
                     turns: turns.min(5000),
                     rich: rich_transcript,
                     missing_session_request,
@@ -197,6 +210,7 @@ async fn main() -> Result<()> {
                     child_lifecycle,
                     plan_and_limit,
                     catalog,
+                    all_clear,
                 },
             )
             .await?;

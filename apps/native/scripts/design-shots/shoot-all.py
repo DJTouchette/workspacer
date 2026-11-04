@@ -26,14 +26,20 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 NATIVE = HERE.parent.parent
 
-# Fixture flavors. "rich" is the believable workspace: real-looking projects,
-# jobs, scratch and history (--catalog) with a conversation full of tool
-# calls, subagents, background tasks and an approval (--rich-transcript).
-# "demo" is the stock `wks-native --demo` (100 synthetic sessions).
+# Fixture flavors. "rich" is the believable workspace (--catalog): one
+# developer's fleet of ~30 distinct sessions across workspacer, hub-rs,
+# infra and notes, two needing them (an approval, a question), three
+# working, a stalled subagent and a failed background task, plus
+# real-looking projects, jobs, scratch, hosts and history; the active
+# conversation is a full run of tool calls, subagents and edits
+# (--rich-transcript). "demo" is the stock `wks-native --demo` (100
+# synthetic sessions).
 FIXTURES = {
-    "rich": ["--rich-transcript", "--catalog", "--turns", "120"],
-    "questions": ["--rich-transcript", "--catalog", "--turns", "120", "--pending-questions"],
-    "plan": ["--rich-transcript", "--catalog", "--turns", "120", "--plan-and-limit"],
+    "rich": ["--rich-transcript", "--catalog", "--turns", "0"],
+    "questions": ["--rich-transcript", "--catalog", "--turns", "0", "--pending-questions"],
+    "plan": ["--rich-transcript", "--catalog", "--turns", "0", "--plan-and-limit"],
+    # Nothing waits on the user: no approval or question (an all-clear list).
+    "clear": ["--rich-transcript", "--catalog", "--turns", "0", "--all-clear"],
     # No sessions yet: the first-run welcome (catalog projects to pick from).
     "empty": ["--catalog", "--sessions", "0"],
     "demo": None,
@@ -72,8 +78,9 @@ def shots():
     add("demo-conversation", "Stock `--demo` workload: 100 synthetic sessions, plain transcript", fixture="demo")
     add("conversation", "Rich conversation at rest: work cards, markdown, approval dock, tool rail")
     add("conversation-streaming", "Reply streaming in after sending a message (Bus fan-out session)",
-        [("click", "SIDEBAR_ROW_BUS"), ("sleep", 1.5)] + send(), capture_after=1.0)
-    add("conversation-scrolled", "Earlier in the transcript: worker/supervisor cards, subagents",
+        [("click", "SIDEBAR_ROW_BUS"), ("sleep", 1.5)]
+        + send("Try a bounded queue per subscriber and re-run the bus tests."), capture_after=1.0)
+    add("conversation-scrolled", "Earlier in the transcript: subagents (one stalled), status summary",
         [("key", "Escape"), ("keys", "ctrl+u", "ctrl+u", "ctrl+u")])
     add("conversation-light", "Rich conversation, Light theme", theme="light")
     add("sidebar-rail", "Sidebar collapsed to its icon rail", [("click", "RAIL_TOGGLE")])
@@ -175,6 +182,16 @@ def shots():
     # Integration: v2 folds Chat into Appearance; its reading width found by search.
     add("settings-reading-width", "Settings search: the transcript's reading width",
         nav("s") + [("click", 1360, 76), ("sleep", 0.5), ("type", "reading width"), ("sleep", 0.8)])
+    # area-fixture (round 2): the fleet's story states, each on screen.
+    add("conversation-tool-rows", "A run of tool calls: Grep, Read, Edit, Write, Bash with results",
+        [("wheel", 4, 1000, 400)])
+    add("subagent-stalled", "A stalled subagent (no heartbeat for 7 minutes) beside working and done ones",
+        [("key", "Escape"), ("keys", "ctrl+u", "ctrl+u", "ctrl+u")])
+    add("failed-task-log", "Background tasks: the failed test run's log",
+        [("move", "TITLE_PILL"), ("click", "TITLE_TASKS_BADGE"), ("sleep", 2), ("click", "TASK_ROW_FAILED"), ("sleep", 2)])
+    add("needs-you-question", "Needs you holds two: the release checklist's question open",
+        [("click", "SIDEBAR_ROW_QUESTION"), ("sleep", 2)])
+    add("all-clear", "Nothing needs you: an all-clear session list", fixture="clear")
     # r2-shell: the command palette (design v2's Ctrl+K).
     add("command-palette", "Command palette (Ctrl+K): recent sessions and actions",
         [("key", "ctrl+k"), ("sleep", 0.8)])
@@ -391,7 +408,10 @@ LANDMARKS = {
     "RAIL_TOGGLE": lambda shot: (286, 35),          # sidebar header, rightmost icon
     "SIDEBAR_SEARCH": lambda shot: (140, 85),       # r2-shell: v2 sidebar search field
     # Design v2 groups the list (Needs you, then Idle): Bus fan-out sits higher.
-    "SIDEBAR_ROW_BUS": lambda shot: (110, 411 if shot.get("v2") else 468),
+    "SIDEBAR_ROW_BUS": lambda shot: (110, 591 if shot.get("v2") else 468),
+    # The fixture's question (Release checklist for 0.9): v2 groups it under
+    # Needs you; v1 lists it after Bus fan-out.
+    "SIDEBAR_ROW_QUESTION": lambda shot: (110, 371 if shot.get("v2") else 532),
     "SIDEBAR_ROW_CHILD": lambda shot: (110, 212),   # "Inspect transcript parsing"
     # The title pill grows when hovered (context meter appears), so hover it
     # first; these two are the chips' positions once it has grown.
@@ -404,7 +424,9 @@ LANDMARKS = {
     "RAIL_FIRST_MARK": lambda shot: (35, 205 if shot.get("v2") else 219),  # first session in the rail
     "README_LINK": lambda shot: (651, 629) if shot["v2"] else (591, 497),  # README.md link, last assistant message
     "TALL_README_LINK": lambda shot: (228, 1229) if shot["v2"] else (169, 1097),  # same link, 1000x1600 tall layout
-    "TASK_ROW_DEV": lambda shot: (1200, 85),        # "npm run dev" in the tasks panel
+    "TASK_ROW_DEV": lambda shot: (1200, 85),        # the fixture hub task in the tasks panel
+    # The failed cargo test task: v2 its "Open log" button, v1 its row.
+    "TASK_ROW_FAILED": lambda shot: (1043, 345) if shot["v2"] else (1200, 270),
     "MODEL_SELECT": lambda shot: (955, 207),        # Change model page, model select
     "NEW_TASK_FIELD": lambda shot: (1150, 560),     # New agent form, Task box
     "END_SESSION": lambda shot: (1337, 679),        # Session details "End session..."
@@ -451,6 +473,8 @@ def main():
         for index, shot in selected:
             print(f"{index:02d}-{shot['slug']}: {shot['desc']}")
         return
+    if not selected:
+        sys.exit(f"no shot slug contains {' or '.join(map(repr, args.only))}; see --list")
     for tool in ("xdotool", "import", "identify"):
         if not shutil.which(tool):
             sys.exit(f"{tool} is required (apt-get install xdotool imagemagick)")
@@ -469,8 +493,8 @@ def main():
 
     xvfb = None
     if not os.environ.get("DISPLAY") or os.environ.get("DESIGN_SHOTS_XVFB"):
-        w = int(max(args.width, *(s.get("width", 0) for _, s in selected)) * args.scale) + 64
-        h = int(max(args.height, *(s.get("height", 0) for _, s in selected)) * args.scale) + 64
+        w = int(max([args.width] + [s.get("width", 0) for _, s in selected]) * args.scale) + 64
+        h = int(max([args.height] + [s.get("height", 0) for _, s in selected]) * args.scale) + 64
         xvfb, display = start_xvfb(w, h)
         os.environ["DISPLAY"] = display
         print(f"Xvfb on {display} ({w}x{h})")

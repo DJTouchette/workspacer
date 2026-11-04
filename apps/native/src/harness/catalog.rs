@@ -35,41 +35,351 @@ const HISTORY_PAGE: usize = 20;
 /// The hub's own bound on `limit`.
 const HISTORY_LIMIT: u64 = 200;
 
-/// Live fixture sessions: `(folder, label)`, cycled by index.
-const LIVE: [(&str, &str); 12] = [
-    (NATIVE, "Native client experiment"),
-    (WORKSPACER, "Session creation review"),
-    (HUB, "Bus fan-out backpressure"),
-    (WORKSPACER, "Release checklist for 0.9"),
-    (NOTES, "Weekly notes tidy-up"),
-    (INFRA, "Fly deploy dry run"),
-    (NATIVE, "Scroll perf profiling"),
-    (HUB, "Federation handshake retries"),
-    (WORKSPACER, "Settings search audit"),
-    (INFRA, "Terraform drift check"),
-    (NATIVE, "Jobs page empty state"),
-    (HUB, "Reconnect storm repro"),
+/// What a live fixture session is doing. The first row's approval (or
+/// plan) and the question are the harness's to add; see `harness.rs`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Live {
+    /// Waiting on the user's approval (the active session).
+    Approval,
+    /// Waiting on the user's answer to a question.
+    Question,
+    /// Mid-turn.
+    Working,
+    /// Ready for the next message.
+    Idle,
+    /// Ended.
+    Ended,
+}
+
+/// One live fixture session: folder, title, provider, model, state, minutes
+/// since its last activity, and the request that opened it.
+type LiveRow = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    Live,
+    i64,
+    &'static str,
+);
+
+/// The live fleet: a developer supervising a handful of agents across the
+/// workspacer repository (with its native client), hub-rs, infra and notes.
+/// Two need the user (an approval, a question), three are mid-turn (one a
+/// hub-launched reviewer under the first), five sit idle and the rest ended
+/// over the last five days. Every title is distinct; past the table rows
+/// repeat with a " · N" suffix (load runs only: the rig serves exactly
+/// [`LIVE_SESSIONS`]).
+const LIVE: [LiveRow; 30] = [
+    (
+        NATIVE,
+        "Restore sessions on launch",
+        "claude",
+        "sonnet",
+        Live::Approval,
+        3,
+        "Sessions I had open don't come back after a restart. Restore them on launch, focused one included.",
+    ),
+    (
+        WORKSPACER,
+        "Session creation review",
+        "codex",
+        "gpt-5.6-sol",
+        Live::Working,
+        0,
+        "Review session creation and model selection for regressions.",
+    ),
+    (
+        HUB,
+        "Bus fan-out backpressure",
+        "claude",
+        "sonnet",
+        Live::Idle,
+        18,
+        "Slow subscribers stall the whole bus fan-out. Add per-subscriber backpressure.",
+    ),
+    (
+        WORKSPACER,
+        "Release checklist for 0.9",
+        "claude",
+        "opus",
+        Live::Question,
+        1,
+        "Walk the 0.9 release checklist and cut the release branch.",
+    ),
+    (
+        HUB,
+        "Federation handshake retries",
+        "codex",
+        "gpt-5.6-sol",
+        Live::Working,
+        0,
+        "Peers give up after one failed handshake. Retry with backoff.",
+    ),
+    (
+        INFRA,
+        "Fly deploy dry run",
+        "claude",
+        "sonnet",
+        Live::Working,
+        0,
+        "Dry-run the Fly deploy for the hub and report anything that would change.",
+    ),
+    (
+        NATIVE,
+        "Scroll perf with 1,000 sessions",
+        "claude",
+        "sonnet",
+        Live::Idle,
+        42,
+        "Profile sidebar scrolling with 1,000 sessions and fix any dropped frames.",
+    ),
+    (
+        NOTES,
+        "Weekly notes tidy-up",
+        "claude",
+        "haiku",
+        Live::Idle,
+        2 * 60,
+        "Tidy this week's notes into the usual sections.",
+    ),
+    (
+        WORKSPACER,
+        "Settings search audit",
+        "claude",
+        "sonnet",
+        Live::Idle,
+        3 * 60 + 10,
+        "Check that every setting is reachable from the settings search.",
+    ),
+    (
+        INFRA,
+        "Terraform drift check",
+        "claude",
+        "sonnet",
+        Live::Idle,
+        5 * 60,
+        "Run a drift check on staging and explain any differences.",
+    ),
+    (
+        NATIVE,
+        "Jobs page empty state",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        7 * 60,
+        "Design the Jobs page for someone with no jobs yet.",
+    ),
+    (
+        HUB,
+        "Reconnect storm repro",
+        "codex",
+        "gpt-5.6-sol",
+        Live::Ended,
+        9 * 60,
+        "Reproduce the reconnect storm when the hub restarts under load.",
+    ),
+    (
+        WORKSPACER,
+        "Usage meter rounding",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        11 * 60,
+        "The usage meter shows 100% while the window still has room.",
+    ),
+    (
+        NATIVE,
+        "Keyboard focus after dialogs",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        14 * 60,
+        "Focus is lost after closing a dialog with Escape.",
+    ),
+    (
+        HUB,
+        "Queue priority ordering",
+        "codex",
+        "gpt-5.6-sol",
+        Live::Ended,
+        20 * 60,
+        "Queued work with the same priority runs out of order.",
+    ),
+    (
+        INFRA,
+        "Rotate staging certificates",
+        "claude",
+        "opus",
+        Live::Ended,
+        23 * 60,
+        "Rotate the staging TLS certificates before they expire.",
+    ),
+    (
+        WORKSPACER,
+        "Changelog link checker",
+        "claude",
+        "haiku",
+        Live::Ended,
+        26 * 60,
+        "Find dead links in CHANGELOG.md.",
+    ),
+    (
+        NOTES,
+        "1:1 agenda for Thursday",
+        "claude",
+        "haiku",
+        Live::Ended,
+        28 * 60,
+        "Draft Thursday's 1:1 agenda from this week's notes.",
+    ),
+    (
+        NATIVE,
+        "Title bar double-click on Linux",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        31 * 60,
+        "Double-clicking the title bar should maximise on Linux.",
+    ),
+    (
+        HUB,
+        "Scratch pending counts",
+        "codex",
+        "gpt-5.6-sol",
+        Live::Ended,
+        34 * 60,
+        "scratch.pending counts files that were already reviewed.",
+    ),
+    (
+        WORKSPACER,
+        "Auto-title prompt tuning",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        40 * 60,
+        "Auto titles are too long. Tune the prompt.",
+    ),
+    (
+        INFRA,
+        "Grafana alert thresholds",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        46 * 60,
+        "The hub latency alert fires on every deploy. Fix the thresholds.",
+    ),
+    (
+        NATIVE,
+        "Terminal paste bracketing",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        52 * 60,
+        "Multi-line paste into the terminal runs each line.",
+    ),
+    (
+        HUB,
+        "Session store vacuum",
+        "codex",
+        "gpt-5.6-sol",
+        Live::Ended,
+        60 * 60,
+        "The session database keeps growing. Vacuum it safely.",
+    ),
+    (
+        WORKSPACER,
+        "Model picker search",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        70 * 60,
+        "Let the model picker filter as you type.",
+    ),
+    (
+        NOTES,
+        "Conference talk outline",
+        "claude",
+        "opus",
+        Live::Ended,
+        80 * 60,
+        "Outline a 20-minute talk on supervising coding agents.",
+    ),
+    (
+        NATIVE,
+        "Font fallback for emoji",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        90 * 60,
+        "Emoji in session titles render as boxes.",
+    ),
+    (
+        INFRA,
+        "Backup restore drill",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        100 * 60,
+        "Restore last night's backup into a scratch database and verify it.",
+    ),
+    (
+        HUB,
+        "Peer token expiry warning",
+        "codex",
+        "gpt-5.6-sol",
+        Live::Ended,
+        110 * 60,
+        "Warn before a peer's token expires.",
+    ),
+    (
+        WORKSPACER,
+        "Onboarding checklist copy",
+        "claude",
+        "sonnet",
+        Live::Ended,
+        118 * 60,
+        "Rewrite the first-run checklist for someone new.",
+    ),
 ];
 
-/// Live sessions listed in History as well (the hub's history holds every
-/// session it has seen, running ones included).
-const LIVE_IN_HISTORY: usize = 4;
+/// How many live sessions the catalog's story holds (the rig serves this many).
+pub const LIVE_SESSIONS: usize = LIVE.len();
+
+fn live_row(index: usize) -> &'static LiveRow {
+    &LIVE[index % LIVE.len()]
+}
 
 pub fn live_cwd(index: usize) -> &'static str {
-    LIVE[index % LIVE.len()].0
+    live_row(index).0
 }
 
 pub fn live_label(index: usize) -> String {
-    let label = LIVE[index % LIVE.len()].1;
+    let label = live_row(index).1;
     match index / LIVE.len() {
         0 => label.to_owned(),
         round => format!("{label} · {}", round + 1),
     }
 }
 
-/// Some live rows have ended, so project cards read "N running of M".
-pub fn live_stopped(index: usize) -> bool {
-    index >= 3 && index.is_multiple_of(3)
+/// `(provider, model)` of a live session.
+pub fn live_agent(index: usize) -> (&'static str, &'static str) {
+    let row = live_row(index);
+    (row.2, row.3)
+}
+
+pub fn live_state(index: usize) -> Live {
+    live_row(index).4
+}
+
+/// When the session last did anything (epoch ms), counted back from `now`.
+pub fn live_activity(index: usize, now: i64) -> i64 {
+    now - live_row(index).5 * MINUTE - (index / LIVE.len()) as i64 * DAY
+}
+
+/// The request that opened the session.
+pub fn live_prompt(index: usize) -> &'static str {
+    live_row(index).6
 }
 
 fn wall_now() -> i64 {
@@ -709,7 +1019,7 @@ impl Catalog {
             created: 0,
             queue: seed_queue(now),
             peer_queues: BTreeMap::from([(PEER_GPU.to_owned(), seed_peer_queue(now))]),
-            limits: json!({"maxAgents": 4, "maxShell": 2, "maxCpuPressure": 60,
+            limits: json!({"maxAgents": 3, "maxShell": 2, "maxCpuPressure": 60,
                 "maxMemoryPressure": 25, "minAvailableMemoryMb": 1024, "minFreeDiskMb": 2048}),
             queue_seq: 0,
             links: vec![json!({"localPath": NATIVE, "peer": PEER_MAC,
@@ -719,6 +1029,20 @@ impl Catalog {
             catalog.schedule(&job, now);
         }
         catalog
+    }
+
+    /// A first run: the projects are known, but nothing has happened yet:
+    /// no scratch waiting for review, no jobs or runs, no history, nothing
+    /// queued (so no badge or count reads as pending work).
+    pub fn first_run(mut self) -> Self {
+        self.scratch.clear();
+        self.jobs.clear();
+        self.runs.clear();
+        self.next_run.clear();
+        self.history.clear();
+        self.queue.clear();
+        self.peer_queues.clear();
+        self
     }
 
     /// The reply to `method`, or `None` when the catalog does not serve it.
@@ -1437,18 +1761,21 @@ impl Catalog {
 
     // ---- history ----------------------------------------------------------
 
-    /// History rows for the first live sessions and any launched here.
+    /// History rows for the live sessions (the hub's history holds every
+    /// session it has seen, running ones included) and any launched here.
     fn live_history(&self, live: &[Value]) -> Vec<Value> {
         live.iter()
             .enumerate()
-            .filter(|(ix, row)| {
+            .filter(|(_, row)| {
                 let id = row["sessionId"].as_str().unwrap_or_default();
-                (*ix < LIVE_IN_HISTORY || id.starts_with("fixture-spawn-"))
-                    && !self.forgotten.contains(id)
+                !self.forgotten.contains(id)
             })
             .map(|(ix, row)| {
                 let ix = ix as i64;
                 let label = row["label"].as_str().unwrap_or_default();
+                let updated = row["lastActivity"]
+                    .as_i64()
+                    .unwrap_or(self.now - ix * 4 * MINUTE);
                 json!({
                     "sessionId": row["sessionId"],
                     "provider": row["provider"].as_str().unwrap_or("claude"),
@@ -1456,16 +1783,16 @@ impl Catalog {
                     "mode": row["mode"].as_str().unwrap_or("input"),
                     "transport": "stream",
                     "archived": false,
-                    "updatedAt": self.now - ix * 4 * MINUTE,
-                    "startedAt": self.now - (ix + 1) * 35 * MINUTE,
+                    "updatedAt": updated,
+                    "startedAt": updated - (25 + (ix * 13) % 70) * MINUTE,
                     "name": label,
                     "title": label,
                     "model": row["model"].as_str().unwrap_or_default(),
                     "hidden": false,
                     "onSidebar": true,
                     "transcriptCopy": false,
-                    "userPrompts": 3 + ix,
-                    "toolCalls": 12 + 7 * ix,
+                    "userPrompts": 3 + ix % 6,
+                    "toolCalls": 12 + (7 * ix) % 60,
                 })
             })
             .collect()
@@ -1630,17 +1957,32 @@ fn no_match(cwd: &str, peer: &str, suggestions: &[Value]) -> String {
     }
 }
 
-/// This hub's queue: one agent running, two waiting (one at a higher
-/// priority, from the nightly job), a finished shell item and one whose
-/// outcome was lost to a restart.
+/// This hub's queue: every agent slot taken by the live fleet's three
+/// working sessions, two waiting for a slot (one at a higher priority, from
+/// the nightly job), a finished shell item and one whose outcome was lost to
+/// a restart.
 fn seed_queue(now: i64) -> Vec<Value> {
     let spawn = |cwd: &str, prompt: &str| json!({"provider": "claude", "cwd": cwd, "prompt": prompt, "model": "sonnet"});
-    vec![
-        json!({"id": "q_01JRUN0000000000000000001", "kind": "spawn", "label": "Bus fan-out profiling",
-            "priority": 0, "state": "running", "source": {"kind": "prompt"},
-            "spawn": spawn(HUB, "Profile the bus fan-out under 500 subscribers."),
-            "enqueuedAt": now - 14 * MINUTE, "startedAt": now - 12 * MINUTE, "finishedAt": 0,
-            "sessionId": "s-fixture-running", "exitCode": null, "detail": "", "waitReason": ""}),
+    // The live rows that are mid-turn, as the running queue items.
+    let running = (0..LIVE.len())
+        .filter(|&ix| live_state(ix) == Live::Working)
+        .enumerate()
+        .map(|(n, ix)| {
+            let (provider, model) = live_agent(ix);
+            let id = if n == 0 {
+                "q_01JRUN0000000000000000001".to_owned()
+            } else {
+                format!("q_01JRUN00000000000000000{:02}", n + 10)
+            };
+            let started = now - (12 + 9 * n as i64) * MINUTE;
+            json!({"id": id, "kind": "spawn", "label": live_label(ix),
+                "priority": 0, "state": "running", "source": {"kind": "prompt"},
+                "spawn": {"provider": provider, "cwd": live_cwd(ix), "prompt": live_prompt(ix), "model": model},
+                "enqueuedAt": started - MINUTE, "startedAt": started, "finishedAt": 0,
+                "sessionId": format!("demo-{ix:04}"), "exitCode": null, "detail": "", "waitReason": ""})
+        });
+    let mut items: Vec<Value> = running.collect();
+    items.extend([
         json!({"id": "q_01JQUE0000000000000000002", "kind": "spawn", "label": "Nightly test sweep",
             "priority": 2, "state": "queued", "source": {"kind": "job", "jobId": JOB_TESTS},
             "spawn": spawn(WORKSPACER, "The nightly test run failed. Triage the failures."),
@@ -1661,7 +2003,8 @@ fn seed_queue(now: i64) -> Vec<Value> {
             "spawn": spawn(WORKSPACER, "Draft the 0.9 release notes."),
             "enqueuedAt": now - DAY, "startedAt": now - DAY, "finishedAt": now - DAY + HOUR,
             "exitCode": null, "detail": "hub restarted while running", "waitReason": ""}),
-    ]
+    ]);
+    items
 }
 
 /// The GPU peer's queue: a remote item from this hub, waiting on its gate.
@@ -1871,9 +2214,15 @@ mod tests {
     fn live(count: usize) -> Vec<Value> {
         (0..count)
             .map(|i| {
+                let (provider, model) = live_agent(i);
                 json!({"sessionId": format!("demo-{i:04}"), "label": live_label(i),
-                    "cwd": live_cwd(i), "provider": "claude", "model": "sonnet",
-                    "mode": if live_stopped(i) { "stopped" } else { "input" }})
+                "cwd": live_cwd(i), "provider": provider, "model": model,
+                "lastActivity": live_activity(i, wall_now()),
+                "mode": match live_state(i) {
+                    Live::Ended => "stopped",
+                    Live::Working => "responding",
+                    _ => "input",
+                }})
             })
             .collect()
     }
@@ -2080,7 +2429,11 @@ mod tests {
         let names: Vec<_> = cards.iter().map(|c| c.host.as_str()).collect();
         assert_eq!(names, ["local", PEER_GPU, PEER_LAPTOP, PEER_MAC]);
         let local = cards[0].resources.as_ref().unwrap();
-        assert_eq!(local.agent_line(), "1/4 agents");
+        assert_eq!(
+            local.agent_line(),
+            "3/3 agents",
+            "the working sessions fill it"
+        );
         assert_eq!(local.queued_line(), "2 queued");
         let gpu = cards[1].resources.as_ref().unwrap();
         assert_eq!(gpu.gate_label(), "Gate closed");
@@ -2102,7 +2455,7 @@ mod tests {
         assert_eq!(limits["maxAgents"], 6);
         assert_eq!(call("queue.setConfig", json!({"nope": 1}))["ok"], false);
         let resources = hosts::Resources::parse(&call("host.resources", json!({}))).unwrap();
-        assert_eq!(resources.agent_line(), "1/6 agents");
+        assert_eq!(resources.agent_line(), "3/6 agents");
         let targets = hosts::parse_targets(&call("queue.targets", json!({"provider": "codex"})));
         assert!(!targets.unwrap().find(PEER_GPU).unwrap().eligible);
     }
@@ -2297,7 +2650,7 @@ mod tests {
     fn history_pages_by_cursor_searches_and_forgets() {
         let now = wall_now();
         let mut catalog = Catalog::new(now);
-        let rows = live(6);
+        let rows = live(12);
         let first = crate::features::history_page(
             catalog
                 .call("sessions.history", &json!({"limit": 200}), &rows)
@@ -2319,7 +2672,7 @@ mod tests {
         assert!(second.get("next").is_none());
         let mut all = page;
         all.extend(second["sessions"].as_array().unwrap().iter().cloned());
-        assert_eq!(all.len(), PAST.len() + LIVE_IN_HISTORY);
+        assert_eq!(all.len(), PAST.len() + rows.len());
         let ids: BTreeSet<_> = all
             .iter()
             .map(|r| r["sessionId"].as_str().unwrap())
@@ -2348,7 +2701,7 @@ mod tests {
         let found = catalog
             .call(
                 "sessions.history",
-                &json!({"limit": 200, "query": "terraform"}),
+                &json!({"limit": 200, "query": "terraform plan"}),
                 &rows,
             )
             .unwrap();
@@ -2368,7 +2721,7 @@ mod tests {
             .unwrap();
         assert!(running["error"].as_str().unwrap().contains("still running"));
         let ended = catalog
-            .call("sessions.forget", &json!({"sessionId": "demo-0003"}), &rows)
+            .call("sessions.forget", &json!({"sessionId": "demo-0010"}), &rows)
             .unwrap();
         assert_eq!(ended["ok"], true);
         let again = catalog
@@ -2382,7 +2735,7 @@ mod tests {
         assert!(
             !left
                 .iter()
-                .any(|r| r["sessionId"] == "hist-07" || r["sessionId"] == "demo-0003")
+                .any(|r| r["sessionId"] == "hist-07" || r["sessionId"] == "demo-0010")
         );
     }
 }
