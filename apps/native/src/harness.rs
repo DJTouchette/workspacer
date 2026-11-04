@@ -124,6 +124,9 @@ struct Fixture {
     finish_at: Instant,
     finished_parent: Option<Value>,
     catalog: Option<catalog::Catalog>,
+    /// When the connection opened (epoch ms): fixed times count back from
+    /// it, so every read of a transcript carries the same timestamps.
+    epoch: i64,
 }
 
 impl Fixture {
@@ -180,6 +183,7 @@ impl Fixture {
             due: Vec::new(),
             finish_at: Instant::now() + Duration::from_secs(4),
             finished_parent: None,
+            epoch: now,
             catalog: options.catalog.then(|| {
                 let catalog = catalog::Catalog::new(now);
                 if options.sessions == 0 {
@@ -788,10 +792,12 @@ impl Fixture {
                 "provider": provider,
                 "model": model,
                 "transport": "stream",
-                "lastActivity": if catalog {
-                    catalog::live_activity(i, now)
+                "lastActivity": if state == Some(catalog::Live::Working) {
+                    now
+                } else if catalog {
+                    catalog::live_activity(i, self.epoch)
                 } else {
-                    demo_activity(i, now)
+                    demo_activity(i, self.epoch)
                 },
                 "mode": if self.streaming && self.active_id == id {
                     "responding"
@@ -874,7 +880,7 @@ impl Fixture {
             .filter(|&i| i > 0 && i < self.options.sessions);
         match index {
             Some(index) if self.options.rich && self.options.catalog => {
-                let items = catalog_opening(index);
+                let items = catalog_opening(index, self.epoch);
                 let seq = items.len() as u64;
                 (items, seq)
             }
@@ -892,10 +898,11 @@ impl Fixture {
             self.seq = next_seq;
             self.active_id = id.to_owned();
         }
+        let at = chrono::Utc::now().to_rfc3339();
         self.items
-            .push(json!({"kind": "user_message", "text": text}));
+            .push(json!({"kind": "user_message", "text": text, "timestamp": at}));
         self.items
-            .push(json!({"kind": "assistant_text", "text": "Message received."}));
+            .push(json!({"kind": "assistant_text", "text": "Message received.", "timestamp": at}));
         self.seq += 2;
         self.streaming = true;
         self.remaining = 30;
@@ -1239,11 +1246,18 @@ pub fn rich_items() -> Vec<Value> {
             "## Ready for review\n\nOpen sessions now come back on launch, and the one you were in keeps focus. Clippy is clean and the session test passes.\n\nSee [README.md](README.md:12) or the [session tests](tests/session.rs). Next I’ll run the full test suite before committing.",
         ),
     ];
-    let start = chrono::Utc::now().timestamp_millis() - 26 * 60_000;
-    let step = 23 * 60_000 / items.len() as i64;
+    // A tool's result lands a few seconds after its call; everything else
+    // moves the clock on, so the run spans ~23 minutes.
+    let mut at = chrono::Utc::now().timestamp_millis() - 28 * 60_000;
+    let step = 23 * 60_000 / items.len() as i64 * 2;
     for (index, item) in items.iter_mut().enumerate() {
+        at += if item["kind"] == "tool_result" {
+            1_500 + (index as i64 * 1_700) % 6_000
+        } else {
+            step
+        };
         item["timestamp"] = json!(
-            chrono::DateTime::from_timestamp_millis(start + index as i64 * step)
+            chrono::DateTime::from_timestamp_millis(at)
                 .unwrap()
                 .to_rfc3339()
         );
@@ -1253,10 +1267,10 @@ pub fn rich_items() -> Vec<Value> {
 
 /// A live catalog session's own short conversation: its opening request,
 /// a search, and where it stands now.
-fn catalog_opening(index: usize) -> Vec<Value> {
+fn catalog_opening(index: usize, epoch: i64) -> Vec<Value> {
     let label = catalog::live_label(index);
     let state = catalog::live_state(index);
-    let at = catalog::live_activity(index, chrono::Utc::now().timestamp_millis());
+    let at = catalog::live_activity(index, epoch);
     let key = label
         .split_whitespace()
         .find(|w| w.len() > 4)
