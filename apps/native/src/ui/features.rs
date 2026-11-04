@@ -903,6 +903,11 @@ impl Workspace {
             chrome::notice_line(self.extras.notice.clone(), tone, p)
                 .debug_selector(|| "feature-notice".into())
         });
+        if self.screen == Screen::Jobs && self.design().is_v2() {
+            // The v2 worked example (`docs/design-v2.md`, "Migrating a
+            // screen"): shared page header, tokens and content width.
+            return self.jobs_page_v2(notice, body, cx);
+        }
         let header = self.page_header(
             Some(back),
             (self.screen == Screen::Session && session_name.is_some()).then_some("SESSION DETAILS"),

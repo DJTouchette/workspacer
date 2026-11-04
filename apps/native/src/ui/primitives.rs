@@ -20,20 +20,8 @@ use gpui::{AnyElement, BoxShadow, ElementId, Hsla, relative};
 use gpui_component::tooltip::Tooltip;
 use wks_native::tokens::Shadow;
 
-/// What a button does, which decides how loud it is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ButtonVariant {
-    /// The one action a surface exists for: filled with the primary colour.
-    Primary,
-    /// Other actions: a tonal wash of the text colour.
-    Secondary,
-    /// Quiet actions in toolbars and rows: no fill until hovered.
-    Ghost,
-    /// Stops or removes something: an error wash, error text.
-    Danger,
-}
-
 /// The meaning a pill, badge, meter or dot carries; its colour follows.
+/// For a session's or job's state use [`StatusKind`] instead.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Intent {
     Neutral,
@@ -84,48 +72,119 @@ pub(crate) fn elevation(p: &Palette, level: Shadow) -> Vec<BoxShadow> {
     }]
 }
 
+/// What a button does, which decides how loud it is. One primary per
+/// region; destructive actions are [`Self::DangerGhost`] (with a confirm
+/// step or undo) or live in an overflow menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ButtonVariant {
+    /// The one action a region exists for: filled with the primary colour.
+    Primary,
+    /// Other actions: a tonal wash of the text colour inside a hairline ring.
+    Secondary,
+    /// Quiet actions in toolbars and rows: no fill until hovered.
+    Ghost,
+    /// Stops or removes something: error text, an error wash on hover.
+    DangerGhost,
+}
+
+/// The two control heights (`layout.control_height_sm` / `control_height`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ButtonSize {
+    /// 28: rows, cards, toolbars, dialogs.
+    Small,
+    /// 36: page-level and composer actions.
+    Large,
+}
+
+impl ButtonSize {
+    pub(crate) fn height(self, p: &Palette) -> f32 {
+        match self {
+            Self::Small => p.tokens.layout.control_height_sm,
+            Self::Large => p.tokens.layout.control_height,
+        }
+    }
+
+    fn padding(self, p: &Palette) -> f32 {
+        let s = p.tokens.space;
+        match self {
+            Self::Small => s.md + s.xxs,
+            Self::Large => s.lg + s.xxs,
+        }
+    }
+
+    fn text(self, p: &Palette) -> f32 {
+        match self {
+            Self::Small => p.tokens.text.body,
+            Self::Large => p.tokens.text.subheading,
+        }
+    }
+}
+
+/// The (rest, hover, pressed) colours and text of one button variant.
+struct ButtonColors {
+    bg: [Hsla; 3],
+    fg: [u32; 2],
+    /// A hairline ring drawn as a shadow (the border is the focus ring).
+    ring: Option<u32>,
+}
+
 /// (rest, hover, pressed) backgrounds and (rest, hover) text for a variant.
-fn button_colors(variant: ButtonVariant, enabled: bool, p: &Palette) -> ([Hsla; 3], [u32; 2]) {
+fn button_colors(variant: ButtonVariant, enabled: bool, p: &Palette) -> ButtonColors {
     let w = p.tokens.wash;
     let solid = |c: u32| Hsla::from(rgb(c));
+    let clear = gpui::transparent_black();
     if !enabled {
-        let bg = match variant {
-            ButtonVariant::Ghost => gpui::transparent_black(),
-            ButtonVariant::Primary => solid(p.selected),
-            ButtonVariant::Secondary | ButtonVariant::Danger => tonal(p, w.disabled),
+        let (bg, ring) = match variant {
+            ButtonVariant::Ghost | ButtonVariant::DangerGhost => (clear, None),
+            ButtonVariant::Primary => (solid(p.selected), None),
+            ButtonVariant::Secondary => (tonal(p, w.disabled), Some(p.border)),
         };
-        return ([bg; 3], [p.disabled; 2]);
+        return ButtonColors {
+            bg: [bg; 3],
+            fg: [p.disabled; 2],
+            ring,
+        };
     }
     match variant {
-        ButtonVariant::Primary => (
-            [
+        ButtonVariant::Primary => ButtonColors {
+            bg: [
                 solid(p.primary),
                 solid(p.primary_hover),
                 solid(p.primary_pressed),
             ],
-            [p.on_primary; 2],
-        ),
-        ButtonVariant::Secondary => (
-            [tonal(p, w.rest), tonal(p, w.hover), tonal(p, w.pressed)],
-            [p.text; 2],
-        ),
-        ButtonVariant::Ghost => (
-            [
-                gpui::transparent_black(),
-                solid(p.roles.hover),
-                solid(p.roles.pressed),
-            ],
-            [p.roles.text_secondary, p.text],
-        ),
-        ButtonVariant::Danger => (
-            [
+            fg: [p.on_primary; 2],
+            ring: None,
+        },
+        ButtonVariant::Secondary => ButtonColors {
+            bg: [tonal(p, w.rest), tonal(p, w.hover), tonal(p, w.pressed)],
+            fg: [p.text; 2],
+            ring: Some(p.roles.border_strong),
+        },
+        ButtonVariant::Ghost => ButtonColors {
+            bg: [clear, solid(p.roles.hover), solid(p.roles.pressed)],
+            fg: [p.roles.text_secondary, p.text],
+            ring: None,
+        },
+        ButtonVariant::DangerGhost => ButtonColors {
+            bg: [
+                clear,
                 wash(p.error, w.tone_rest),
                 wash(p.error, w.tone_hover),
-                wash(p.error, w.tone_pressed),
             ],
-            [p.error; 2],
-        ),
+            fg: [p.error; 2],
+            ring: None,
+        },
     }
+}
+
+/// A 1px ring as a shadow, so it sits outside the reserved focus border.
+fn ring(p: &Palette, color: u32) -> Vec<BoxShadow> {
+    vec![BoxShadow {
+        color: Hsla::from(rgb(color)),
+        offset: gpui::point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(p.tokens.stroke.hairline),
+    }]
 }
 
 /// Apply a variant's fill, text and hover/press states to a control.
@@ -135,17 +194,25 @@ fn button_states(
     enabled: bool,
     p: &Palette,
 ) -> Stateful<Div> {
-    let ([rest, hover, pressed], [fg, fg_hover]) = button_colors(variant, enabled, p);
-    control.bg(rest).text_color(rgb(fg)).when(enabled, |d| {
-        d.hover_text_style(move |s| s.bg(hover).text_color(rgb(fg_hover)))
-            .active_text_style(move |s| s.bg(pressed).text_color(rgb(fg_hover)))
-    })
+    let ButtonColors {
+        bg: [rest, hover, pressed],
+        fg: [fg, fg_hover],
+        ring: edge,
+    } = button_colors(variant, enabled, p);
+    control
+        .bg(rest)
+        .text_color(rgb(fg))
+        .when_some(edge, |d, edge| d.shadow(ring(p, edge)))
+        .when(enabled, |d| {
+            d.hover_text_style(move |s| s.bg(hover).text_color(rgb(fg_hover)))
+                .active_text_style(move |s| s.bg(pressed).text_color(rgb(fg_hover)))
+        })
 }
 
 /// A labelled button, with an optional leading icon. Add `.on_click`.
 ///
 /// ```ignore
-/// primitives::button("save", "Save", None, ButtonVariant::Primary, dirty, &p)
+/// primitives::button("save", "Save", None, ButtonVariant::Primary, ButtonSize::Small, dirty, &p)
 ///     .debug_selector(|| "save".into())
 ///     .on_click(cx.listener(|this, _, window, cx| this.save(window, cx)))
 /// ```
@@ -154,31 +221,46 @@ pub(crate) fn button(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
     variant: ButtonVariant,
+    size: ButtonSize,
     enabled: bool,
     p: &Palette,
 ) -> Stateful<Div> {
     let t = p.tokens;
     let control = interactive_control(div().id(id.into()), *p, enabled)
-        .h(px(t.layout.control_height))
-        .px(px(t.space.lg))
+        .h(px(size.height(p)))
+        .px(px(size.padding(p)))
         .flex()
         .items_center()
         .justify_center()
         .gap(px(t.space.sm))
         .flex_shrink_0()
         .rounded(px(t.radius.control))
-        .text_size(px(t.text.meta))
-        .font_weight(FontWeight::MEDIUM)
-        .when_some(icon, |d, icon| d.child(Icon::new(icon).size(px(t.icon.md))))
+        .text_size(px(size.text(p)))
+        .font_weight(FontWeight(t.weight.medium))
+        .when_some(icon, |d, icon| d.child(Icon::new(icon).size(px(t.icon.sm))))
         .child(label.into());
     button_states(control, variant, enabled, p)
 }
 
-/// A square icon-only button with a tooltip naming it. Add `.on_click`.
+/// A square icon-only button (small height) with a tooltip naming it.
+/// Add `.on_click`.
 pub(crate) fn icon_button(
     id: impl Into<ElementId>,
     icon: IconName,
     tooltip: &'static str,
+    variant: ButtonVariant,
+    enabled: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    icon_button_with_shortcut(id, icon, tooltip, None, variant, enabled, p)
+}
+
+/// [`icon_button`] whose tooltip also shows its shortcut ("Ctrl K", "g n").
+pub(crate) fn icon_button_with_shortcut(
+    id: impl Into<ElementId>,
+    icon: IconName,
+    tooltip: &'static str,
+    shortcut: Option<&'static str>,
     variant: ButtonVariant,
     enabled: bool,
     p: &Palette,
@@ -191,9 +273,126 @@ pub(crate) fn icon_button(
         .justify_center()
         .flex_shrink_0()
         .rounded(px(t.radius.control))
-        .tooltip(move |window, cx| Tooltip::new(tooltip).build(window, cx))
-        .child(Icon::new(icon).size(px(t.icon.md)));
+        .tooltip(tooltip_view(tooltip, shortcut, p))
+        .child(Icon::new(icon).size(px(t.icon.sm)));
     button_states(control, variant, enabled, p)
+}
+
+/// The two halves of a split button: the main action and the chevron that
+/// opens its menu (Queue / Send now). Wire each half's `.on_click`, then
+/// join them with [`split_button`].
+pub(crate) fn split_button_parts(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    icon: Option<IconName>,
+    variant: ButtonVariant,
+    size: ButtonSize,
+    enabled: bool,
+    p: &Palette,
+) -> (Stateful<Div>, Stateful<Div>) {
+    let t = p.tokens;
+    let r = px(t.radius.control);
+    let main = button(id, label, icon, variant, size, enabled, p)
+        .rounded(px(0.))
+        .rounded_l(r);
+    let menu = interactive_control(div().id((id, 1usize)), *p, enabled)
+        .h(px(size.height(p)))
+        .w(px(size.height(p) - t.space.md))
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .rounded_r(r)
+        .tooltip(tooltip_view("More options", None, p))
+        .child(Icon::new(IconName::ChevronDown).size(px(t.icon.sm)));
+    (main, button_states(menu, variant, enabled, p))
+}
+
+/// Join [`split_button_parts`] into one control, a hairline apart.
+pub(crate) fn split_button(main: Stateful<Div>, menu: Stateful<Div>, p: &Palette) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .gap(px(p.tokens.stroke.hairline))
+        .child(main)
+        .child(menu)
+}
+
+/// The "…" trigger for a row's or card's overflow menu: where Remove,
+/// Discard and other rare or destructive actions live. Add `.on_click`.
+pub(crate) fn overflow_trigger(id: impl Into<ElementId>, p: &Palette) -> Stateful<Div> {
+    icon_button(
+        id,
+        IconName::Ellipsis,
+        "More actions",
+        ButtonVariant::Ghost,
+        true,
+        p,
+    )
+}
+
+/// A tooltip builder: the label, then the shortcut as keycaps ("Ctrl K",
+/// or a sequence such as "g n"; spaces separate caps). Pass to `.tooltip`.
+pub(crate) fn tooltip_view(
+    label: impl Into<SharedString>,
+    shortcut: Option<&'static str>,
+    p: &Palette,
+) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
+    let label: SharedString = label.into();
+    let p = *p;
+    move |window, cx| {
+        let label = label.clone();
+        Tooltip::element(move |_, _| {
+            let t = p.tokens;
+            div()
+                .flex()
+                .items_center()
+                .gap(px(t.space.md))
+                .text_size(px(t.text.meta))
+                .text_color(rgb(p.text))
+                .child(label.clone())
+                .when_some(shortcut, |d, keys| {
+                    d.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.xxs))
+                            .children(keys.split_whitespace().map(|key| kbd(key.to_owned(), &p))),
+                    )
+                })
+        })
+        .build(window, cx)
+    }
+}
+
+/// Give a control that has no tooltip yet one, with an optional shortcut.
+/// (GPUI allows one tooltip per element.)
+pub(crate) fn with_tooltip(
+    control: Stateful<Div>,
+    label: impl Into<SharedString>,
+    shortcut: Option<&'static str>,
+    p: &Palette,
+) -> Stateful<Div> {
+    control.tooltip(tooltip_view(label, shortcut, p))
+}
+
+/// One line of text that ends in an ellipsis when it does not fit and shows
+/// the whole value in a tooltip; it never overlaps its neighbours. Give it a
+/// text size and colour. For a character budget instead of the layout's,
+/// cut with `wks_native::format::truncate_end` first.
+pub(crate) fn truncated(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    p: &Palette,
+) -> Stateful<Div> {
+    let text: SharedString = text.into();
+    div()
+        .id(id.into())
+        .min_w_0()
+        .truncate()
+        .tooltip(tooltip_view(text.clone(), None, p))
+        .child(text)
 }
 
 /// A static status label: tone-coloured text on its tone's wash, fully
@@ -211,7 +410,7 @@ pub(crate) fn pill(label: impl Into<SharedString>, intent: Intent, p: &Palette) 
         .rounded(px(t.radius.full))
         .bg(wash(color, t.wash.tone_rest))
         .text_size(px(t.text.caption))
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(FontWeight(t.weight.medium))
         .text_color(rgb(color))
         .child(label.into())
 }
@@ -245,7 +444,7 @@ pub(crate) fn chip(
         .rounded(px(t.radius.full))
         .bg(bg)
         .text_size(px(t.text.caption))
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(FontWeight(t.weight.medium))
         .text_color(rgb(if enabled { fg } else { p.disabled }))
         .when(enabled, |d| {
             d.hover_text_style(move |s| s.bg(hover).text_color(rgb(p.text)))
@@ -267,7 +466,7 @@ pub(crate) fn badge(label: impl Into<SharedString>, intent: Intent, p: &Palette)
         .rounded(px(t.radius.full))
         .bg(rgb(intent.color(p)))
         .text_size(px(t.text.overline))
-        .font_weight(FontWeight::SEMIBOLD)
+        .font_weight(FontWeight(t.weight.semibold))
         .text_color(rgb(p.base))
         .child(label.into())
 }
@@ -329,7 +528,7 @@ pub(crate) fn empty_state(
         .child(
             div()
                 .text_size(px(t.text.heading))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight(t.weight.semibold))
                 .text_color(rgb(p.text))
                 .child(title.into()),
         )
@@ -353,7 +552,7 @@ pub(crate) fn section_label(label: impl Into<SharedString>, p: &Palette) -> Div 
         .px(px(t.space.xs))
         .pb(px(t.space.xs))
         .text_size(px(t.text.overline))
-        .font_weight(FontWeight::SEMIBOLD)
+        .font_weight(FontWeight(t.weight.semibold))
         .text_color(rgb(p.roles.text_tertiary))
         .child(SharedString::from(label.to_uppercase()))
 }
@@ -369,7 +568,7 @@ pub(crate) fn card(p: &Palette) -> Div {
         .rounded(px(t.radius.panel))
         .bg(rgb(p.surface))
         .border(px(t.stroke.hairline))
-        .border_color(rgb(p.border))
+        .border_color(rgb(p.roles.card_border))
         .shadow(elevation(p, t.elevation.raised))
 }
 
@@ -386,8 +585,8 @@ pub(crate) fn card_header(
         .gap(px(t.space.xxs))
         .child(
             div()
-                .text_size(px(t.text.heading))
-                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(t.text.subheading))
+                .font_weight(FontWeight(t.weight.semibold))
                 .text_color(rgb(p.text))
                 .child(title.into()),
         )
@@ -453,11 +652,11 @@ pub(crate) fn segment(
         .flex()
         .items_center()
         .justify_center()
-        .h(px(t.layout.control_height - 2. * t.space.xxs))
+        .h(px(t.layout.control_height_sm - 2. * t.space.xxs))
         .px(px(t.space.lg))
         .rounded(px(t.radius.control - t.space.xxs))
         .text_size(px(t.text.meta))
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(FontWeight(t.weight.medium))
         .when(selected, |d| {
             d.bg(rgb(p.roles.raised))
                 .text_color(rgb(p.text))
@@ -580,7 +779,7 @@ pub(crate) fn dialog_header(
         .child(
             div()
                 .text_size(px(t.text.title_short))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(FontWeight(t.weight.semibold))
                 .text_color(rgb(p.text))
                 .child(title.into()),
         )
@@ -630,10 +829,457 @@ pub(crate) fn status_dot(intent: Intent, p: &Palette) -> Div {
         .bg(rgb(intent.color(p)))
 }
 
+/// Every state a session, job, host, task or card can show, with one colour
+/// map and one shape (dot + label) everywhere (`docs/design-v2-direction.md`
+/// §2). Attention is amber, running blue and animated, success green (only
+/// for terminal success), error red; the rest is neutral.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum StatusKind {
+    /// Waiting on the user: an approval, a question, a proposal.
+    NeedsYou,
+    /// An agent or run in progress (pulses; never the brand mark).
+    Working,
+    /// Ready and waiting for work, or ended.
+    Idle,
+    /// Finished successfully.
+    Done,
+    Failed,
+    /// Switched off by the user.
+    Paused,
+    /// Accepted, waiting to start.
+    Queued,
+}
+
+impl StatusKind {
+    pub(crate) const ALL: [Self; 7] = [
+        Self::NeedsYou,
+        Self::Working,
+        Self::Idle,
+        Self::Done,
+        Self::Failed,
+        Self::Paused,
+        Self::Queued,
+    ];
+
+    /// The vocabulary: "Needs you · Working · Idle · Done · Failed".
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::NeedsYou => "Needs you",
+            Self::Working => "Working",
+            Self::Idle => "Idle",
+            Self::Done => "Done",
+            Self::Failed => "Failed",
+            Self::Paused => "Paused",
+            Self::Queued => "Queued",
+        }
+    }
+
+    /// The indicator's colour.
+    pub(crate) fn color(self, p: &Palette) -> u32 {
+        match self {
+            Self::NeedsYou => p.warning,
+            Self::Working | Self::Queued => p.busy,
+            Self::Done => p.success,
+            Self::Failed => p.error,
+            Self::Idle | Self::Paused => p.roles.text_tertiary,
+        }
+    }
+
+    /// The label's colour: states that ask for something carry their hue;
+    /// the rest leave it to the dot.
+    pub(crate) fn text_color(self, p: &Palette) -> u32 {
+        match self {
+            Self::NeedsYou => p.warning,
+            Self::Failed => p.error,
+            Self::Working | Self::Done => p.roles.text_secondary,
+            Self::Idle | Self::Paused | Self::Queued => p.roles.text_tertiary,
+        }
+    }
+
+    /// Hollow ring rather than a dot: not running, not finished.
+    fn hollow(self) -> bool {
+        matches!(self, Self::Paused | Self::Queued)
+    }
+}
+
+/// The status indicator alone, in its fixed `layout.status_box` square so
+/// labels after it share one left edge. Working pulses (held still under
+/// reduced motion).
+pub(crate) fn status_indicator(kind: StatusKind, p: &Palette) -> Div {
+    let t = p.tokens;
+    let (boxed, dot) = (t.layout.status_box, t.layout.status_dot);
+    let color = kind.color(p);
+    let core = if kind.hollow() {
+        div()
+            .size(px(dot + t.space.xxs))
+            .rounded(px(t.radius.full))
+            .border(px(t.stroke.hairline + t.stroke.hairline / 2.))
+            .border_color(rgb(color))
+    } else {
+        div()
+            .size(px(dot))
+            .rounded(px(t.radius.full))
+            .bg(rgb(color))
+    };
+    let frame = div()
+        .relative()
+        .size(px(boxed))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center();
+    if kind != StatusKind::Working {
+        return frame.child(core);
+    }
+    // At rest (reduced motion) the halo has fully faded.
+    let beat = super::motion::looping(
+        std::time::Duration::from_millis(t.motion.pulse_ms as u64),
+        1.,
+    );
+    let halo = dot + (boxed - dot) * beat;
+    frame
+        .child(
+            div()
+                .absolute()
+                .left(px((boxed - halo) / 2.))
+                .top(px((boxed - halo) / 2.))
+                .size(px(halo))
+                .rounded(px(t.radius.full))
+                .bg(wash(color, t.elevation.glow_alpha * (1. - beat))),
+        )
+        .child(core)
+}
+
+/// A status as dot + label. `label` overrides the vocabulary word for a
+/// more specific one ("Succeeded 3h ago", "Proposed change") while keeping
+/// the kind's colour.
+#[derive(Clone, Debug)]
+pub(crate) struct StatusBadge {
+    pub(crate) kind: StatusKind,
+    pub(crate) label: Option<SharedString>,
+}
+
+impl StatusBadge {
+    pub(crate) fn new(kind: StatusKind) -> Self {
+        Self { kind, label: None }
+    }
+
+    pub(crate) fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub(crate) fn render(self, p: &Palette) -> Div {
+        let t = p.tokens;
+        div()
+            .flex()
+            .items_center()
+            .gap(px(t.space.sm))
+            .flex_shrink_0()
+            .min_w_0()
+            .text_size(px(t.text.meta))
+            .font_weight(FontWeight(t.weight.medium))
+            .text_color(rgb(self.kind.text_color(p)))
+            .child(status_indicator(self.kind, p))
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .child(self.label.unwrap_or_else(|| self.kind.label().into())),
+            )
+    }
+}
+
+/// [`StatusBadge`] with the vocabulary label.
+pub(crate) fn status(kind: StatusKind, p: &Palette) -> Div {
+    StatusBadge::new(kind).render(p)
+}
+
+/// A page's header: an optional back link, the title (22/600), a one-line
+/// description and right-aligned actions. The back row's height is kept
+/// even without a back link, so every page title lands at the same y; put
+/// it in [`page_column`] for the shared top offset and max width.
+pub(crate) fn page_header(
+    back: Option<AnyElement>,
+    title: impl Into<SharedString>,
+    description: Option<SharedString>,
+    actions: Vec<AnyElement>,
+    p: &Palette,
+) -> Div {
+    let t = p.tokens;
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px(t.space.sm))
+        .child(
+            div()
+                .h(px(t.layout.control_height_sm))
+                .flex()
+                .items_center()
+                // Ghost padding hangs outside the column so the back label
+                // lines up with the title.
+                .ml(px(-(t.space.md + t.space.xxs)))
+                .children(back),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(t.space.xl))
+                .child(
+                    div()
+                        .debug_selector(|| "page-title".into())
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(t.text.title))
+                        .font_weight(FontWeight(t.weight.title))
+                        .text_color(rgb(p.text))
+                        .child(title.into()),
+                )
+                .when(!actions.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .debug_selector(|| "page-actions".into())
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.md))
+                            .children(actions),
+                    )
+                }),
+        )
+        .when_some(description, |d, text| {
+            d.child(
+                div()
+                    .text_size(px(t.text.body))
+                    .line_height(relative(t.text.line_height))
+                    .text_color(rgb(p.roles.text_secondary))
+                    .child(text),
+            )
+        })
+}
+
+/// A page header's back link ("Back to chat"). Add `.on_click`.
+pub(crate) fn back_link(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    p: &Palette,
+) -> Stateful<Div> {
+    button(
+        id,
+        label,
+        Some(IconName::ArrowLeft),
+        ButtonVariant::Ghost,
+        ButtonSize::Small,
+        true,
+        p,
+    )
+}
+
+/// The shared full-page content column: `layout.page_width` wide at most,
+/// centred, below the fixed `layout.page_top` offset.
+pub(crate) fn page_column(p: &Palette) -> Div {
+    let t = p.tokens.layout;
+    div()
+        .w_full()
+        .max_w(px(t.page_width))
+        .mx_auto()
+        .pt(px(t.page_top))
+        .flex()
+        .flex_col()
+        .gap(px(p.tokens.space.xxl))
+}
+
+/// One card anatomy for every list item and transcript card: a leading
+/// icon (or avatar), the title with its status beside it, one meta line,
+/// and actions on the right.
+pub(crate) struct CardHead {
+    leading: Option<Leading>,
+    title: SharedString,
+    status: Option<StatusBadge>,
+    meta: Option<SharedString>,
+    actions: Vec<AnyElement>,
+}
+
+enum Leading {
+    Icon(IconName),
+    Avatar(SharedString),
+}
+
+impl CardHead {
+    pub(crate) fn new(title: impl Into<SharedString>) -> Self {
+        Self {
+            leading: None,
+            title: title.into(),
+            status: None,
+            meta: None,
+            actions: Vec::new(),
+        }
+    }
+
+    pub(crate) fn icon(mut self, icon: IconName) -> Self {
+        self.leading = Some(Leading::Icon(icon));
+        self
+    }
+
+    /// A monogram tile for `name` instead of an icon.
+    pub(crate) fn avatar(mut self, name: impl Into<SharedString>) -> Self {
+        self.leading = Some(Leading::Avatar(name.into()));
+        self
+    }
+
+    pub(crate) fn status(mut self, status: StatusBadge) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    pub(crate) fn meta(mut self, meta: impl Into<SharedString>) -> Self {
+        self.meta = Some(meta.into());
+        self
+    }
+
+    pub(crate) fn action(mut self, action: impl IntoElement) -> Self {
+        self.actions.push(action.into_any_element());
+        self
+    }
+
+    pub(crate) fn render(self, p: &Palette) -> Div {
+        let t = p.tokens;
+        let leading = self.leading.map(|leading| match leading {
+            Leading::Icon(icon) => div()
+                .size(px(t.layout.avatar_lg))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(t.radius.control))
+                .bg(tonal(p, t.wash.rest))
+                .text_color(rgb(p.roles.text_secondary))
+                .child(Icon::new(icon).size(px(t.icon.md))),
+            Leading::Avatar(name) => avatar_tile_sized(&name, t.layout.avatar_lg, p),
+        });
+        div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(px(t.space.lg))
+            .children(leading)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(t.space.xxs))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.md))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(t.text.subheading))
+                                    .font_weight(FontWeight(t.weight.semibold))
+                                    .text_color(rgb(p.text))
+                                    .child(self.title),
+                            )
+                            .children(self.status.map(|s| s.render(p))),
+                    )
+                    .when_some(self.meta, |d, meta| {
+                        d.child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(t.text.meta))
+                                .text_color(rgb(p.roles.text_tertiary))
+                                .child(meta),
+                        )
+                    }),
+            )
+            .when(!self.actions.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.xs))
+                        .children(self.actions),
+                )
+            })
+    }
+}
+
+/// A monogram avatar tile at `layout.avatar`: two letters on a muted fill
+/// picked deterministically from the name. No emoji.
+pub(crate) fn avatar_tile(name: &str, p: &Palette) -> Div {
+    avatar_tile_sized(name, p.tokens.layout.avatar, p)
+}
+
+/// [`avatar_tile`] at another size (`layout.avatar_lg` on cards).
+pub(crate) fn avatar_tile_sized(name: &str, size: f32, p: &Palette) -> Div {
+    use wks_native::appearance::AVATAR_TONES;
+    use wks_native::format::{avatar_index, monogram};
+    let t = p.tokens;
+    let fill = p.roles.avatar[avatar_index(name, AVATAR_TONES)];
+    div()
+        .size(px(size))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(t.radius.control))
+        .bg(rgb(fill))
+        .text_size(px(if size >= t.layout.avatar_lg {
+            t.text.meta
+        } else {
+            t.text.overline
+        }))
+        .font_weight(FontWeight(t.weight.semibold))
+        .text_color(rgb(p.text))
+        .child(monogram(name))
+}
+
+/// Which edge of floating chrome a [`fade_mask`] sits against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FadeEdge {
+    /// Under a top bar (title capsule): solid at the top, clear below.
+    Top,
+    /// Above a bottom control (Jump to latest, the composer).
+    Bottom,
+}
+
+/// A `layout.fade`-tall gradient from `color` (the surface beneath, usually
+/// `p.chat`) to clear, so content scrolling under floating chrome fades out
+/// instead of showing through or clipping. Absolute and full width: put it
+/// in the floating chrome's (relative) container, behind its controls.
+pub(crate) fn fade_mask(edge: FadeEdge, color: u32, p: &Palette) -> Div {
+    let solid = Hsla::from(rgb(color));
+    let (angle, mask) = match edge {
+        FadeEdge::Top => (180., div().top_0()),
+        FadeEdge::Bottom => (0., div().bottom_0()),
+    };
+    mask.absolute()
+        .left_0()
+        .w_full()
+        .h(px(p.tokens.layout.fade))
+        .bg(gpui::linear_gradient(
+            angle,
+            gpui::linear_color_stop(solid, 0.),
+            gpui::linear_color_stop(solid.opacity(0.), 1.),
+        ))
+}
+
 /// Every primitive once, for tests and design review.
 pub(crate) fn gallery(p: &Palette) -> AnyElement {
     use ButtonVariant as B;
-    let variants = [B::Primary, B::Secondary, B::Ghost, B::Danger];
+    let variants = [B::Primary, B::Secondary, B::Ghost, B::DangerGhost];
     let intents = [
         Intent::Neutral,
         Intent::Accent,
@@ -645,34 +1291,119 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
     ];
     let t = p.tokens;
     let row = || div().flex().flex_wrap().items_center().gap(px(t.space.md));
+    let buttons = |size: ButtonSize, base: usize| {
+        row().children(variants.into_iter().enumerate().map(move |(ix, v)| {
+            button(
+                ("primitive-button", base + ix),
+                format!("{v:?}"),
+                (ix == 0).then_some(IconName::Plus),
+                v,
+                size,
+                true,
+                p,
+            )
+            .debug_selector(move || format!("primitive-button-{v:?}-{size:?}"))
+        }))
+    };
+    let (split_main, split_menu) = split_button_parts(
+        "primitive-split",
+        "Queue",
+        None,
+        B::Primary,
+        ButtonSize::Small,
+        true,
+        p,
+    );
     div()
         .flex()
         .flex_col()
         .gap(px(t.space.lg))
         .p(px(t.space.xl))
         .bg(rgb(p.chat))
+        .child(
+            page_header(
+                Some(back_link("primitive-back", "Back to chat", p).into_any_element()),
+                "Page title",
+                Some("One line that says what this page is for.".into()),
+                vec![
+                    button(
+                        "primitive-header-action",
+                        "New job",
+                        Some(IconName::Plus),
+                        B::Primary,
+                        ButtonSize::Large,
+                        true,
+                        p,
+                    )
+                    .into_any_element(),
+                ],
+                p,
+            )
+            .debug_selector(|| "primitive-page-header".into()),
+        )
         .child(section_label("Buttons", p))
+        .child(buttons(ButtonSize::Small, 0))
+        .child(buttons(ButtonSize::Large, variants.len()))
         .child(
-            row().children(variants.into_iter().enumerate().map(|(ix, v)| {
-                button(("primitive-button", ix), format!("{v:?}"), None, v, true, p)
-                    .debug_selector(move || format!("primitive-button-{v:?}"))
-            })),
-        )
-        .child(
-            row().children(variants.into_iter().enumerate().map(|(ix, v)| {
-                icon_button(
-                    ("primitive-icon", ix),
-                    IconName::Plus,
-                    "Add",
-                    v,
-                    ix % 2 == 0,
-                    p,
+            row()
+                .children(variants.into_iter().enumerate().map(|(ix, v)| {
+                    icon_button(
+                        ("primitive-icon", ix),
+                        IconName::Plus,
+                        "Add",
+                        v,
+                        ix % 2 == 0,
+                        p,
+                    )
+                }))
+                .child(
+                    split_button(split_main, split_menu, p)
+                        .debug_selector(|| "primitive-split".into()),
                 )
-            })),
+                .child(
+                    overflow_trigger("primitive-overflow", p)
+                        .debug_selector(|| "primitive-overflow".into()),
+                )
+                .child(icon_button_with_shortcut(
+                    "primitive-shortcut",
+                    IconName::Search,
+                    "Search sessions",
+                    Some("Ctrl K"),
+                    B::Ghost,
+                    true,
+                    p,
+                ))
+                .child(with_tooltip(
+                    button(
+                        "primitive-jump",
+                        "Next needs you",
+                        None,
+                        B::Ghost,
+                        ButtonSize::Small,
+                        true,
+                        p,
+                    ),
+                    "Jump to the next session that needs you",
+                    Some("g n"),
+                    p,
+                )),
         )
+        .child(section_label("Status", p))
+        .child(row().children(StatusKind::ALL.into_iter().map(|kind| {
+            status(kind, p).debug_selector(move || format!("primitive-status-{kind:?}"))
+        })))
         .child(row().children(intents.into_iter().map(|i| pill(format!("{i:?}"), i, p))))
         .child(row().children(intents.into_iter().map(|i| badge("3", i, p))))
         .child(row().children(intents.into_iter().map(|i| status_dot(i, p))))
+        .child(
+            row()
+                .debug_selector(|| "primitive-avatars".into())
+                .children(
+                    ["workspacer", "hub-rs", "inbox", "docs", "web", "native"]
+                        .into_iter()
+                        .map(|name| avatar_tile(name, p)),
+                ),
+        )
         .child(
             row()
                 .child(chip("primitive-chip-on", "Selected", true, true, p))
@@ -685,6 +1416,18 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
                 .child(meter(0.6, Intent::Accent, p)),
         )
         .child(
+            div().w(px(t.layout.status_column)).child(
+                truncated(
+                    "primitive-truncated",
+                    "A value far too long for its column",
+                    p,
+                )
+                .debug_selector(|| "primitive-truncated".into())
+                .text_size(px(t.text.meta))
+                .text_color(rgb(p.roles.text_secondary)),
+            ),
+        )
+        .child(
             segmented(p)
                 .debug_selector(|| "primitive-segmented".into())
                 .child(segment("primitive-segment-a", "Auto", true, p))
@@ -693,9 +1436,45 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
         .child(
             card(p)
                 .debug_selector(|| "primitive-card".into())
+                .child(
+                    CardHead::new("Nightly tests")
+                        .icon(IconName::Calendar)
+                        .status(StatusBadge::new(StatusKind::Working).label("Running"))
+                        .meta("Weekdays at 07:00 · next in 3h")
+                        .action(button(
+                            "primitive-card-run",
+                            "Run now",
+                            None,
+                            B::Secondary,
+                            ButtonSize::Small,
+                            true,
+                            p,
+                        ))
+                        .action(overflow_trigger("primitive-card-more", p))
+                        .render(p)
+                        .debug_selector(|| "primitive-card-head".into()),
+                )
+                .child(
+                    CardHead::new("workspacer")
+                        .avatar("workspacer")
+                        .status(StatusBadge::new(StatusKind::NeedsYou))
+                        .meta("3 sessions · 1 needs you")
+                        .render(p),
+                )
                 .child(card_header("Card", Some("A description.".into()), p))
                 .child(list_row("primitive-row", true, true, p).child("Selected row"))
                 .child(list_row("primitive-row-2", false, true, p).child("Row")),
+        )
+        .child(
+            div()
+                .relative()
+                .h(px(t.layout.fade * 2.))
+                .rounded(px(t.radius.panel))
+                .overflow_hidden()
+                .bg(rgb(p.surface))
+                .child(
+                    fade_mask(FadeEdge::Top, p.chat, p).debug_selector(|| "primitive-fade".into()),
+                ),
         )
         .child(
             menu(p)
@@ -731,10 +1510,19 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
                                     "Cancel",
                                     None,
                                     B::Secondary,
+                                    ButtonSize::Small,
                                     true,
                                     p,
                                 ))
-                                .child(button("primitive-ok", "OK", None, B::Primary, true, p)),
+                                .child(button(
+                                    "primitive-ok",
+                                    "OK",
+                                    None,
+                                    B::Primary,
+                                    ButtonSize::Small,
+                                    true,
+                                    p,
+                                )),
                         ),
                 ),
             ),

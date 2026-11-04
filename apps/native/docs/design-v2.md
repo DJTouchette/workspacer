@@ -42,47 +42,68 @@ picks either.
 ## Tokens (`src/tokens.rs`)
 
 `Tokens` is `Copy` and lives on every `Palette` as `p.tokens`. `Tokens::V1`
-names the literals the shipped app uses; `Tokens::V2` is the redesign's set and
-currently starts as a copy of V1. **Designers tune V2 there and nowhere else.**
+names the literals the shipped app uses (fields v1 never draws carry the v2
+value and say so); `Tokens::V2` is the redesign's set. **Designers tune V2
+there and nowhere else.** `tokens::tests::v2_holds_the_direction_scale` keeps
+V2 on the direction's scale.
 
-| Group | Fields |
+| Group | V2 values |
 |---|---|
-| `text: TypeScale` | `title` 22, `title_short` 18, `heading` 15, `body` 13, `meta` 12, `caption` 11, `overline` 10, `ui` 15 (gpui-component base), `mono` 13, `line_height` 1.45 |
-| `space: Spacing` | `xxs` 2, `xs` 4, `sm` 6, `md` 8, `lg` 12, `xl` 16, `xxl` 24, `xxxl` 32 |
-| `icon: IconSizes` | `xs` 11, `sm` 12, `md` 13, `lg` 14, `xl` 20 |
-| `radius: Radii` | `xs` 4, `sm` 6, `control` 12, `panel` 16, `composer` 24, `full` |
-| `elevation: Elevation` | `raised` / `floating` / `modal` `Shadow { offset_y, blur, spread, opacity }`, `glow_blur`, `glow_spread`, `glow_alpha`, `scrim_alpha` |
-| `wash: Washes` | `disabled` .04, `rest` .07, `hover` .12, `pressed` .17, `tone_rest` .08, `tone_hover` .14, `tone_pressed` .2 |
+| `text: TypeScale` | `title` 22, `title_short` 16, `heading` 16, `subheading` 14 (card/row/dialog titles), `body` 13, `meta` 12, `caption` 12, `overline` 11 (keycaps, compact meta: the floor), `ui` 14, `mono` 13, `line_height` 1.5 |
+| `weight: Weights` | `regular` 400, `medium` 500, `semibold` 600, `title` 600 (v1 700). Use `FontWeight(t.weight.medium)` |
+| `space: Spacing` | `xxs` 2, `xs` 4, `sm` 6, `md` 8, `lg` 12, `xl` 16, `xxl` 24, `xxxl` 32, `huge` 48 |
+| `icon: IconSizes` | `xs` 12 (status), `sm` 14 (buttons, inline), `md` 16 (nav, card icons), `lg` 20, `xl` 24 (empty states) |
+| `radius: Radii` | `xs` 4, `sm` 6, `control` **8**, `panel` 12, `composer` 16, `full` (chips, badges, dots) |
+| `elevation: Elevation` | `raised` 1/2/0 ×0.35, `floating` 8/24/−6, `modal` 16/48/−12 ×1.25, `glow_*`, `scrim_alpha` 0.5 |
+| `wash: Washes` | `disabled` .04, `rest` .06, `hover` .09, `pressed` .13, `tone_rest` .12, `tone_hover` .18, `tone_pressed` .24 |
 | `stroke: Strokes` | `hairline` 1, `focus` 2 |
-| `layout: Layout` | `chat_width` 900, `chat_gutter` 20, `rail_width` 56, `rail_row` 44, `rail_session` 30, `rail_child` 22, `flyout_gap` 6, `sidebar_width` 304, `control_height` 32, `icon_button` 28, `status_dot` 6, `meter_height` 4, `row_height` 30, `menu_width` 240, `dialog_width` 440 |
+| `layout: Layout` | controls `control_height_sm` **28** / `control_height` **36**, `icon_button` 28, `row_height` 32; reading `chat_width` 760 (comfortable), `reading_wide` 1040, `reading_full` (no cap); pages `page_width` 880, `page_top` 40, `page_gutter` 32; sidebar `sidebar_row` 44 / `sidebar_row_compact` 28, `footer_height` 44, `sidebar_width` 304; status `status_dot` 6, `status_box` 12, `status_column` 112; `avatar` 24 / `avatar_lg` 32; `fade` 32; plus rail, menu, dialog and meter measures |
+| `motion: Motion` | `pulse_ms` 1400 (the Working pulse) |
 
 All sizes are logical px: pass them through the UI's zoomed `px()`.
 
 The v1 constants (`chrome::scale::*`, `CHAT_WIDTH`, `portrait::RAIL_WIDTH`,
-`sidebar::RAIL_*`, the default sidebar width) are now defined from
-`Tokens::V1`, so the two can never drift. They stay v1 forever: v2 code reads
-`p.tokens.*` instead.
+`sidebar::RAIL_*`, the default sidebar width) are defined from `Tokens::V1`, so
+the two can never drift. They stay v1 forever: v2 code reads `p.tokens.*`.
 
 ### Colours
 
-Colours stay per theme on `Palette` (all eight themes work in both designs):
+Colours are per theme on `Palette`; all eight themes have a v2 set
+(`Appearance::v2_colors` → `V2Colors`, one arm per theme, in
+`src/appearance.rs`). `palette_v2` derives the rest so the rules hold
+everywhere:
 
-- The v1 fields (`base`, `surface`, `chat`, `selected`, `border`, `text`,
-  `prose`, `muted`, `disabled`, `accent`, `primary*`, `on_primary`, tones,
-  code surfaces, `selection`, `shadow`, `shadow_opacity`).
-- `p.roles: Roles`, the extra roles v2 needs: `hover`, `pressed`, `raised`,
-  `text_secondary`, `text_tertiary` (not the disabled colour), `border_strong`,
-  `focus`, `info`. In v1 each is derived from an existing colour.
-- Per-theme v2 overrides go in `Appearance::v2_colors` (`src/appearance.rs`),
-  one arm per theme. `palette_v2` also copies the token radii into
-  `control_radius` / `panel_radius` / `composer_radius`.
+| Role | Where it lives in v2 |
+|---|---|
+| Surfaces | `base` (sidebar/chrome), `chat` (canvas), `surface` (cards, code blocks), `roles.raised` (menus, popovers, dialogs, tooltips) |
+| Fills | `selected` (always neutral), `roles.hover`, `roles.pressed` |
+| Edges | `border` (dividers), `roles.border_strong` (inputs, secondary buttons, popovers), `roles.card_border` (the 1px card edge; visible in Light) |
+| Text tiers | `text`, `prose` (chat copy), `roles.text_secondary` (= `muted`), `roles.text_tertiary` (= `disabled`, so v1 code under v2 inherits the hierarchy) |
+| One accent | `accent` (links, focus = `roles.focus`), `primary` / `primary_hover` / `primary_pressed` (hover and press move away from the label colour), `on_primary` |
+| Status | attention = `warning` (amber), running = `busy` (blue; also `roles.info`), success = `success` (terminal only), error = `error`. **No purple.** |
+| Identity | `roles.provider` (= tertiary: provider glyphs and model names), `roles.avatar[6]` (muted monogram fills) |
+| Code | `code_block` = `surface` (with a `border` edge), `code_header` = raised, `code_inline` |
+
+Per-theme notes: Light has off-white canvas, white cards with a 1px
+`card_border`, amber-700 attention text and a grey selected row. Nord's
+primary is frost (Nord8) with nord0 text, so it never reads disabled.
+Everforest's accent is its blue (green is success only).
+
+`appearance::tests::v2_meets_the_direction_floors` enforces, in all 8 themes,
+on chat / surface / base / raised: text and prose ≥ 4.5:1, secondary ≥ 4.5:1,
+tertiary ≥ 3:1, accent and status colours ≥ 3:1; primary button vs surface
+and chat ≥ 3:1; on-accent label ≥ 4.5:1 (rest, hover and pressed); visible
+borders and selection; a real tier hierarchy; code on the card surface;
+neutral providers; one accent hue; nothing purple; neutral selected/hover
+fills; avatar text ≥ 4.5:1. `appearance::contrast(a, b)` is public for new
+tests.
+
 - Syntax colours: `ui/syntax.rs::syntax_for(appearance, design)`.
 - gpui-component: v1 maps the shipped ~20 `ThemeColor` fields; v2
   (`ui.rs::configure_theme_v2`) also maps lists, tables, tabs, scrollbars,
-  popover, overlay, sidebar, accordion, sliders, progress, tone families and
-  charts, so no widget falls back to the stock theme.
-
-The appearance tests hold every v2 theme to v1's contrast floors.
+  popover/tooltip, overlay, sidebar, accordion, sliders, progress, switch
+  tracks, tone families and charts, so Switch, Select, Input, scrollbars and
+  tooltips follow the v2 palette in every theme.
 
 ## The rule
 
@@ -99,48 +120,81 @@ Keep every existing `debug_selector`: UI tests find elements by them.
 
 Free functions that take `&Palette` and return a `Div` / `Stateful<Div>`.
 Callers add `.on_click(cx.listener(…))`, children and `.debug_selector(…)`.
-Interactive ones use `chrome::interactive_control` (keyboard focus ring,
-Enter/Space activation, pointer cursor when enabled).
+Interactive ones use `chrome::interactive_control` (keyboard focus ring in
+the 2px border, Enter/Space activation, pointer cursor when enabled).
 
 | Primitive | Signature |
 |---|---|
-| Button | `button(id, label, icon: Option<IconName>, ButtonVariant, enabled, &p) -> Stateful<Div>` |
-| Icon button | `icon_button(id, IconName, tooltip: &'static str, ButtonVariant, enabled, &p) -> Stateful<Div>` |
-| Variants | `ButtonVariant::{Primary, Secondary, Ghost, Danger}`: explicit, never inferred from the id |
-| Pill (status) | `pill(label, Intent, &p) -> Div` |
+| Button | `button(id, label, icon: Option<IconName>, ButtonVariant, ButtonSize, enabled, &p) -> Stateful<Div>` |
+| Variants | `ButtonVariant::{Primary, Secondary, Ghost, DangerGhost}`: explicit, never inferred from the id. One primary per region; destructive = `DangerGhost` with confirm/undo, or the overflow menu |
+| Sizes | `ButtonSize::{Small (28), Large (36)}`, `.height(&p)` |
+| Icon button | `icon_button(id, IconName, tooltip, variant, enabled, &p)`; `icon_button_with_shortcut(id, icon, tooltip, Some("Ctrl K"), variant, enabled, &p)` |
+| Split button | `let (main, menu) = split_button_parts(id, label, icon, variant, size, enabled, &p);` wire both, then `split_button(main, menu, &p) -> Div` |
+| Overflow | `overflow_trigger(id, &p) -> Stateful<Div>` ("…", ghost, tooltip "More actions"); open a `menu(&p)` from it |
+| Status | `status(StatusKind, &p) -> Div` (dot + vocabulary label); `StatusBadge::new(kind).label("Succeeded 3h ago").render(&p)`; `status_indicator(kind, &p)` (the fixed 12px box alone, for rails and dense rows) |
+| Status kinds | `StatusKind::{NeedsYou, Working, Idle, Done, Failed, Paused, Queued}` with `.label()`, `.color(&p)`, `.text_color(&p)`. NeedsYou amber, Working blue + pulse (reduced motion holds still; never the brand mark), Done green, Failed red, Idle/Paused tertiary, Paused/Queued hollow rings |
+| Page header | `page_header(back: Option<AnyElement>, title, description: Option<SharedString>, actions: Vec<AnyElement>, &p) -> Div` (22/600 title; back row height kept even without a back link, so titles share one y), `back_link(id, label, &p)`, `page_column(&p)` (shared `page_width`, `page_top`) |
+| Card anatomy | `CardHead::new(title).icon(IconName)` or `.avatar(name)`, `.status(StatusBadge)`, `.meta(text)`, `.action(el)`…, `.render(&p) -> Div`; put it in `card(&p)` |
+| Avatar | `avatar_tile(name, &p)`, `avatar_tile_sized(name, size, &p)`: monogram, deterministic muted hue, 8px radius, no emoji |
+| Fade mask | `fade_mask(FadeEdge::{Top, Bottom}, color, &p) -> Div`: absolute, full width, `layout.fade` tall, colour → clear. Put it behind floating chrome |
+| Tooltip | `tooltip_view(label, shortcut: Option<&'static str>, &p)` for `.tooltip(…)`; `with_tooltip(control, label, shortcut, &p)` for a control without one (GPUI allows one tooltip per element). Spaces in the shortcut separate keycaps ("g n") |
+| Truncation | `truncated(id, text, &p) -> Stateful<Div>`: one line, ellipsis, full value in a tooltip |
+| Pill (static label) | `pill(label, Intent, &p) -> Div` (prefer `status` for states) |
 | Chip (toggle) | `chip(id, label, selected, enabled, &p) -> Stateful<Div>` |
 | Badge (count) | `badge(label, Intent, &p) -> Div` |
 | Meter | `meter(fraction 0–1, Intent, &p) -> Div` (give it a width) |
 | Empty state | `empty_state(IconName, title, body: Option<SharedString>, &p) -> Div` |
-| Section label | `section_label(label, &p) -> Div` |
-| Card | `card(&p) -> Div`, `card_header(title, description: Option<SharedString>, &p) -> Div` |
+| Section label | `section_label(label, &p) -> Div` (caps: page sections only) |
+| Card | `card(&p) -> Div` (surface, `card_border`), `card_header(title, description, &p) -> Div` |
 | List row | `list_row(id, selected, enabled, &p) -> Stateful<Div>` |
 | Segmented | `segmented(&p) -> Div` holding `segment(id, label, selected, &p) -> Stateful<Div>` |
-| Popover / menu | `popover(&p)`, `menu(&p) -> Div`, `menu_item(id, label, icon: Option<IconName>, danger, enabled, &p) -> Stateful<Div>`, `menu_separator(&p)` |
-| Dialog | `scrim(&p) -> Div` (absolute, fills parent) holding `dialog(&p)`, with `dialog_header(title, description, &p)` and `dialog_footer(&p)` |
+| Popover / menu | `popover(&p)`, `menu(&p) -> Div`, `menu_item(id, label, icon, danger, enabled, &p)`, `menu_separator(&p)` |
+| Dialog | `scrim(&p)` holding `dialog(&p)`, with `dialog_header(title, description, &p)` and `dialog_footer(&p)` |
 | Keycap | `kbd(label, &p) -> Div` |
-| Status dot | `status_dot(Intent, &p) -> Div` |
 | Helpers | `Intent::{Neutral, Accent, Info, Success, Warning, Danger, Busy}` with `.color(&p)`, `wash(color, alpha)`, `tonal(&p, alpha)`, `elevation(&p, Shadow) -> Vec<BoxShadow>` |
-| Review | `gallery(&p) -> AnyElement` renders every primitive once |
+| Review | `gallery(&p) -> AnyElement` renders every primitive once (`ui::tests::design`) |
 
-Example:
+## Formatting (`wks_native::format`)
 
-```rust
-let p = self.palette();
-primitives::dialog_footer(&p)
-    .child(
-        primitives::button("discard-cancel", "Cancel", None, ButtonVariant::Secondary, true, &p)
-            .on_click(cx.listener(|this, _, _, cx| this.close_dialog(cx))),
-    )
-    .child(
-        primitives::button("discard", "Discard", None, ButtonVariant::Danger, true, &p)
-            .debug_selector(|| "discard".into())
-            .on_click(cx.listener(|this, _, window, cx| this.discard(window, cx))),
-    )
-```
+Pure and unit-tested; use these instead of ad-hoc `format!`s.
 
-These primitives replace the v1 duplicates listed in the UI audit (pills in
-hosts/jobs/fleet_card/scratch, three meters, four empty states, four section
-labels, bespoke menu and modal layers, `Workspace::button`'s id matching).
-Migrate an area by drawing it from primitives under `if self.design().is_v2()`
-and leaving the v1 path as it is; the v1 helpers are deleted once v2 ships.
+| Function | Result |
+|---|---|
+| `duration(ms)` | `"850ms"`, `"42s"`, `"12m 05s"`, `"5h 12m"`, and from 48h `"34d 3h"` |
+| `is_stale(last_beat: Option<i64>, now)` / `stale_after(…, threshold)` | true past `HEARTBEAT_STALE_MS` (5 min): show `LOST_HEARTBEAT` ("Lost heartbeat") in `warning` instead of a growing timer |
+| `timestamp(at: Option<i64>, now, twelve_hour)` | `"14:07"` today, `"Oct 14 · 14:07"` otherwise; never seconds |
+| `truncate_end(text, max)` / `truncate_middle(text, max)` | `Some(cut…)` when it did not fit (then add a tooltip with the full value), `None` when it did |
+| `monogram(name)`, `avatar_index(name, tones)` | what `avatar_tile` draws |
+
+## Migrating a screen (recipe)
+
+The Jobs page is the worked example: `ui/jobs.rs` (`jobs_page_v2`,
+`job_chip`, `job_status`, `job_actions`, `run_row`) and its test
+`ui::tests::job_list::jobs_page_under_design_v2_keeps_its_actions`.
+
+1. **Branch once, high up.** `if self.design().is_v2() { return self.thing_v2(…) }`
+   or a per-element `if`; leave the v1 branch byte-for-byte as it is.
+2. **Read tokens, not literals.** `let p = self.palette(); let t = p.tokens;`
+   sizes from `t.text.*` / `t.space.*` / `t.icon.*` / `t.layout.*`, weights
+   from `FontWeight(t.weight.*)`, colours from `p.*` and `p.roles.*`. No
+   `px(12.)`, no `0x…`, no `.opacity(0.08)`, no `px_3`/`gap_2`.
+3. **Page frame.** Full pages use `page_header(back_link(…), title,
+   description, actions)` and `t.layout.page_width` (`page_view(id,
+   t.layout.page_width, …)` or `page_column(&p)`).
+4. **Status.** Map the screen's states onto `StatusKind` with one small
+   function (Jobs: `run_kind`) and draw `StatusBadge`s: never a bespoke pill
+   or dot. "Ready"/"Ended" are `Idle`; green is only `Done`.
+5. **Buttons.** Pick a variant per action: one `Primary` per region (or
+   none), `Secondary` for the rest, `Ghost` in rows and toolbars,
+   `DangerGhost` (after a confirm step) or the overflow menu for destructive
+   actions. `ButtonSize::Small` in rows/cards, `Large` for page-level and
+   composer actions.
+6. **Cards and rows.** `card(&p)` + `CardHead` (icon, title, status, meta,
+   actions right); long values via `truncated`; avatars via `avatar_tile`.
+7. **Keep selectors and ids.** Reuse every existing element id and
+   `debug_selector` (pass them to the primitive); add new ones for new
+   elements.
+8. **Test both designs.** Parameterise the screen's UI test over
+   `Design::V1`/`V2` (`this.force_design(Some(design))`), and shoot it with
+   `scripts/design-shots/shoot-all.py --setting design_v2=true --only <slug>`
+   in dark, light and one more theme.

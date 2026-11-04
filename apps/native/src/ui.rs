@@ -249,6 +249,14 @@ fn configure_theme_v2(c: &mut gpui_component::ThemeColor, p: &Palette, dark: boo
     c.secondary_active = tone(p.text, w.pressed);
     c.secondary_foreground = solid(p.text);
     c.primary_active = solid(p.primary_pressed);
+    // Switch: an off track that reads on cards (light themes need the
+    // tertiary grey under a white thumb); the on track is `primary`.
+    c.switch = solid(if dark {
+        r.border_strong
+    } else {
+        r.text_tertiary
+    });
+    c.switch_thumb = solid(if dark { p.text } else { p.surface });
     c.muted = solid(p.surface);
     c.muted_foreground = solid(r.text_secondary);
     c.border = solid(p.border);

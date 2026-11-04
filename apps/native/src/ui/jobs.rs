@@ -7,6 +7,7 @@
 //! A Runs tab shows every job's runs together, newest first and grouped by
 //! day, each opening to its full output; each job row carries a strip of its
 //! last runs so a failing job stands out without opening it.
+use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
 use super::*;
 use wks_native::features::{JobAction, Request};
 use wks_native::jobs::{self, Job, Run};
@@ -136,6 +137,67 @@ impl Workspace {
                 .text_size(px(chrome::scale::CAPTION))
                 .text_color(rgb(p.muted))
                 .child(JOBS_FOOTER),
+        )
+    }
+
+    /// The Jobs page under design v2: the shared [`primitives::page_header`]
+    /// (back link, title, description, one Refresh action) over the page
+    /// body, in the shared page width.
+    pub(super) fn jobs_page_v2(
+        &self,
+        notice: Option<Div>,
+        body: Div,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let connected = self.view.connected;
+        let back = primitives::back_link(
+            "feature-back",
+            if self.extras.return_launch {
+                "Back to new agent"
+            } else {
+                "Back to chat"
+            },
+            &p,
+        )
+        .debug_selector(|| "feature-back".into())
+        .on_click(cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)));
+        let refresh = primitives::button(
+            "jobs-refresh",
+            "Refresh",
+            Some(IconName::Redo),
+            ButtonVariant::Secondary,
+            ButtonSize::Small,
+            connected,
+            &p,
+        )
+        .debug_selector(|| "jobs-refresh".into())
+        .when(connected, |d| {
+            d.on_click(cx.listener(|this, _, _, cx| {
+                this.request(Request::Jobs, cx);
+                this.request(Request::JobRuns, cx);
+            }))
+        });
+        let header = primitives::page_header(
+            Some(back.into_any_element()),
+            "Jobs",
+            Some(JOBS_DESCRIPTION.into()),
+            vec![refresh.into_any_element()],
+            &p,
+        )
+        .debug_selector(|| "page-header".into());
+        self.page_view(
+            "feature-view",
+            t.layout.page_width,
+            false,
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.xxl))
+                .child(header)
+                .children(notice)
+                .child(body),
         )
     }
 
@@ -431,7 +493,11 @@ impl Workspace {
                 .flex_shrink_0()
                 .text_color(rgb(p.muted)),
             )
-            .child(status_dot(color, 8.))
+            .child(if self.design().is_v2() {
+                primitives::status_indicator(run_kind(run), &p)
+            } else {
+                status_dot(color, 8.)
+            })
             .child(
                 div()
                     .flex_1()
@@ -765,6 +831,20 @@ impl Workspace {
     /// The state beside a job's name: waiting for approval, running, or
     /// switched off.
     fn job_chip(&self, job: &Job, p: Palette) -> Option<Div> {
+        if self.design().is_v2() {
+            let badge = if job.change() {
+                StatusBadge::new(StatusKind::NeedsYou).label("Proposed change")
+            } else if job.proposal() {
+                return None;
+            } else if job.running {
+                StatusBadge::new(StatusKind::Working).label("Running")
+            } else if !job.enabled {
+                StatusBadge::new(StatusKind::Paused)
+            } else {
+                return None;
+            };
+            return Some(badge.render(&p));
+        }
         let (text, color) = if job.change() {
             ("Proposed change", p.warning)
         } else if job.proposal() {
@@ -792,6 +872,20 @@ impl Workspace {
         };
         if job.proposal() {
             return div();
+        }
+        if self.design().is_v2() {
+            let badge = match &job.last_run {
+                None => StatusBadge::new(StatusKind::Idle).label("Not run yet"),
+                Some(run) => {
+                    let at = run.finished_at.unwrap_or(run.started_at);
+                    StatusBadge::new(run_kind(run)).label(format!(
+                        "{} {}",
+                        run_word(run),
+                        jobs::since(at, now)
+                    ))
+                }
+            };
+            return badge.render(&p);
         }
         let Some(run) = &job.last_run else {
             return caption("Not run yet".into(), p.muted);
@@ -824,7 +918,27 @@ impl Workspace {
         let remove_id = id.clone();
         // Removing is quiet until it is asked for; the second click, which
         // deletes the history too, is the one that looks destructive.
-        let remove = if confirming {
+        let v2 = self.design().is_v2().then(|| self.palette());
+        // V2: one quiet ghost until asked, then a ghost-danger confirm.
+        let v2_button = |id: SharedString, label: &'static str, variant, enabled: bool| {
+            v2.map(|p| primitives::button(id, label, None, variant, ButtonSize::Small, enabled, &p))
+        };
+        let remove = if let Some(button) = v2_button(
+            job_control("remove", ix),
+            match (confirming, proposal) {
+                (true, _) => "Remove job and history",
+                (false, true) => "Reject",
+                (false, false) => "Remove",
+            },
+            if confirming {
+                ButtonVariant::DangerGhost
+            } else {
+                ButtonVariant::Ghost
+            },
+            enabled,
+        ) {
+            button
+        } else if confirming {
             self.danger_button(job_control("remove", ix), "Remove job and history", enabled)
         } else {
             self.job_quiet(
@@ -852,38 +966,59 @@ impl Workspace {
             let approval = job.approval();
             // Proposals sort first: the first is the page's one primary
             // action, the rest stay tonal.
-            let approve = self
-                .button_style(job_control("approve", ix), "Approve", can_approve, ix == 0)
-                .debug_selector(move || format!("job-approve-{ix}"))
-                .when(can_approve, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.job_action(JobAction::Save(approval.clone()), cx);
-                    }))
-                });
+            let approve = v2_button(
+                job_control("approve", ix),
+                "Approve",
+                if ix == 0 {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Secondary
+                },
+                can_approve,
+            )
+            .unwrap_or_else(|| {
+                self.button_style(job_control("approve", ix), "Approve", can_approve, ix == 0)
+            })
+            .debug_selector(move || format!("job-approve-{ix}"))
+            .when(can_approve, |d| {
+                d.on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.job_action(JobAction::Save(approval.clone()), cx);
+                }))
+            });
             return row.child(approve);
         }
         let paused = job.with_enabled(!job.enabled);
         let pause_label = if job.enabled { "Pause" } else { "Resume" };
-        let pause = self
-            .button(job_control("pause", ix), pause_label, enabled)
-            .debug_selector(move || format!("job-pause-{ix}"))
-            .when(enabled, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.job_action(JobAction::Save(paused.clone()), cx);
-                }))
-            });
+        let pause = v2_button(
+            job_control("pause", ix),
+            pause_label,
+            ButtonVariant::Secondary,
+            enabled,
+        )
+        .unwrap_or_else(|| self.button(job_control("pause", ix), pause_label, enabled))
+        .debug_selector(move || format!("job-pause-{ix}"))
+        .when(enabled, |d| {
+            d.on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.job_action(JobAction::Save(paused.clone()), cx);
+            }))
+        });
         let can_run = enabled && !job.running;
-        let run = self
-            .button(job_control("run", ix), "Run now", can_run)
-            .debug_selector(move || format!("job-run-{ix}"))
-            .when(can_run, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.job_action(JobAction::Run(id.clone()), cx);
-                }))
-            });
+        let run = v2_button(
+            job_control("run", ix),
+            "Run now",
+            ButtonVariant::Secondary,
+            can_run,
+        )
+        .unwrap_or_else(|| self.button(job_control("run", ix), "Run now", can_run))
+        .debug_selector(move || format!("job-run-{ix}"))
+        .when(can_run, |d| {
+            d.on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.job_action(JobAction::Run(id.clone()), cx);
+            }))
+        });
         row.child(pause).child(run)
     }
 
@@ -1092,6 +1227,15 @@ fn run_color(run: &Run, p: Palette) -> u32 {
         "ok" => p.success,
         "error" => p.error,
         _ => p.muted,
+    }
+}
+
+/// A run's state in the shared status vocabulary (v2).
+fn run_kind(run: &Run) -> StatusKind {
+    match run.status.as_str() {
+        "ok" => StatusKind::Done,
+        "error" => StatusKind::Failed,
+        _ => StatusKind::Idle,
     }
 }
 

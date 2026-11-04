@@ -1,10 +1,13 @@
 //! Design tokens: every non-colour measure the native client draws with.
 //!
 //! [`Tokens::V1`] reproduces the shipped look exactly; each value names the
-//! literal it replaces. [`Tokens::V2`] is the redesign's set, selected by the
-//! `design_v2` setting (Settings → Appearance → New design (preview)). It
-//! starts as a copy of V1 so the preview is safe to switch on; designers tune
-//! V2 here and nowhere else. Per-theme colours live on
+//! literal it replaces (fields v1 never draws carry the v2 value and say so).
+//! [`Tokens::V2`] is the redesign's set, selected by the `design_v2` setting
+//! (Settings → Appearance → New design (preview)): a 22/16/14/13/12 type
+//! scale (11 for keycaps and meta) at weights 400/500/600, two control
+//! heights (28/36), two radii (8 for controls, full for chips and badges),
+//! quiet elevation and narrower reading widths. Designers tune V2 here and
+//! nowhere else. Per-theme colours live on
 //! [`crate::appearance::Palette`], which carries one of these sets in its
 //! `tokens` field, so any function that takes a `Palette` reads tokens too.
 //!
@@ -43,15 +46,17 @@ pub struct TypeScale {
     /// Page titles (Settings, Projects, Changes…); `title_short` in short windows.
     pub title: f32,
     pub title_short: f32,
-    /// Card and section headings.
+    /// Section headings (v2: 16).
     pub heading: f32,
+    /// Card, row and dialog titles (v2: 14).
+    pub subheading: f32,
     /// Body copy and control labels on pages.
     pub body: f32,
     /// Descriptions, metadata, notices, button labels.
     pub meta: f32,
     /// Captions, chips and hints.
     pub caption: f32,
-    /// Uppercase overlines, keycaps.
+    /// Uppercase overlines, keycaps, compact meta (v2: 11, the floor).
     pub overline: f32,
     /// gpui-component's base size before the reader's text-size setting
     /// replaces it (`configure_theme`).
@@ -60,6 +65,19 @@ pub struct TypeScale {
     pub mono: f32,
     /// Line height for wrapped notices and body copy, as a multiple.
     pub line_height: f32,
+}
+
+/// Font weights as CSS numbers (`FontWeight(t.weight.medium)`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Weights {
+    /// Body copy.
+    pub regular: f32,
+    /// Labels, buttons, chips.
+    pub medium: f32,
+    /// Headings and titles.
+    pub semibold: f32,
+    /// Page titles (v1 draws them bold; v2 caps weights at 600).
+    pub title: f32,
 }
 
 /// Spacing steps in logical px. V1 has no spacing tokens; these are the
@@ -74,6 +92,8 @@ pub struct Spacing {
     pub xl: f32,
     pub xxl: f32,
     pub xxxl: f32,
+    /// Between page sections and around hero states.
+    pub huge: f32,
 }
 
 /// Icon sizes in logical px.
@@ -169,16 +189,42 @@ pub struct Layout {
     pub rail_row: f32,
     pub rail_session: f32,
     pub rail_child: f32,
+    /// Wider reading measures (Settings → reading width); `chat_width` is
+    /// the comfortable one. `reading_full` is larger than any window.
+    pub reading_wide: f32,
+    pub reading_full: f32,
+    /// Shared max width of full-page content (`page_view`'s `CHAT_WIDTH`).
+    pub page_width: f32,
+    /// Space above a page header, below the caption (`page_scroller`).
+    pub page_top: f32,
+    /// Side padding of a page (`page_scroller`'s 24px).
+    pub page_gutter: f32,
+    /// Sidebar session rows: comfortable (two lines) and compact (one).
+    pub sidebar_row: f32,
+    pub sidebar_row_compact: f32,
+    /// The sidebar's single footer row, at most.
+    pub footer_height: f32,
     /// Gap between the rail and its flyout (`portrait::FLYOUT_GAP`).
     pub flyout_gap: f32,
     /// The sidebar's default width (`Settings::default().sidebar_width`).
     pub sidebar_width: f32,
-    /// Pill and composer buttons (`chrome::pill_button`).
+    /// Large buttons and inputs (v1: `chrome::pill_button`; v2: 36).
     pub control_height: f32,
+    /// Small buttons in rows, toolbars and cards (v2: 28).
+    pub control_height_sm: f32,
     /// Round icon buttons (`chrome::icon_button`).
     pub icon_button: f32,
     /// Status dots (`ui::status_dot`).
     pub status_dot: f32,
+    /// The fixed box a status indicator (dot, pulse, spinner) sits in.
+    pub status_box: f32,
+    /// A fixed status column, so titles after it share one left edge.
+    pub status_column: f32,
+    /// Monogram avatar tiles: in rows, and on cards and headers.
+    pub avatar: f32,
+    pub avatar_lg: f32,
+    /// Height of the fade under floating chrome (title capsule, Jump to latest).
+    pub fade: f32,
     /// Meter track thickness.
     pub meter_height: f32,
     /// List rows (menus, pickers, file lists).
@@ -189,6 +235,13 @@ pub struct Layout {
     pub dialog_width: f32,
 }
 
+/// Durations of looping indicators, in milliseconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Motion {
+    /// One beat of the Working pulse (v1: the brand spinner's 1600).
+    pub pulse_ms: f32,
+}
+
 /// Every non-colour token. Copy, so it rides along on [`Palette`].
 ///
 /// [`Palette`]: crate::appearance::Palette
@@ -196,6 +249,7 @@ pub struct Layout {
 pub struct Tokens {
     pub design: Design,
     pub text: TypeScale,
+    pub weight: Weights,
     pub space: Spacing,
     pub icon: IconSizes,
     pub radius: Radii,
@@ -203,6 +257,7 @@ pub struct Tokens {
     pub wash: Washes,
     pub stroke: Strokes,
     pub layout: Layout,
+    pub motion: Motion,
 }
 
 impl Tokens {
@@ -213,6 +268,7 @@ impl Tokens {
             title: 22.,
             title_short: 18.,
             heading: 15.,
+            subheading: 14.,
             body: 13.,
             meta: 12.,
             caption: 11.,
@@ -220,6 +276,12 @@ impl Tokens {
             ui: 15.,
             mono: 13.,
             line_height: 1.45,
+        },
+        weight: Weights {
+            regular: 400.,
+            medium: 500.,
+            semibold: 600.,
+            title: 700.,
         },
         space: Spacing {
             xxs: 2.,
@@ -230,6 +292,7 @@ impl Tokens {
             xl: 16.,
             xxl: 24.,
             xxxl: 32.,
+            huge: 48.,
         },
         icon: IconSizes {
             xs: 11.,
@@ -286,6 +349,16 @@ impl Tokens {
         layout: Layout {
             chat_width: 900.,
             chat_gutter: 20.,
+            // V1 has one reading measure.
+            reading_wide: 900.,
+            reading_full: 900.,
+            page_width: 900.,
+            page_top: 24.,
+            page_gutter: 24.,
+            // V1's two-line rows; v1 has no compact density or footer row.
+            sidebar_row: 64.,
+            sidebar_row_compact: 28.,
+            footer_height: 44.,
             rail_width: 56.,
             rail_row: 44.,
             rail_session: 30.,
@@ -293,19 +366,141 @@ impl Tokens {
             flyout_gap: 6.,
             sidebar_width: 304.,
             control_height: 32.,
+            control_height_sm: 28.,
             icon_button: 28.,
             status_dot: 6.,
+            // Unused by v1 (it shows the brand spinner and ragged pills).
+            status_box: 12.,
+            status_column: 112.,
+            avatar: 24.,
+            avatar_lg: 32.,
+            // `DOCK_FADE`.
+            fade: 12.,
             meter_height: 4.,
             row_height: 30.,
             menu_width: 240.,
             dialog_width: 440.,
         },
+        motion: Motion { pulse_ms: 1600. },
     };
 
-    /// The redesign. A copy of V1 until designers tune it.
+    /// The redesign: calm by default, dense on demand (`docs/design-v2-direction.md`).
     pub const V2: Self = Self {
         design: Design::V2,
-        ..Self::V1
+        text: TypeScale {
+            title: 22.,
+            title_short: 16.,
+            heading: 16.,
+            subheading: 14.,
+            body: 13.,
+            meta: 12.,
+            caption: 12.,
+            overline: 11.,
+            ui: 14.,
+            mono: 13.,
+            line_height: 1.5,
+        },
+        weight: Weights {
+            regular: 400.,
+            medium: 500.,
+            semibold: 600.,
+            title: 600.,
+        },
+        space: Spacing {
+            xxs: 2.,
+            xs: 4.,
+            sm: 6.,
+            md: 8.,
+            lg: 12.,
+            xl: 16.,
+            xxl: 24.,
+            xxxl: 32.,
+            huge: 48.,
+        },
+        icon: IconSizes {
+            xs: 12.,
+            sm: 14.,
+            md: 16.,
+            lg: 20.,
+            xl: 24.,
+        },
+        radius: Radii {
+            xs: 4.,
+            sm: 6.,
+            control: 8.,
+            panel: 12.,
+            composer: 16.,
+            full: 9999.,
+        },
+        elevation: Elevation {
+            raised: Shadow {
+                offset_y: 1.,
+                blur: 2.,
+                spread: 0.,
+                opacity: 0.35,
+            },
+            floating: Shadow {
+                offset_y: 8.,
+                blur: 24.,
+                spread: -6.,
+                opacity: 1.,
+            },
+            modal: Shadow {
+                offset_y: 16.,
+                blur: 48.,
+                spread: -12.,
+                opacity: 1.25,
+            },
+            glow_blur: 16.,
+            glow_spread: 0.,
+            glow_alpha: 0.3,
+            scrim_alpha: 0.5,
+        },
+        wash: Washes {
+            disabled: 0.04,
+            rest: 0.06,
+            hover: 0.09,
+            pressed: 0.13,
+            tone_rest: 0.12,
+            tone_hover: 0.18,
+            tone_pressed: 0.24,
+        },
+        stroke: Strokes {
+            hairline: 1.,
+            focus: 2.,
+        },
+        layout: Layout {
+            chat_width: 760.,
+            chat_gutter: 24.,
+            reading_wide: 1040.,
+            reading_full: 9999.,
+            page_width: 880.,
+            page_top: 40.,
+            page_gutter: 32.,
+            sidebar_row: 44.,
+            sidebar_row_compact: 28.,
+            footer_height: 44.,
+            rail_width: 56.,
+            rail_row: 44.,
+            rail_session: 30.,
+            rail_child: 22.,
+            flyout_gap: 6.,
+            sidebar_width: 304.,
+            control_height: 36.,
+            control_height_sm: 28.,
+            icon_button: 28.,
+            status_dot: 6.,
+            status_box: 12.,
+            status_column: 112.,
+            avatar: 24.,
+            avatar_lg: 32.,
+            fade: 32.,
+            meter_height: 4.,
+            row_height: 32.,
+            menu_width: 240.,
+            dialog_width: 440.,
+        },
+        motion: Motion { pulse_ms: 1400. },
     };
 }
 
@@ -318,5 +513,44 @@ mod tests {
         assert_eq!(Design::from_flag(false).tokens(), Tokens::V1);
         assert_eq!(Design::from_flag(true).tokens(), Tokens::V2);
         assert!(Design::from_flag(true).is_v2());
+    }
+
+    #[test]
+    fn v2_holds_the_direction_scale() {
+        let t = Tokens::V2;
+        // 22 / 16 / 14 / 13 / 12, with 11 only for keycaps and meta.
+        let mut sizes = vec![
+            t.text.title,
+            t.text.title_short,
+            t.text.heading,
+            t.text.subheading,
+            t.text.body,
+            t.text.meta,
+            t.text.caption,
+            t.text.overline,
+            t.text.ui,
+            t.text.mono,
+        ];
+        sizes.sort_by(f32::total_cmp);
+        sizes.dedup();
+        assert_eq!(sizes, [11., 12., 13., 14., 16., 22.]);
+        for w in [
+            t.weight.regular,
+            t.weight.medium,
+            t.weight.semibold,
+            t.weight.title,
+        ] {
+            assert!([400., 500., 600.].contains(&w), "weight {w}");
+        }
+        assert_eq!(
+            (t.layout.control_height_sm, t.layout.control_height),
+            (28., 36.)
+        );
+        assert_eq!(t.radius.control, 8.);
+        assert!(t.radius.full > t.layout.control_height);
+        assert!(t.layout.footer_height <= 44.);
+        assert!(t.layout.chat_width < t.layout.reading_wide);
+        assert!(t.layout.reading_wide < t.layout.reading_full);
+        assert!(t.layout.status_dot < t.layout.status_box);
     }
 }

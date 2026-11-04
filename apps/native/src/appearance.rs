@@ -83,7 +83,22 @@ pub struct Roles {
     pub focus: u32,
     /// Informational tone (neither success nor warning).
     pub info: u32,
+    /// The 1px edge of a card resting on the page. Light themes need it to
+    /// separate white cards from a near-white canvas.
+    pub card_border: u32,
+    /// Provider glyphs and model names: neutral, never brand colour (v2).
+    pub provider: u32,
+    /// Monogram avatar fills, muted, picked by a hash of the name
+    /// (`wks_native::format::avatar_index`). Text on them is `text`.
+    pub avatar: [u32; AVATAR_TONES],
 }
+
+/// How many muted avatar fills a palette carries.
+pub const AVATAR_TONES: usize = 6;
+
+/// The avatar hues in degrees: blue, teal, green, sand, clay, rose. No
+/// purple, which v2 retires.
+const AVATAR_HUES: [f32; AVATAR_TONES] = [212., 174., 128., 40., 18., 346.];
 
 impl Roles {
     /// Placeholder in the palette literals; `palette()` derives the real values.
@@ -96,6 +111,9 @@ impl Roles {
         border_strong: 0,
         focus: 0,
         info: 0,
+        card_border: 0,
+        provider: 0,
+        avatar: [0; AVATAR_TONES],
     };
 
     /// The v1 mapping: every role is an existing palette colour.
@@ -109,8 +127,78 @@ impl Roles {
             border_strong: p.border,
             focus: p.accent,
             info: p.accent,
+            card_border: p.border,
+            provider: p.muted,
+            avatar: [p.selected; AVATAR_TONES],
         }
     }
+}
+
+/// The v2 colours of one theme. Everything else in the v2 palette is derived
+/// from these in [`Appearance::palette_v2`].
+struct V2Colors {
+    /// Sidebar and window chrome.
+    base: u32,
+    /// The conversation and page canvas.
+    chat: u32,
+    /// Cards, code blocks, inputs on cards.
+    surface: u32,
+    /// Menus, popovers, dialogs, tooltips.
+    raised: u32,
+    /// The selected row: always a neutral fill, never a tint of the accent.
+    selected: u32,
+    hover: u32,
+    pressed: u32,
+    /// Dividers inside cards and between rows.
+    border: u32,
+    /// Inputs, popovers, secondary buttons.
+    border_strong: u32,
+    card_border: u32,
+    /// Text tiers: primary, chat prose, secondary, tertiary.
+    text: u32,
+    prose: u32,
+    secondary: u32,
+    tertiary: u32,
+    /// The one accent: links, focus, selection tint.
+    accent: u32,
+    /// Primary buttons and the text on them.
+    primary: u32,
+    on_primary: u32,
+    /// Status: attention (needs you), error, success (terminal only), running.
+    attention: u32,
+    error: u32,
+    success: u32,
+    running: u32,
+    /// The user's message bubble and inline code.
+    user: u32,
+    code_inline: u32,
+}
+
+/// `a` moved `t` (0–1) of the way to `b`, per channel.
+fn mix(a: u32, b: u32, t: f32) -> u32 {
+    let ch = |shift: u32| {
+        let (x, y) = (((a >> shift) & 0xff) as f32, ((b >> shift) & 0xff) as f32);
+        ((x + (y - x) * t).round() as u32) << shift
+    };
+    ch(16) | ch(8) | ch(0)
+}
+
+/// An HSL colour (hue in degrees, saturation and lightness 0–1) as 0xRRGGBB.
+fn hsl(hue: f32, saturation: f32, lightness: f32) -> u32 {
+    let c = (1. - (2. * lightness - 1.).abs()) * saturation;
+    let h = hue.rem_euclid(360.) / 60.;
+    let x = c * (1. - (h % 2. - 1.).abs());
+    let (r, g, b) = match h as u32 {
+        0 => (c, x, 0.),
+        1 => (x, c, 0.),
+        2 => (0., c, x),
+        3 => (0., x, c),
+        4 => (x, 0., c),
+        _ => (c, 0., x),
+    };
+    let m = lightness - c / 2.;
+    let byte = |v: f32| (((v + m) * 255.).round().clamp(0., 255.)) as u32;
+    byte(r) << 16 | byte(g) << 8 | byte(b)
 }
 
 impl Appearance {
@@ -159,35 +247,279 @@ impl Appearance {
         }
     }
 
-    /// The redesign's palette: per theme, so all eight keep working. Starts
-    /// from the v1 colours; designers override them in [`Self::v2_colors`].
-    /// Radii follow [`Tokens::V2`] so the palette's radius fields and the
-    /// token set never disagree.
+    /// The redesign's palette: per theme, so all eight keep working. Keeps
+    /// v1's selection and shadow, takes every other colour from
+    /// [`Self::v2_colors`], and derives the rest so the rules hold in every
+    /// theme: `muted` is secondary text and `disabled` tertiary (v1 code
+    /// drawn under v2 inherits the hierarchy), `busy` is the running blue
+    /// (no purple), code blocks sit on the card surface, providers are
+    /// tertiary grey. Radii follow [`Tokens::V2`] so the palette's radius
+    /// fields and the token set never disagree.
     pub fn palette_v2(self) -> Palette {
         let mut p = self.v1_colors();
-        p.roles = Roles::derive(&p);
+        let c = self.v2_colors();
         p.tokens = Tokens::V2;
         p.control_radius = p.tokens.radius.control;
         p.panel_radius = p.tokens.radius.panel;
         p.composer_radius = p.tokens.radius.composer;
-        self.v2_colors(&mut p);
+        p.base = c.base;
+        p.chat = c.chat;
+        p.surface = c.surface;
+        p.selected = c.selected;
+        p.border = c.border;
+        p.text = c.text;
+        p.prose = c.prose;
+        p.muted = c.secondary;
+        p.disabled = c.tertiary;
+        p.accent = c.accent;
+        p.primary = c.primary;
+        // Hover and press move away from the label colour, so the label
+        // only gains contrast while the button is touched.
+        let away = if luminance(c.on_primary) > 0.5 {
+            0x000000
+        } else {
+            0xffffff
+        };
+        p.primary_hover = mix(c.primary, away, 0.1);
+        p.primary_pressed = mix(c.primary, away, 0.2);
+        p.on_primary = c.on_primary;
+        p.warning = c.attention;
+        p.error = c.error;
+        p.success = c.success;
+        p.busy = c.running;
+        p.user = c.user;
+        p.code_inline = c.code_inline;
+        p.code_block = c.surface;
+        p.code_header = c.raised;
+        let dark = self.is_dark();
+        let (saturation, lightness) = if dark { (0.24, 0.27) } else { (0.42, 0.86) };
+        p.roles = Roles {
+            hover: c.hover,
+            pressed: c.pressed,
+            raised: c.raised,
+            text_secondary: c.secondary,
+            text_tertiary: c.tertiary,
+            border_strong: c.border_strong,
+            focus: c.accent,
+            info: c.running,
+            card_border: c.card_border,
+            provider: c.tertiary,
+            avatar: AVATAR_HUES.map(|hue| hsl(hue, saturation, lightness)),
+        };
         p
     }
 
-    /// Per-theme v2 colour overrides, applied over the v1 colours and the
-    /// derived roles. Empty for now: the preview matches v1's colours.
-    fn v2_colors(self, p: &mut Palette) {
+    /// The v2 colours per theme: quiet near-neutral surfaces, crisp borders,
+    /// one accent and four status hues. Contrast floors are enforced in
+    /// `tests::v2_meets_the_direction_floors`.
+    fn v2_colors(self) -> V2Colors {
         match self {
-            Self::Dark => {}
-            Self::Light => {}
-            Self::Nord => {}
-            Self::TokyoNight => {}
-            Self::Catppuccin => {}
-            Self::Gruvbox => {}
-            Self::Everforest => {}
-            Self::CatppuccinLatte => {}
+            Self::Dark => V2Colors {
+                base: 0x111214,
+                chat: 0x0e0f11,
+                surface: 0x17181b,
+                raised: 0x1d1e22,
+                selected: 0x24252a,
+                hover: 0x1b1c20,
+                pressed: 0x27282d,
+                border: 0x25262b,
+                border_strong: 0x33353b,
+                card_border: 0x25262b,
+                text: 0xededef,
+                prose: 0xd2d3d7,
+                secondary: 0xa1a2a9,
+                tertiary: 0x74767f,
+                accent: 0x6aa1f8,
+                primary: 0x2f6ee5,
+                on_primary: 0xffffff,
+                attention: 0xe9b464,
+                error: 0xf27a7a,
+                success: 0x4cc38a,
+                running: 0x6aa1f8,
+                user: 0x1d1e22,
+                code_inline: 0x202125,
+            },
+            // Off-white canvas, white cards with a real 1px edge, amber-700
+            // attention text and a neutral grey selection.
+            Self::Light => V2Colors {
+                base: 0xf6f6f7,
+                chat: 0xfcfcfc,
+                surface: 0xffffff,
+                raised: 0xffffff,
+                selected: 0xebebee,
+                hover: 0xf1f1f3,
+                pressed: 0xe6e6e9,
+                border: 0xe7e7ea,
+                border_strong: 0xd9d9de,
+                card_border: 0xdedee3,
+                text: 0x18181b,
+                prose: 0x2c2c31,
+                secondary: 0x5d5e66,
+                tertiary: 0x84858e,
+                accent: 0x1f5fd6,
+                primary: 0x2563eb,
+                on_primary: 0xffffff,
+                attention: 0xa85200,
+                error: 0xc81e1e,
+                success: 0x15803d,
+                running: 0x2563eb,
+                user: 0xf1f1f3,
+                code_inline: 0xefeff1,
+            },
+            // Polar night surfaces with frost as the one accent: the primary
+            // is Nord8 with nord0 text, bright enough to never read disabled.
+            Self::Nord => V2Colors {
+                base: 0x2e3440,
+                chat: 0x292e39,
+                surface: 0x343a47,
+                raised: 0x3b4252,
+                selected: 0x3f4655,
+                hover: 0x393f4c,
+                pressed: 0x454c5c,
+                border: 0x414857,
+                border_strong: 0x4c566a,
+                card_border: 0x414857,
+                text: 0xeceff4,
+                prose: 0xd8dee9,
+                secondary: 0xb2bac8,
+                tertiary: 0x8f99ab,
+                accent: 0x88c0d0,
+                primary: 0x88c0d0,
+                on_primary: 0x242933,
+                attention: 0xebcb8b,
+                error: 0xe0828a,
+                success: 0xa3be8c,
+                running: 0x81a1c1,
+                user: 0x3b4252,
+                code_inline: 0x3b4252,
+            },
+            Self::TokyoNight => V2Colors {
+                base: 0x16161e,
+                chat: 0x1a1b26,
+                surface: 0x1f2030,
+                raised: 0x24283b,
+                selected: 0x292e42,
+                hover: 0x232536,
+                pressed: 0x2c3148,
+                border: 0x292d3e,
+                border_strong: 0x343a52,
+                card_border: 0x292d3e,
+                text: 0xc8d0f5,
+                prose: 0xb0b8dc,
+                secondary: 0x9aa2c8,
+                tertiary: 0x737aa2,
+                accent: 0x7aa2f7,
+                primary: 0x7aa2f7,
+                on_primary: 0x16161e,
+                attention: 0xe0af68,
+                error: 0xf7768e,
+                success: 0x9ece6a,
+                running: 0x7aa2f7,
+                user: 0x24283b,
+                code_inline: 0x24283b,
+            },
+            Self::Catppuccin => V2Colors {
+                base: 0x181825,
+                chat: 0x1e1e2e,
+                surface: 0x24273a,
+                raised: 0x2a2b3d,
+                selected: 0x313244,
+                hover: 0x2a2b3d,
+                pressed: 0x383a4e,
+                border: 0x313244,
+                border_strong: 0x45475a,
+                card_border: 0x313244,
+                text: 0xcdd6f4,
+                prose: 0xbac2de,
+                secondary: 0xa6adc8,
+                tertiary: 0x7f849c,
+                accent: 0x89b4fa,
+                primary: 0x89b4fa,
+                on_primary: 0x1e1e2e,
+                attention: 0xf9e2af,
+                error: 0xf38ba8,
+                success: 0xa6e3a1,
+                running: 0x89b4fa,
+                user: 0x2a2b3d,
+                code_inline: 0x313244,
+            },
+            Self::Gruvbox => V2Colors {
+                base: 0x1d2021,
+                chat: 0x282828,
+                surface: 0x2e2c2b,
+                raised: 0x32302f,
+                selected: 0x3a3735,
+                hover: 0x32302f,
+                pressed: 0x423e3b,
+                border: 0x3c3836,
+                border_strong: 0x504945,
+                card_border: 0x3c3836,
+                text: 0xddc7a1,
+                prose: 0xd4be98,
+                secondary: 0xbdae93,
+                tertiary: 0x928374,
+                accent: 0x7daea3,
+                primary: 0x7daea3,
+                on_primary: 0x1d2021,
+                attention: 0xd8a657,
+                error: 0xea6962,
+                success: 0xa9b665,
+                running: 0x7daea3,
+                user: 0x32302f,
+                code_inline: 0x3a3735,
+            },
+            // Everforest's blue is the accent; green stays success only.
+            Self::Everforest => V2Colors {
+                base: 0x272e33,
+                chat: 0x2d353b,
+                surface: 0x323c41,
+                raised: 0x374145,
+                selected: 0x3d484d,
+                hover: 0x374145,
+                pressed: 0x434f54,
+                border: 0x414b50,
+                border_strong: 0x4f5b58,
+                card_border: 0x414b50,
+                text: 0xe0d5bc,
+                prose: 0xd3c6aa,
+                secondary: 0xb0b8ad,
+                tertiary: 0x8f9a92,
+                accent: 0x7fbbb3,
+                primary: 0x7fbbb3,
+                on_primary: 0x232a2e,
+                attention: 0xdbbc7f,
+                error: 0xe67e80,
+                success: 0xa7c080,
+                running: 0x7fbbb3,
+                user: 0x374145,
+                code_inline: 0x3d484d,
+            },
+            Self::CatppuccinLatte => V2Colors {
+                base: 0xe6e9ef,
+                chat: 0xeff1f5,
+                surface: 0xfbfbfd,
+                raised: 0xffffff,
+                selected: 0xd5d9e2,
+                hover: 0xe4e7ed,
+                pressed: 0xcdd1db,
+                border: 0xd8dce4,
+                border_strong: 0xc6cad5,
+                card_border: 0xd3d7e0,
+                text: 0x41445e,
+                prose: 0x4c4f69,
+                secondary: 0x5c5f77,
+                tertiary: 0x7c7f93,
+                accent: 0x1e66f5,
+                primary: 0x1e66f5,
+                on_primary: 0xffffff,
+                attention: 0x9a5400,
+                error: 0xc8102f,
+                success: 0x2f7d1f,
+                running: 0x1e66f5,
+                user: 0xe4e7ed,
+                code_inline: 0xe4e7ed,
+            },
         }
-        let _ = p;
     }
 
     /// Native semantic palettes. Dark keeps chrome close to the conversation
@@ -501,26 +833,28 @@ pub fn preference_path() -> Option<PathBuf> {
     Some(base.join("workspacer/native-theme.json"))
 }
 
+/// WCAG relative luminance of 0xRRGGBB.
+pub fn luminance(color: u32) -> f64 {
+    let channel = |shift: u32| {
+        let c = ((color >> shift) & 0xff) as f64 / 255.;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+}
+
+/// WCAG contrast ratio between two 0xRRGGBB colours (1–21).
+pub fn contrast(a: u32, b: u32) -> f64 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn luminance(color: u32) -> f64 {
-        let channel = |shift: u32| {
-            let c = ((color >> shift) & 0xff) as f64 / 255.;
-            if c <= 0.03928 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
-    }
-
-    fn contrast(a: u32, b: u32) -> f64 {
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
-    }
 
     #[test]
     fn quiet_text_stays_legible_on_the_chat_surface() {
@@ -745,18 +1079,150 @@ mod tests {
             assert_eq!(v2.control_radius, v2.tokens.radius.control);
             assert_eq!(v2.panel_radius, v2.tokens.radius.panel);
             assert_eq!(v2.composer_radius, v2.tokens.radius.composer);
-            // The preview stays at least as readable as v1 in every theme
-            // while designers tune it (floors are v1's weakest theme).
-            for (name, fg, bg, floor) in [
-                ("text", v2.text, v2.chat, 7.),
-                ("muted", v2.muted, v2.chat, 4.3),
-                ("text_secondary", v2.roles.text_secondary, v2.surface, 3.7),
-                ("text_tertiary", v2.roles.text_tertiary, v2.chat, 2.4),
-                ("on_primary", v2.on_primary, v2.primary, 3.),
-            ] {
+        }
+    }
+
+    /// Hue (degrees) and HSL saturation of 0xRRGGBB.
+    fn hue_saturation(color: u32) -> (f64, f64) {
+        let [r, g, b] = [16, 8, 0].map(|s| ((color >> s) & 0xff) as f64 / 255.);
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let d = max - min;
+        let l = (max + min) / 2.;
+        if d == 0. {
+            return (0., 0.);
+        }
+        let s = d / (1. - (2. * l - 1.).abs());
+        let h = if max == r {
+            60. * ((g - b) / d).rem_euclid(6.)
+        } else if max == g {
+            60. * ((b - r) / d + 2.)
+        } else {
+            60. * ((r - g) / d + 4.)
+        };
+        (h, s)
+    }
+
+    /// The direction's floors (`docs/design-v2-direction.md` §1) in all
+    /// eight themes.
+    #[test]
+    fn v2_meets_the_direction_floors() {
+        for appearance in Appearance::ALL {
+            let p = appearance.palette_v2();
+            let r = p.roles;
+            let floor = |name: &str, fg: u32, bg: u32, min: f64| {
                 let ratio = contrast(fg, bg);
-                assert!(ratio >= floor, "{appearance:?} v2 {name}: {ratio:.2}");
+                assert!(ratio >= min, "{appearance:?} v2 {name}: {ratio:.2} < {min}");
+            };
+            assert_eq!(appearance.is_dark(), luminance(p.chat) < 0.4);
+            for (surface, bg) in [
+                ("chat", p.chat),
+                ("surface", p.surface),
+                ("base", p.base),
+                ("raised", r.raised),
+            ] {
+                floor(&format!("text on {surface}"), p.text, bg, 4.5);
+                floor(&format!("prose on {surface}"), p.prose, bg, 4.5);
+                floor(
+                    &format!("secondary on {surface}"),
+                    r.text_secondary,
+                    bg,
+                    4.5,
+                );
+                floor(&format!("tertiary on {surface}"), r.text_tertiary, bg, 3.);
+                for (tone, color) in [
+                    ("accent", p.accent),
+                    ("attention", p.warning),
+                    ("running", p.busy),
+                    ("success", p.success),
+                    ("error", p.error),
+                ] {
+                    floor(&format!("{tone} on {surface}"), color, bg, 3.);
+                }
+            }
+            floor("secondary on selected", r.text_secondary, p.selected, 4.);
+            floor("primary button on surface", p.primary, p.surface, 3.);
+            floor("primary button on chat", p.primary, p.chat, 3.);
+            floor("on-accent label", p.on_primary, p.primary, 4.5);
+            floor(
+                "on-accent label (hover)",
+                p.on_primary,
+                p.primary_hover,
+                4.5,
+            );
+            floor(
+                "on-accent label (pressed)",
+                p.on_primary,
+                p.primary_pressed,
+                4.5,
+            );
+            for (name, fg, bg) in [
+                ("border on surface", p.border, p.surface),
+                ("border on chat", p.border, p.chat),
+                ("card border on chat", r.card_border, p.chat),
+                ("selected on base", p.selected, p.base),
+                ("selected on chat", p.selected, p.chat),
+            ] {
+                floor(name, fg, bg, 1.1);
+            }
+            // Text tiers are a real hierarchy.
+            assert!(contrast(p.text, p.chat) > contrast(r.text_secondary, p.chat));
+            assert!(contrast(r.text_secondary, p.chat) > contrast(r.text_tertiary, p.chat));
+            // Code blocks sit on the card surface; providers are neutral;
+            // v1 code drawn under v2 inherits the tiers.
+            assert_eq!(p.code_block, p.surface, "{appearance:?}");
+            assert_eq!(r.provider, r.text_tertiary, "{appearance:?}");
+            assert_eq!((p.muted, p.disabled), (r.text_secondary, r.text_tertiary));
+            // One accent: links, focus and primary buttons share a hue, and
+            // running is blue-ish; nothing is purple.
+            let (accent_hue, _) = hue_saturation(p.accent);
+            let (primary_hue, _) = hue_saturation(p.primary);
+            assert!(
+                (accent_hue - primary_hue).abs() < 12.,
+                "{appearance:?} accent {accent_hue:.0} vs primary {primary_hue:.0}"
+            );
+            assert_eq!(r.focus, p.accent);
+            for (name, color) in [
+                ("accent", p.accent),
+                ("primary", p.primary),
+                ("running", p.busy),
+                ("info", r.info),
+            ]
+            .into_iter()
+            .chain(r.avatar.iter().map(|&c| ("avatar", c)))
+            {
+                let (hue, saturation) = hue_saturation(color);
+                assert!(
+                    saturation < 0.15 || !(255. ..=320.).contains(&hue),
+                    "{appearance:?} {name} is purple ({hue:.0}°)"
+                );
+            }
+            for (name, color) in [("selected", p.selected), ("hover", r.hover)] {
+                let (_, saturation) = hue_saturation(color);
+                // Neutral fills; the themed palettes keep a faint cast.
+                let cap = if appearance == Appearance::Light {
+                    0.1
+                } else {
+                    0.3
+                };
+                assert!(
+                    saturation <= cap,
+                    "{appearance:?} {name} saturation {saturation:.2}"
+                );
+            }
+            // Avatar monograms read on every tile.
+            for &tile in &r.avatar {
+                floor("avatar text", p.text, tile, 4.5);
             }
         }
+        // Light: cards get a visible edge on the canvas, amber is dark enough
+        // to read as text, and the selected row is grey, not blue.
+        let light = Appearance::Light.palette_v2();
+        assert!(contrast(light.roles.card_border, light.surface) >= 1.25);
+        assert!(contrast(light.warning, light.surface) >= 4.5);
+        // Nord: a saturated primary that never reads as disabled.
+        let nord = Appearance::Nord.palette_v2();
+        let (_, saturation) = hue_saturation(nord.primary);
+        assert!(saturation >= 0.4, "Nord primary saturation {saturation:.2}");
+        assert!(contrast(nord.primary, nord.surface) >= 4.);
     }
 }

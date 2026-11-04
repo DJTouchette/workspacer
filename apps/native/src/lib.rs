@@ -9,6 +9,7 @@ pub mod controller;
 pub mod diff;
 pub mod elicitation;
 pub mod features;
+pub mod format;
 pub mod handoff;
 pub mod harness;
 pub mod history;

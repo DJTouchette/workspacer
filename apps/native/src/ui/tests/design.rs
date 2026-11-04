@@ -120,8 +120,18 @@ fn primitives_render_in_every_theme_and_design(cx: &mut TestAppContext) {
             visual.simulate_resize(size(px(1000.), px(1600.)));
             visual.run_until_parked();
             for selector in [
-                "primitive-button-Primary",
-                "primitive-button-Danger",
+                "primitive-button-Primary-Small",
+                "primitive-button-DangerGhost-Large",
+                "primitive-page-header",
+                "primitive-split",
+                "primitive-overflow",
+                "primitive-status-NeedsYou",
+                "primitive-status-Working",
+                "primitive-status-Queued",
+                "primitive-avatars",
+                "primitive-truncated",
+                "primitive-card-head",
+                "primitive-fade",
                 "primitive-segmented",
                 "primitive-card",
                 "primitive-menu",
@@ -133,6 +143,19 @@ fn primitives_render_in_every_theme_and_design(cx: &mut TestAppContext) {
                     "{design:?} {appearance:?} {selector}"
                 );
             }
+            // The two control heights, and status boxes of one fixed size
+            // whatever the label (so titles after them line up).
+            let t = palette.tokens.layout;
+            for (selector, expected) in [
+                ("primitive-button-Primary-Small", t.control_height_sm),
+                ("primitive-button-DangerGhost-Large", t.control_height),
+            ] {
+                let bounds = visual.debug_bounds(selector).unwrap();
+                assert_eq!(f32::from(bounds.size.height), expected, "{selector}");
+            }
+            let working = visual.debug_bounds("primitive-status-Working").unwrap();
+            let idle = visual.debug_bounds("primitive-status-Idle").unwrap();
+            assert_eq!(working.size.height, idle.size.height);
         }
     }
 }
