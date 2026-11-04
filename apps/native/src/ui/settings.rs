@@ -17,6 +17,8 @@ pub(super) enum SettingsSection {
     Chat,
     Keyboard,
     About,
+    // r2-pages: v2 only (previews and experiments); v1 never lists it.
+    Labs,
 }
 
 impl SettingsSection {
@@ -41,6 +43,7 @@ impl SettingsSection {
             Self::Chat => "Chat",
             Self::Keyboard => "Keyboard",
             Self::About => "About",
+            Self::Labs => "Labs",
         }
     }
 
@@ -54,6 +57,7 @@ impl SettingsSection {
             Self::Chat => "How conversations and tool calls read.",
             Self::Keyboard => "Move around your workspace at your own pace.",
             Self::About => "Version and updates.",
+            Self::Labs => "Early features you can try before they are finished.",
         }
     }
 
@@ -67,6 +71,7 @@ impl SettingsSection {
             Self::Chat => IconName::Inbox,
             Self::Keyboard => IconName::SquareTerminal,
             Self::About => IconName::Info,
+            Self::Labs => IconName::Star,
         }
     }
 }
@@ -331,7 +336,12 @@ impl Workspace {
             S::Appearance,
             "theme",
             "Theme",
-            "Dark, Light, Nord, or Omarchy's Tokyo Night, Catppuccin Mocha and Latte, Gruvbox and Everforest. Press t in Normal mode to cycle.",
+            if self.design().is_v2() {
+                // r2-pages: mouse first; keys live under Keyboard.
+                "The palette for the whole app. Each tile is a small preview of it."
+            } else {
+                "Dark, Light, Nord, or Omarchy's Tokyo Night, Catppuccin Mocha and Latte, Gruvbox and Everforest. Press t in Normal mode to cycle."
+            },
             "palette color colour dark light nord mode omarchy tokyo night catppuccin mocha latte gruvbox everforest",
             Layout::Block,
             themes,
@@ -408,7 +418,12 @@ impl Workspace {
                 })),
         ));
         entries.push(Entry::new(
-            S::Appearance,
+            // r2-pages: under v2 the preview lives in Labs.
+            if self.design().is_v2() {
+                S::Labs
+            } else {
+                S::Appearance
+            },
             "design-v2",
             "New design (preview)",
             "Try the redesigned interface while it is being built. Every theme works with it; switch it off to return to the current look.",
@@ -626,7 +641,11 @@ impl Workspace {
             S::Agents,
             "default-agent",
             "Default agent",
-            "Provider for new sessions. Press a in Normal mode to switch.",
+            if self.design().is_v2() {
+                "The agent new sessions start with. You can still pick another for each session."
+            } else {
+                "Provider for new sessions. Press a in Normal mode to switch."
+            },
             "provider claude codex new session",
             Layout::Row,
             self.segmented(
@@ -1484,13 +1503,15 @@ use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind
 
 impl SettingsSection {
     /// The rail under v2: Chat folds into Appearance.
-    pub(super) const V2: [Self; 7] = [
+    pub(super) const V2: [Self; 8] = [
         Self::Appearance,
         Self::Typography,
         Self::Workspace,
         Self::Remote,
         Self::Agents,
         Self::Keyboard,
+        // r2-pages
+        Self::Labs,
         Self::About,
     ];
 
@@ -1795,7 +1816,11 @@ impl Workspace {
         let t = p.tokens;
         let mut column = div().flex().flex_col().gap(px(t.space.lg));
         let mut entries = entries;
-        for source in SettingsSection::ALL {
+        // r2-pages: Labs is v2's own section, outside `ALL`.
+        for source in SettingsSection::ALL
+            .into_iter()
+            .chain([SettingsSection::Labs])
+        {
             if source.v2_home() != section {
                 continue;
             }
@@ -1820,7 +1845,7 @@ impl Workspace {
             wks_native::navigation::sidebar_width(self.settings.sidebar_width, viewport)
         };
         // Beside a wide sidebar the rail shrinks to icons.
-        let tight = viewport - sidebar < t.layout.page_width;
+        let tight = viewport - sidebar < t.layout.page_width + t.layout.page_gutter * 2.;
         let query = self.settings_search.read(cx).value().trim().to_owned();
         let searching = !query.is_empty();
         let remote_unavailable = self.remote_unavailable();
@@ -1992,14 +2017,16 @@ impl Workspace {
         let header = primitives::page_header(
             None,
             "Settings",
-            Some("Saved on this device, unless a setting says the hub shares it.".into()),
+            Some("Saved on this device, unless a setting says it is shared.".into()),
             vec![search.into_any_element()],
             &p,
         )
         .debug_selector(|| "page-header".into());
+        // r2-pages: R2.2 shared page grid; Settings shares every page's
+        // width and left edge.
         self.page_view(
             "settings-view",
-            t.layout.settings_width,
+            t.layout.page_width,
             false,
             div()
                 .flex()

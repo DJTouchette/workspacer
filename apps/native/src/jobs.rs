@@ -176,6 +176,50 @@ impl Job {
         action_summary(&self.spec["action"])
     }
 
+    // r2-pages
+    /// What the job does, in a sentence ("Starts an agent in workspacer on
+    /// gpu-box"), and the command it runs, if any, for a mono inset.
+    pub fn describe(&self) -> (String, Option<String>) {
+        let action = &self.spec["action"];
+        let text = |v: &Value, key: &str| v[key].as_str().unwrap_or("").trim().to_owned();
+        let place = match self.host() {
+            "" => String::new(),
+            "local" => " on this machine".to_owned(),
+            "any" => " on whichever machine is free".to_owned(),
+            peer => format!(" on {peer}"),
+        };
+        match action["kind"].as_str().unwrap_or("") {
+            "spawn" => {
+                let spawn = &action["spawn"];
+                let cwd = text(spawn, "cwd");
+                let folder = cwd
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .filter(|f| !f.is_empty())
+                    .unwrap_or("its folder")
+                    .to_owned();
+                let steps = spawn["context"].as_array().map_or(&[][..], Vec::as_slice);
+                let first = steps.iter().find_map(|step| {
+                    (step["kind"] != "call")
+                        .then(|| text(&step["shell"], "command"))
+                        .filter(|c| !c.is_empty())
+                });
+                // The inset shows the command it runs first.
+                (format!("Starts an agent in {folder}{place}"), first)
+            }
+            "shell" => {
+                let cmd = text(&action["shell"], "command");
+                (
+                    format!("Runs a command{place}"),
+                    Some(cmd).filter(|c| !c.is_empty()),
+                )
+            }
+            "call" => (format!("Calls {}", text(&action["call"], "method")), None),
+            other => (other.to_owned(), None),
+        }
+    }
+
     /// Everything the job will do, field by field: what the user reads
     /// before approving it, since there is no editor to open it in.
     pub fn details(&self) -> Vec<(String, String)> {
@@ -472,6 +516,17 @@ mod tests {
         assert_eq!((plain.host(), plain.priority()), ("", 0));
         assert_eq!(plain.host_label(), "inline");
         assert!(plain.with_enabled(false).get("host").is_none());
+    }
+
+    // r2-pages
+    #[test]
+    fn describe_reads_as_a_sentence() {
+        let jobs = parse_list(&listed());
+        assert_eq!(
+            jobs[0].describe(),
+            ("Runs a command".to_owned(), Some("make test".to_owned()))
+        );
+        assert!(jobs[1].describe().0.starts_with("Starts an agent in api"));
     }
 
     #[test]

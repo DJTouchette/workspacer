@@ -544,17 +544,18 @@ pub(crate) fn empty_state(
         })
 }
 
-/// An uppercase overline naming a group of rows or cards.
+// r2-pages: R2.2 one section-header style, sentence case 12/600, no caps.
+/// The one section header naming a group of rows or cards: sentence case,
+/// `text.meta` / semibold, secondary text, flush with the content edge.
 pub(crate) fn section_label(label: impl Into<SharedString>, p: &Palette) -> Div {
     let t = p.tokens;
     let label: SharedString = label.into();
     div()
-        .px(px(t.space.xs))
         .pb(px(t.space.xs))
-        .text_size(px(t.text.overline))
+        .text_size(px(t.text.meta))
         .font_weight(FontWeight(t.weight.semibold))
-        .text_color(rgb(p.roles.text_tertiary))
-        .child(SharedString::from(label.to_uppercase()))
+        .text_color(rgb(p.roles.text_secondary))
+        .child(label)
 }
 
 /// The raised surface for grouped content, padded. `chrome::card` is v1's.

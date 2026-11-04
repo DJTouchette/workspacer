@@ -12,39 +12,58 @@ use wks_native::features::{LinkAction, Request};
 use wks_native::project_links::{CellState, CellView, Directory, PeerCell, Project, Snapshot};
 
 const DESCRIPTION: &str = "The same project on each peer, under that machine's own path. Launches on a peer use the folder shown here.";
+// r2-pages: plain words ("machine", not peer/hub).
+const DESCRIPTION_V2: &str = "The same project on each machine, under that machine's own path. New sessions there use the folder shown here.";
 
 impl Workspace {
     pub(super) fn render_project_links(&self, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let state = self.view.requests.get("project-links");
         let loading = state.is_some_and(|s| s.loading);
-        let header = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .child(projects::section_label(
-                if self.design().is_v2() {
-                    "Projects on other machines"
-                } else {
-                    "Projects"
-                },
-                p,
+        let v2 = self.design().is_v2();
+        // r2-pages: under v2 the page's one Refresh re-reads these too.
+        let header = if v2 {
+            div().child(super::primitives::section_label(
+                "Projects on other machines",
+                &p,
             ))
-            .child(
-                self.pquiet(
-                    "projects-refresh",
-                    "Refresh",
-                    IconName::Redo,
-                    self.view.connected && !loading,
+        } else {
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(projects::section_label(
+                    if self.design().is_v2() {
+                        "Projects on other machines"
+                    } else {
+                        "Projects"
+                    },
+                    p,
+                ))
+                .child(
+                    self.pquiet(
+                        "projects-refresh",
+                        "Refresh",
+                        IconName::Redo,
+                        self.view.connected && !loading,
+                    )
+                    .debug_selector(|| "projects-refresh".into())
+                    .when(self.view.connected && !loading, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| {
+                            this.command(Command::Request(Request::ProjectLinks), cx)
+                        }))
+                    }),
                 )
-                .debug_selector(|| "projects-refresh".into())
-                .when(self.view.connected && !loading, |d| {
-                    d.on_click(cx.listener(|this, _, _, cx| {
-                        this.command(Command::Request(Request::ProjectLinks), cx)
-                    }))
-                }),
-            );
+        };
         let caption = |text: &str| {
+            if v2 {
+                let t = p.tokens;
+                return div()
+                    .text_size(px(t.text.meta))
+                    .line_height(gpui::relative(t.text.line_height))
+                    .text_color(rgb(p.roles.text_secondary))
+                    .child(text.to_owned());
+            }
             div()
                 .text_size(px(chrome::scale::CAPTION))
                 .text_color(rgb(p.muted))
@@ -74,7 +93,11 @@ impl Workspace {
         };
         if snapshot.unsupported() {
             return section.child(
-                caption("Project links are not supported by this hub. Update it to link the same project across machines.")
+                caption(if v2 {
+                    "Linking projects across machines needs a newer Workspacer on this machine."
+                } else {
+                    "Project links are not supported by this hub. Update it to link the same project across machines."
+                })
                     .debug_selector(|| "projects-unsupported".into()),
             );
         }
@@ -84,12 +107,16 @@ impl Workspace {
                 return section.child(chrome::notice_line(error.clone(), chrome::Tone::Error, p));
             }
         };
-        let mut section = section.child(caption(DESCRIPTION));
+        let mut section = section.child(caption(if v2 { DESCRIPTION_V2 } else { DESCRIPTION }));
         if matrix.projects.is_empty() {
             return section.child(caption("No local projects yet."));
         }
         if matrix.peers().is_empty() {
-            return section.child(caption("No federation peers to link projects with."));
+            return section.child(caption(if v2 {
+                "No other machines to link projects with."
+            } else {
+                "No federation peers to link projects with."
+            }));
         }
         for (row, project) in matrix.projects.iter().enumerate() {
             section = section.child(self.render_link_row(row, project, snapshot.saved(), cx));
@@ -105,6 +132,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.palette();
+        if self.design().is_v2() {
+            return self.render_link_row_v2(row, project, links, cx);
+        }
         let head = div()
             .flex()
             .items_baseline()
@@ -185,21 +215,42 @@ impl Workspace {
                 peer_path,
             })
         };
+        let v2 = self.design().is_v2();
+        let t = p.tokens;
         let mono = |text: String| {
             div()
                 .min_w_0()
                 .truncate()
                 .font_family(mono_font())
-                .text_size(px(chrome::scale::META))
+                .text_size(px(if v2 { t.text.meta } else { chrome::scale::META }))
                 .child(text)
         };
         let muted = |text: String| {
             div()
-                .text_size(px(chrome::scale::CAPTION))
-                .text_color(rgb(p.muted))
+                .text_size(px(if v2 {
+                    t.text.meta
+                } else {
+                    chrome::scale::CAPTION
+                }))
+                .text_color(rgb(if v2 { p.roles.text_tertiary } else { p.muted }))
                 .child(text)
         };
-        let v2 = self.design().is_v2();
+        // r2-pages: v2 cell actions are the shared ghost button.
+        let quiet = |id: SharedString, label: &'static str, icon: IconName, enabled: bool| {
+            if v2 {
+                super::primitives::button(
+                    id,
+                    label,
+                    Some(icon),
+                    super::primitives::ButtonVariant::Ghost,
+                    super::primitives::ButtonSize::Small,
+                    enabled,
+                    &p,
+                )
+            } else {
+                self.pquiet(id, label, icon, enabled)
+            }
+        };
         let mut body = div().flex().flex_col().gap_1().min_w_0();
         match &view.state {
             // v2: the path, then how it is linked as a quiet line; no pills.
@@ -263,7 +314,7 @@ impl Workspace {
                                     .child(muted(format!("suggested · {}", suggestion.label()))),
                             )
                             .child(
-                                self.pquiet(
+                                quiet(
                                     SharedString::from(format!("link-accept-{row}-{col}-{ix}")),
                                     "Accept",
                                     IconName::Check,
@@ -283,7 +334,9 @@ impl Workspace {
             }
             CellState::Missing => {
                 body = body.child(
-                    muted(if view.offline && cell.choices.is_empty() {
+                    muted(if v2 && view.offline && cell.choices.is_empty() {
+                        "Can't see its folders while it is offline".to_owned()
+                    } else if view.offline && cell.choices.is_empty() {
                         format!("{} is offline", cell.peer)
                     } else {
                         format!("not on {}", cell.peer)
@@ -304,7 +357,7 @@ impl Workspace {
         if !cell.choices.is_empty() {
             let key = (project.path.clone(), cell.peer.clone());
             actions = actions.child(
-                self.pquiet(
+                quiet(
                     SharedString::from(format!("link-choose-{row}-{col}")),
                     "Choose…",
                     IconName::Folder,
@@ -330,7 +383,7 @@ impl Workspace {
                 peer: cell.peer.clone(),
             });
             actions = actions.child(
-                self.pquiet(
+                quiet(
                     SharedString::from(format!("link-unlink-{row}-{col}")),
                     "Unlink",
                     IconName::Close,
@@ -377,15 +430,30 @@ impl Workspace {
                     d.w(px(280.))
                 }
             })
-            .p_2()
-            .rounded(px(p.control_radius))
-            .border_1()
-            .border_color(rgb(p.border))
-            .bg(rgb(p.chat))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .when(view.offline, |d| d.opacity(0.55))
+            .map(|d| {
+                if v2 {
+                    // r2-pages: the shared inset; offline reads through its
+                    // words, not a faded cell.
+                    d.p(px(t.space.lg))
+                        .rounded(px(t.radius.control))
+                        .bg(super::primitives::tonal(&p, t.wash.disabled))
+                        .border(px(t.stroke.hairline))
+                        .border_color(rgb(p.border))
+                        .flex()
+                        .flex_col()
+                        .gap(px(t.space.sm))
+                } else {
+                    d.p_2()
+                        .rounded(px(p.control_radius))
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.chat))
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .when(view.offline, |d| d.opacity(0.55))
+                }
+            })
             .child(
                 div()
                     .flex()
@@ -403,6 +471,8 @@ impl Workspace {
                     .when(view.offline && v2, |d| d.child(muted("Offline".into()))),
             )
             .child(body)
+            // r2-pages: actions pinned to the cell's bottom edge.
+            .when(v2, |d| d.child(div().flex_grow()))
             .child(actions)
             .when(open, |d| {
                 d.child(choices.debug_selector(move || format!("link-choices-{row}-{col}")))
@@ -413,6 +483,63 @@ impl Workspace {
                         .debug_selector(move || format!("link-error-{row}-{col}")),
                 )
             })
+    }
+
+    // r2-pages
+    /// A v2 project row: name and path over one equal column per machine;
+    /// every cell's actions sit on the cell's bottom edge, so a row's
+    /// buttons share one baseline.
+    fn render_link_row_v2(
+        &self,
+        row: usize,
+        project: &Project,
+        links: &[wks_native::project_links::Link],
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let head = div()
+            .flex()
+            .items_baseline()
+            .gap(px(t.space.md))
+            .min_w_0()
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(t.text.subheading))
+                    .font_weight(FontWeight(t.weight.semibold))
+                    .text_color(rgb(p.text))
+                    .child(project.name.clone()),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_family(mono_font())
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(project.path.clone()),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .max_w(px(t.layout.status_column * 2.))
+                    .truncate()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(project.remote.clone().unwrap_or_else(|| "No remote".into())),
+            );
+        let mut cells = div().flex().gap(px(t.space.md));
+        for (col, cell) in project.peers.iter().enumerate() {
+            let view = CellView::new(project, cell, links);
+            cells = cells.child(self.render_link_cell(row, col, project, cell, &view, cx));
+        }
+        super::primitives::card(&p)
+            .debug_selector(move || format!("project-row-{row}"))
+            .gap(px(t.space.lg))
+            .child(head)
+            .child(cells)
     }
 
     /// One folder in a cell's "Choose…" list: its name, path, and its

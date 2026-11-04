@@ -713,7 +713,16 @@ impl Workspace {
                                         d.child(tag(IconName::Heart, "kept", p.muted))
                                     })
                                     .when(item.sensitive, |d| {
-                                        d.child(tag(IconName::EyeOff, "sensitive", p.warning))
+                                        // r2-pages: a fact, not attention (R2.1).
+                                        d.child(tag(
+                                            IconName::EyeOff,
+                                            "sensitive",
+                                            if self.design().is_v2() {
+                                                p.roles.text_tertiary
+                                            } else {
+                                                p.warning
+                                            },
+                                        ))
                                     }),
                             )
                             .child(

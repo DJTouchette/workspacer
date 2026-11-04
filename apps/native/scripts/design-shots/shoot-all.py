@@ -44,10 +44,11 @@ SETTINGS_SECTIONS = ["Appearance", "Typography", "Workspace", "Remote",
 # area-pages: controls design v2 moved (used when --setting design_v2=true).
 LANDMARKS_V2 = {
     "END_SESSION": lambda shot: (1324, 634),        # Session details "End session..."
+    "NEW_TASK_FIELD": lambda shot: (900, 200),      # r2-pages: v2's task box leads the form
 }
 # area-pages: design v2's rail.
 SETTINGS_SECTIONS_V2 = ["Appearance", "Typography", "Workspace", "Remote",
-                        "Agents", "Keyboard", "About"]
+                        "Agents", "Keyboard", "Labs", "About"]  # r2-pages: Labs
 
 
 def nav(letter):
@@ -398,7 +399,7 @@ LANDMARKS = {
     # Settings category rail; rows are ~37.7 px apart starting at Appearance.
     "settings_section": lambda shot, index: (570, 114 + round(index * 37.7)),
     # area-pages: the design v2 rail (Chat folds into Appearance).
-    "settings_section_v2": lambda shot, index: (476, 158 + round(index * 34.4)),
+    "settings_section_v2": lambda shot, index: (570, 158 + round(index * 34.4)),  # r2-pages: shared page grid
 }
 
 
