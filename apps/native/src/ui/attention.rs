@@ -86,7 +86,7 @@ pub(crate) fn group(
         }
     }
     // Each group's trees, with when their longest wait began.
-    type Waiting = (Option<i64>, Vec<(usize, usize)>);
+    type Waiting = (Option<i64>, Option<i64>, Vec<(usize, usize)>);
     let mut groups: Vec<(Bucket, Vec<Waiting>)> =
         Bucket::ALL.iter().map(|b| (*b, Vec::new())).collect();
     for members in trees {
@@ -100,19 +100,27 @@ pub(crate) fn group(
             .filter(|&&(ix, _)| bucket_of(ix) == Bucket::NeedsYou)
             .filter_map(|&(ix, _)| waiting_since(ix))
             .min();
-        groups[bucket.index()].1.push((since, members));
+        // r2-shell: the latest activity anywhere in the tree.
+        let latest = members.iter().filter_map(|&(ix, _)| waiting_since(ix)).max();
+        groups[bucket.index()].1.push((since, latest, members));
     }
     // Oldest wait first; a tree with no known wait keeps its place after them.
     groups[Bucket::NeedsYou.index()]
         .1
-        .sort_by_key(|(since, _)| since.unwrap_or(i64::MAX));
+        .sort_by_key(|(since, _, _)| since.unwrap_or(i64::MAX));
+    // r2-shell: Idle and Ended put the most recent first (unknown last).
+    for quiet in [Bucket::Idle, Bucket::Ended] {
+        groups[quiet.index()]
+            .1
+            .sort_by_key(|(_, latest, _)| std::cmp::Reverse(latest.unwrap_or(i64::MIN)));
+    }
     groups
         .into_iter()
         .filter(|(_, trees)| !trees.is_empty())
         .map(|(bucket, trees)| {
             (
                 bucket,
-                trees.into_iter().flat_map(|(_, members)| members).collect(),
+                trees.into_iter().flat_map(|(_, _, members)| members).collect(),
             )
         })
         .collect()
@@ -467,6 +475,14 @@ mod tests {
                 (Bucket::Ended, vec![(3, 0)]),
             ]
         );
+    }
+
+    #[test]
+    fn quiet_groups_put_the_most_recent_first() {
+        let tree = [(0, 0), (1, 0), (2, 0)];
+        let at = [Some(100), None, Some(300)];
+        let groups = group(&tree, |_| Bucket::Idle, |ix| at[ix]);
+        assert_eq!(groups[0].1, vec![(2, 0), (0, 0), (1, 0)]);
     }
 
     #[test]

@@ -51,7 +51,8 @@ impl Workspace {
             return 0.6;
         }
         let height = f32::from(self.header_bounds.size.height);
-        let fade = self.tokens().space.md;
+        // r2-shell: a 32px fade (`layout.fade`) under the capsule.
+        let fade = self.tokens().layout.fade;
         if height <= fade {
             0.6
         } else {
