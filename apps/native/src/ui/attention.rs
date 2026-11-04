@@ -179,7 +179,9 @@ pub(crate) fn session_stalled(session: &Session, now: i64) -> bool {
 /// What a waiting row offers inline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InboxAction {
-    /// Allow a tool once (the request is named in the reason).
+    /// A tool waits for permission (the request is named in the reason).
+    /// r3-shell: its verb is "Review", which opens the session at the
+    /// request; the sidebar never allows an unseen command blind.
     Allow,
     /// Open the session at its question.
     Answer,
@@ -190,7 +192,7 @@ pub(crate) enum InboxAction {
 impl InboxAction {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Allow => "Allow",
+            Self::Allow => "Review",
             Self::Answer => "Answer",
             Self::Open => "Open",
         }

@@ -742,6 +742,17 @@ pub struct ShellTokens {
     pub palette_top: f32,
     /// Rows the palette lists per scope before it stops.
     pub palette_limit: usize,
+    // r3-shell
+    /// The conversation's header strip (R3.3: 36–40): title on the left,
+    /// the session toolbar on the right, the transcript scrolling beneath.
+    pub header: f32,
+    /// The toolbar shows its labels from this conversation width; below
+    /// it, icons with tooltips.
+    pub toolbar_labels_at: f32,
+    /// "Jump to latest": its gap above the composer/decision stack and the
+    /// scrim behind it (R3.3: 12, ≥ 32).
+    pub jump_gap: f32,
+    pub jump_scrim: f32,
 }
 
 impl Tokens {
@@ -758,6 +769,10 @@ impl Tokens {
             palette_list: 420.,
             palette_top: 96.,
             palette_limit: 40,
+            header: 40.,
+            toolbar_labels_at: 1100.,
+            jump_gap: 12.,
+            jump_scrim: 40.,
         }
     }
 }

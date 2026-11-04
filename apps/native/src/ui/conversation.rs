@@ -226,7 +226,8 @@ impl Workspace {
     /// covers a card's own controls at the column's edge.
     fn tools_float(&self, narrow: bool) -> bool {
         if self.design().is_v2() {
-            return self.tools_float_v2(narrow);
+            // r3-shell: the tools live on the header strip, not a rail.
+            return false;
         }
         self.settings.tool_rail && !narrow && self.chat_width >= px(CHAT_WIDTH + 2. * RAIL_ROOM)
     }
@@ -269,6 +270,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        if self.design().is_v2() {
+            return self.render_chat_header_v2(layout, selected, window, cx);
+        }
         let p = self.palette();
         let title = selected
             .map(|s| self.session_title(s))

@@ -1,8 +1,8 @@
-//! Design v2's title capsule and session tools: the title with a neutral
-//! model chip and the access mode always in view, counts in words, the
-//! model popover's anchor, and the tool rail docked to the window edge in
-//! labelled groups. The shipped capsule is `chrome::render_title_bar`.
-use super::primitives::{self, ButtonVariant, StatusKind, status_indicator, tooltip_view};
+//! Design v2's conversation header (R3.3): a header strip with the title,
+//! its status words and the red failure chip on the left and the labelled,
+//! badged session toolbar on the right; the transcript scrolls beneath it.
+//! The shipped capsule is `chrome::render_title_bar`.
+use super::primitives::{self, StatusKind, tooltip_view};
 use super::*;
 use gpui::{AnyElement, ClickEvent};
 use wks_native::background_tasks::{self as bg, Kind};
@@ -57,27 +57,187 @@ pub(super) fn access_word(session: &Session) -> (&'static str, Option<Permission
 }
 
 impl Workspace {
-    /// Where the header's fade turns from solid canvas to clear: solid
-    /// below the capsule, so nothing shows through or around it, then a
-    /// short fade. v1 keeps its gentler 60%.
+    /// Where the header's fade turns from solid canvas to clear. v2 draws a
+    /// solid header strip (no fade); v1 keeps its gentler 60%.
     pub(super) fn title_fade_stop(&self) -> f32 {
         if !self.design().is_v2() {
             return 0.6;
         }
-        let height = f32::from(self.header_bounds.size.height);
-        // r2-shell: a 32px fade (`layout.fade`) under the capsule.
-        let fade = self.tokens().layout.fade;
-        if height <= fade {
-            0.6
+        1.
+    }
+
+    /// The selected session's state in the R3.1 lexicon, for the header.
+    fn title_kind(&self, session: &Session) -> StatusKind {
+        let now = timing::now_ms();
+        if !self.view.connected {
+            StatusKind::Offline
+        } else if self.paused(session) {
+            StatusKind::Paused
+        } else if super::attention::needs_you(session) {
+            StatusKind::NeedsYou
+        } else if self.stalled_for(session, now).is_some() {
+            StatusKind::NotResponding
         } else {
-            1. - fade / height
+            match super::attention::bucket(session, false) {
+                super::attention::Bucket::Working => StatusKind::Working,
+                _ => StatusKind::Idle,
+            }
         }
     }
 
-    /// The v2 title: status, the project crumb (it gives way first), the
-    /// session title (primary, truncated last), the access mode once it is
-    /// known, and background work in words. The model lives in the
-    /// composer's chip, the one place it is shown and changed.
+    // r3-shell
+    /// The v2 conversation header (R3.3): a real strip at the top of the
+    /// conversation, the transcript scrolling beneath it. The title and its
+    /// status words on the left, the session toolbar on the right; below
+    /// the strip, the notices and the pinned plan in the reading column.
+    /// Everything it covers is padding (`header_bounds`), never content.
+    pub(super) fn render_chat_header_v2(
+        &mut self,
+        layout: super::conversation::ChatLayout,
+        selected: Option<&Session>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let sh = t.shell();
+        let title = selected
+            .map(|s| self.session_title(s))
+            .unwrap_or_else(|| "Your sessions".into());
+        let child_bar = self.render_child_title_bar(cx);
+        let viewing_child = child_bar.is_some();
+        let strip_shown = selected.is_some() || viewing_child;
+        let left = match child_bar {
+            Some(bar) => bar
+                .bg(gpui::transparent_black())
+                .border_0()
+                .shadow(Vec::new())
+                .flex_shrink()
+                .min_w_0(),
+            None => self.render_title_bar_v2(layout.narrow, layout.enabled, &title, selected, cx),
+        };
+        let toolbar = (selected.is_some() && !viewing_child)
+            .then(|| self.session_toolbar_v2(layout.enabled, cx));
+        let compact = unzoom(window.viewport_size().height) < 300.;
+        let notice = self.title_notice();
+        let notices: Vec<AnyElement> = self
+            .title_notice_rows(notice, false, compact, cx)
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect();
+        let plan = self.render_pinned_plan(layout.compact, window, cx);
+        // A header that grows or shrinks while reading history keeps the
+        // same message under the reader's eye.
+        let header_size = chrome::measure(cx.entity().downgrade(), |this: &mut Self, bounds, _| {
+            if this.header_bounds == bounds {
+                return false;
+            }
+            let delta = bounds.size.height - this.header_bounds.size.height;
+            if !this.follow && delta != px(0.) {
+                let mut anchor = this.scroll_anchor();
+                anchor.offset_in_item += delta;
+                this.list.scroll_to(anchor);
+            }
+            this.header_bounds = bounds;
+            true
+        });
+        let caption = chrome::custom_caption();
+        let strip = div()
+            .id("chat-header")
+            .debug_selector(|| "chat-header".into())
+            .relative()
+            .w_full()
+            .h(px(sh.header))
+            .flex_shrink_0()
+            .pl(px(t.space.lg))
+            .pr(px(t.space.sm))
+            .flex()
+            .items_center()
+            .gap(px(t.space.md))
+            .border_b(px(t.stroke.hairline))
+            .border_color(rgb(p.border))
+            // The strip's empty room drags the window; its controls occlude.
+            .when(caption, |d| {
+                d.child(
+                    chrome::drag_region(div())
+                        .debug_selector(|| "chat-drag-region".into())
+                        .absolute()
+                        .inset_0(),
+                )
+                .pr(px(chrome::CAPTION_WIDTH + t.space.sm))
+            })
+            .child(left)
+            .child(div().flex_1().min_w_0())
+            .children(toolbar);
+        let band = (!notices.is_empty() || plan.is_some()).then(|| {
+            div()
+                .w_full()
+                .flex()
+                .justify_center()
+                .pt(px(t.space.sm))
+                .pb(px(t.space.sm))
+                .child(
+                    self.reading_column()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(t.space.sm))
+                        .when(!notices.is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .id("title-island-notices")
+                                    .debug_selector(|| "title-island-notices".into())
+                                    .occlude()
+                                    .w_full()
+                                    .max_h(window.viewport_size().height * 0.35)
+                                    .overflow_y_scroll()
+                                    .px(px(t.space.md))
+                                    .py(px(t.space.xs))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(t.space.xs))
+                                    .rounded(px(t.radius.panel))
+                                    .bg(rgb(p.surface))
+                                    .border(px(t.stroke.hairline))
+                                    .border_color(rgb(p.roles.card_border))
+                                    .children(notices),
+                            )
+                        })
+                        .children(plan),
+                )
+        });
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(p.chat))
+            .child(header_size)
+            .map(|d| {
+                if strip_shown {
+                    d.child(strip)
+                } else if caption {
+                    // The welcome keeps its own question; only the drag room.
+                    d.child(
+                        chrome::drag_region(div())
+                            .debug_selector(|| "chat-drag-region".into())
+                            .w_full()
+                            .h(px(sh.header)),
+                    )
+                } else {
+                    d
+                }
+            })
+            .children(band)
+    }
+
+    /// The v2 title, the header strip's left side: the status (glyph and
+    /// word; Idle shows none), the project crumb (it gives way first), the
+    /// session title (truncated last), the access mode once it is known,
+    /// the session's chips and the red chip naming a failure. The model
+    /// lives in the composer's chip; running work in the toolbar's Tasks.
     pub(super) fn render_title_bar_v2(
         &self,
         narrow: bool,
@@ -88,49 +248,44 @@ impl Workspace {
     ) -> Stateful<Div> {
         let p = self.palette();
         let t = p.tokens;
-        let height = t.layout.control_height + t.space.xs;
-        let now = timing::now_ms();
         div()
             .id("title-bar")
             .debug_selector(|| "title-bar".into())
             .occlude()
-            .max_w_full()
             .min_w_0()
-            .h(px(height))
-            .pl(px(t.space.lg))
-            .pr(px(t.space.xs))
+            .flex_shrink()
+            .h_full()
             .flex()
             .items_center()
             .gap(px(t.space.sm))
-            .rounded_full()
-            .bg(rgb(p.surface))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.border_strong))
-            .shadow(primitives::elevation(&p, t.elevation.floating))
             .when_some(session, |d, session| {
-                let kind = if !self.view.connected {
-                    StatusKind::Offline
-                } else if self.paused(session) {
-                    StatusKind::Paused
-                } else if super::attention::needs_you(session) {
-                    StatusKind::NeedsYou
-                } else if self.stalled_for(session, now).is_some() {
-                    StatusKind::NotResponding
-                } else {
-                    match super::attention::bucket(session, false) {
-                        super::attention::Bucket::Working => StatusKind::Working,
-                        _ => StatusKind::Idle,
-                    }
-                };
-                // r3-foundation: the one lexicon, never a provider's word.
+                let kind = self.title_kind(session);
                 let label = kind.label();
                 d.child(
                     div()
                         .id("title-status")
+                        .debug_selector(|| "title-status".into())
                         .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.xs))
+                        .text_size(px(t.text.meta))
+                        .font_weight(FontWeight(t.weight.medium))
+                        .text_color(rgb(kind.text_color(&p)))
                         .tooltip(tooltip_view(label, None, &p))
-                        .child(status_indicator(kind, &p)),
+                        .children(primitives::status_glyph(kind, &p))
+                        // R3.1: Idle shows no glyph and no word.
+                        .when(kind.has_glyph() && !narrow, |d| d.child(label)),
                 )
+                .when(kind.has_glyph() && !narrow, |d| {
+                    d.child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(t.text.body))
+                            .text_color(rgb(p.roles.text_tertiary))
+                            .child("·"),
+                    )
+                })
                 .when(!narrow, |d| {
                     let project = self.project_name(&session.cwd);
                     d.child(
@@ -164,15 +319,11 @@ impl Workspace {
                     .id("title-text")
                     .debug_selector(|| "title-text".into())
                     .min_w_0()
-                    .max_w(px(if narrow {
-                        t.layout.menu_width
-                    } else {
-                        t.layout.dialog_width + t.layout.menu_width / 2.
-                    }))
                     .truncate()
                     .text_size(px(t.text.subheading))
                     .font_weight(FontWeight(t.weight.semibold))
                     .text_color(rgb(p.text))
+                    .tooltip(tooltip_view(title.to_owned(), None, &p))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.title_reveal.tap(std::time::Instant::now());
                         cx.notify();
@@ -196,8 +347,8 @@ impl Workspace {
                             .debug_selector(|| "title-access".into())
                             .flex_shrink_0()
                             .h(px(t.layout.control_height_sm))
-                            .px(px(t.space.md))
-                            .rounded_full()
+                            .px(px(t.space.sm))
+                            .rounded(px(t.radius.control))
                             .flex()
                             .items_center()
                             .gap(px(t.space.xs))
@@ -223,7 +374,10 @@ impl Workspace {
                             })
                             .child(access)
                             .on_click(cx.listener(
-                                |this, _, window, cx| this.open_model_popover(window, cx),
+                                |this, _, window, cx| {
+                                    this.open_model_popover(window, cx);
+                                    this.shell.model_from_header = true;
+                                },
                             )),
                         )
                     },
@@ -234,58 +388,12 @@ impl Workspace {
                     .map(|s| self.status_chips(s, narrow, cx))
                     .unwrap_or_default(),
             )
-            .children(session.and_then(|s| self.render_tasks_words(s, cx)))
-    }
-
-    /// Background work in the title (R3.1): neutral words for what runs
-    /// ("3 subagents", "3 running"), and apart from it a red chip that names
-    /// what broke ("cargo test failed"). The red chip opens that task; its ✕
-    /// acknowledges it and the chip goes for this run. Healthy work is never
-    /// red.
-    pub(super) fn render_tasks_words(
-        &self,
-        session: &Session,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if session.tasks.is_empty() && session.background_tasks == 0 {
-            return None;
-        }
-        let p = self.palette();
-        let t = p.tokens;
-        let failed = unacknowledged_failures(&session.tasks, &self.shell.acknowledged_failures);
-        let label = running_words(&session.tasks, session.background_tasks)
-            .unwrap_or_else(|| "Background tasks".into());
-        let words = chrome::interactive_control(div().id("title-tasks"), p, true)
-            .debug_selector(|| "title-tasks".into())
-            .flex_shrink_0()
-            .h(px(t.layout.control_height_sm))
-            .px(px(t.space.md))
-            .rounded_full()
-            .flex()
-            .items_center()
-            .text_size(px(t.text.meta))
-            .font_weight(FontWeight(t.weight.medium))
-            .map(super::shell::tabular)
-            .text_color(rgb(p.roles.text_secondary))
-            .when(self.tasks.open, |d| d.bg(rgb(p.selected)))
-            .hover(move |s| s.bg(rgb(p.roles.hover)))
-            .child(label)
-            .tooltip(tooltip_view("Show background tasks", None, &p))
-            .on_click(cx.listener(|this, _, window, cx| this.toggle_tasks(window, cx)));
-        Some(
-            div()
-                .flex()
-                .items_center()
-                .flex_shrink_0()
-                .gap(px(t.space.xs))
-                .child(words)
-                .children(
-                    failed
-                        .first()
-                        .map(|task| self.render_failed_chip(task, failed.len(), cx)),
-                )
-                .into_any_element(),
-        )
+            .children(session.and_then(|s| {
+                let failed = unacknowledged_failures(&s.tasks, &self.shell.acknowledged_failures);
+                failed
+                    .first()
+                    .map(|task| self.render_failed_chip(task, failed.len(), cx))
+            }))
     }
 
     /// The red chip naming the newest unacknowledged failed task: the name
@@ -352,239 +460,298 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// The session's tools in labelled groups (review · session · agent),
-    /// each tooltip naming its shortcut. `floating` stacks them in the rail.
-    pub(super) fn chat_actions_v2(
+    /// Whether the toolbar has room for its labels.
+    pub(super) fn toolbar_labels(&self) -> bool {
+        f32::from(self.chat_width) >= self.tokens().shell().toolbar_labels_at
+    }
+
+    /// "+5 −2": what the agent's edits in the loaded conversation add and
+    /// remove (counts only). `None` before any edit.
+    fn session_line_changes(&self) -> Option<(usize, usize, usize)> {
+        let files = wks_native::transcript::turn_changes(
+            self.view.transcript.rows.iter().map(AsRef::as_ref),
+        );
+        if files.is_empty() {
+            return None;
+        }
+        Some((
+            files.len(),
+            files.iter().map(|f| f.added).sum(),
+            files.iter().map(|f| f.removed).sum(),
+        ))
+    }
+
+    /// One toolbar tool: a 16px icon and its label (icons only when the
+    /// window is narrow), a 28px hit area, an optional badge, and a tooltip
+    /// with the shortcut.
+    #[allow(clippy::too_many_arguments)]
+    fn toolbar_tool(
         &self,
+        id: &'static str,
+        icon: IconName,
+        label: &'static str,
+        tip: SharedString,
+        keys: Option<&'static str>,
         enabled: bool,
-        floating: bool,
-        cx: &mut Context<Self>,
-    ) -> Div {
+        on: bool,
+        badge: Option<AnyElement>,
+    ) -> Stateful<Div> {
         let p = self.palette();
         let t = p.tokens;
-        let selected = self.view.selected.is_some();
+        let labels = self.toolbar_labels();
+        chrome::interactive_control(div().id(id), p, enabled)
+            .debug_selector(move || id.into())
+            .flex_shrink_0()
+            .h(px(t.layout.control_height_sm))
+            .min_w(px(t.layout.control_height_sm))
+            .px(px(if labels || badge.is_some() {
+                t.space.sm
+            } else {
+                0.
+            }))
+            .rounded(px(t.radius.control))
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(t.space.xs))
+            .text_size(px(t.text.meta))
+            .font_weight(FontWeight(t.weight.medium))
+            .map(super::shell::tabular)
+            .text_color(rgb(if !enabled {
+                p.disabled
+            } else if on {
+                p.text
+            } else {
+                p.roles.text_secondary
+            }))
+            .when(on, |d| d.bg(rgb(p.selected)))
+            .when(enabled && !on, |d| {
+                d.hover(move |s| s.bg(rgb(p.roles.hover)).text_color(rgb(p.text)))
+                    .active(move |s| s.bg(rgb(p.roles.pressed)))
+            })
+            .tooltip(tooltip_view(tip, keys, &p))
+            .child(Icon::new(icon).size(px(t.icon.md)))
+            .when(labels, |d| d.child(label))
+            .children(badge)
+    }
+
+    // r3-shell
+    /// The session toolbar on the header strip's right (R3.3): Changes
+    /// (+N −M), Files, Terminal (● while its shell runs), Tasks (running
+    /// count) · History, Details, Model. Labelled where there is room.
+    pub(super) fn session_toolbar_v2(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let session = self.selected_session();
+        let selected = session.is_some();
         let model_enabled = enabled && self.supported_session();
         let vim = self.vim();
-        let handoff_enabled = self.supported_session() && self.view.connected && !self.demo;
-        let handoff_label = match self.selected_session().map(|s| s.provider.as_str()) {
-            Some("codex") => "Continue with Claude",
-            Some("claude" | "") => "Continue with Codex",
-            _ => "Continue with another agent",
-        };
-        let tool = |id: &'static str,
-                    icon: IconName,
-                    tip: &'static str,
-                    keys: Option<&'static str>,
-                    on: bool| {
-            primitives::icon_button_with_shortcut(
-                id,
-                icon,
-                tip,
-                keys,
-                ButtonVariant::Tertiary,
-                on,
-                &p,
-            )
-            .debug_selector(move || id.into())
+        let mac = cfg!(target_os = "macos");
+        let quiet = |text: String| {
+            div()
+                .flex_shrink_0()
+                .text_color(rgb(p.roles.text_tertiary))
+                .child(text)
+                .into_any_element()
         };
         let page = |screen: Screen| {
-            cx.listener(move |this: &mut Self, event: &ClickEvent, window, cx| {
-                if floating || this.title_action_allowed(event) {
-                    this.open_feature(screen, window, cx)
-                }
+            cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
+                this.open_feature(screen, window, cx)
             })
         };
-        let separator = || {
-            div().flex_shrink_0().bg(rgb(p.border)).map(|d| {
-                if floating {
-                    d.h(px(t.stroke.hairline))
-                        .w(px(t.icon.lg))
-                        .my(px(t.space.xs))
-                } else {
-                    d.w(px(t.stroke.hairline))
-                        .h(px(t.icon.lg))
-                        .mx(px(t.space.xs))
-                }
-            })
+        // Changes: what the agent's edits add and remove.
+        let lines = self.session_line_changes();
+        let changes_tip: SharedString = match lines {
+            Some((files, added, removed)) => format!(
+                "Changes · this session's edits: {files} {}, +{added} −{removed}",
+                if files == 1 { "file" } else { "files" }
+            )
+            .into(),
+            None => "Changes".into(),
         };
-        let changes = tool(
-            "open-changes",
-            IconName::Replace,
-            "Changes",
-            vim.then_some("g d"),
-            selected,
-        )
-        .when(selected, |d| d.on_click(page(Screen::Changes)));
-        // r2-shell: badges where there is state.
-        let changed = self
-            .selected_session()
-            .and_then(|s| self.changes_count(&s.cwd))
-            .filter(|n| *n > 0)
-            .map(|n| {
-                if n > 99 {
-                    "99+".to_owned()
-                } else {
-                    n.to_string()
-                }
+        let changes = self
+            .toolbar_tool(
+                "open-changes",
+                IconName::Replace,
+                "Changes",
+                changes_tip,
+                vim.then_some("g d"),
+                selected,
+                self.review_dock_showing(),
+                lines
+                    .map(|(_, added, removed)| format!("+{added} −{removed}"))
+                    .or_else(|| {
+                        // Before any edit here, the folder's own changed files.
+                        session
+                            .and_then(|s| self.changes_count(&s.cwd))
+                            .filter(|n| *n > 0)
+                            .map(primitives::count_text)
+                    })
+                    .map(quiet),
+            )
+            .when(selected, |d| d.on_click(page(Screen::Changes)));
+        let files = self
+            .toolbar_tool(
+                "open-editor",
+                IconName::FolderOpen,
+                "Files",
+                "Files and editor".into(),
+                Some(if mac { "⌘ Shift E" } else { "Ctrl Shift E" }),
+                selected,
+                false,
+                None,
+            )
+            .when(selected, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| this.open_selected_editor(window, cx)))
             });
-        let changes = tool_badge(changes, changed.filter(|_| floating), &p);
-        let files = tool(
-            "open-editor",
-            IconName::FolderOpen,
-            "Files and editor",
-            Some("Ctrl Shift E"),
-            selected,
-        )
-        .when(selected, |d| {
-            d.on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                if floating || this.title_action_allowed(event) {
-                    this.open_selected_editor(window, cx)
-                }
-            }))
-        });
-        let terminal = tool(
-            "open-terminal",
-            IconName::SquareTerminal,
-            if self.terminal.open {
-                "Hide terminal"
-            } else {
-                "Terminal in this session's folder"
-            },
-            Some("Ctrl `"),
-            selected,
-        )
-        .when(self.terminal.open, |d| {
-            d.bg(rgb(p.selected)).text_color(rgb(p.text))
-        })
-        .when(selected, |d| {
-            d.on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                if floating || this.title_action_allowed(event) {
-                    this.toggle_terminal(window, cx)
-                }
-            }))
-        });
         let shell_running = self
             .view
             .selected
             .as_ref()
             .is_some_and(|id| self.view.terminals.contains_key(id));
-        let terminal = tool_badge(
-            terminal,
-            (floating && shell_running && !self.terminal.open).then(String::new),
-            &p,
-        );
-        let history = tool(
-            "open-history",
-            IconName::BookOpen,
-            "Conversation history",
-            None,
-            selected,
-        )
-        .when(selected, |d| d.on_click(page(Screen::History)));
-        let details = tool(
-            "open-session",
-            IconName::Info,
-            "Session details",
-            vim.then_some("g e"),
-            selected,
-        )
-        .when(selected, |d| d.on_click(page(Screen::Session)));
-        let model = tool(
-            "open-model",
-            IconName::Settings2,
-            "Model, effort and access",
-            vim.then_some("g m"),
-            model_enabled,
-        )
-        .when(model_enabled, |d| {
-            d.on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                if floating || this.title_action_allowed(event) {
-                    this.open_model_popover(window, cx)
-                }
-            }))
+        let terminal = self
+            .toolbar_tool(
+                "open-terminal",
+                IconName::SquareTerminal,
+                "Terminal",
+                if self.terminal.open {
+                    "Hide terminal".into()
+                } else if shell_running {
+                    "Terminal · its shell is running".into()
+                } else {
+                    "Terminal in this session's folder".into()
+                },
+                Some(if mac { "⌘ `" } else { "Ctrl `" }),
+                selected,
+                self.terminal.open,
+                shell_running.then(|| {
+                    div()
+                        .debug_selector(|| "terminal-running-dot".into())
+                        .size(px(t.layout.status_dot))
+                        .rounded(px(t.radius.full))
+                        .bg(rgb(p.roles.status.working))
+                        .into_any_element()
+                }),
+            )
+            .when(selected, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx)))
+            });
+        let running = session.map_or(0, |s| {
+            if s.tasks.is_empty() {
+                s.background_tasks as usize
+            } else {
+                s.tasks.iter().filter(|t| t.running()).count()
+            }
         });
-        let handoff = tool(
-            "open-handoff",
-            IconName::ArrowRight,
-            handoff_label,
-            None,
-            handoff_enabled,
-        )
-        .when(handoff_enabled, |d| d.on_click(page(Screen::Handoff)));
+        let tasks_tip: SharedString = session
+            .and_then(|s| running_words(&s.tasks, s.background_tasks))
+            .map(|words| format!("Tasks · {words} running"))
+            .unwrap_or_else(|| "Tasks · background work".into())
+            .into();
+        let tasks = self
+            .toolbar_tool(
+                "title-tasks",
+                IconName::LoaderCircle,
+                "Tasks",
+                tasks_tip,
+                None,
+                selected,
+                self.tasks.open,
+                (running > 0).then(|| {
+                    primitives::count_badge(
+                        primitives::count_text(running),
+                        primitives::CountTone::Neutral,
+                        &p,
+                    )
+                    .into_any_element()
+                }),
+            )
+            .when(selected, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| this.toggle_tasks(window, cx)))
+            });
+        let history = self
+            .toolbar_tool(
+                "open-history",
+                IconName::BookOpen,
+                "History",
+                "Conversation history".into(),
+                vim.then_some("g h"),
+                selected,
+                false,
+                None,
+            )
+            .when(selected, |d| d.on_click(page(Screen::History)));
+        let details = self
+            .toolbar_tool(
+                "open-session",
+                IconName::Info,
+                "Details",
+                "Session details".into(),
+                vim.then_some("g e"),
+                selected,
+                false,
+                None,
+            )
+            .when(selected, |d| d.on_click(page(Screen::Session)));
+        let model = self
+            .toolbar_tool(
+                "open-model",
+                IconName::Settings2,
+                "Model",
+                "Model, effort and access".into(),
+                vim.then_some("g m"),
+                model_enabled,
+                self.shell.model_popover && self.shell.model_from_header,
+                None,
+            )
+            .when(model_enabled, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| {
+                    this.open_model_popover(window, cx);
+                    this.shell.model_from_header = true;
+                }))
+            });
+        let separator = || {
+            div()
+                .flex_shrink_0()
+                .w(px(t.stroke.hairline))
+                .h(px(t.icon.md))
+                .mx(px(t.space.xs))
+                .bg(rgb(p.border))
+        };
         div()
+            .debug_selector(|| "session-toolbar".into())
+            .occlude()
+            .flex_shrink_0()
             .flex()
-            .when(floating, |d| d.flex_col())
             .items_center()
             .gap(px(t.space.xxs))
-            .flex_shrink_0()
             .child(changes)
             .child(files)
             .child(terminal)
+            .child(tasks)
             .child(separator())
             .child(history)
             .child(details)
-            .child(separator())
             .child(model)
-            .child(handoff)
     }
 
-    /// The session's tools, docked to the conversation column's right edge
-    /// just under the title (not floating at the window edge). The column's
-    /// measure comes from the transcript (`reading_max`).
-    pub(super) fn render_tool_rail_v2(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let column = self.reading_max().min(self.chat_width);
-        let rail = t.layout.icon_button + 2. * t.space.xs + 2. * t.stroke.hairline;
-        // The rail's left edge sits a step outside the column's text edge.
-        let right = ((self.chat_width - column) / 2. + px(t.layout.chat_gutter)
-            - px(t.space.lg + rail))
-        .max(px(t.space.sm));
+    /// The session's tools in labelled groups (review · session · agent),
+    /// each tooltip naming its shortcut. v2 shows them on the header strip
+    /// (`session_toolbar_v2`); this is what a v1 caller asking for the v2
+    /// actions gets.
+    pub(super) fn chat_actions_v2(
+        &self,
+        enabled: bool,
+        _floating: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        self.session_toolbar_v2(enabled, cx)
+    }
+
+    /// v2 has no floating rail: the tools live on the header strip.
+    pub(super) fn render_tool_rail_v2(&self, _enabled: bool, _cx: &mut Context<Self>) -> Div {
         div()
-            .absolute()
-            .top(self.header_bounds.size.height + px(t.space.md))
-            .right(right)
-            .child(
-                div()
-                    .debug_selector(|| "tool-rail".into())
-                    .occlude()
-                    .py(px(t.space.xs))
-                    .px(px(t.space.xs))
-                    .rounded(px(t.radius.panel))
-                    .bg(rgb(p.surface))
-                    .border(px(t.stroke.hairline))
-                    .border_color(rgb(p.roles.card_border))
-                    .child(self.chat_actions_v2(enabled, true, cx)),
-            )
     }
-}
-
-/// A small count or dot on a tool's top-right corner.
-fn tool_badge(control: Stateful<Div>, badge: Option<String>, p: &Palette) -> Stateful<Div> {
-    let t = p.tokens;
-    control.relative().when_some(badge, |d, badge| {
-        d.child(
-            div()
-                .absolute()
-                .top(-px(t.space.xxs))
-                .right(-px(t.space.xxs))
-                .map(|d| {
-                    if badge.is_empty() {
-                        d.top(px(t.space.xs))
-                            .right(px(t.space.xs))
-                            .size(px(t.layout.status_dot))
-                            .rounded(px(t.radius.full))
-                            .bg(rgb(p.roles.text_secondary))
-                    } else {
-                        d.child(primitives::count_badge(
-                            badge,
-                            primitives::CountTone::Neutral,
-                            p,
-                        ))
-                    }
-                }),
-        )
-    })
 }
 
 #[cfg(test)]

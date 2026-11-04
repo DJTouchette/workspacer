@@ -1,9 +1,70 @@
-//! Design v2: model, effort and access in a popover hanging from the title
-//! capsule's model chip, instead of a trip to the full Model page (which
-//! stays one click away, and on `g m`).
+//! Design v2: model, effort and access in a popover hanging from the
+//! composer's model chip or the header's Model tool, instead of a trip to
+//! the full Model page (which stays one click away, and on `g m`). It never
+//! covers a pending decision, and Up/Down, Enter and Esc drive it.
 use super::primitives::{self, ButtonSize, ButtonVariant, tooltip_view};
 use super::*;
-use gpui::{AnyElement, deferred};
+use gpui::{AnyElement, KeyDownEvent, deferred};
+
+// r3-shell
+/// The models this app knows per provider (R3.5): listed even when the
+/// agent reports none, after whatever its catalog says. Curated; ids are
+/// the providers' own.
+pub(super) const KNOWN_MODELS: [(&str, &[&str]); 2] = [
+    (
+        "claude",
+        &["claude-opus-5-5", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    ),
+    ("codex", &["gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4-mini"]),
+];
+
+/// One row of the popover's model list.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ListedModel {
+    pub(super) id: String,
+    pub(super) is_default: bool,
+    pub(super) window: Option<u64>,
+}
+
+/// The catalog's models, then the known ones it does not already name (by
+/// id or by human name, so an alias that reads the same hides its twin).
+pub(super) fn listed_models(provider: &str, catalog: &[ModelChoice]) -> Vec<ListedModel> {
+    let mut out: Vec<ListedModel> = catalog
+        .iter()
+        .map(|m| ListedModel {
+            id: m.id.clone(),
+            is_default: m.is_default,
+            window: m.windows.first().copied(),
+        })
+        .collect();
+    let known = KNOWN_MODELS
+        .iter()
+        .find(|(p, _)| *p == provider)
+        .map_or(&[][..], |(_, ids)| *ids);
+    for id in known {
+        let name = wks_native::format::model_name(id);
+        let named = out
+            .iter()
+            .any(|m| m.id == *id || wks_native::format::model_name(&m.id) == name);
+        if !named {
+            out.push(ListedModel {
+                id: (*id).to_owned(),
+                is_default: false,
+                window: None,
+            });
+        }
+    }
+    out
+}
+
+/// The access the popover shows as selected: the reported mode, or "Ask
+/// first" (the agents' own default) until one is reported.
+pub(super) fn effective_access(
+    current: Option<Permission>,
+    choices: &[Permission],
+) -> Option<Permission> {
+    current.or(Some(Permission::Ask).filter(|ask| choices.contains(ask)))
+}
 
 impl Workspace {
     /// Open the popover on the selected session's current model, effort and
@@ -48,6 +109,79 @@ impl Workspace {
         self.reconcile_effort(window, cx);
         self.load_models(true, cx);
         self.shell.model_popover = true;
+        self.shell.model_from_header = false;
+        let models = self.popover_models();
+        self.shell.model_cursor = models
+            .iter()
+            .position(|m| m.id == s.model)
+            .unwrap_or(models.len());
+        let focus = self
+            .shell
+            .model_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        window.focus(&focus);
+        cx.notify();
+    }
+
+    /// The popover's models for the selected session's provider.
+    pub(super) fn popover_models(&self) -> Vec<ListedModel> {
+        let provider = match self.selected_session().map(|s| s.provider_id()) {
+            Some("codex") => "codex",
+            _ => "claude",
+        };
+        listed_models(provider, &self.catalog_models)
+    }
+
+    /// Close the popover and give the keys back to the window.
+    pub(super) fn close_model_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.shell.model_popover = false;
+        window.focus(&self.focus);
+        cx.notify();
+    }
+
+    /// Up/Down walk the models (then "Custom id…"), Enter picks and applies
+    /// the row the keys are on, Esc closes.
+    fn model_popover_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let models = self.popover_models();
+        let last = models.len();
+        match event.keystroke.key.as_str() {
+            "down" => self.shell.model_cursor = (self.shell.model_cursor + 1).min(last),
+            "up" => self.shell.model_cursor = self.shell.model_cursor.saturating_sub(1),
+            "escape" => {
+                self.close_model_popover(window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            "enter" => {
+                cx.stop_propagation();
+                if self.view.busy || !self.view.connected {
+                    return;
+                }
+                match models.get(self.shell.model_cursor) {
+                    Some(model) => {
+                        self.model_choice = model.id.clone();
+                        self.context_window = model.window;
+                        self.reconcile_effort(window, cx);
+                        self.apply_model_change(cx);
+                        self.close_model_popover(window, cx);
+                    }
+                    None => {
+                        self.model_choice = "__custom".into();
+                        self.model.update(cx, |input, cx| input.focus(window, cx));
+                    }
+                }
+                cx.notify();
+                return;
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
         cx.notify();
     }
 
@@ -62,6 +196,9 @@ impl Workspace {
         };
         let provider = session.provider_id().to_owned();
         let current = Permission::from_wire(&provider, session.access_mode());
+        // R3.5: the effective mode is always shown selected; until the
+        // agent reports one, that is its default, asking first.
+        let shown = effective_access(current, Permission::choices(&provider));
         let switching = self.view.busy && self.extras.access_switching;
         let note = match (switching, current) {
             (true, _) => "Switching…".to_owned(),
@@ -72,7 +209,8 @@ impl Workspace {
                 )
             }
             (false, None) if session.permission_mode.is_empty() => {
-                "The agent has not reported its access yet. Choosing one sets it.".to_owned()
+                "Not reported yet, so it asks first, the agents' default. Choosing one sets it."
+                    .to_owned()
             }
             (false, None) => format!(
                 "Running in “{}”, which this app does not offer. Choosing one sets it.",
@@ -88,7 +226,9 @@ impl Workspace {
                     .map(|permission| {
                         let id =
                             SharedString::from(format!("popover-access-{}", permission.label()));
-                        let active = current == Some(permission);
+                        let active = shown == Some(permission);
+                        // Unreported, the shown default can still be set.
+                        let settable = !active || current.is_none();
                         let provider = provider.clone();
                         let label = match permission {
                             Permission::Ask => "Ask first",
@@ -103,7 +243,7 @@ impl Workspace {
                             .when(active && permission == Permission::FullAccess, |d| {
                                 d.text_color(rgb(p.warning))
                             })
-                            .when(!busy && !active, |d| {
+                            .when(!busy && settable, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
                                     let Ok(mode) = permission.wire(&provider) else {
                                         return;
@@ -145,15 +285,16 @@ impl Workspace {
         // An exact id typed (or the session's own) that the list knows
         // selects its row rather than "Custom…".
         let typed = self.model.read(cx).value().trim().to_owned();
-        let known =
-            self.model_choice == "__custom" && self.catalog_models.iter().any(|m| m.id == typed);
+        let models = self.popover_models();
+        let cursor = self.shell.model_cursor;
+        let known = self.model_choice == "__custom" && models.iter().any(|m| m.id == typed);
         let custom = self.model_choice == "__custom" && !known;
         let chosen = if known {
             typed
         } else {
             self.model_choice.clone()
         };
-        let row = |id: SharedString, label: String, raw: String, selected: bool| {
+        let row = |id: SharedString, label: String, raw: String, selected: bool, keyed: bool| {
             chrome::interactive_control(div().id(id.clone()), p, !busy)
                 .debug_selector(move || id.to_string())
                 .h(px(t.layout.row_height))
@@ -169,6 +310,11 @@ impl Workspace {
                     p.roles.text_secondary
                 }))
                 .when(selected, |d| d.bg(rgb(p.selected)))
+                .when(keyed && !selected, |d| d.bg(rgb(p.roles.hover)))
+                .when(keyed, |d| {
+                    d.border(px(t.stroke.hairline))
+                        .border_color(rgb(p.roles.border_strong))
+                })
                 .when(!selected && !busy, |d| {
                     d.hover(move |s| s.bg(rgb(p.roles.hover)))
                 })
@@ -187,7 +333,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap(px(t.space.xxs));
-        for (n, model) in self.catalog_models.iter().enumerate() {
+        for (n, model) in models.iter().enumerate() {
             let name = wks_native::format::model_name(&model.id);
             let label = if model.is_default {
                 format!("{name} · default")
@@ -195,16 +341,18 @@ impl Workspace {
                 name
             };
             let id = model.id.clone();
-            let window = model.windows.first().copied();
+            let window = model.window;
             list = list.child(
                 row(
                     format!("popover-model-{n}").into(),
                     label,
                     model.id.clone(),
                     !custom && chosen == model.id,
+                    cursor == n,
                 )
                 .when(!busy, |d| {
                     d.on_click(cx.listener(move |this, _, window_, cx| {
+                        this.shell.model_cursor = n;
                         if this.model_choice != id {
                             this.model_choice = id.clone();
                             this.context_window = window;
@@ -215,29 +363,28 @@ impl Workspace {
                 }),
             );
         }
-        if self.catalog_models.is_empty() {
+        if self.catalog_models.is_empty() && loading {
             list = list.child(
                 div()
                     .px(px(t.space.md))
                     .py(px(t.space.xs))
                     .text_size(px(t.text.meta))
                     .text_color(rgb(p.roles.text_tertiary))
-                    .child(if loading {
-                        "Loading models…"
-                    } else {
-                        "No model list from this agent: enter a model id."
-                    }),
+                    .child("Checking the agent's own list…"),
             );
         }
+        let last = models.len();
         list = list.child(
             row(
                 "popover-model-custom".into(),
-                "Custom…".into(),
+                "Custom id…".into(),
                 String::new(),
                 custom,
+                cursor == last,
             )
             .when(!busy, |d| {
-                d.on_click(cx.listener(|this, _, window, cx| {
+                d.on_click(cx.listener(move |this, _, window, cx| {
+                    this.shell.model_cursor = last;
                     this.model_choice = "__custom".into();
                     this.model.update(cx, |input, cx| input.focus(window, cx));
                     cx.notify();
@@ -291,10 +438,24 @@ impl Workspace {
         let anchor = self.shell.model_anchor;
         let width = t.layout.dialog_width;
         let viewport = window.viewport_size();
+        // r3-shell: while a decision waits above the composer, the popover
+        // hangs from the header instead, and stops short of the dock, so it
+        // never covers the decision card.
+        let pending = self
+            .selected_session()
+            .is_some_and(super::attention::needs_you);
+        let from_header = self.shell.model_from_header || pending || anchor.size.width <= px(0.);
+        let dock_top = self.composer_dock_bounds.top();
         // Hangs from its chip: below it in the top half of the window,
-        // above it (the composer's chip) in the bottom half; without a chip,
-        // under the title.
-        let (left, top, bottom) = if anchor.size.width > px(0.) {
+        // above it (the composer's chip) in the bottom half; from the
+        // header, under the strip at its right, by the Model tool.
+        let (left, top, bottom) = if from_header {
+            let strip = self.header_bounds.top() + px(t.shell().header);
+            let left = (self.header_bounds.right() - px(width + t.space.md))
+                .max(px(t.space.md))
+                .min(viewport.width - px(width + t.space.md));
+            (left, Some(strip + px(t.space.xs)), None)
+        } else if anchor.size.width > px(0.) {
             let left = (anchor.center().x - px(width / 2.))
                 .max(px(t.space.md))
                 .min(viewport.width - px(width + t.space.md));
@@ -315,10 +476,12 @@ impl Workspace {
             )
         };
         let room = match (top, bottom) {
+            (Some(top), _) if pending && dock_top > top => dock_top - top - px(t.space.sm),
             (Some(top), _) => viewport.height - top - px(t.space.xl),
             (_, Some(bottom)) => viewport.height - bottom - px(t.space.xl),
             _ => viewport.height,
         };
+        let focus = self.shell.model_focus.clone();
         let card = primitives::popover(&p)
             .id("model-popover")
             .debug_selector(|| "model-popover".into())
@@ -329,6 +492,8 @@ impl Workspace {
             .p(px(t.space.lg))
             .gap(px(t.space.lg))
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .when_some(focus, |d, focus| d.track_focus(&focus))
+            .on_key_down(cx.listener(Self::model_popover_key))
             .child(
                 div()
                     .flex()
@@ -342,19 +507,19 @@ impl Workspace {
                             .child("Model and access"),
                     )
                     .child(
-                        primitives::icon_button(
+                        primitives::icon_button_with_shortcut(
                             "model-popover-close",
                             IconName::Close,
                             "Close",
+                            Some("Esc"),
                             ButtonVariant::Tertiary,
                             true,
                             &p,
                         )
                         .debug_selector(|| "model-popover-close".into())
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.shell.model_popover = false;
-                            cx.notify();
-                        })),
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.close_model_popover(window, cx)),
+                        ),
                     ),
             )
             .child(self.render_model_list(busy, cx))
@@ -413,10 +578,9 @@ impl Workspace {
                             &p,
                         ))
                         .when(!busy, |d| {
-                            d.on_click(cx.listener(|this, _, _, cx| {
+                            d.on_click(cx.listener(|this, _, window, cx| {
                                 this.apply_model_change(cx);
-                                this.shell.model_popover = false;
-                                cx.notify();
+                                this.close_model_popover(window, cx);
                             }))
                         }),
                     ),
@@ -431,10 +595,7 @@ impl Workspace {
                     .occlude()
                     .on_mouse_down(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.shell.model_popover = false;
-                            cx.notify();
-                        }),
+                        cx.listener(|this, _, window, cx| this.close_model_popover(window, cx)),
                     )
                     .child(
                         card.absolute()
@@ -456,4 +617,59 @@ fn field_label(text: &'static str, p: &Palette) -> Div {
         .font_weight(FontWeight(t.weight.medium))
         .text_color(rgb(p.roles.text_secondary))
         .child(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn choice(id: &str, is_default: bool) -> ModelChoice {
+        ModelChoice {
+            id: id.into(),
+            label: String::new(),
+            windows: vec![],
+            is_default,
+            efforts: vec![],
+            default_effort: None,
+        }
+    }
+
+    #[test]
+    fn known_models_are_listed_when_the_agent_reports_none() {
+        let ids = |v: Vec<ListedModel>| v.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(listed_models("claude", &[])),
+            ["claude-opus-5-5", "claude-sonnet-4-6", "claude-haiku-4-5"]
+        );
+        assert_eq!(
+            ids(listed_models("codex", &[])),
+            ["gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4-mini"]
+        );
+        // The catalog leads; a known model it already names (by id or by
+        // the same human name) is not listed twice.
+        let catalog = [
+            choice("claude-sonnet-4-6", true),
+            choice("claude-opus-5-5-20260101", false),
+        ];
+        assert_eq!(
+            ids(listed_models("claude", &catalog)),
+            [
+                "claude-sonnet-4-6",
+                "claude-opus-5-5-20260101",
+                "claude-haiku-4-5"
+            ]
+        );
+        assert!(listed_models("claude", &catalog)[0].is_default);
+    }
+
+    #[test]
+    fn access_shows_ask_first_until_the_agent_reports_one() {
+        let claude = Permission::choices("claude");
+        assert_eq!(effective_access(None, claude), Some(Permission::Ask));
+        assert_eq!(
+            effective_access(Some(Permission::Plan), claude),
+            Some(Permission::Plan)
+        );
+        assert_eq!(effective_access(None, &[]), None);
+    }
 }

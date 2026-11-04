@@ -201,7 +201,9 @@ fn v2_reading_width_widens_the_column(cx: &mut TestAppContext) {
         roomy >= tt.reading_max - 1.,
         "{roomy} reaches the cap in a wide window"
     );
-    let snug = width_for(cx, 1500., ReadingWidth::Comfortable);
+    // r3-shell: no rail takes room beside the column any more, so a
+    // narrower window shows it below the cap.
+    let snug = width_for(cx, 1300., ReadingWidth::Comfortable);
     assert!(
         snug < roomy,
         "{snug} < {roomy}: the column grows with the window"

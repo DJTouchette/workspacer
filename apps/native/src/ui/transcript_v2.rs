@@ -449,17 +449,11 @@ impl Workspace {
             .px(px(self.tokens().layout.chat_gutter))
     }
 
-    /// Whether the session's tools float in the rail beside the column
-    /// (v2): wherever the comfortable column and the rail both fit; wider
-    /// reading widths give way to the rail rather than slide under it.
-    pub(super) fn tools_float_v2(&self, narrow: bool) -> bool {
-        let t = self.tokens();
-        self.settings.tool_rail
-            && !narrow
-            && self.chat_width
-                >= px(t.layout.chat_width
-                    + 2. * t.layout.chat_gutter
-                    + 2. * (t.layout.rail_width + t.space.md))
+    /// Whether the session's tools float in a rail beside the column (v2).
+    /// r3-shell: never; they live on the header strip's toolbar, so the
+    /// column keeps all of its room.
+    pub(super) fn tools_float_v2(&self, _narrow: bool) -> bool {
+        false
     }
 
     // ----- Quiet metadata -------------------------------------------------
@@ -1432,34 +1426,44 @@ impl Workspace {
             )
     }
 
-    /// "Jump to latest", outside the scroll content: a pill centred over a
-    /// fade just above the dock, so the rows beneath dissolve into the
-    /// canvas instead of being cut under it, with how many arrived since you
-    /// scrolled away.
+    /// "Jump to latest", outside the scroll content (R3.3): a solid pill
+    /// with a shadow, anchored `shell().jump_gap` above the composer and
+    /// decision stack, over a scrim (`shell().jump_scrim`) that dissolves
+    /// the rows beneath into the canvas. With news it reads "↓ 3 new".
     pub(super) fn render_jump_latest_v2(&self, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
+        let sh = t.shell();
         let session = self.view.selected.clone().unwrap_or_default();
         let fresh = unseen(
             self.chat.seen.as_ref(),
             &session,
             self.view.transcript.rows.len(),
         );
+        let label = if fresh > 0 {
+            format!("{fresh} new")
+        } else {
+            "Jump to latest".to_owned()
+        };
         div()
             .absolute()
             .left_0()
             .w_full()
             .bottom(self.composer_dock_bounds.size.height)
-            .h(px(t.layout.fade + t.layout.control_height_sm))
+            .h(px(sh.jump_scrim + t.layout.control_height_sm + sh.jump_gap))
             .flex()
             .items_end()
             .justify_center()
-            .pb(px(t.space.xs))
-            .child(primitives::fade_mask(FadeEdge::Bottom, p.chat, &p).h_full())
+            .pb(px(sh.jump_gap))
+            .child(
+                primitives::fade_mask(FadeEdge::Bottom, p.chat, &p)
+                    .debug_selector(|| "jump-latest-scrim".into())
+                    .h_full(),
+            )
             .child(
                 primitives::button(
                     "latest",
-                    "Jump to latest",
+                    label,
                     Some(IconName::ArrowDown),
                     ButtonVariant::Secondary,
                     ButtonSize::Small,
@@ -1467,24 +1471,15 @@ impl Workspace {
                     &p,
                 )
                 .debug_selector(|| "jump-latest".into())
+                .when(fresh > 0, |d| {
+                    d.tooltip(primitives::tooltip_view("Jump to latest", None, &p))
+                        .child(div().debug_selector(|| "jump-latest-new".into()))
+                })
                 .relative()
                 .rounded(px(t.radius.full))
                 .bg(rgb(p.roles.raised))
                 .shadow(primitives::elevation(&p, t.elevation.floating))
                 .occlude()
-                .when(fresh > 0, |d| {
-                    d.child(
-                        div()
-                            .debug_selector(|| "jump-latest-new".into())
-                            .px(px(t.space.sm))
-                            .rounded(px(t.radius.full))
-                            .bg(rgb(p.accent))
-                            .text_size(px(t.text.overline))
-                            .font_weight(FontWeight(t.weight.semibold))
-                            .text_color(rgb(p.on_primary))
-                            .child(format!("{fresh} new")),
-                    )
-                })
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.follow = true;
                     this.list.scroll_to(ListOffset {

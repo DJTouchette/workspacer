@@ -43,6 +43,14 @@ pub(super) struct ShellUi {
     /// Failed background tasks the user acknowledged in the title's red
     /// chip, by task id: their chip is gone for this run (memory only).
     pub(super) acknowledged_failures: BTreeSet<String>,
+    // r3-shell
+    /// The model popover was opened from the header (toolbar or access
+    /// chip), so it hangs from the strip rather than the composer's chip.
+    pub(super) model_from_header: bool,
+    /// The model row the keyboard is on in the popover (↑/↓, Enter).
+    pub(super) model_cursor: usize,
+    /// The popover's focus, so its keys reach it.
+    pub(super) model_focus: Option<gpui::FocusHandle>,
 }
 
 impl Default for ShellUi {
@@ -58,6 +66,9 @@ impl Default for ShellUi {
             scroll: gpui::ScrollHandle::new(),
             palette: Default::default(),
             acknowledged_failures: BTreeSet::new(),
+            model_from_header: false,
+            model_cursor: 0,
+            model_focus: None,
         }
     }
 }
@@ -792,7 +803,7 @@ impl Workspace {
             .when(empty, |d| d.child(self.render_list_empty_v2(filtered, cx)))
             .child(list)
             .children(self.render_finish_setup(cx))
-            .child(self.render_footer_v2(window, cx))
+            .child(self.render_footer_v2(cx))
             .child(self.sidebar_resize_handle(cx))
             .into_any_element()
     }
@@ -820,7 +831,9 @@ impl Workspace {
             .count()
     }
 
-    /// The global destinations, labelled, at the top of the sidebar.
+    /// The global destinations at the top of the sidebar, still labelled
+    /// but in a two-column grid (r3-shell: three rows, not six), shortcuts
+    /// in their tooltips.
     fn render_destinations(&self, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
@@ -832,7 +845,8 @@ impl Workspace {
             .px(px(t.space.sm))
             .pb(px(t.space.sm))
             .flex()
-            .flex_col()
+            .flex_wrap()
+            .gap_y(px(t.space.xxs))
             .child(
                 self.destination(
                     "new-session",
@@ -883,35 +897,24 @@ impl Workspace {
                 None,
                 cx,
             ))
-            .child(
-                self.destination_to(
-                    "nav-scratch",
-                    IconName::FolderClosed,
-                    "Scratch",
-                    vim.then_some("g x"),
-                    Screen::Scratch,
-                    (pending > 0).then(|| {
-                        div()
-                            .debug_selector(|| "scratch-pending-badge".into())
-                            .child(primitives::count_badge(
-                                primitives::count_text(pending),
-                                primitives::CountTone::Neutral,
-                                &p,
-                            ))
-                            .into_any_element()
-                    }),
-                    cx,
-                )
-                .tooltip(tooltip_view(
-                    if pending > 0 {
-                        "Scratch files · some are waiting for you to run them"
-                    } else {
-                        "Scratch files"
-                    },
-                    vim.then_some("g x"),
-                    &p,
-                )),
-            )
+            .child(self.destination_to(
+                "nav-scratch",
+                IconName::FolderClosed,
+                "Scratch",
+                vim.then_some("g x"),
+                Screen::Scratch,
+                (pending > 0).then(|| {
+                    div()
+                        .debug_selector(|| "scratch-pending-badge".into())
+                        .child(primitives::count_badge(
+                            primitives::count_text(pending),
+                            primitives::CountTone::Neutral,
+                            &p,
+                        ))
+                        .into_any_element()
+                }),
+                cx,
+            ))
             .child(self.destination_to(
                 "nav-settings",
                 IconName::Settings,
@@ -943,8 +946,8 @@ impl Workspace {
             ))
     }
 
-    /// One destination row: icon, label, then a badge, or the shortcut on
-    /// hover.
+    /// One destination cell: icon, label, then a badge; the shortcut in
+    /// its tooltip. Half the sidebar's width.
     #[allow(clippy::too_many_arguments)]
     fn destination(
         &self,
@@ -958,10 +961,10 @@ impl Workspace {
     ) -> Stateful<Div> {
         let p = self.palette();
         let t = p.tokens;
-        let group: SharedString = format!("dest-{id}").into();
         chrome::interactive_control(div().id(id), p, enabled)
-            .group(group.clone())
-            .h(px(t.shell().nav_row))
+            .w(gpui::relative(0.5))
+            .min_w_0()
+            .h(px(t.layout.control_height_sm))
             .px(px(t.space.md))
             .rounded(px(t.radius.control))
             .flex()
@@ -980,19 +983,16 @@ impl Workspace {
                 p.roles.text_tertiary
             })))
             .child(div().flex_1().min_w_0().truncate().child(label))
-            .map(|d| match badge {
-                Some(badge) => d.child(badge),
-                None => d.when_some(shortcut, |d, keys| {
-                    d.child(
-                        div()
-                            .invisible()
-                            .group_hover(group, |s| s.visible())
-                            .flex()
-                            .gap(px(t.space.xxs))
-                            .children(keys.split(' ').map(|k| kbd(k, &p))),
-                    )
-                }),
-            })
+            .children(badge)
+            .tooltip(tooltip_view(
+                if id == "nav-scratch" && self.pending_total() > 0 {
+                    "Scratch files · some are waiting for you to run them"
+                } else {
+                    label
+                },
+                shortcut,
+                &p,
+            ))
     }
 
     /// A destination that opens a page, highlighted while it is open.
@@ -1549,7 +1549,9 @@ impl Workspace {
             )
     }
 
-    /// The inline action of a waiting row: Allow, Answer or Open.
+    /// The inline action of a waiting row: Review (a tool waits for
+    /// permission: it opens the session at the request, never allowing an
+    /// unseen command blind), Answer or Open. Shown on hover or selection.
     fn inbox_button(
         &self,
         index: usize,
@@ -1560,11 +1562,10 @@ impl Workspace {
         let p = self.palette();
         let t = p.tokens;
         let action = reason.action;
-        let enabled = self.view.connected && !self.demo;
         let tip = match action {
-            InboxAction::Allow => "Allow this once · the session keeps asking for anything else",
-            InboxAction::Answer => "Open the session at its question",
-            InboxAction::Open => "Open the session",
+            InboxAction::Allow => format!("{} · review the request in its session", reason.text),
+            InboxAction::Answer => "Open the session at its question".to_owned(),
+            InboxAction::Open => "Open the session".to_owned(),
         };
         primitives::button(
             SharedString::from(format!("sidebar-inbox-{ix}")),
@@ -1572,7 +1573,7 @@ impl Workspace {
             None,
             ButtonVariant::Secondary,
             ButtonSize::Small,
-            enabled || action != InboxAction::Allow,
+            true,
             &p,
         )
         .debug_selector(move || format!("sidebar-inbox-action-{ix}"))
@@ -1583,24 +1584,29 @@ impl Workspace {
         .tooltip(tooltip_view(tip, None, &p))
         .on_click(cx.listener(move |this, _, _, cx| {
             cx.stop_propagation();
-            let Some(session) = this.view.sessions.get(index).cloned() else {
-                return;
-            };
-            if action == InboxAction::Allow && this.view.connected && !this.demo {
-                this.command(
-                    Command::Act {
-                        session: session.id.clone(),
-                        action: Action::Approve(true, session.card()),
-                    },
-                    cx,
-                );
-                cx.notify();
-            } else {
-                this.open_listed_session(index, cx);
-            }
+            this.open_listed_session(index, cx);
         }))
     }
 
+    /// How long a working session has been at its turn: the turn clock
+    /// when this window keeps one, else since it started.
+    fn working_elapsed(&self, session: &Session, now: i64) -> Option<String> {
+        self.turn_clocks
+            .get(&session.id)
+            .and_then(|clock| clock.elapsed_label(now))
+            .or_else(|| {
+                session
+                    .telemetry
+                    .started_at_ms
+                    .map(|at| wks_native::format::age(at, now))
+            })
+    }
+
+    /// One session row (R3.6): one template for every group. Line one is
+    /// the status glyph (none when Idle), the title (it truncates last) and
+    /// the time (elapsed while Working, else the age); line two is why it
+    /// waits, or the project and what it is doing. Compact drops line two
+    /// everywhere. Needs you rows carry the one attention treatment.
     #[allow(clippy::too_many_arguments)]
     fn render_session_v2(
         &self,
@@ -1625,15 +1631,19 @@ impl Workspace {
         let reason = (bucket == Bucket::NeedsYou)
             .then(|| self.inbox_reason(session, now))
             .flatten();
-        let working = kind == StatusKind::Working && depth == 0;
-        let two_lines = reason.is_some() || (working && !compact);
+        let working = kind == StatusKind::Working;
+        let two_lines = !compact && depth == 0;
         let job = !session.job_id.is_empty();
         let cold =
             super::cache::cold(session, now).map(|cold| super::cache::marker_tooltip(cold, now));
-        let age = session
-            .telemetry
-            .last_activity_ms
-            .map(|at| wks_native::format::age(at, now));
+        let time = if working {
+            self.working_elapsed(session, now)
+        } else {
+            session
+                .telemetry
+                .last_activity_ms
+                .map(|at| wks_native::format::age(at, now))
+        };
         let (status_label, _) = if self.view.connected {
             self.status_of(session, p)
         } else {
@@ -1641,6 +1651,9 @@ impl Workspace {
         };
         let details = {
             let mut lines = vec![title.clone(), session.cwd.clone()];
+            if let Some(reason) = &reason {
+                lines.push(reason.text.clone());
+            }
             let provider = match session.provider_id() {
                 "claude" => "Claude",
                 "codex" => "Codex",
@@ -1650,10 +1663,11 @@ impl Workspace {
             lines.push(format!(
                 "{provider} · {} · {}",
                 wks_native::format::model_name(&session.display_model()),
-                if kind == StatusKind::NotResponding {
-                    "Not responding"
-                } else {
-                    status_label
+                match kind {
+                    StatusKind::NotResponding | StatusKind::NeedsYou | StatusKind::Working => {
+                        kind.label()
+                    }
+                    _ => status_label,
                 }
             ));
             if job {
@@ -1715,7 +1729,15 @@ impl Workspace {
             }))
             .into_any_element()
         });
-        let trailing = self.row_trailing(group.clone(), age, actions);
+        // The verb chip takes the archive's place on a waiting row: on
+        // hover, or while the row is selected.
+        let verb = reason
+            .as_ref()
+            .map(|reason| self.inbox_button(index, reason, ix, cx).into_any_element());
+        let trailing = match verb {
+            Some(verb) => self.row_trailing_verb(group.clone(), time, verb, active),
+            None => self.row_trailing(group.clone(), time, actions),
+        };
         let title_el = self.row_title(title, tag, active, query).text_color(rgb(
             if session.stopped() && !self.paused(session) {
                 p.roles.text_secondary
@@ -1743,121 +1765,83 @@ impl Workspace {
                         .debug_selector(move || format!("sidebar-cold-{ix}")),
                 )
             });
-        let project_el = |max: f32| {
-            div()
-                .debug_selector(move || format!("sidebar-project-{ix}"))
-                .min_w_0()
-                .flex_shrink()
-                .max_w(gpui::relative(max))
-                .truncate()
-                .text_size(px(t.text.meta))
-                .text_color(rgb(p.roles.text_tertiary))
-                .child(project.clone())
-        };
-        let lead = div()
-            .h(px(t.text.body + t.space.xs))
+        let first = div()
+            .w_full()
+            .min_w_0()
             .flex()
             .items_center()
-            .child(status_indicator(kind, &p));
-        let body = if two_lines {
-            // Line two: why it waits (with its action) or what it is doing.
-            let second = match &reason {
-                Some(reason) => div()
-                    .flex()
-                    .items_center()
-                    .gap(px(t.space.sm))
-                    .min_w_0()
-                    .child(
-                        div()
-                            .debug_selector(move || format!("sidebar-reason-{ix}"))
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(if reason.fault {
-                                p.error
-                            } else {
-                                p.roles.text_secondary
-                            }))
-                            .child(reason.text.clone()),
-                    )
-                    .child(self.inbox_button(index, reason, ix, cx)),
-                None => {
-                    let activity = [
-                        session.telemetry.last_tool_name.trim(),
-                        session.telemetry.last_tool_summary.trim(),
-                    ]
-                    .into_iter()
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(t.space.xs))
-                        .min_w_0()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_tertiary))
-                        .child(project_el(0.5))
-                        .when(!activity.is_empty(), |d| {
-                            d.child("·").child(
-                                div()
-                                    .debug_selector(move || format!("sidebar-activity-{ix}"))
-                                    .min_w_0()
-                                    .flex_1()
-                                    .truncate()
-                                    .child(activity),
-                            )
-                        })
-                }
-            };
-            div()
-                .flex_1()
+            .gap(px(t.space.sm))
+            .child(status_indicator(kind, &p))
+            .child(title_el)
+            .child(marks)
+            .child(trailing);
+        // Line two, under the title: why it waits, or where and what.
+        let second = two_lines.then(|| {
+            let line = div()
+                .w_full()
                 .min_w_0()
-                .flex()
-                .items_start()
-                .gap(px(t.space.sm))
-                .child(lead)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap(px(t.space.xxs))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(t.space.sm))
-                                .child(title_el)
-                                .child(marks)
-                                .child(trailing),
-                        )
-                        .child(second),
-                )
-        } else {
-            div()
-                .flex_1()
-                .min_w_0()
+                .pl(px(t.layout.status_box + t.space.sm))
                 .flex()
                 .items_center()
-                .gap(px(t.space.sm))
-                .child(status_indicator(kind, &p))
-                .child(title_el)
-                .when(depth == 0, |d| d.child(project_el(0.3)))
-                .child(marks)
-                .child(trailing)
-        };
+                .gap(px(t.space.xs))
+                .text_size(px(t.text.meta))
+                .text_color(rgb(p.roles.text_tertiary));
+            match &reason {
+                Some(reason) => line.child(
+                    div()
+                        .debug_selector(move || format!("sidebar-reason-{ix}"))
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(rgb(if reason.fault {
+                            p.error
+                        } else {
+                            p.roles.text_secondary
+                        }))
+                        .child(reason.text.clone()),
+                ),
+                None => {
+                    let activity = working
+                        .then(|| {
+                            [
+                                session.telemetry.last_tool_name.trim(),
+                                session.telemetry.last_tool_summary.trim(),
+                            ]
+                            .into_iter()
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                        })
+                        .filter(|a| !a.is_empty());
+                    line.child(
+                        div()
+                            .debug_selector(move || format!("sidebar-project-{ix}"))
+                            .min_w_0()
+                            .flex_shrink()
+                            .when(activity.is_some(), |d| d.max_w(gpui::relative(0.5)))
+                            .truncate()
+                            .child(project.clone()),
+                    )
+                    .when_some(activity, |d, activity| {
+                        d.child("·").child(
+                            div()
+                                .debug_selector(move || format!("sidebar-activity-{ix}"))
+                                .min_w_0()
+                                .flex_1()
+                                .truncate()
+                                .child(activity),
+                        )
+                    })
+                }
+            }
+        });
         let height = if two_lines {
             t.shell().row_double
         } else {
             self.single_height()
         };
-        let stripe = matches!(
-            kind,
-            StatusKind::NeedsYou | StatusKind::Failed | StatusKind::NotResponding
-        ) && reason.is_some();
+        let attention = reason.is_some();
+        let bar = t.signals().attention_bar;
         let control = chrome::interactive_control(
             div().id(SharedString::from(format!("session-{}", session.id))),
             p,
@@ -1867,33 +1851,80 @@ impl Workspace {
         .group(group)
         .relative()
         .size_full()
-        .px(px(t.space.md))
-        .when(two_lines, |d| d.py(px(t.space.xs)))
+        .pl(px(if attention {
+            t.space.md + bar
+        } else {
+            t.space.md
+        }))
+        .pr(px(t.space.md))
         .rounded(px(t.radius.control))
-        .overflow_hidden()
         .flex()
-        .items_center()
+        .flex_col()
+        .justify_center()
+        .gap(px(t.space.xxs))
         .when(active, |d| d.bg(rgb(p.selected)))
         .when(!active, |d| d.hover(move |s| s.bg(rgb(p.roles.hover))))
         .tooltip(tooltip_view(details, None, &p))
-        .when(stripe, |d| {
-            // Attention's shape: a stripe on the row's leading edge.
-            d.child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top(px(t.space.sm))
-                    .bottom(px(t.space.sm))
-                    .w(px(t.stroke.focus + t.stroke.hairline))
-                    .rounded_r(px(t.radius.xs))
-                    .bg(rgb(kind.color(&p))),
-            )
-        })
-        .child(body)
+        .child(first)
+        .children(second)
         .on_click(cx.listener(move |this, _, _, cx| this.open_listed_session(index, cx)));
+        // R3.1: one attention treatment, the bar and a neutral edge.
+        let control = if attention {
+            primitives::attention_frame(t.radius.control, &p)
+                .size_full()
+                .child(control)
+                .into_any_element()
+        } else {
+            control.into_any_element()
+        };
         self.row_frame(depth, height)
             .child(control)
             .into_any_element()
+    }
+
+    /// A waiting row's right edge: its time at rest and its verb chip on
+    /// hover; while the row is selected, the chip alone.
+    fn row_trailing_verb(
+        &self,
+        group: SharedString,
+        time: Option<String>,
+        verb: AnyElement,
+        active: bool,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let slot = div()
+            .flex_shrink_0()
+            .h(px(t.icon.lg + t.space.xxs))
+            .flex()
+            .items_center()
+            .justify_end();
+        if active {
+            return slot.child(verb);
+        }
+        slot.relative()
+            .when_some(time, |d, time| {
+                d.child(
+                    div()
+                        .text_size(px(t.text.meta))
+                        .map(tabular)
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .group_hover(group.clone(), |s| s.invisible())
+                        .child(time),
+                )
+            })
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .bottom_0()
+                    .flex()
+                    .items_center()
+                    .invisible()
+                    .group_hover(group, |s| s.visible())
+                    .child(verb),
+            )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2169,14 +2200,11 @@ impl Workspace {
         )
     }
 
-    /// The footer: account and usage only ("Claude 42%" with a meter), the
-    /// connection when it is not live, and the modal-key mode while modal
-    /// keys are on.
-    fn render_footer_v2(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+    /// The footer: account and usage only ("Claude 42%" with a meter) and
+    /// the connection when it is not live. r3-shell: no modal-key label.
+    fn render_footer_v2(&self, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
-        let mode =
-            (self.vim() && self.focus.is_focused(window)).then(|| self.render_mode_label(cx));
         div()
             .debug_selector(|| "sidebar-footer".into())
             .h(px(t.layout.footer_height))
@@ -2205,38 +2233,6 @@ impl Workspace {
                 None => d.children(self.render_usage_compact(cx)),
             })
             .child(div().flex_1().min_w_0())
-            .children(mode)
-    }
-
-    /// The modal-key mode as a small label inside the footer (never over
-    /// the list); it opens the cheat sheet.
-    fn render_mode_label(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let p = self.palette();
-        let t = p.tokens;
-        chrome::interactive_control(div().id("sidebar-mode"), p, true)
-            .debug_selector(|| "sidebar-mode".into())
-            .flex_shrink_0()
-            .h(px(t.layout.icon_button))
-            .px(px(t.space.sm))
-            .rounded(px(t.radius.control))
-            .flex()
-            .items_center()
-            .gap(px(t.space.xs))
-            .text_size(px(t.text.meta))
-            .font_weight(FontWeight(t.weight.medium))
-            .text_color(rgb(p.roles.text_tertiary))
-            .hover(move |s| s.bg(rgb(p.roles.hover)))
-            .child("Normal")
-            .child(kbd("?", &p))
-            .tooltip(tooltip_view(
-                "Modal keys are on · press i to type, ? for every key",
-                None,
-                &p,
-            ))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.shell.shortcuts = true;
-                cx.notify();
-            }))
     }
 
     fn sidebar_resize_handle(&self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -2676,6 +2672,7 @@ impl Workspace {
                     ("Send", m("Ctrl Enter", "⌘ Enter")),
                     ("Files and editor", m("Ctrl Shift E", "⌘ Shift E")),
                     ("Terminal", m("Ctrl `", "⌘ `")),
+                    ("Model popover: choose, apply, close", "↑ ↓, Enter, Esc"),
                     ("Refresh", m("Ctrl R", "⌘ R")),
                     ("Zoom in / out", m("Ctrl +, Ctrl -", "⌘ +, ⌘ -")),
                 ],
