@@ -10,6 +10,8 @@ use gpui::{
 use std::collections::BTreeMap;
 use wks_native::terminal::{self as term, Emulator, Status};
 
+mod v2;
+
 /// Panel height as a share of the window, normal and enlarged.
 const PANEL_SHARE: f32 = 0.4;
 const PANEL_SHARE_TALL: f32 = 0.72;
@@ -234,6 +236,9 @@ impl TerminalView {
 /// error/success/warning/accent tones and white is its text; the remaining
 /// slots use VS Code's terminal palette for the theme's lightness.
 fn ansi(index: u8, p: Palette) -> u32 {
+    if p.tokens.design.is_v2() {
+        return v2::ansi_v2(index, p);
+    }
     match index & 15 {
         1 | 9 => return p.error,
         2 | 10 => return p.success,
@@ -265,7 +270,7 @@ impl Render for TerminalView {
         let font = gpui::font(family.clone());
         let measure = font.clone();
         let size = px(self.font_size);
-        let line = px((self.font_size * 1.35).round());
+        let line = px((self.font_size * p.tokens.panels.terminal_line).round());
         if self.focus_watch.is_none() {
             self.focus_watch = Some([
                 cx.on_focus(&self.focus, window, |_, _, cx| cx.notify()),
@@ -333,7 +338,7 @@ impl Render for TerminalView {
                 .w(cell.0)
                 .h(cell.1)
                 .when(focused, |d| {
-                    d.bg(gpui::Hsla::from(rgb(p.accent)).opacity(0.55))
+                    d.bg(gpui::Hsla::from(rgb(p.accent)).opacity(p.tokens.panels.cursor_alpha))
                 })
                 .when(!focused, |d| d.border_1().border_color(rgb(p.accent)))
         });
@@ -803,12 +808,33 @@ impl Workspace {
                 .debug_selector(|| "terminal-close".into())
                 .on_click(cx.listener(|this, _, window, cx| this.hide_terminal(window, cx))),
             );
+        let v2 = self.design().is_v2();
+        let header = if v2 {
+            let status = state.as_ref().map(|t| t.status);
+            let can_restart = can_start && state.is_some();
+            self.terminal_header_v2(
+                session
+                    .as_ref()
+                    .map(|s| self.session_title(s))
+                    .unwrap_or_else(|| "Session".into()),
+                cwd.clone(),
+                status,
+                view.clone(),
+                has_shell,
+                can_restart,
+                cx,
+            )
+        } else {
+            header
+        };
+        let t = p.tokens;
         let body: AnyElement = match (view, has_shell || state.as_ref().is_some_and(|t| t.status == Status::Failed)) {
             (Some(view), true) => div()
                 .flex_1()
                 .min_h_0()
                 .px_2()
                 .py_1()
+                .when(v2, |d| d.px(px(t.space.lg)).py(px(t.space.md)))
                 .bg(rgb(p.code_block))
                 // Cached: a Workspace redraw reuses the grid unless the
                 // terminal itself changed (output, size, focus, palette).
@@ -867,6 +893,11 @@ impl Workspace {
                         .rounded(px(p.panel_radius))
                         .border_1()
                         .border_color(rgb(p.border))
+                        .when(v2, |d| {
+                            d.rounded(px(t.radius.panel))
+                                .border(px(t.stroke.hairline))
+                                .border_color(rgb(p.roles.card_border))
+                        })
                         .bg(rgb(p.surface))
                         .overflow_hidden()
                         .child(header)

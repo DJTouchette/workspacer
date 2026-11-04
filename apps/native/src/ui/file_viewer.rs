@@ -23,6 +23,8 @@ use wks_native::{
     links::{self, DocumentLink, FileKind, FileTarget, Link},
 };
 
+mod v2;
+
 const KEY: &str = "file-preview";
 /// The conversation keeps at least this much width beside a docked viewer.
 pub(super) const MIN_CHAT_BESIDE: f32 = 400.;
@@ -1346,6 +1348,17 @@ impl Render for PreviewPane {
             .as_ref()
             .map(|t| t.path.clone())
             .unwrap_or_else(|| self.explorer.root.clone());
+        let header_v2 = p.tokens.design.is_v2().then(|| v2::HeaderV2 {
+            title: title.clone(),
+            path: path.clone(),
+            details: details.clone(),
+            icon: icon.clone(),
+            dirty,
+            saving,
+            can_save: editable && !saving && (dirty || self.conflict.is_some()),
+            editable,
+            window_pane,
+        });
         let modes = self.render_modes(p, cx);
         let back = (!self.history.is_empty())
             .then(|| back.on_click(cx.listener(|this, _, _, cx| this.back_guarded(cx))));
@@ -1430,6 +1443,10 @@ impl Render for PreviewPane {
             .child(place)
             .child(copy)
             .child(close);
+        let header = match header_v2 {
+            Some(h) => self.render_header_v2(h, p, cx).into_any_element(),
+            None => header.into_any_element(),
+        };
         let banner = |id: &'static str, tone: u32, icon: IconName, text: String| {
             div()
                 .debug_selector(move || id.into())
@@ -1611,6 +1628,12 @@ impl Render for PreviewPane {
                 d.rounded(px(p.panel_radius))
                     .border_1()
                     .border_color(rgb(p.border))
+            })
+            // Design v2: the same card edge as the Changes dock beside it.
+            .when(!window_pane && p.tokens.design.is_v2(), |d| {
+                d.rounded(px(p.tokens.radius.panel))
+                    .border(px(p.tokens.stroke.hairline))
+                    .border_color(rgb(p.roles.card_border))
             })
             .when(self.presentation == Presentation::Sheet, |d| {
                 d.shadow(chrome::floating_shadow(p))

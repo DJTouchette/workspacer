@@ -96,8 +96,6 @@ def shots():
     add("file-viewer", "File viewer with README.md open from a transcript link",
         [("click", "README_LINK"), ("sleep", 2)])
     add("terminal", "Session terminal panel", [("key", "Escape"), ("key", "ctrl+grave"), ("sleep", 2)])
-    add("welcome", "First run: no sessions yet, the welcome with setup checklist", fixture="empty")
-    add("slash-menu", "Composer `/` menu over the draft", [("key", "ctrl+l"), ("sleep", 0.8), ("type", "/")])
     add("new-session", "New agent form with a task typed",
         [("key", "Escape"), ("key", "ctrl+n"), ("sleep", 3), ("click", "NEW_TASK_FIELD"),
          ("type", "Profile sidebar scrolling with 1,000 sessions and fix any dropped frames.", 150)])
@@ -158,6 +156,19 @@ def shots():
         settings={"reading_width": "wide"})
     add("transcript-full", "Earlier transcript at the full reading width",
         [("key", "Escape"), ("keys", "ctrl+u", "ctrl+u", "ctrl+u")], settings={"reading_width": "full"})
+    # area-panels: design v2 opens Changes as a dock beside the chat (`g d`,
+    # the tool rail); its expand button opens the full page.
+    add("changes-docked", "Changes docked beside the conversation (v2; v1 shows the page)", nav("d"))
+    add("changes-docked-split", "Docked Changes, side by side", nav("d"), settings={"review_split": True})
+    add("changes-docked-light", "Docked Changes, Light theme", nav("d"), theme="light")
+    add("changes-page", "Changes full page from the dock's expand button (v2)",
+        nav("d") + [("click", "REVIEW_DOCK_EXPAND"), ("sleep", 1.5)])
+    add("changes-discard", "Docked Changes: a file's overflow menu",
+        nav("d") + [("click", "REVIEW_FILE_MORE"), ("sleep", 0.5)])
+    # area-composer: first run and the composer's menus (appended so v1
+    # baseline numbering stays stable).
+    add("welcome", "First run: no sessions yet, the welcome with setup checklist", fixture="empty")
+    add("slash-menu", "Composer `/` menu over the draft", [("key", "ctrl+l"), ("sleep", 0.8), ("type", "/")])
     return s
 
 
@@ -378,6 +389,9 @@ LANDMARKS = {
     # area-pages (design v2 layouts)
     "HOSTS_DETAILS": lambda shot: (1345, 211),      # Hosts: first machine's "Details"
     "JOB_OVERFLOW": lambda shot: (1366, 420),       # Jobs: first scheduled job's "..."
+    # area-panels: the v2 Changes dock's header and first file header.
+    "REVIEW_DOCK_EXPAND": lambda shot: (1535, 30),  # dock header "Open full page"
+    "REVIEW_FILE_MORE": lambda shot: (1563, 74),    # first file's "More actions"
     # Settings category rail; rows are ~37.7 px apart starting at Appearance.
     "settings_section": lambda shot, index: (570, 114 + round(index * 37.7)),
     # area-pages: the design v2 rail (Chat folds into Appearance).

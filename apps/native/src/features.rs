@@ -458,7 +458,29 @@ pub enum Request {
     },
     /// Whether `gh` and `az` are installed and signed in on the hub.
     PrProviders,
+    // area-panels
+    /// Every changed file's diff at once, for the stacked Changes view
+    /// (design v2): one `git.diff` per file, answered as
+    /// `{"files": [{"path", "staged", "untracked", "diff"}]}` in order. A
+    /// file whose read fails comes back with an empty diff and its error.
+    DiffSet {
+        cwd: String,
+        files: Vec<DiffTarget>,
+    },
 }
+
+// area-panels
+/// One file of a [`Request::DiffSet`]: which side of it to read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffTarget {
+    pub path: String,
+    pub staged: bool,
+    pub untracked: bool,
+}
+
+/// Files a [`Request::DiffSet`] reads at most; the view says when more
+/// changed.
+pub const DIFF_SET_MAX_FILES: usize = 200;
 
 /// One change to `agents.autoTitle`; everything else in it is left alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -651,6 +673,8 @@ impl Request {
             Self::PrAction(_) => "pr-action",
             Self::PrDetect { .. } => "pr-detect",
             Self::PrProviders => "pr-providers",
+            // area-panels
+            Self::DiffSet { .. } => "diff-set",
         }
     }
 
@@ -940,6 +964,38 @@ impl Request {
             Self::PrThreads { url } => backend.call("pr.threads", json!({"url":url})).await,
             Self::PrDetect { cwd } => backend.call("pr.detect", json!({"cwd":cwd})).await,
             Self::PrProviders => backend.call("pr.providers", json!({})).await,
+            // area-panels
+            Self::DiffSet { cwd, files } => {
+                let reads = files
+                    .iter()
+                    .take(DIFF_SET_MAX_FILES)
+                    .map(|file| async move {
+                        let answer = backend
+                            .call(
+                                "git.diff",
+                                json!({
+                                    "cwd": cwd,
+                                    "path": file.path,
+                                    "staged": file.staged,
+                                    "untracked": file.untracked,
+                                }),
+                            )
+                            .await;
+                        let (diff, error) = match answer {
+                            Ok(value) => (value["diff"].as_str().unwrap_or("").to_owned(), None),
+                            Err(e) => (String::new(), Some(e.to_string())),
+                        };
+                        json!({
+                            "path": file.path,
+                            "staged": file.staged,
+                            "untracked": file.untracked,
+                            "diff": diff,
+                            "error": error,
+                        })
+                    });
+                let files = futures_util::future::join_all(reads).await;
+                Ok(json!({ "files": files }))
+            }
             Self::PrForBranch { cwd } => backend.call("pr.forBranch", json!({"cwd":cwd})).await,
             Self::PrLink { session, url } => match url {
                 Some(url) => {

@@ -121,6 +121,12 @@ pub struct Settings {
     // area-transcript
     /// How wide the transcript reads under design v2 (v1 has one measure).
     pub reading_width: ReadingWidth,
+    // area-panels
+    /// Width of the docked Changes panel (design v2), unzoomed; `None`
+    /// follows the window. Dragging its edge sets it.
+    pub review_dock_width: Option<f32>,
+    /// Changes shows old and new side by side instead of one column (v2).
+    pub review_split: bool,
 }
 // area-transcript
 /// The transcript's reading measure under design v2: Settings -> Chat.
@@ -185,6 +191,9 @@ impl Default for Settings {
             sidebar_compact: false,
             // area-transcript
             reading_width: ReadingWidth::Comfortable,
+            // area-panels
+            review_dock_width: None,
+            review_split: false,
         }
     }
 }

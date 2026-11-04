@@ -2101,6 +2101,8 @@ impl Render for Workspace {
         let docked = [
             self.render_docked_viewer(window, cx),
             self.render_docked_tasks(window, cx),
+            // area-panels
+            self.render_docked_review(window, cx),
         ]
         .into_iter()
         .flatten();
