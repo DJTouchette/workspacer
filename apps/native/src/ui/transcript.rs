@@ -840,45 +840,61 @@ impl Workspace {
                     let brief_max = p.tokens.transcript().brief_max;
                     // r2-transcript: one quiet line, the whole brief on click.
                     if v2 {
-                        lead.push(self.dispatch_brief_v2(&key, description, open_key, open, window, cx));
+                        lead.push(self.dispatch_brief_v2(
+                            &key,
+                            description,
+                            open_key,
+                            open,
+                            window,
+                            cx,
+                        ));
                     } else {
-                    lead.push(
-                        div()
-                            .pl(px(10.))
-                            .border_l_2()
-                            .border_color(gpui::Hsla::from(rgb(p.accent)).opacity(0.45))
-                            .when(v2, |d| {
-                                d.pl(px(p.tokens.space.lg))
-                                    .border_l(px(p.tokens.stroke.focus))
-                                    .border_color(rgb(p.border))
-                                    .text_size(px(p.tokens.text.body))
-                            })
-                            .text_color(rgb(p.prose))
-                            .child(
-                                div()
-                                    .when(long && !open, |d| {
-                                        d.max_h(px(brief_max)).overflow_hidden()
-                                    })
-                                    .child(literal(format!("{key}-task"), description, window, cx)),
-                            )
-                            .when(long, |d| {
-                                d.child(
+                        lead.push(
+                            div()
+                                .pl(px(10.))
+                                .border_l_2()
+                                .border_color(gpui::Hsla::from(rgb(p.accent)).opacity(0.45))
+                                .when(v2, |d| {
+                                    d.pl(px(p.tokens.space.lg))
+                                        .border_l(px(p.tokens.stroke.focus))
+                                        .border_color(rgb(p.border))
+                                        .text_size(px(p.tokens.text.body))
+                                })
+                                .text_color(rgb(p.prose))
+                                .child(
                                     div()
-                                        .id(SharedString::from(format!("{open_key}-toggle")))
-                                        .debug_selector(|| "task-brief-toggle".into())
-                                        .mt_1()
-                                        .text_size(px(11.))
-                                        .text_color(rgb(p.accent))
-                                        .cursor_pointer()
-                                        .hover(|s| s.underline())
-                                        .child(if open { "Show less" } else { "Show full task" })
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.toggle_open(open_key.clone(), false, cx)
-                                        })),
+                                        .when(long && !open, |d| {
+                                            d.max_h(px(brief_max)).overflow_hidden()
+                                        })
+                                        .child(literal(
+                                            format!("{key}-task"),
+                                            description,
+                                            window,
+                                            cx,
+                                        )),
                                 )
-                            })
-                            .into_any_element(),
-                    );
+                                .when(long, |d| {
+                                    d.child(
+                                        div()
+                                            .id(SharedString::from(format!("{open_key}-toggle")))
+                                            .debug_selector(|| "task-brief-toggle".into())
+                                            .mt_1()
+                                            .text_size(px(11.))
+                                            .text_color(rgb(p.accent))
+                                            .cursor_pointer()
+                                            .hover(|s| s.underline())
+                                            .child(if open {
+                                                "Show less"
+                                            } else {
+                                                "Show full task"
+                                            })
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.toggle_open(open_key.clone(), false, cx)
+                                            })),
+                                    )
+                                })
+                                .into_any_element(),
+                        );
                     }
                 }
             }

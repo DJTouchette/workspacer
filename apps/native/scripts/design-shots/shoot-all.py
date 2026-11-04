@@ -172,6 +172,9 @@ def shots():
     # Integration: v2 folds Chat into Appearance; its reading width found by search.
     add("settings-reading-width", "Settings search: the transcript's reading width",
         nav("s") + [("click", 1360, 76), ("sleep", 0.5), ("type", "reading width"), ("sleep", 0.8)])
+    # r2-transcript: the turn's tool calls as event rows ("Worked … · n tools").
+    add("transcript-tools", "Transcript: a turn's tool calls as one-line event rows",
+        [("wheel", 6, 1000, 400)])
     return s
 
 

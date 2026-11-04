@@ -166,7 +166,11 @@ pub(super) fn tool_glyph(name: &str, category: &str) -> Glyph {
 /// lower-cased.
 fn short_tool_name(name: &str) -> String {
     let short = name.rsplit("__").next().unwrap_or(name);
-    short.rsplit('.').next().unwrap_or(short).to_ascii_lowercase()
+    short
+        .rsplit('.')
+        .next()
+        .unwrap_or(short)
+        .to_ascii_lowercase()
 }
 
 /// The event's verb, past tense once it has finished ("Read", "Edited",
@@ -639,7 +643,6 @@ impl Workspace {
         step
     }
 
-
     /// A tool's input and output, opened under its line: on the card
     /// surface with its hairline edge, as code blocks are.
     fn tool_details_v2(
@@ -1031,19 +1034,19 @@ impl Workspace {
                                 div()
                                     .text_size(px(t.text.meta))
                                     .text_color(rgb(p.roles.text_tertiary))
-                                    .child("Tool content was clipped to the retained-history limit."),
+                                    .child(
+                                        "Tool content was clipped to the retained-history limit.",
+                                    ),
                             )
                         })
                         .when(expanded, |d| {
-                            d.child(
-                                div().pt(px(t.space.xs)).child(self.tool_details_v2(
-                                    &preview,
-                                    tool,
-                                    &element_key,
-                                    window,
-                                    cx,
-                                )),
-                            )
+                            d.child(div().pt(px(t.space.xs)).child(self.tool_details_v2(
+                                &preview,
+                                tool,
+                                &element_key,
+                                window,
+                                cx,
+                            )))
                         }),
                 )
             })
@@ -1340,9 +1343,11 @@ impl Workspace {
                 &p,
             )
             .when(connected, |d| {
-                d.on_click(cx.listener(|this, _, window, cx| {
-                    this.open_feature(Screen::Changes, window, cx)
-                }))
+                d.on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.open_feature(Screen::Changes, window, cx)
+                    }),
+                )
             })
             .into_any_element(),
         );
@@ -1801,7 +1806,11 @@ impl Workspace {
                         .gap(px(t.space.md))
                         .min_w_0()
                         .when(!single, |d| {
-                            d.child(glyph_box(Glyph::Named(IconName::Bot), p.roles.text_tertiary, &p))
+                            d.child(glyph_box(
+                                Glyph::Named(IconName::Bot),
+                                p.roles.text_tertiary,
+                                &p,
+                            ))
                         })
                         .child(
                             div()
@@ -2092,7 +2101,9 @@ pub(super) fn children_badge(views: &[ChildView]) -> Option<StatusBadge> {
 /// A child row's name and its quieter context, never repeating the title
 /// of the delegation it sits under: then it is named by role or model.
 pub(super) fn child_names(child: &ChildAgent, parent_title: Option<&str>) -> (String, String) {
-    let same = |a: &str| parent_title.is_some_and(|t| !a.is_empty() && t.trim().eq_ignore_ascii_case(a.trim()));
+    let same = |a: &str| {
+        parent_title.is_some_and(|t| !a.is_empty() && t.trim().eq_ignore_ascii_case(a.trim()))
+    };
     let model = model_name(&child.model);
     let role = [child.agent_type.as_str(), child.label.as_str()]
         .into_iter()
@@ -2211,13 +2222,16 @@ impl Workspace {
             event.target = (!context.is_empty()).then(|| context.into());
             event.summary = last_tool.map(Into::into);
             event.end = match view.kind {
-                _ if view.stalled => EventEnd::Badge(StatusBadge::new(view.kind).label(view.word.clone())),
+                _ if view.stalled => {
+                    EventEnd::Badge(StatusBadge::new(view.kind).label(view.word.clone()))
+                }
                 StatusKind::Failed | StatusKind::NeedsYou => {
                     EventEnd::Badge(StatusBadge::new(view.kind).label(view.word.clone()))
                 }
-                StatusKind::Working | StatusKind::Done => {
-                    view.clock.clone().map_or(EventEnd::Nothing, EventEnd::Quiet)
-                }
+                StatusKind::Working | StatusKind::Done => view
+                    .clock
+                    .clone()
+                    .map_or(EventEnd::Nothing, EventEnd::Quiet),
                 _ => EventEnd::Quiet(view.word.clone()),
             };
             let open = {
@@ -2285,20 +2299,24 @@ impl Workspace {
                                 &p,
                             )
                             .debug_selector(|| "stalled-child-stop".into())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.command(
-                                    Command::Act {
-                                        session: id.clone(),
-                                        action: Action::Stop,
-                                    },
-                                    cx,
-                                );
-                            })),
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.command(
+                                        Command::Act {
+                                            session: id.clone(),
+                                            action: Action::Stop,
+                                        },
+                                        cx,
+                                    );
+                                },
+                            )),
                         )
                     })
             });
-            event.trailing.extend(actions.map(IntoElement::into_any_element));
+            event
+                .trailing
+                .extend(actions.map(IntoElement::into_any_element));
             let row = chrome::interactive_control(event_row(event, &p), p, enabled)
                 .px(px(t.space.sm - t.stroke.focus))
                 .debug_selector(move || {
@@ -2308,7 +2326,11 @@ impl Workspace {
                         "open-provider-subagent".into()
                     }
                 })
-                .tooltip(primitives::tooltip_view(child_details(child, managed), None, &p))
+                .tooltip(primitives::tooltip_view(
+                    child_details(child, managed),
+                    None,
+                    &p,
+                ))
                 .child(div().debug_selector(move || {
                     if managed {
                         "workspacer-child-icon".into()
@@ -2508,7 +2530,9 @@ impl Workspace {
                         .mt(px(t.space.xxs))
                         .mb(px(t.space.sm))
                         .ml(px(t.transcript().event_icon / 2.))
-                        .pl(px(t.transcript().event_icon / 2. + t.space.md - t.stroke.hairline))
+                        .pl(px(
+                            t.transcript().event_icon / 2. + t.space.md - t.stroke.hairline
+                        ))
                         .border_l(px(t.stroke.hairline))
                         .border_color(rgb(p.border))
                         .child(
@@ -2624,7 +2648,10 @@ mod tests {
         // The batch says so too, before anything else.
         let badge = children_badge(std::slice::from_ref(&view)).unwrap();
         assert_eq!(badge.kind, stalled_kind());
-        assert_eq!(badge.label.as_ref().map(|l| l.as_ref()), Some("Not responding · 7m"));
+        assert_eq!(
+            badge.label.as_ref().map(|l| l.as_ref()),
+            Some("Not responding · 7m")
+        );
         // A live one shows its humanised duration.
         child.telemetry.started_at_ms = Some(now - 125_000);
         child.telemetry.last_activity_ms = Some(now - 1_000);
@@ -2662,7 +2689,10 @@ mod tests {
         assert_eq!(tool_verb("Read", "Read", false), Some("Read"));
         assert_eq!(tool_verb("Edit", "Edit", true), Some("Editing"));
         assert_eq!(tool_verb("Bash", "Command", false), Some("Ran"));
-        assert_eq!(tool_verb("mcp__fs__write_file", "Edit", false), Some("Wrote"));
+        assert_eq!(
+            tool_verb("mcp__fs__write_file", "Edit", false),
+            Some("Wrote")
+        );
         assert_eq!(tool_verb("custom_tool", "Tool", false), None);
         assert_eq!(work_headline(false, Some(134_000)), "Worked 2m 14s");
         assert_eq!(work_headline(true, None), "Working");
