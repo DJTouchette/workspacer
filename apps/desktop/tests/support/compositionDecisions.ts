@@ -438,6 +438,35 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'queue.submit': {
+    reason:
+      "enqueues one item in the hub's own 0600 queue.json; the queue later runs it when a slot of its kind is free and the resource gate is open. A `shell` item is host code: shell.command runs under /bin/sh -c in the bounded process owner with a timeout, so it requires the actual server owner (is_owner, the same check as jobs.upsert); a federated caller is never the owner. A `spawn` item needs the caller's own agents.spawn authority and re-enters agents.spawn over the hub's own bus client with only provider, cwd, prompt, model, effort and permissionMode, so it inherits every agents.spawn clamp. `host` other than local is refused, and `source.kind` remote is stamped from the federated caller, never read from params",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['shell'],
+      },
+    ],
+  },
+  'queue.cancel': {
+    reason:
+      "marks one queued item, named by its hub-minted `id`, cancelled in the hub's own queue.json. Owner only, or the federation credential that submitted that remote item. A running item is refused, so it can only SHRINK what will run: nothing is executed, killed or deleted",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['id'],
+      },
+    ],
+  },
+  'queue.setConfig': {
+    reason:
+      'writes bounded numbers (slot counts, pressure percentages, MB floors) under the queue section of the shared config through the config lock; owner only. Unknown keys are refused and no path, argv, permission or grant reaches anything; the values only decide when already-authorized queued work is admitted. NOTHING HERE IS MACHINE-CHECKED beyond the Rust tests of the queue',
+    witnesses: [
+      {
+        kind: 'none',
+      },
+    ],
+  },
   'scratch.save': {
     reason:
       "writes one file into the project's personal scratch store, ~/.workspacer/scratch/<key>/files, and records its metadata in the hub's own index.json there. `cwd` only selects which project's scratch directory (canonicalized once, keyed by its first .git ancestor) and `path` is a relative path the hub refuses when absolute, dotted or symlinked and then requires to stay inside files/. WRITE-THEN-INTERPRET: the scratch directory lies outside every checkout and is not a config, skill, library, hook, job or launch root; the hub and claudemon never execute, source, parse or load a scratch file, there is deliberately no run or execute method, and the only later readers are scratch.list/scratch.read returning it as data. An agent that runs a scratch script does so with its own shell tools, the same authority it already had over /tmp. WIDEN-THEN-USE: it changes no grant, root, permission mode, approval gate, spawn input or token; credential-shaped content only tightens the file to sensitive 0600, and an existing file is replaced only with overwrite:true",
@@ -1589,6 +1618,20 @@ export const parameterDecisions: Record<
         "selects which group the hub deletes from its own project-groups.json; bounded opaque text, never a path the hub joins, and the group's folders are untouched",
     },
   },
+  'queue.submit': {
+    shell: {
+      kind: 'executable',
+      reason:
+        'shell.command is host code run by /bin/sh -c under the bounded process owner; accepted only from the actual server owner, like a jobs.upsert shell action',
+    },
+  },
+  'queue.cancel': {
+    id: {
+      kind: 'id',
+      reason:
+        'selects which queued item the hub marks cancelled in its own queue.json; a hub-minted opaque id, never a path or argv',
+    },
+  },
   'scratch.save': {
     cwd: {
       kind: 'path',
@@ -2167,6 +2210,9 @@ export const actors: string[] = [
   'push.revoke',
   'push.subscribe',
   'push.unsubscribe',
+  'queue.cancel',
+  'queue.setConfig',
+  'queue.submit',
   'remote.setSharing',
   'remote.tailscaleInfo',
   'remote.tailscaleServe',

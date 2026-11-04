@@ -115,6 +115,7 @@
     "git.stage",
     "git.status",
     "git.unstage",
+    "host.resources",
     "jobs.history",
     "jobs.list",
     "jobs.propose",
@@ -148,6 +149,11 @@
     "push.subscribe",
     "push.test",
     "push.unsubscribe",
+    "queue.cancel",
+    "queue.config",
+    "queue.list",
+    "queue.setConfig",
+    "queue.submit",
     "remote.pairingInfo",
     "remote.setSharing",
     "remote.sharingInfo",
@@ -1023,7 +1029,10 @@
       "sessions.queueResume",
       "sessions.queueSendNow",
       "sessions.queueUpdate",
-      "sessions.mcpStatus"
+      "sessions.mcpStatus",
+      "host.resources",
+      "queue.list",
+      "queue.config"
     ],
     "view": [
       "remote.sharingInfo",
@@ -1054,7 +1063,10 @@
       "sessionOpen.get",
       "sessions.kept",
       "sessions.taskOutput",
-      "sessions.mcpStatus"
+      "sessions.mcpStatus",
+      "host.resources",
+      "queue.list",
+      "queue.config"
     ]
   },
   "spawnKeys": [
@@ -1219,6 +1231,13 @@
       "Publisher": "fs.watch"
     },
     {
+      "Pattern": "host.resources",
+      "Disposition": "guarded-by-capability",
+      "Method": "host.resources",
+      "Reason": "the same object host.resources returns: this host's name, CPU, memory and IO pressure, available memory, free space on the hub state disk, work-queue slot usage and the admission gate's reasons. Guarding it by that method discloses exactly what the call plane already does. Only the hub publishes it (every 15 s and when the gate opens or closes; the topic has no provider publisher), so a forged sample cannot steer a client's placement view",
+      "Publisher": ""
+    },
+    {
       "Pattern": "hub.peer.connected",
       "Disposition": "open-by-decision",
       "Method": "",
@@ -1321,6 +1340,13 @@
       "Disposition": "guarded-by-capability",
       "Method": "sessions.attachTerminal",
       "Reason": "end-of-stream for the same guarded stream: it names a sessionId and tells a credential that may not watch the terminal exactly when that terminal died",
+      "Publisher": ""
+    },
+    {
+      "Pattern": "queue.changed",
+      "Disposition": "guarded-by-capability",
+      "Method": "queue.list",
+      "Reason": "one work-queue item exactly as queue.list returns it (label, kind, state, the spawn prompt or shell command, timestamps, exit code and an output tail), published on every state change. It discloses what queue.list discloses, so only a caller that may already list the queue receives it. Only the hub publishes it (queue.submit, queue.cancel and the queue's own scheduler; the topic has no provider publisher), so a forged event cannot fake a finished or cancelled item",
       "Publisher": ""
     },
     {

@@ -79,6 +79,12 @@ pub struct Options {
     pub home_dir: Option<std::path::PathBuf>,
     pub jobs_file: Option<std::path::PathBuf>,
     pub(crate) jobs_service: Option<Arc<crate::services::jobs::Service>>,
+    /// The host work queue file. Defaults to `queue.json` next to `jobs_file`
+    /// (else in `data_dir`); an empty path disables the queue.
+    pub work_queue_file: Option<std::path::PathBuf>,
+    pub(crate) work_queue: Option<Arc<crate::services::work_queue::WorkQueue>>,
+    /// The shared config.yaml owner, when this hub installed one.
+    pub(crate) shared_config: Option<Arc<crate::services::config::Config>>,
     pub(crate) terminals: Option<Arc<crate::services::terminals::Terminals>>,
     pub machine_power_provider: Option<Arc<dyn crate::services::machine_power::PowerProvider>>,
     pub(crate) analytics_watcher: Option<Arc<crate::services::analytics::Watcher>>,
@@ -163,6 +169,9 @@ impl Default for Options {
             home_dir: None,
             jobs_file: None,
             jobs_service: None,
+            work_queue_file: None,
+            work_queue: None,
+            shared_config: None,
             analytics_watcher: None,
             library_watcher: None,
             terminals: None,
@@ -2379,6 +2388,9 @@ async fn run(
     options = configured;
     let (configured, mut jobs_task) = crate::services::jobs::install(options, handle.clone());
     options = configured;
+    let (configured, mut work_queue_task) =
+        crate::services::work_queue::install(options, handle.clone())?;
+    options = configured;
     let (configured, mut nodes_owner) =
         crate::services::nodes::install(options, handle.clone()).await?;
     options = configured;
@@ -2644,6 +2656,10 @@ async fn run(
                 result = match jobs_result { Ok(Ok(())) => Err(anyhow!("job scheduler stopped unexpectedly")), Ok(Err(e)) => Err(e), Err(e) => Err(e.into()) };
                 jobs_task = None; break;
             }
+            queue_result = async { work_queue_task.as_mut().unwrap().await }, if work_queue_task.is_some() => {
+                result = match queue_result { Ok(Ok(())) => Err(anyhow!("work queue stopped unexpectedly")), Ok(Err(e)) => Err(e), Err(e) => Err(e.into()) };
+                work_queue_task = None; break;
+            }
             mcp_result = async { mcp_task.as_mut().unwrap().await }, if mcp_task.is_some() => {
                 result = match mcp_result { Ok(Ok(())) => Err(anyhow!("MCP listener stopped unexpectedly")), Ok(Err(e)) => Err(e), Err(e) => Err(e.into()) };
                 mcp_task = None; break;
@@ -2888,6 +2904,10 @@ async fn run(
         let _ = task.await;
     }
     if let Some(task) = jobs_task {
+        task.abort();
+        let _ = task.await;
+    }
+    if let Some(task) = work_queue_task {
         task.abort();
         let _ = task.await;
     }

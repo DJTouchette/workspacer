@@ -112,6 +112,33 @@ On hub start, items persisted as `running` become `unknown` with detail
 Retention: terminal items keep the newest 200; queued and running items are
 never evicted.
 
+Storage: `queue.json` next to `jobs.json` (else in the hub data dir), shape
+`{"version": 1, "items": [...]}`. A file that cannot be parsed is renamed to
+`queue.damaged-<ms>.json` (never overwritten) and the queue starts empty.
+
+Identity (hub implementation notes):
+- A federation peer reaches the destination over `/bus?peer=1` with a
+  credential the destination issued, so the destination sees `federated: true`,
+  `authenticated_host: false` (also for the host token), `trusted` only for the
+  host token or an operator token, and `token_id` = that credential's
+  fingerprint. The destination does not learn the peer's *name*.
+- `source.kind` is stamped by the destination: a federated caller is always
+  `remote` (its `source.origin` is the submitter's own display label, not
+  verified); any other caller asking for `remote` gets `prompt`, and its
+  `origin` is cleared. The remote submitter's credential fingerprint is stored
+  with the item (never on the wire) and is what lets that peer cancel it.
+- Consequence of invariant 3: a federated caller is never the server owner, so
+  a peer cannot submit **shell** items to another hub. Remote placement of
+  shell work needs an explicit contract change first.
+- Spawn authority: the host or an operator credential (`trusted`, local or
+  federated), or a scoped tier that lists `agents.spawn` (none today). Plugin
+  connections are refused. The item's agent is started by the hub's own bus
+  client with only `provider`, `cwd`, `prompt` (as the spawn `message`),
+  `model`, `effort`, `permissionMode`, `label` and, for `source.kind == "job"`,
+  `jobId`.
+- Wire items always carry `sessionId`, `exitCode`, `detail` and `waitReason`
+  (empty / `null` when not applicable).
+
 ## RPCs
 
 | Method | Auth | Params → Result |

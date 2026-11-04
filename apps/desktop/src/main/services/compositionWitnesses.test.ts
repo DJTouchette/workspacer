@@ -29,6 +29,8 @@ const NONE = [
   // Hub-chosen ids only: an optional integer/boolean, or no input at all.
   'sessionOpen.cleanup',
   'sessionOpen.snoozeCleanup',
+  // Bounded numbers only, into the hub's own queue limits.
+  'queue.setConfig',
 ];
 // Closed vocabulary: new exemptions must change both a claim and this verifier.
 const INVERSE = [

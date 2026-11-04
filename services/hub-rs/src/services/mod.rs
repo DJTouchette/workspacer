@@ -17,6 +17,7 @@ pub mod filewatch;
 pub mod fleet_messages;
 pub mod fleet_review;
 pub mod git;
+pub mod host_resources;
 pub mod host_status;
 pub mod html_card;
 pub mod image_preview;
@@ -65,6 +66,7 @@ pub mod ui_assets;
 pub mod uploads;
 pub mod usage_prefs;
 pub mod wakes;
+pub mod work_queue;
 pub mod worker_results;
 pub mod workflow_artifacts;
 pub mod workflow_runtime;
@@ -147,6 +149,8 @@ pub(crate) fn install_config(
         options = profile_accounts::install(options, directory.clone(), home);
     }
     let config = Arc::new(config::Config::open(directory.join("config.yaml")));
+    // The work queue's `queue.*` limits live in this same shared file.
+    options.shared_config = Some(config.clone());
     // The sidebar cleanup prompt's threshold (`sessions.cleanupThreshold`).
     if let Some(open) = &options.session_open {
         open.set_config(config.clone());
