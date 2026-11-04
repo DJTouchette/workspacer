@@ -1,5 +1,5 @@
 //! `native-harness serve --catalog`: believable data for the feature pages
-//! (Projects, project groups, Scratch, Jobs, History) so they can be looked
+//! (Projects, project groups, Scratch, Jobs, Hosts, History) so they can be looked
 //! at without a real hub. Every path is an obvious fixture path under
 //! `/home/dev`; nothing here touches the disk or starts anything.
 //!
@@ -609,6 +609,12 @@ pub struct Catalog {
     /// Ended live rows deleted from History.
     forgotten: BTreeSet<String>,
     created: u64,
+    /// The host work queue (`docs/host-work-queue.md`): this hub's items,
+    /// each peer's, the `queue.*` limits, and the next item number.
+    queue: Vec<Value>,
+    peer_queues: BTreeMap<String, Vec<Value>>,
+    limits: Value,
+    queue_seq: u64,
 }
 
 impl Catalog {
@@ -699,6 +705,11 @@ impl Catalog {
             history,
             forgotten: BTreeSet::new(),
             created: 0,
+            queue: seed_queue(now),
+            peer_queues: BTreeMap::from([(PEER_GPU.to_owned(), seed_peer_queue(now))]),
+            limits: json!({"maxAgents": 4, "maxShell": 2, "maxCpuPressure": 60,
+                "maxMemoryPressure": 25, "minAvailableMemoryMb": 1024, "minFreeDiskMb": 2048}),
+            queue_seq: 0,
         };
         for job in catalog.jobs.clone() {
             catalog.schedule(&job, now);
@@ -722,11 +733,197 @@ impl Catalog {
             "jobs.upsert" => self.jobs_upsert(params),
             "jobs.remove" => self.jobs_remove(params),
             "jobs.run" => self.jobs_run(params),
+            "host.resources" => Ok(self.resources(LOCAL_HUB)),
+            "queue.list" => Ok(self.queue_list(params)),
+            "queue.targets" => Ok(self.queue_targets(params)),
+            "queue.config" => Ok(self.limits.clone()),
+            "queue.setConfig" => self.queue_set_config(params),
+            "queue.submit" => self.queue_submit(params),
+            "queue.cancel" => self.queue_cancel(params),
             "sessions.history" => self.history(params, live),
             "sessions.forget" => self.forget(params, live),
             _ => return None,
         };
         Some(result.unwrap_or_else(|error| json!({"ok": false, "error": error})))
+    }
+
+    // ---- host work queue -------------------------------------------------
+
+    /// A sample: this hub is busy (one agent running, three queued) with its
+    /// gate open; the GPU peer's memory pressure has closed its gate. The
+    /// laptop has no PSI (macOS): those fields are null, never zero.
+    fn resources(&self, host: &str) -> Value {
+        let running = |items: &[Value], kind: &str| {
+            items
+                .iter()
+                .filter(|i| i["state"] == "running" && i["kind"] == kind)
+                .count()
+        };
+        let queued = |items: &[Value]| items.iter().filter(|i| i["state"] == "queued").count();
+        let local = host == LOCAL_HUB;
+        let items = if local {
+            &self.queue
+        } else {
+            self.peer_queues.get(host).map_or(&[][..], Vec::as_slice)
+        };
+        let limit = |key: &str, default: i64| self.limits[key].as_i64().unwrap_or(default);
+        let (cpu, memory, available, gate) = match host {
+            LOCAL_HUB => (
+                json!(4.2),
+                json!(1.3),
+                12_288,
+                json!({"open": true, "reasons": []}),
+            ),
+            PEER_GPU => (
+                json!(18.0),
+                json!(34.0),
+                5_900,
+                json!({"open": false, "reasons": ["memory pressure 34.0 >= 25.0"]}),
+            ),
+            _ => (
+                Value::Null,
+                Value::Null,
+                7_400,
+                json!({"open": true, "reasons": []}),
+            ),
+        };
+        json!({
+            "host": host,
+            "sampledAt": self.now - 3_000,
+            "cpu": {"cores": if local { 8 } else { 32 }, "load1": 1.4,
+                "usagePct": if local { 23.5 } else { 61.0 }, "pressureAvg10": cpu},
+            "memory": {"totalMb": if local { 31_800 } else { 128_000 }, "availableMb": available,
+                "pressureAvg10": memory},
+            "io": {"pressureAvg10": if host == PEER_LAPTOP { Value::Null } else { json!(0.4) }},
+            "disk": {"path": "/home/dev/.config/workspacer-hub", "freeMb": 80_000, "totalMb": 500_000},
+            "queue": {
+                "agentSlots": if local { limit("maxAgents", 4) } else { 2 },
+                "agentsRunning": running(items, "spawn"),
+                "shellSlots": if local { limit("maxShell", 2) } else { 1 },
+                "shellRunning": running(items, "shell"),
+                "queued": queued(items),
+                "gate": gate,
+            },
+        })
+    }
+
+    fn queue_list(&self, params: &Value) -> Value {
+        let peers: Vec<Value> = if params["includePeers"] == true {
+            let mut peers: Vec<Value> = self
+                .peer_queues
+                .iter()
+                .map(|(peer, items)| json!({"peer": peer, "ok": true, "items": items}))
+                .collect();
+            peers.push(json!({"peer": PEER_LAPTOP, "ok": false,
+                "error": "hub:laptop/queue.list timed out after 10s", "items": []}));
+            peers
+        } else {
+            Vec::new()
+        };
+        json!({"host": LOCAL_HUB, "items": self.queue, "peers": peers})
+    }
+
+    fn queue_targets(&self, params: &Value) -> Value {
+        let provider = text(params, "provider");
+        let providers = |codex: bool| {
+            json!([{"provider": "claude", "found": true, "authenticated": true},
+                   {"provider": "codex", "found": codex, "authenticated": codex}])
+        };
+        let gpu_ok = provider != "codex";
+        json!({
+            "targets": [
+                {"host": "local", "local": true, "connected": true, "dispatch": true,
+                 "resources": self.resources(LOCAL_HUB), "providers": providers(true),
+                 "cwds": [WORKSPACER, NATIVE, HUB, INFRA], "eligible": true, "score": 3.0,
+                 "reasons": []},
+                {"host": PEER_GPU, "local": false, "connected": true, "dispatch": true,
+                 "resources": self.resources(PEER_GPU), "providers": providers(false),
+                 "cwds": ["/srv/dev/workspacer", "/srv/dev/models"], "eligible": gpu_ok,
+                 "score": 1.0,
+                 "reasons": if gpu_ok { json!([]) } else { json!(["codex is not installed"]) }},
+                {"host": PEER_LAPTOP, "local": false, "connected": false, "dispatch": true,
+                 "resources": null, "providers": [], "cwds": [], "eligible": false, "score": 0,
+                 "reasons": ["not connected"]},
+            ],
+            "best": "local",
+        })
+    }
+
+    fn queue_set_config(&mut self, params: &Value) -> Result<Value, String> {
+        let Some(patch) = params.as_object() else {
+            return Err("queue.setConfig takes an object".into());
+        };
+        for (key, value) in patch {
+            if self.limits.get(key).is_none() {
+                return Err(format!("unknown queue setting {key}"));
+            }
+            if !value.as_f64().is_some_and(|v| v >= 0.) {
+                return Err(format!("{key} must be a non-negative number"));
+            }
+            self.limits[key] = value.clone();
+        }
+        Ok(self.limits.clone())
+    }
+
+    /// Spawns only (shell items are owner host code, out of scope here):
+    /// queued here, or on the GPU peer; `any` lands here (best fit).
+    fn queue_submit(&mut self, params: &Value) -> Result<Value, String> {
+        if params["kind"] != "spawn" || !params["spawn"].is_object() {
+            return Err("the fixture queues spawn items only".into());
+        }
+        let host = match text(params, "host") {
+            "" | "local" | "any" => LOCAL_HUB,
+            PEER_GPU => PEER_GPU,
+            PEER_LAPTOP => return Err("peer laptop is not connected".into()),
+            other => return Err(format!("unknown peer {other}")),
+        };
+        self.queue_seq += 1;
+        let item = json!({
+            "id": format!("q_fixture{:03}", self.queue_seq),
+            "kind": "spawn",
+            "label": text(params, "label"),
+            "priority": params["priority"].as_i64().unwrap_or(0),
+            "state": "queued",
+            "source": {"kind": if host == LOCAL_HUB { "prompt" } else { "remote" },
+                "origin": if host == LOCAL_HUB { "" } else { LOCAL_HUB }},
+            "spawn": params["spawn"],
+            "enqueuedAt": wall_now(), "startedAt": 0, "finishedAt": 0,
+            "exitCode": null, "detail": "", "waitReason": "no free agent slot",
+        });
+        if host == LOCAL_HUB {
+            self.queue.push(item.clone());
+        } else {
+            self.peer_queues
+                .entry(host.to_owned())
+                .or_default()
+                .push(item.clone());
+        }
+        Ok(json!({"host": if host == LOCAL_HUB { "local" } else { host }, "item": item}))
+    }
+
+    fn queue_cancel(&mut self, params: &Value) -> Result<Value, String> {
+        let id = text(params, "id");
+        let items = match text(params, "host") {
+            "" | "local" => &mut self.queue,
+            peer => self
+                .peer_queues
+                .get_mut(peer)
+                .ok_or_else(|| format!("unknown peer {peer}"))?,
+        };
+        let item = items
+            .iter_mut()
+            .find(|i| i["id"] == id)
+            .ok_or_else(|| format!("no queue item {id}"))?;
+        if item["state"] != "queued" {
+            return Err(format!(
+                "item {id} is {}; only queued items can be cancelled",
+                item["state"].as_str().unwrap_or("?")
+            ));
+        }
+        item["state"] = json!("cancelled");
+        item["finishedAt"] = json!(wall_now());
+        item["waitReason"] = json!("");
+        Ok(json!({"ok": true, "item": item}))
     }
 
     // ---- project groups ---------------------------------------------------
@@ -1227,10 +1424,60 @@ impl Catalog {
     }
 }
 
+const LOCAL_HUB: &str = "studio";
+const PEER_GPU: &str = "gpu-box";
+const PEER_LAPTOP: &str = "laptop";
+
+/// This hub's queue: one agent running, two waiting (one at a higher
+/// priority, from the nightly job), a finished shell item and one whose
+/// outcome was lost to a restart.
+fn seed_queue(now: i64) -> Vec<Value> {
+    let spawn = |cwd: &str, prompt: &str| json!({"provider": "claude", "cwd": cwd, "prompt": prompt, "model": "sonnet"});
+    vec![
+        json!({"id": "q_01JRUN0000000000000000001", "kind": "spawn", "label": "Bus fan-out profiling",
+            "priority": 0, "state": "running", "source": {"kind": "prompt"},
+            "spawn": spawn(HUB, "Profile the bus fan-out under 500 subscribers."),
+            "enqueuedAt": now - 14 * MINUTE, "startedAt": now - 12 * MINUTE, "finishedAt": 0,
+            "sessionId": "s-fixture-running", "exitCode": null, "detail": "", "waitReason": ""}),
+        json!({"id": "q_01JQUE0000000000000000002", "kind": "spawn", "label": "Nightly test sweep",
+            "priority": 2, "state": "queued", "source": {"kind": "job", "jobId": JOB_TESTS},
+            "spawn": spawn(WORKSPACER, "The nightly test run failed. Triage the failures."),
+            "enqueuedAt": now - 6 * MINUTE, "startedAt": 0, "finishedAt": 0,
+            "exitCode": null, "detail": "", "waitReason": "no free agent slot"}),
+        json!({"id": "q_01JQUE0000000000000000003", "kind": "spawn", "label": "",
+            "priority": 0, "state": "queued", "source": {"kind": "agent"},
+            "spawn": spawn(NATIVE, "Tidy the Hosts view spacing at narrow widths."),
+            "enqueuedAt": now - 2 * MINUTE, "startedAt": 0, "finishedAt": 0,
+            "exitCode": null, "detail": "", "waitReason": "no free agent slot"}),
+        json!({"id": "q_01JDON0000000000000000004", "kind": "shell", "label": "cargo test",
+            "priority": 0, "state": "failed", "source": {"kind": "job", "jobId": JOB_HEALTH},
+            "shell": {"command": "cargo test --locked", "cwd": HUB, "timeoutSec": 3600},
+            "enqueuedAt": now - 3 * HOUR, "startedAt": now - 3 * HOUR, "finishedAt": now - 3 * HOUR + 4 * MINUTE,
+            "exitCode": 101, "detail": "test bus::fanout ... FAILED", "waitReason": ""}),
+        json!({"id": "q_01JUNK0000000000000000005", "kind": "spawn", "label": "Release notes draft",
+            "priority": 0, "state": "unknown", "source": {"kind": "prompt"},
+            "spawn": spawn(WORKSPACER, "Draft the 0.9 release notes."),
+            "enqueuedAt": now - DAY, "startedAt": now - DAY, "finishedAt": now - DAY + HOUR,
+            "exitCode": null, "detail": "hub restarted while running", "waitReason": ""}),
+    ]
+}
+
+/// The GPU peer's queue: a remote item from this hub, waiting on its gate.
+fn seed_peer_queue(now: i64) -> Vec<Value> {
+    vec![
+        json!({"id": "q_01JGPU0000000000000000001", "kind": "spawn", "label": "Fine-tune eval",
+        "priority": 1, "state": "queued", "source": {"kind": "remote", "origin": LOCAL_HUB},
+        "spawn": {"provider": "claude", "cwd": "/srv/dev/models", "prompt": "Run the eval suite."},
+        "enqueuedAt": now - 9 * MINUTE, "startedAt": 0, "finishedAt": 0,
+        "exitCode": null, "detail": "", "waitReason": "memory pressure 34.0 >= 25.0"}),
+    ]
+}
+
 fn seed_jobs(now: i64) -> Vec<Value> {
     vec![
         json!({
             "id": JOB_TESTS, "name": "Nightly test sweep", "enabled": true,
+            "host": "local", "priority": 2,
             "trigger": {"kind": "daily", "at": "07:00", "days": [1, 2, 3, 4, 5]},
             "action": {"kind": "spawn", "spawn": {
                 "cwd": WORKSPACER, "provider": "claude", "model": "sonnet",
@@ -1613,6 +1860,49 @@ mod tests {
             &[],
         );
         assert_eq!(nothing.unwrap()["ok"], false);
+    }
+
+    #[test]
+    fn hosts_fixture_serves_the_whole_contract() {
+        use crate::hosts::{self, Snapshot, Support};
+        let mut catalog = Catalog::new(wall_now());
+        let mut call = |method: &str, params: Value| catalog.call(method, &params, &[]).unwrap();
+        let snapshot = Snapshot::parse(&json!({
+            "resources": call("host.resources", json!({})),
+            "list": call("queue.list", json!({"includePeers": true})),
+            "targets": call("queue.targets", json!({"kind": "spawn"})),
+            "config": call("queue.config", json!({})),
+        }));
+        assert_eq!(snapshot.support(), Support::Supported);
+        let cards = hosts::cards(&snapshot, &hosts::Live::default());
+        let names: Vec<_> = cards.iter().map(|c| c.host.as_str()).collect();
+        assert_eq!(names, ["local", PEER_GPU, PEER_LAPTOP]);
+        let local = cards[0].resources.as_ref().unwrap();
+        assert_eq!(local.agent_line(), "1/4 agents");
+        assert_eq!(local.queued_line(), "2 queued");
+        let gpu = cards[1].resources.as_ref().unwrap();
+        assert_eq!(gpu.gate_label(), "Gate closed");
+        assert!(!cards[2].error.is_empty(), "the laptop timed out");
+
+        // Submit to the peer, cancel it, and refuse to cancel running work.
+        let submitted = call(
+            "queue.submit",
+            json!({"host": PEER_GPU, "kind": "spawn",
+            "spawn": {"provider": "claude", "cwd": "/srv/dev/models", "prompt": "go"}}),
+        );
+        let (host, item) = hosts::parse_submitted(&submitted).unwrap();
+        assert_eq!((host.as_str(), item.state.label()), (PEER_GPU, "queued"));
+        let cancelled = call("queue.cancel", json!({"id": item.id, "host": PEER_GPU}));
+        assert_eq!(cancelled["item"]["state"], "cancelled");
+        let refused = call("queue.cancel", json!({"id": "q_01JRUN0000000000000000001"}));
+        assert_eq!(refused["ok"], false);
+        let limits = call("queue.setConfig", json!({"maxAgents": 6}));
+        assert_eq!(limits["maxAgents"], 6);
+        assert_eq!(call("queue.setConfig", json!({"nope": 1}))["ok"], false);
+        let resources = hosts::Resources::parse(&call("host.resources", json!({}))).unwrap();
+        assert_eq!(resources.agent_line(), "1/6 agents");
+        let targets = hosts::parse_targets(&call("queue.targets", json!({"provider": "codex"})));
+        assert!(!targets.unwrap().find(PEER_GPU).unwrap().eligible);
     }
 
     #[test]

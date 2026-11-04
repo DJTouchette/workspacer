@@ -14,6 +14,7 @@ mod file_viewer;
 mod fleet_card;
 mod gauge;
 mod handoff;
+mod hosts;
 mod island;
 mod jobs;
 mod kept;
@@ -424,6 +425,7 @@ actions!(
         ShowSessionDetails,
         ShowModel,
         ShowJobs,
+        ShowHosts,
         ShowScratch,
         Search,
         OpenProject,
@@ -495,6 +497,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("g e", ShowSessionDetails, Some("VimNormal")),
         KeyBinding::new("g m", ShowModel, Some("VimNormal")),
         KeyBinding::new("g j", ShowJobs, Some("VimNormal")),
+        KeyBinding::new("g o", ShowHosts, Some("VimNormal")),
         KeyBinding::new("g n", ShowScratch, Some("VimNormal")),
         KeyBinding::new("h", ShowProjects, Some("VimNormal")),
         KeyBinding::new("l", OpenProject, Some("VimNormal")),
@@ -1657,8 +1660,15 @@ impl Workspace {
             || self.requested_session.is_some()
             || self.spawn_pending
             || self.view.creating
+            || self.extras.queue_sent
             || !self.view.connected
         {
+            return;
+        }
+        // A peer, Best fit or "Queue if busy" goes through the work queue;
+        // This machine without it keeps the direct spawn below unchanged.
+        if let Some(host) = self.queued_launch() {
+            self.submit_queued(host, window, cx);
             return;
         }
         self.adopt_typed_project(window, cx);
@@ -1871,6 +1881,7 @@ impl Render for Workspace {
                 Screen::Changes => self.render_review(window, cx).into_any_element(),
                 Screen::Recent
                 | Screen::Jobs
+                | Screen::Hosts
                 | Screen::Scratch
                 | Screen::History
                 | Screen::Session

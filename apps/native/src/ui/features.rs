@@ -55,6 +55,27 @@ pub(super) struct Extras {
     pub show_archived: bool,
     /// The Jobs row showing its spec and runs.
     pub job_expanded: Option<String>,
+    /// Re-reads the Hosts view every 10s while it is open; ends itself
+    /// (and the `host.*`/`queue.*` watch) once the view closes.
+    pub hosts_poll: Option<Task<()>>,
+    /// The local limits editor is open.
+    pub limits_open: bool,
+    /// One input per `hosts::LIMITS` key, in that order.
+    pub limit_inputs: Vec<Entity<InputState>>,
+    pub limits_error: String,
+    /// A `queue.setConfig` is on its way; the editor closes when it lands.
+    pub limits_sent: bool,
+    /// The `host-action` number when it was sent; only a newer one settles it.
+    pub limits_after: u64,
+    /// Where the New Agent form launches (`Local` is today's direct spawn).
+    pub launch_host: wks_native::hosts::HostChoice,
+    /// "Queue if busy" for This machine: submit through the queue instead.
+    pub launch_queue: bool,
+    /// The project folder chosen on a peer (from its target's `cwds`).
+    pub launch_host_cwd: String,
+    /// A `queue.submit` from the form is on its way.
+    pub queue_sent: bool,
+    pub queue_receipt: u64,
     /// The job whose Remove was clicked once; the second click removes it.
     pub job_confirm_remove: Option<String>,
     /// The Jobs page shows every job's runs instead of the jobs.
@@ -238,6 +259,20 @@ impl Extras {
             dismissed_notices: Vec::new(),
             show_archived: false,
             job_expanded: None,
+            hosts_poll: None,
+            limits_open: false,
+            limit_inputs: wks_native::hosts::LIMITS
+                .iter()
+                .map(|_| cx.new(|cx| InputState::new(window, cx)))
+                .collect(),
+            limits_error: String::new(),
+            limits_sent: false,
+            limits_after: 0,
+            launch_host: Default::default(),
+            launch_queue: false,
+            launch_host_cwd: String::new(),
+            queue_sent: false,
+            queue_receipt: 0,
             job_confirm_remove: None,
             job_runs_tab: false,
             job_failed_only: false,
@@ -472,6 +507,7 @@ impl Workspace {
                 self.request(Request::Jobs, cx);
                 self.request(Request::JobRuns, cx);
             }
+            Screen::Hosts => self.open_hosts(cx),
             Screen::Scratch => self.open_scratch(cx),
             Screen::Changes => {
                 if let Some(s) = self.selected_session() {
@@ -571,6 +607,7 @@ impl Workspace {
         self.sync_file_viewer(next, window, cx);
         self.sync_archive(next, cx);
         self.sync_project_groups(next);
+        self.sync_hosts(next, window, cx);
         if self.settings.notifications
             && self.view.connected
             && next.connected
@@ -724,6 +761,7 @@ impl Workspace {
                 Some("Every session this connection knows about, including ended ones.".into()),
             ),
             Screen::Jobs => ("Jobs", Some(super::jobs::JOBS_DESCRIPTION.into())),
+            Screen::Hosts => ("Hosts", Some(super::hosts::HOSTS_DESCRIPTION.into())),
             Screen::Scratch => ("Scratch", Some(super::scratch::SCRATCH_DESCRIPTION.into())),
             Screen::History => ("Conversation history", Some(HISTORY_DESCRIPTION.into())),
             // The session itself is the hero; its facts follow underneath.
@@ -768,6 +806,19 @@ impl Workspace {
                 })
                 .into_any_element(),
             ),
+            Screen::Hosts => Some(
+                self.quiet_button(
+                    "hosts-refresh",
+                    "Refresh",
+                    IconName::Redo,
+                    self.view.connected,
+                )
+                .debug_selector(|| "hosts-refresh".into())
+                .when(self.view.connected, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Hosts, cx)))
+                })
+                .into_any_element(),
+            ),
             Screen::Scratch => Some(
                 self.quiet_button(
                     "scratch-refresh",
@@ -809,6 +860,7 @@ impl Workspace {
         };
         let body = match self.screen {
             Screen::Jobs => self.render_jobs(cx),
+            Screen::Hosts => self.render_hosts(cx),
             Screen::Scratch => self.render_scratch(window, cx),
             Screen::History => self.render_history(window, cx),
             Screen::Session => self.render_session(window.viewport_size().width < px(900.), cx),

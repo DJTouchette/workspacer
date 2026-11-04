@@ -146,6 +146,32 @@ impl Job {
         trigger_summary(&self.spec["trigger"])
     }
 
+    /// Where a due run goes (`docs/host-work-queue.md`): empty runs it
+    /// inline as before; `local`, a peer or `any` submits a queue item.
+    pub fn host(&self) -> &str {
+        self.spec["host"].as_str().unwrap_or("").trim()
+    }
+
+    /// Queue priority; used only when [`Job::host`] is set.
+    pub fn priority(&self) -> i64 {
+        self.spec["priority"].as_i64().unwrap_or(0)
+    }
+
+    /// `"inline"`, `"queue · this machine"`, `"queue · gpu-box"`,
+    /// `"queue · best fit"`, with the priority when it is not 0.
+    pub fn host_label(&self) -> String {
+        let host = match self.host() {
+            "" => return "inline".into(),
+            "local" => "queue · this machine".to_owned(),
+            "any" => "queue · best fit".to_owned(),
+            peer => format!("queue · {peer}"),
+        };
+        match self.priority() {
+            0 => host,
+            p => format!("{host} · priority {p}"),
+        }
+    }
+
     pub fn action_summary(&self) -> String {
         action_summary(&self.spec["action"])
     }
@@ -202,6 +228,10 @@ impl Job {
                 }
             }
             _ => {}
+        }
+        // `call` actions run inline only; the others may go to the queue.
+        if action["kind"] != "call" {
+            rows.push(("Host".to_owned(), self.host_label()));
         }
         rows
     }
@@ -408,6 +438,40 @@ mod tests {
         assert_eq!(paused["enabled"], false);
         assert_eq!(paused["futureField"], json!({"kept":true}));
         assert!(paused.get("nextRunAt").is_none());
+    }
+
+    #[test]
+    fn host_and_priority_survive_every_write() {
+        let mut listed = listed();
+        listed["jobs"][0]["host"] = json!("gpu-box");
+        listed["jobs"][0]["priority"] = json!(3);
+        listed["jobs"][1]["host"] = json!("any");
+        listed["jobs"][1]["priority"] = json!(-1);
+        let jobs = parse_list(&listed);
+        let (proposal, job) = (&jobs[0], &jobs[1]);
+        assert_eq!((job.host(), job.priority()), ("gpu-box", 3));
+        assert_eq!(job.host_label(), "queue · gpu-box · priority 3");
+        assert_eq!(proposal.host_label(), "queue · best fit · priority -1");
+        for write in [
+            job.with_enabled(false),
+            job.with_enabled(true),
+            proposal.approval(),
+        ] {
+            let host = write["host"].as_str().unwrap();
+            assert!(host == "gpu-box" || host == "any", "{write}");
+            assert!(write["priority"].is_i64(), "{write}");
+        }
+        assert_eq!(job.with_enabled(false)["priority"], 3);
+        assert_eq!(proposal.approval()["host"], "any");
+        assert_eq!(proposal.approval()["priority"], -1);
+        let details = job.details();
+        assert!(details.contains(&("Host".into(), "queue · gpu-box · priority 3".into())));
+
+        // No host: inline, as every job ran before the queue.
+        let plain = parse_list(&super::tests::listed()).remove(1);
+        assert_eq!((plain.host(), plain.priority()), ("", 0));
+        assert_eq!(plain.host_label(), "inline");
+        assert!(plain.with_enabled(false).get("host").is_none());
     }
 
     #[test]

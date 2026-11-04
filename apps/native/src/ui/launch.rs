@@ -1,5 +1,6 @@
 use super::*;
 use gpui_component::{scroll::ScrollableElement, select::SelectItem};
+use wks_native::hosts::{self, HostChoice};
 
 #[derive(Clone)]
 pub(super) struct PickerItem {
@@ -192,7 +193,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = self.appearance.palette();
-        let busy = self.spawn_pending || self.view.creating;
+        let busy = self.spawn_pending || self.view.creating || self.extras.queue_sent;
         let can_create = self.view.connected && !busy && !self.demo;
         let resume = self.extras.resume.is_some();
         // Two columns only where both stay readable beside the sidebar.
@@ -287,7 +288,14 @@ impl Workspace {
             .flex_col()
             .gap_4()
             .child(header)
-            .child(card().child(self.render_project_section(busy, cx)))
+            .children(
+                self.render_host_picker(busy, cx)
+                    .map(|picker| card().child(picker)),
+            )
+            .child(card().child(match self.launch_peer() {
+                Some(peer) => self.render_peer_folders(&peer, busy, cx),
+                None => self.render_project_section(busy, cx),
+            }))
             .map(|d| {
                 if wide {
                     d.child(
@@ -574,11 +582,28 @@ impl Workspace {
                 wks_native::launch::effort_label(&self.effort)
             )
         };
-        let project = (!self.projects.cwd.is_empty()).then(|| {
-            self.known_project(&self.projects.cwd)
-                .map(|p| p.title().to_owned())
-                .unwrap_or_else(|| wks_native::projects::basename(&self.projects.cwd).to_owned())
-        });
+        let queued = self.queued_launch();
+        let project = match self.launch_peer() {
+            Some(peer) => (!self.extras.launch_host_cwd.is_empty()).then(|| {
+                format!(
+                    "{} on {peer}",
+                    wks_native::projects::basename(&self.extras.launch_host_cwd)
+                )
+            }),
+            None => (!self.projects.cwd.is_empty()).then(|| {
+                let title = self
+                    .known_project(&self.projects.cwd)
+                    .map(|p| p.title().to_owned())
+                    .unwrap_or_else(|| {
+                        wks_native::projects::basename(&self.projects.cwd).to_owned()
+                    });
+                match &queued {
+                    Some(HostChoice::Best) => format!("{title} · best fit"),
+                    Some(_) => format!("{title} · queued here"),
+                    None => title,
+                }
+            }),
+        };
         // Short validation fits the footer line; a hub/launch error is shown
         // whole above it, since its wording says what may have happened.
         let uncertain = wks_native::launch::uncertain_outcome(&self.spawn_error);
@@ -595,6 +620,15 @@ impl Workspace {
                 } else {
                     self.spawn_error.clone()
                 },
+            )
+        } else if self.extras.queue_sent {
+            (
+                None,
+                p.muted,
+                format!(
+                    "Submitting {provider} to the queue · {}…",
+                    project.clone().unwrap_or_default()
+                ),
             )
         } else if busy {
             (
@@ -656,8 +690,12 @@ impl Workspace {
                     .child(
                         self.primary_button(
                             "create-session",
-                            if busy {
+                            if self.extras.queue_sent {
+                                "Submitting…"
+                            } else if busy {
                                 "Starting…"
+                            } else if queued.is_some() {
+                                "Queue agent"
                             } else if uncertain {
                                 // Still allowed: the hub keeps no retry block, and
                                 // the user may have checked. The label says so.
@@ -1157,5 +1195,320 @@ pub(super) fn context_label(tokens: u64) -> String {
         format!("{}M", tokens / 1_000_000)
     } else {
         format!("{}K", tokens / 1000)
+    }
+}
+
+impl Workspace {
+    /// The queue route this launch takes, or `None` for today's direct
+    /// `agents.spawn` on this machine. Always direct while the host picker
+    /// is hidden (an older hub, or a resume).
+    pub(super) fn queued_launch(&self) -> Option<HostChoice> {
+        if self.extras.resume.is_some() {
+            return None;
+        }
+        self.launch_targets()?;
+        match &self.extras.launch_host {
+            HostChoice::Local if !self.extras.launch_queue => None,
+            other => Some(other.clone()),
+        }
+    }
+
+    /// The peer the form launches on, when one is chosen.
+    pub(super) fn launch_peer(&self) -> Option<String> {
+        match self.queued_launch()? {
+            HostChoice::Peer(peer) => Some(peer),
+            _ => None,
+        }
+    }
+
+    fn choose_launch_host(&mut self, choice: HostChoice, cx: &mut Context<Self>) {
+        if let HostChoice::Peer(peer) = &choice {
+            let cwds = self
+                .launch_targets()
+                .and_then(|t| t.find(peer).map(|t| t.cwds.clone()))
+                .unwrap_or_default();
+            if !cwds.contains(&self.extras.launch_host_cwd) {
+                self.extras.launch_host_cwd = cwds.first().cloned().unwrap_or_default();
+            }
+        }
+        self.extras.launch_host = choice;
+        self.spawn_error.clear();
+        cx.notify();
+    }
+
+    /// Run on: This machine (with "Queue if busy"), each peer, Best fit.
+    /// Hidden for a hub that has no `queue.targets`.
+    fn render_host_picker(&self, busy: bool, cx: &mut Context<Self>) -> Option<Div> {
+        if self.extras.resume.is_some() {
+            return None;
+        }
+        let targets = self.launch_targets()?;
+        let p = self.appearance.palette();
+        let options = hosts::host_options(&targets);
+        let chips = options.iter().enumerate().map(|(ix, option)| {
+            let selected = self.extras.launch_host == option.choice;
+            let enabled = option.enabled && !busy;
+            let choice = option.choice.clone();
+            chrome::interactive_control(div().id(("launch-host", ix)), p, enabled)
+                .debug_selector(move || format!("launch-host-{ix}"))
+                .px_3()
+                .py(px(6.))
+                .rounded(px(p.control_radius))
+                .bg(rgb(if selected { p.selected } else { p.chat }))
+                .border_color(rgb(if selected { p.accent } else { p.border }))
+                .flex()
+                .flex_col()
+                .min_w(px(120.))
+                .when(!option.enabled, |d| d.opacity(0.55))
+                .when(enabled, |d| {
+                    d.cursor_pointer()
+                        .hover(|s| s.bg(rgb(p.selected)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.choose_launch_host(choice.clone(), cx)
+                        }))
+                })
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .text_size(px(chrome::scale::META))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(option.label.clone())
+                        .when(selected, |d| {
+                            d.child(
+                                Icon::new(IconName::Check)
+                                    .size(px(12.))
+                                    .text_color(rgb(p.accent)),
+                            )
+                        }),
+                )
+                .when(!option.detail.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .truncate()
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .child(option.detail.clone()),
+                    )
+                })
+        });
+        let reasons: Vec<String> = options
+            .iter()
+            .filter(|o| !o.enabled && !o.reasons.is_empty())
+            .map(|o| format!("{}: {}", o.label, o.reasons.join("; ")))
+            .collect();
+        let local = self.extras.launch_host == HostChoice::Local;
+        let queue = self.extras.launch_queue;
+        Some(
+            div()
+                .debug_selector(|| "launch-hosts".into())
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(projects::section_label("Run on", p))
+                        .child(
+                            self.quiet_button(
+                                "launch-hosts-refresh",
+                                "Refresh",
+                                IconName::Redo,
+                                !busy && self.view.connected,
+                            )
+                            .when(!busy && self.view.connected, |d| {
+                                d.on_click(cx.listener(|this, _, _, cx| {
+                                    let provider = Some(this.provider.to_owned());
+                                    this.command(
+                                        Command::Request(
+                                            wks_native::features::Request::QueueTargets {
+                                                provider,
+                                            },
+                                        ),
+                                        cx,
+                                    );
+                                }))
+                            }),
+                        ),
+                )
+                .child(div().flex().flex_wrap().gap_2().children(chips))
+                .children(reasons.into_iter().enumerate().map(|(ix, line)| {
+                    div()
+                        .debug_selector(move || format!("launch-host-reason-{ix}"))
+                        .text_size(px(chrome::scale::CAPTION))
+                        .text_color(rgb(p.muted))
+                        .child(line)
+                }))
+                .when(local, |d| {
+                    d.child(
+                        chrome::interactive_control(div().id("launch-queue"), p, !busy)
+                            .debug_selector(|| "launch-queue".into())
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .text_size(px(chrome::scale::META))
+                            .when(!busy, |d| {
+                                d.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
+                                    this.extras.launch_queue = !this.extras.launch_queue;
+                                    cx.notify();
+                                }))
+                            })
+                            .child(
+                                div()
+                                    .size(px(14.))
+                                    .rounded(px(3.))
+                                    .border_1()
+                                    .border_color(rgb(if queue { p.accent } else { p.border }))
+                                    .bg(rgb(if queue { p.accent } else { p.chat }))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .when(queue, |d| {
+                                        d.child(
+                                            Icon::new(IconName::Check)
+                                                .size(px(10.))
+                                                .text_color(rgb(p.on_primary)),
+                                        )
+                                    }),
+                            )
+                            .child("Queue if busy")
+                            .child(
+                                div()
+                                    .text_size(px(chrome::scale::CAPTION))
+                                    .text_color(rgb(p.muted))
+                                    .child("waits for a free slot and an open gate"),
+                            ),
+                    )
+                }),
+        )
+    }
+
+    /// A peer's project folders (its target's `cwds`): the local folder
+    /// picker does not apply to another machine.
+    fn render_peer_folders(&self, peer: &str, busy: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        let cwds = self
+            .launch_targets()
+            .and_then(|t| t.find(peer).map(|t| t.cwds.clone()))
+            .unwrap_or_default();
+        let mut list = div().flex().flex_col().gap_1();
+        for (ix, cwd) in cwds.iter().enumerate() {
+            let selected = self.extras.launch_host_cwd == *cwd;
+            let chosen = cwd.clone();
+            list = list.child(
+                chrome::interactive_control(div().id(("launch-host-cwd", ix)), p, !busy)
+                    .debug_selector(move || format!("launch-host-cwd-{ix}"))
+                    .px_3()
+                    .py(px(6.))
+                    .rounded(px(p.control_radius))
+                    .bg(rgb(if selected { p.selected } else { p.chat }))
+                    .border_color(rgb(if selected { p.accent } else { p.border }))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .when(!busy, |d| {
+                        d.cursor_pointer()
+                            .hover(|s| s.bg(rgb(p.selected)))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.extras.launch_host_cwd = chosen.clone();
+                                this.spawn_error.clear();
+                                cx.notify();
+                            }))
+                    })
+                    .child(Icon::new(IconName::Folder).size(px(13.)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(mono_font())
+                            .text_size(px(chrome::scale::META))
+                            .child(cwd.clone()),
+                    )
+                    .when(selected, |d| {
+                        d.child(
+                            Icon::new(IconName::Check)
+                                .size(px(13.))
+                                .text_color(rgb(p.accent)),
+                        )
+                    }),
+            );
+        }
+        div()
+            .debug_selector(|| "launch-peer-folders".into())
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(projects::section_label("Project on this peer", p))
+            .child(if cwds.is_empty() {
+                div()
+                    .text_size(px(chrome::scale::META))
+                    .text_color(rgb(p.muted))
+                    .child("This peer offers no project folders.")
+            } else {
+                list
+            })
+    }
+
+    /// Send the form to the queue instead of starting an agent here; the
+    /// confirmation and the Hosts view follow in `sync_hosts`.
+    pub(super) fn submit_queued(
+        &mut self,
+        host: HostChoice,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let cwd = if matches!(host, HostChoice::Peer(_)) {
+            self.extras.launch_host_cwd.clone()
+        } else {
+            self.adopt_typed_project(window, cx);
+            if self.projects.cwd.is_empty() {
+                self.spawn_error = "Choose a project folder first.".into();
+                self.open_project_picker(window, cx);
+                cx.notify();
+                return;
+            }
+            self.projects.cwd.clone()
+        };
+        let model = if self.model_choice == "__custom" {
+            let custom = self.model.read(cx).value().trim().to_owned();
+            if custom.is_empty() {
+                self.spawn_error = "Enter a custom model or choose Provider default.".into();
+                cx.notify();
+                return;
+            }
+            custom
+        } else {
+            self.model_choice.clone()
+        };
+        let submit = hosts::SpawnSubmit {
+            host,
+            provider: self.provider.to_owned(),
+            cwd,
+            prompt: self.prompt.read(cx).value().to_string(),
+            model,
+            effort: self.effort.clone(),
+            permission_mode: self
+                .permission
+                .wire(self.provider)
+                .map(str::to_owned)
+                .unwrap_or_default(),
+            label: self.label.read(cx).value().to_string(),
+        };
+        match submit.params() {
+            Ok(params) => {
+                self.spawn_error.clear();
+                self.extras.queue_sent = true;
+                self.command(
+                    Command::Request(wks_native::features::Request::QueueSubmit(params)),
+                    cx,
+                );
+            }
+            Err(error) => self.spawn_error = error,
+        }
+        cx.notify();
     }
 }

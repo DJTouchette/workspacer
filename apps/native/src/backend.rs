@@ -110,6 +110,65 @@ impl Backend {
         );
         Ok(value)
     }
+    // ---- host work queue (docs/host-work-queue.md) ----------------------
+
+    /// This hub's resource sample, slots and gate (`host.resources`).
+    pub async fn host_resources(&self) -> Result<Value> {
+        self.call("host.resources", json!({})).await
+    }
+    /// This hub's queue, and each peer's when `include_peers` (`queue.list`).
+    pub async fn queue_list(&self, include_peers: bool) -> Result<Value> {
+        self.call("queue.list", json!({"includePeers": include_peers}))
+            .await
+    }
+    /// Where a spawn could run, scored (`queue.targets`).
+    pub async fn queue_targets(&self, provider: Option<&str>) -> Result<Value> {
+        let mut params = json!({"kind": "spawn"});
+        if let Some(provider) = provider.filter(|p| !p.is_empty()) {
+            params["provider"] = json!(provider);
+        }
+        self.call("queue.targets", params).await
+    }
+    /// Enqueue an item here, on a peer, or wherever fits (`queue.submit`).
+    pub async fn queue_submit(&self, params: Value) -> Result<Value> {
+        self.call("queue.submit", params).await
+    }
+    /// Cancel a queued item on `host` (`local` or a peer).
+    pub async fn queue_cancel(&self, id: &str, host: &str) -> Result<Value> {
+        let mut params = json!({"id": id});
+        if !host.is_empty() && host != crate::hosts::LOCAL {
+            params["host"] = json!(host);
+        }
+        self.call("queue.cancel", params).await
+    }
+    /// The effective `queue.*` limits (`queue.config`).
+    pub async fn queue_config(&self) -> Result<Value> {
+        self.call("queue.config", json!({})).await
+    }
+    /// Change some limits; answers the effective config (`queue.setConfig`).
+    pub async fn queue_set_config(&self, patch: Value) -> Result<Value> {
+        self.call("queue.setConfig", patch).await
+    }
+    /// Everything the Hosts view shows, read together; each part is the
+    /// method's result or `{"error": "..."}`, so one failing (or missing on
+    /// an older hub) does not hide the rest. See `hosts::Snapshot`.
+    pub async fn hosts_snapshot(&self) -> Value {
+        let (resources, list, targets, config) = tokio::join!(
+            self.host_resources(),
+            self.queue_list(true),
+            self.queue_targets(None),
+            self.queue_config(),
+        );
+        let part = |result: Result<Value>| {
+            result.unwrap_or_else(|error| json!({"error": error.to_string()}))
+        };
+        json!({
+            "resources": part(resources),
+            "list": part(list),
+            "targets": part(targets),
+            "config": part(config),
+        })
+    }
     /// Serializes one complete project transaction (fresh `config.get`,
     /// patch, `config.save`, readback) against every other on this hub. FIFO,
     /// shared with registry reads. The guarded counter orders snapshots by

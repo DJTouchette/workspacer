@@ -1,5 +1,32 @@
 # Native client validation — 2026-09-27
 
+## Hosts view and launch host picker (host work queue, 2026-11-04)
+
+Built against `docs/host-work-queue.md`. A Hosts page (`g o`, sidebar rail and
+footer) shows one card per host, this hub first and then federation peers from
+`queue.list {includePeers}` and `queue.targets`: CPU, memory and IO pressure
+meters (filled as a share of the gate's limit), available memory, free disk,
+slots, gate state and reasons, connected/dispatch badges, and that host's queue
+with Cancel on queued items. The owner edits the six `queue.*` limits inline;
+a refusal shows in the editor. `host.*`/`queue.*` events are watched only while
+the page is open and folded into a live overlay; a 10s re-read is the fallback.
+Unknown metrics render as "—", never 0, and a hub without the methods reads as
+"Not supported by this hub". New Agent gains a Run on picker (This machine with
+"Queue if busy", each peer, Best fit), shown only when the hub answers
+`queue.targets`; This machine without queueing keeps the direct `agents.spawn`
+path. Queued launches submit `queue.submit {kind:"spawn"}` and open Hosts with
+where the item landed. Jobs show a job's host (inline when blank) and priority.
+
+- `cargo test --locked --features ui-tests --no-fail-fast -- --test-threads=1`:
+  all passed (274 library, 341 GPUI with 1 ignored, 58 protocol, and every
+  Rust-hub suite including the new `hosts_hub`).
+- `cargo clippy --locked --all-targets --features ui-tests -- -D warnings` and
+  `cargo fmt --check`: passed.
+- `hosts_hub` runs the view's reads and the owner's writes against the real
+  Rust hub at `1ed4f61`, which does not serve `queue.targets` yet; the test
+  accepts that as unsupported (picker hidden) until it lands.
+- No real-window capture in this pass.
+
 ## Stable finished children and Clear (#29, 2026-10-05)
 
 Finished provider-native children used to leave the sidebar when the parent's

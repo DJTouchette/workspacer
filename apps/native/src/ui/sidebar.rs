@@ -920,6 +920,15 @@ impl Workspace {
                     })),
             )
             .child(
+                self.icon_button("hosts-rail", "Hosts", IconName::LayoutDashboard, true)
+                    .when(!self.new_session && self.screen == Screen::Hosts, |d| {
+                        d.bg(rgb(p.selected)).text_color(rgb(p.text))
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_feature(Screen::Hosts, window, cx)
+                    })),
+            )
+            .child(
                 self.icon_button("scratch-rail", "Scratch", IconName::FolderClosed, true)
                     .relative()
                     .when_some(self.pending_badge(), |d, badge| d.child(badge))
@@ -1585,6 +1594,26 @@ impl Workspace {
                                 this.open_feature(Screen::Jobs, window, cx)
                             })),
                     )
+                    // Icon-only, like Scratch, and only while the connection
+                    // is healthy: a lost connection's label needs the room
+                    // (the rail and `g o` still reach Hosts).
+                    .when(self.footer_connection_label().is_none(), |d| {
+                        d.child(
+                            self.icon_button(
+                                "nav-hosts",
+                                "Hosts",
+                                IconName::LayoutDashboard,
+                                true,
+                            )
+                            .debug_selector(|| "nav-hosts".into())
+                            .when(!self.new_session && self.screen == Screen::Hosts, |d| {
+                                d.bg(rgb(p.selected)).text_color(rgb(p.text))
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_feature(Screen::Hosts, window, cx)
+                            })),
+                        )
+                    })
                     .child(
                         // Icon-only: the footer row also carries the connection
                         // status, and a third label pushes it out of the sidebar.

@@ -17,6 +17,9 @@ fn listed() -> serde_json::Value {
 #[gpui::test]
 fn jobs_page_reviews_a_proposed_change_and_only_writes_owner_actions(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    // Tall enough that the open proposal's details (Host row included)
+    // leave the next row's actions on screen.
+    visual.simulate_resize(size(px(1000.), px(900.)));
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
             this.demo = false;

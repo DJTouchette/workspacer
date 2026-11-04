@@ -373,6 +373,10 @@ pub enum Command {
     },
     /// An agent's interactive shell; see [`crate::terminal`].
     Terminal(crate::terminal::Command),
+    /// The Hosts view opened (`true`) or closed: while open, `host.*` and
+    /// `queue.*` events are watched and folded into `View::hosts_live`, and
+    /// a reconnect re-reads the snapshot. The view reads it itself.
+    WatchHosts(bool),
 }
 
 /// A provider-native subagent of a session (Claude's Task/Agent children).
@@ -490,6 +494,9 @@ pub struct View {
     /// in-process backend, older hubs): everything is offered and the hub
     /// still refuses what the caller may not do.
     pub methods: Option<Arc<Vec<String>>>,
+    /// `host.resources` and `queue.changed` events since the last Hosts
+    /// snapshot, local and forwarded from peers; see [`crate::hosts::Live`].
+    pub hosts_live: crate::hosts::Live,
 }
 
 impl View {
@@ -764,6 +771,8 @@ struct Worker {
     scratch_watch: bool,
     /// Projects have been read: `projectGroups.changed` is subscribed.
     groups_watch: bool,
+    /// The Hosts view is open: `host.*` and `queue.*` are subscribed.
+    hosts_watch: bool,
     catalog_number: u64,
     catalog_abort: Option<AbortHandle>,
     /// The last loaded catalog per provider. The view shows one at a time, and
@@ -825,6 +834,7 @@ impl Worker {
             action_number: 0,
             scratch_watch: false,
             groups_watch: false,
+            hosts_watch: false,
             catalog_number: 0,
             catalog_abort: None,
             catalogs: BTreeMap::new(),
@@ -962,6 +972,16 @@ impl Worker {
                 }
             }
             Command::RefreshUsage => self.fetch_usage(),
+            Command::WatchHosts(watch) => {
+                if watch != self.hosts_watch {
+                    self.hosts_watch = watch;
+                    if !watch {
+                        self.view.hosts_live = Default::default();
+                        self.dirty = true;
+                    }
+                    self.subscribe().await;
+                }
+            }
             Command::Terminal(command) => self.terminal(command).await,
             Command::ViewChild(target) => self.view_child(target).await,
             Command::LoadOlder => {
@@ -1122,6 +1142,8 @@ impl Worker {
                 | "project-save"
                 | "file-save"
                 | "job-action"
+                | "host-action"
+                | "queue-submit"
                 | "scratch-mark"
                 | "project-group-save"
                 | "project-group-remove"
@@ -1707,6 +1729,12 @@ impl Worker {
                 self.request(crate::features::Request::Archive);
                 // The same for the shared open set, which says what is Paused.
                 self.request(crate::features::Request::OpenSessions);
+                // Where a launch could run: the New Agent host picker shows
+                // only when this hub answers (older hubs have no queue).
+                self.request(crate::features::Request::QueueTargets { provider: None });
+                if self.hosts_watch {
+                    self.request(crate::features::Request::Hosts);
+                }
                 let child = self.view.child.clone();
                 self.select(self.view.selected.clone()).await;
                 if child.is_some() {
@@ -1717,6 +1745,15 @@ impl Worker {
             Event::Disconnected(reason) => self.disconnected(reason, false),
             Event::PowerPaused => self.disconnected(String::new(), true),
             Event::Data { topic, data, hub } => {
+                // Host and queue events, this hub's and forwarded peers', only
+                // feed the Hosts view; they own nothing locally.
+                if topic.starts_with("host.") || topic.starts_with("queue.") {
+                    if self.hosts_watch && self.view.hosts_live.apply(&topic, hub.as_deref(), &data)
+                    {
+                        self.dirty = true;
+                    }
+                    return;
+                }
                 // This first client operates on the connected hub only. Never
                 // interpret a federated session as locally owned.
                 if hub.is_some()
@@ -2231,6 +2268,11 @@ impl Worker {
                 }
                 if key == "session-undo" && error.is_none() {
                     self.apply_archive(&value);
+                }
+                // A fresh Hosts snapshot already shows what events reported.
+                if matches!(key, "hosts" | "host-action") && error.is_none() {
+                    let snapshot = crate::hosts::Snapshot::parse(&value);
+                    self.view.hosts_live.settle(&snapshot);
                 }
                 // An older page joins the list it was asked for; one asked
                 // for a list since replaced (a refresh) is dropped.
@@ -2872,6 +2914,10 @@ impl Worker {
         }
         if self.groups_watch {
             topics.insert("projectGroups.changed".into());
+        }
+        if self.hosts_watch {
+            topics.insert("host.*".into());
+            topics.insert("queue.*".into());
         }
         if let Some(id) = &self.view.selected {
             topics.insert(format!("agent.conversation.{id}"));

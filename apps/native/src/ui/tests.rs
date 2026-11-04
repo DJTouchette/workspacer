@@ -20,6 +20,7 @@ mod connection;
 mod controls;
 mod history_screen;
 mod history_store;
+mod hosts_view;
 mod job_list;
 mod kept_sessions;
 mod message_queue;

@@ -8,6 +8,8 @@ pub(super) enum Screen {
     Recent,
     /// The hub's scheduled jobs: read and approve, never author.
     Jobs,
+    /// Every host's resources and work queue (this hub and its peers).
+    Hosts,
     /// A project's scratch files: read and mark, never run.
     Scratch,
     Changes,
@@ -522,6 +524,9 @@ impl Workspace {
             }))
             .on_action(cx.listener(|this, _: &ShowJobs, window, cx| {
                 this.open_feature(Screen::Jobs, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowHosts, window, cx| {
+                this.open_feature(Screen::Hosts, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ShowScratch, window, cx| {
                 this.open_feature(Screen::Scratch, window, cx)

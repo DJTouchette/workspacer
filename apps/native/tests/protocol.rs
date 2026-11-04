@@ -970,6 +970,11 @@ async fn live_harness_targets_and_cleans_up_only_its_disposable_session() {
                         "sessionArchive.get" => json!({"version":0,"archived":{}}),
                         // So is the shared open set (what reads as Paused).
                         "sessionOpen.get" => json!({"version":0,"open":{},"ended":{}}),
+                        // The New Agent host picker's targets, read on connect;
+                        // answered as a hub without the work queue.
+                        "queue.targets" => {
+                            json!({"ok":false,"error":"no provider for queue.targets"})
+                        }
                         other => panic!("unexpected live harness method {other}"),
                     };
                     if ws

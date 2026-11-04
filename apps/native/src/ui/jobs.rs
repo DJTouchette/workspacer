@@ -725,7 +725,14 @@ impl Workspace {
                             .font_family(mono_font())
                             .text_size(px(chrome::scale::CAPTION))
                             .text_color(rgb(p.muted))
-                            .child(job.action_summary()),
+                            .debug_selector(move || format!("job-action-{ix}"))
+                            .child(if job.host().is_empty() {
+                                job.action_summary()
+                            } else {
+                                // Queued work says where; inline is the default
+                                // and stays unsaid (Details shows it).
+                                format!("{} · {}", job.action_summary(), job.host_label())
+                            }),
                     ),
             )
             .child(self.job_actions(ix, job, target, cx));
@@ -1132,7 +1139,7 @@ fn chip(text: &'static str, color: u32, p: Palette) -> Div {
 }
 
 /// The overline above a group of job rows.
-fn group_label(text: &'static str, color: u32) -> Div {
+pub(super) fn group_label(text: &'static str, color: u32) -> Div {
     div()
         .px_1()
         .text_size(px(chrome::scale::OVERLINE))
@@ -1143,7 +1150,7 @@ fn group_label(text: &'static str, color: u32) -> Div {
 
 /// A centred page state (nothing yet, or not available): an icon on a
 /// tonal disc, a heading and one short paragraph.
-fn jobs_state(
+pub(super) fn jobs_state(
     icon: IconName,
     title: &'static str,
     body: &'static str,

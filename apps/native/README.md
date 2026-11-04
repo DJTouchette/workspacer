@@ -1193,6 +1193,8 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/ui/archive.rs` | Archive and restore, shared through the hub |
 | `src/jobs.rs` | Hub jobs as the Jobs view reads them, and the owner's approve/pause payloads |
 | `src/ui/jobs.rs` | Jobs screen: review, approve, pause, run and remove (agents author jobs) |
+| `src/hosts.rs` | Host work queue model (`docs/host-work-queue.md`): `host.resources`, `queue.list`/`targets`/`config` replies and `host.resources`/`queue.changed` events folded into a live overlay; unknown metrics render as "—", never 0; older hubs read as unsupported |
+| `src/ui/hosts.rs` | Hosts screen (`g o`, sidebar): a card per host (this hub, then peers) with pressure meters, memory/disk, slots, gate and reasons, and its queue with Cancel on queued items; the owner's Limits editor; the New Agent host picker's targets |
 | `src/project_groups.rs` | Projects as named groups of folders (`projectGroups.list`): membership by longest folder (worktrees and workers resolve to their repository's project), editor drafts, pending-scratch totals |
 | `src/ui/project_groups.rs` | Project cards and editor on Projects, the `group:<id>` sidebar filter and its helpers, pending counts |
 | `src/scratch.rs` | A project's `scratch.list` rows (pending first), filters, and the `scratch.mark` patches the Scratch page sends |

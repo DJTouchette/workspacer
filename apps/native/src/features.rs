@@ -28,6 +28,16 @@ pub enum JobAction {
     Remove(String),
 }
 
+/// The owner's writes from the Hosts view, each answered with a fresh
+/// Hosts snapshot (see `Backend::hosts_snapshot`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum HostAction {
+    /// Cancel a queued item on `host` (`local` or a peer).
+    Cancel { id: String, host: String },
+    /// A `queue.setConfig` patch for this hub's limits.
+    SetConfig(Value),
+}
+
 /// The owner's writes to a repository from Review. Each one runs in the
 /// repository holding `cwd`; `path: None` stages or unstages everything under
 /// it. There is no discard: the hub offers no way to throw changes away.
@@ -291,6 +301,20 @@ pub enum Request {
     /// One owner write to a job, answered with the refreshed `jobs.list`.
     /// Never superseded: a second click while one is in flight is dropped.
     JobAction(JobAction),
+    /// Every host's resources, queue and limits (`host.resources`,
+    /// `queue.list {includePeers}`, `queue.targets`, `queue.config`), read
+    /// together; see `hosts::Snapshot`.
+    Hosts,
+    /// A Hosts write, answered with a fresh snapshot. Never superseded.
+    HostAction(HostAction),
+    /// Where a spawn of `provider` could run (`queue.targets`), for the
+    /// launch host picker.
+    QueueTargets {
+        provider: Option<String>,
+    },
+    /// A launch through the work queue (`queue.submit` params). Never
+    /// superseded: the hub may already have enqueued it.
+    QueueSubmit(Value),
     /// A project's scratch files (`scratch.list`, once per folder): personal
     /// files kept outside git, shared by every worktree
     /// (docs/features/scratch.md). Answers `{lists: [<scratch.list>…]}` in
@@ -562,6 +586,10 @@ impl Request {
             Self::JobHistory { .. } => "job-history",
             Self::JobRuns => "job-runs",
             Self::JobAction(_) => "job-action",
+            Self::Hosts => "hosts",
+            Self::HostAction(_) => "host-action",
+            Self::QueueTargets { .. } => "queue-targets",
+            Self::QueueSubmit(_) => "queue-submit",
             Self::ScratchList { .. } => "scratch",
             Self::ScratchRead { .. } => "scratch-read",
             Self::ScratchMark { .. } => "scratch-mark",
@@ -781,6 +809,28 @@ impl Request {
                     }
                 }
                 backend.call("jobs.list", json!({})).await
+            }
+            Self::Hosts => Ok(backend.hosts_snapshot().await),
+            Self::HostAction(action) => {
+                match action {
+                    HostAction::Cancel { id, host } => {
+                        backend.queue_cancel(id, host).await?;
+                    }
+                    HostAction::SetConfig(patch) => {
+                        ensure!(patch.is_object(), "A limits change must be an object.");
+                        backend.queue_set_config(patch.clone()).await?;
+                    }
+                }
+                Ok(backend.hosts_snapshot().await)
+            }
+            Self::QueueTargets { provider } => backend.queue_targets(provider.as_deref()).await,
+            Self::QueueSubmit(params) => {
+                let submitted = backend.queue_submit(params.clone()).await?;
+                ensure!(
+                    crate::hosts::parse_submitted(&submitted).is_some(),
+                    "The hub accepted the work but did not say where it landed."
+                );
+                Ok(submitted)
             }
             Self::RewindFiles {
                 session,
