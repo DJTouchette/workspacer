@@ -50,8 +50,8 @@ pub(super) struct ReviewUi {
     /// it (for the same folder) until the new answer lands, so the list never
     /// blanks and nothing is re-parsed per frame.
     status: Option<Status>,
-    /// The answer number and appearance it was parsed and colored for.
-    parsed: Option<(u64, Appearance, ParsedDiff)>,
+    /// The answer number, theme and design it was parsed and colored for.
+    parsed: Option<(u64, (Appearance, Design), ParsedDiff)>,
     /// Syntax-coloring the parsed diff off the UI thread.
     coloring: Option<gpui::Task<()>>,
     pub scroll: gpui::UniformListScrollHandle,
@@ -436,7 +436,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let short = window.viewport_size().height < px(620.);
         let caption = chrome::custom_caption();
         let back = self
@@ -577,7 +577,7 @@ impl Workspace {
     }
 
     fn diff_panel_shell(&self) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         chrome::card(p)
             .flex_1()
             .min_w_0()
@@ -588,7 +588,7 @@ impl Workspace {
     }
 
     fn diff_placeholder(&self, text: &'static str) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .flex_1()
             .flex()
@@ -611,7 +611,7 @@ impl Workspace {
         let s = state.filter(|s| !s.loading && s.error.is_none())?;
         Some(match &self.review.parsed {
             Some((number, appearance, parsed))
-                if *number == s.number && *appearance == self.appearance =>
+                if *number == s.number && *appearance == (self.appearance, self.design()) =>
             {
                 parsed.clone()
             }
@@ -628,9 +628,9 @@ impl Workspace {
                     widest,
                     highlights: Arc::default(),
                 };
-                let (number, appearance) = (s.number, self.appearance);
+                let (number, appearance) = (s.number, (self.appearance, self.design()));
                 self.review.parsed = Some((number, appearance, parsed.clone()));
-                let theme = syntax::highlight_theme(appearance);
+                let theme = syntax::highlight_theme(appearance.0, appearance.1);
                 let colored = cx
                     .background_executor()
                     .spawn(async move { syntax::highlight_diff(&diff, &theme) });
@@ -651,7 +651,7 @@ impl Workspace {
     }
 
     fn diff_header(&self) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .px_3()
             .py_2()
@@ -691,7 +691,7 @@ impl Workspace {
         open_hint: &'static str,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(state) = state else {
             return panel.child(
                 div()
@@ -764,7 +764,7 @@ impl Workspace {
     }
 
     fn render_diff_panel(&mut self, changes: &[Change], cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let panel = self.diff_panel_shell();
         let loaded = self.review_status().is_some();
         let Some(selected) = self.review.selected.clone() else {
@@ -977,7 +977,7 @@ impl Workspace {
     }
 
     fn render_commit_panel(&mut self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let panel = self.diff_panel_shell();
         let Some(hash) = self.review.commit.clone() else {
             return panel
@@ -1034,7 +1034,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mode = self.review.mode;
         let segment = |id: &'static str, label: String, active: bool| {
             chrome::interactive_control(div().id(id), p, true)
@@ -1119,7 +1119,7 @@ impl Workspace {
         root: &str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let hide_untracked = self.review.hide_untracked;
         let tree = self
             .explorer
@@ -1256,7 +1256,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.git_busy() || !self.view.connected;
         let staged = changes.iter().filter(|c| c.has_staged()).count();
         let unstaged = changes.iter().filter(|c| c.has_unstaged()).count();
@@ -1464,7 +1464,7 @@ impl Workspace {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let active = self.review.selected.as_ref() == Some(&change.path);
         let (name, dir) = match change.path.rsplit_once(['/', '\\']) {
             Some((dir, name)) => (name.to_owned(), dir.to_owned()),
@@ -1583,7 +1583,7 @@ impl Workspace {
     }
 
     fn render_commit_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self.view.requests.get("git-log");
         if state.is_none_or(|s| s.loading) {
             return div()
@@ -1642,7 +1642,7 @@ impl Workspace {
         now: i64,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let active = self.review.commit.as_deref() == Some(hash);
         let clicked = hash.to_owned();
         div()

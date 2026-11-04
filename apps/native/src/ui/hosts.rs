@@ -169,7 +169,7 @@ impl Workspace {
     }
 
     pub(super) fn render_hosts(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let page = div().flex().flex_col().gap_3();
         let read_error = self
             .view
@@ -253,7 +253,7 @@ impl Workspace {
         limits: Option<&Limits>,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let now = now_ms();
         let gate_color = match card.resources.as_ref().and_then(|r| r.gate.as_ref()) {
             Some(g) if g.open => p.success,
@@ -453,7 +453,7 @@ impl Workspace {
         now: i64,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let color = state_color(&item.state, p);
         let busy = self
             .view
@@ -596,7 +596,7 @@ impl Workspace {
     /// This hub's six `queue.*` limits; only the owner may change them, and
     /// the hub's refusal shows here.
     fn render_limits(&self, limits: Option<&Limits>, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.extras.limits_sent;
         let mut grid = div().flex().flex_wrap().gap_3();
         for (ix, ((key, label, unit), input)) in hosts::LIMITS

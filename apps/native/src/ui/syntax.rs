@@ -11,7 +11,7 @@ use gpui_component::highlighter::{
 };
 use std::ops::Range;
 use std::sync::Arc;
-use wks_native::appearance::Appearance;
+use wks_native::appearance::{Appearance, Design};
 use wks_native::diff::{self, Kind};
 use wks_native::links;
 
@@ -134,6 +134,14 @@ const CATPPUCCIN_LATTE: Syntax = Syntax {
     heading: "#1e66f5",
 };
 
+/// The syntax colours for a theme under a design. V2 shares v1's tables
+/// until the redesign tunes its own (add them here, per theme).
+fn syntax_for(appearance: Appearance, design: Design) -> &'static Syntax {
+    match design {
+        Design::V1 | Design::V2 => syntax(appearance),
+    }
+}
+
 fn syntax(appearance: Appearance) -> &'static Syntax {
     match appearance {
         Appearance::Dark => &GITHUB_DARK,
@@ -190,13 +198,13 @@ fn colors(s: &Syntax) -> SyntaxColors {
     .expect("static syntax palette is valid")
 }
 
-pub(super) fn highlight_theme(appearance: Appearance) -> Arc<HighlightTheme> {
+pub(super) fn highlight_theme(appearance: Appearance, design: Design) -> Arc<HighlightTheme> {
     let base = if appearance.is_dark() {
         HighlightTheme::default_dark()
     } else {
         HighlightTheme::default_light()
     };
-    let s = syntax(appearance);
+    let s = syntax_for(appearance, design);
     let mut theme = (*base).clone();
     theme.name = format!("Workspacer {}", appearance.label());
     theme.style.syntax = colors(s);
@@ -304,15 +312,15 @@ mod tests {
     #[test]
     fn every_appearance_colors_keywords_strings_and_comments_distinctly() {
         for appearance in Appearance::ALL {
-            let theme = highlight_theme(appearance);
+            let theme = highlight_theme(appearance, Design::V1);
             let color = |name| theme.style(name).and_then(|s| s.color).unwrap();
             assert_ne!(color("keyword"), color("string"), "{appearance:?}");
             assert_ne!(color("string"), color("comment"), "{appearance:?}");
             assert_ne!(color("function"), color("keyword"), "{appearance:?}");
         }
         assert_ne!(
-            highlight_theme(Appearance::Dark).style("keyword"),
-            highlight_theme(Appearance::Light).style("keyword")
+            highlight_theme(Appearance::Dark, Design::V1).style("keyword"),
+            highlight_theme(Appearance::Light, Design::V1).style("keyword")
         );
     }
 
@@ -334,7 +342,7 @@ diff --git a/notes.unknown b/notes.unknown
 +fn plain() {}
 ",
         );
-        let theme = highlight_theme(Appearance::Dark);
+        let theme = highlight_theme(Appearance::Dark, Design::V1);
         let highlights = highlight_diff(&parsed, &theme);
         let styled = |ix: usize, name: &str| {
             let want = theme.style(name).unwrap();
@@ -355,7 +363,7 @@ diff --git a/notes.unknown b/notes.unknown
                 .all(|(_, h)| h.is_empty())
         );
         // A dark theme and a light theme color the same keyword differently.
-        let light = highlight_diff(&parsed, &highlight_theme(Appearance::Light));
+        let light = highlight_diff(&parsed, &highlight_theme(Appearance::Light, Design::V1));
         let ix = row("fn old() {}");
         assert_ne!(highlights[ix], light[ix]);
     }
@@ -364,7 +372,7 @@ diff --git a/notes.unknown b/notes.unknown
     /// query upstream; files in them must still color.
     #[test]
     fn grammars_without_upstream_queries_still_highlight() {
-        let theme = highlight_theme(Appearance::Dark);
+        let theme = highlight_theme(Appearance::Dark, Design::V1);
         for (language, code) in [
             ("csharp", "public class Foo { // note\n string s = \"x\"; }"),
             ("swift", "let s = \"x\" // note"),

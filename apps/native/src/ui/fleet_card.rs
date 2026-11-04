@@ -158,7 +158,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let owner = self.view.selected.clone().unwrap_or_default();
         let (overline, icon, tone) = kind_face(fleet.kind, p);
         let single = fleet.entries.len() == 1;
@@ -491,7 +491,7 @@ impl Workspace {
         open: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         chrome::interactive_control(
             div().id(SharedString::from(format!("toggle-{key}"))),
             p,

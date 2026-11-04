@@ -217,7 +217,7 @@ impl Workspace {
     }
 
     pub(super) fn render_scratch(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let page = div().flex().flex_col().gap_3();
         if self.extras.scratch_project.is_none() {
             return page.child(empty_state(IconName::FolderClosed, NO_PROJECT, p));
@@ -376,7 +376,7 @@ impl Workspace {
 
     /// A folder's heading inside a multi-folder project.
     fn scratch_section(&self, cwd: &str, listing: &Listing, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let pending = listing.pending();
         div()
             .pt_2()
@@ -470,7 +470,7 @@ impl Workspace {
         listings: Option<&[(String, Listing)]>,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let target = self.extras.scratch_project.clone().unwrap_or_default();
         let groups = self.project_groups();
         let (identity, name) = match target.strip_prefix("group:").and_then(|id| groups.get(id)) {
@@ -624,7 +624,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let item = row.item;
         let expanded = self
             .extras
@@ -725,7 +725,7 @@ impl Workspace {
     }
 
     fn scratch_status(&self, item: &Item) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let color = match item.status {
             Status::Pending => p.warning,
             Status::Done => p.success,
@@ -747,7 +747,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let item = row.item;
         let cwd = row.cwd.to_owned();
         let enabled = self.view.connected && !self.demo && !self.scratch_busy();
@@ -904,7 +904,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let item = row.item;
         let state = self.view.requests.get("scratch-read").filter(|s| {
             matches!(&s.request, Request::ScratchRead { cwd, path } if path == &item.path && cwd == row.cwd)

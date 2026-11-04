@@ -369,7 +369,7 @@ impl Workspace {
         if session.tasks.is_empty() && session.background_tasks == 0 {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         let running = if session.tasks.is_empty() {
             session.background_tasks as usize
         } else {
@@ -411,7 +411,7 @@ impl Workspace {
         now: i64,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let opens = task.shows_log() || task.subagent_id.is_some();
         let confirming = self.tasks.confirm_stop.as_deref() == Some(task.id.as_str());
         let id = task.id.clone();
@@ -495,7 +495,7 @@ impl Workspace {
         ix: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let small = |id: gpui::ElementId, label: &'static str, color: u32| {
             interactive_control(div().id(id), p, true)
                 .px_2()
@@ -554,7 +554,7 @@ impl Workspace {
     }
 
     fn render_tasks_header(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let log_title = self.tasks.log.as_ref().map(|log| {
             self.task_session()
                 .and_then(|s| s.tasks.iter().find(|t| t.id == log.task))
@@ -600,7 +600,7 @@ impl Workspace {
     }
 
     fn render_task_list(&self, cx: &mut Context<Self>) -> AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(session) = self.task_session() else {
             return div().into_any_element();
         };
@@ -653,7 +653,7 @@ impl Workspace {
     }
 
     fn render_task_log(&self, log: &Log, cx: &mut Context<Self>) -> AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let now = timing::now_ms();
         let task = self
             .task_session()
@@ -850,7 +850,7 @@ impl Workspace {
         has_task_file: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (caption, other): (SharedString, Option<(&'static str, IconName, Source)>) =
             match source {
                 Source::Redirect => (
@@ -896,7 +896,7 @@ impl Workspace {
     }
 
     fn render_tasks_panel(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let body = match &self.tasks.log {
             Some(log) => self.render_task_log(log, cx),
             None => self.render_task_list(cx),
@@ -1009,7 +1009,7 @@ impl Workspace {
         if !self.tasks_showing() || self.dock(window).is_some() {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         let width = (window.viewport_size().width - px(24.))
             .min(px(640.))
             .max(px(280.));

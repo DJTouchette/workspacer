@@ -58,7 +58,7 @@ fn paused_and_ended_follow_the_hub_open_set(cx: &mut TestAppContext) {
     view.session_open = Some(open_set(&["a", "b", "d"], &["b"]));
     show(&workspace, &mut visual, view);
     workspace.read_with(&visual, |this, _| {
-        let p = this.appearance.palette();
+        let p = this.palette();
         let [a, b, c, d] = &this.view.sessions[..] else {
             panic!("four sessions")
         };
@@ -97,7 +97,7 @@ fn starting_rows_read_starting(cx: &mut TestAppContext) {
         fleet(vec![unknown, marked, ready], "a"),
     );
     workspace.read_with(&visual, |this, _| {
-        let p = this.appearance.palette();
+        let p = this.palette();
         let [a, b, c] = &this.view.sessions[..] else {
             panic!("three sessions")
         };

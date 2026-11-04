@@ -26,6 +26,7 @@ mod motion;
 mod navigation;
 mod plan;
 mod portrait;
+pub(crate) mod primitives;
 mod project_groups;
 mod project_links;
 mod projects;
@@ -117,7 +118,7 @@ use gpui_component::{
 use launch::{PickerItem, model_items};
 use navigation::Screen;
 use std::{collections::HashMap, sync::Arc};
-use wks_native::appearance::{Appearance, Palette, preference_path};
+use wks_native::appearance::{Appearance, Design, Palette, Tokens, preference_path};
 use wks_native::controller::{Action, Command, Controller, NewSession, View};
 use wks_native::launch::{CatalogKey, ModelChoice, Permission};
 use wks_native::model::Session;
@@ -125,7 +126,7 @@ use wks_native::navigation::{Provider, Settings};
 use wks_native::projects::KnownProject;
 use wks_native::timing::{self, TurnClock};
 
-const CHAT_WIDTH: f32 = 900.;
+const CHAT_WIDTH: f32 = Tokens::V1.layout.chat_width;
 
 /// Fade height above the conversation dock; within its 12px of transcript padding.
 const DOCK_FADE: f32 = 12.;
@@ -174,7 +175,16 @@ impl gpui::AssetSource for Assets {
     }
 }
 
-pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: &mut App) {
+/// Point gpui-component's global theme at `appearance` under `design`. V1
+/// maps the shipped set of colours and leaves the rest stock; v2 maps every
+/// widget family (lists, tabs, scrollbars, tables…) so nothing falls back to
+/// gpui-component's defaults. Re-run whenever either input changes.
+pub fn configure_theme(
+    appearance: Appearance,
+    design: Design,
+    window: Option<&mut Window>,
+    cx: &mut App,
+) {
     typography::register_fonts(cx);
     use gpui_component::{Theme, ThemeMode};
     Theme::change(
@@ -186,7 +196,7 @@ pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: 
         window,
         cx,
     );
-    let p = appearance.palette();
+    let p = appearance.palette_for(design);
     let theme = Theme::global_mut(cx);
     theme.colors.background = rgb(p.base).into();
     theme.colors.foreground = rgb(p.text).into();
@@ -213,12 +223,111 @@ pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: 
     // Text selection is translucent and painted beneath the glyphs (see the
     // vendored Inline patch), so selected text keeps its syntax colors.
     theme.colors.selection = gpui::rgba(p.selection).into();
-    theme.highlight_theme = syntax::highlight_theme(appearance);
-    theme.font_size = px(15.);
+    theme.highlight_theme = syntax::highlight_theme(appearance, design);
+    theme.font_size = px(p.tokens.text.ui);
     theme.font_family = "Inter".into();
     theme.mono_font_family = "JetBrains Mono".into();
-    theme.mono_font_size = px(13.);
+    theme.mono_font_size = px(p.tokens.text.mono);
     theme.radius = px(p.control_radius);
+    if design.is_v2() {
+        configure_theme_v2(&mut theme.colors, &p, appearance.is_dark());
+        theme.radius_lg = px(p.tokens.radius.panel);
+    }
+}
+
+/// The v2 mapping of every remaining gpui-component colour, from the
+/// palette and its roles.
+fn configure_theme_v2(c: &mut gpui_component::ThemeColor, p: &Palette, dark: bool) {
+    let solid = |color: u32| gpui::Hsla::from(rgb(color));
+    let tone = |color: u32, alpha: f32| solid(color).opacity(alpha);
+    let w = p.tokens.wash;
+    let r = p.roles;
+    c.accent = solid(r.hover);
+    c.accent_foreground = solid(p.text);
+    c.secondary = tone(p.text, w.rest);
+    c.secondary_hover = tone(p.text, w.hover);
+    c.secondary_active = tone(p.text, w.pressed);
+    c.secondary_foreground = solid(p.text);
+    c.primary_active = solid(p.primary_pressed);
+    c.muted = solid(p.surface);
+    c.muted_foreground = solid(r.text_secondary);
+    c.border = solid(p.border);
+    c.input = solid(r.border_strong);
+    c.ring = solid(r.focus);
+    c.link_hover = solid(p.primary_hover);
+    c.link_active = solid(p.primary_pressed);
+    c.popover = solid(r.raised);
+    c.popover_foreground = solid(p.text);
+    c.overlay = tone(p.shadow, p.tokens.elevation.scrim_alpha);
+    c.window_border = solid(p.border);
+    c.title_bar = solid(p.base);
+    c.title_bar_border = solid(p.border);
+    c.list = solid(p.surface);
+    c.list_even = solid(p.surface);
+    c.list_head = solid(p.surface);
+    c.list_hover = solid(r.hover);
+    c.list_active = solid(p.selected);
+    c.list_active_border = solid(r.focus);
+    c.table = solid(p.surface);
+    c.table_even = solid(p.surface);
+    c.table_head = solid(p.base);
+    c.table_head_foreground = solid(r.text_secondary);
+    c.table_hover = solid(r.hover);
+    c.table_active = solid(p.selected);
+    c.table_active_border = solid(r.focus);
+    c.table_row_border = solid(p.border);
+    c.tab = gpui::transparent_black();
+    c.tab_foreground = solid(r.text_secondary);
+    c.tab_active = solid(p.selected);
+    c.tab_active_foreground = solid(p.text);
+    c.tab_bar = solid(p.base);
+    c.tab_bar_segmented = tone(p.text, w.rest);
+    c.scrollbar = gpui::transparent_black();
+    c.scrollbar_thumb = tone(p.text, w.pressed);
+    c.scrollbar_thumb_hover = tone(p.text, w.pressed + w.rest);
+    c.sidebar = solid(p.base);
+    c.sidebar_foreground = solid(p.text);
+    c.sidebar_border = solid(p.border);
+    c.sidebar_accent = solid(r.hover);
+    c.sidebar_accent_foreground = solid(p.text);
+    c.sidebar_primary = solid(p.primary);
+    c.sidebar_primary_foreground = solid(p.on_primary);
+    c.accordion = solid(p.surface);
+    c.accordion_hover = solid(r.hover);
+    c.group_box = solid(p.surface);
+    c.group_box_foreground = solid(p.text);
+    c.description_list_label = solid(p.base);
+    c.description_list_label_foreground = solid(r.text_secondary);
+    c.skeleton = tone(p.text, w.rest);
+    c.progress_bar = solid(p.primary);
+    c.slider_bar = solid(p.primary);
+    c.slider_thumb = solid(if dark { p.text } else { p.surface });
+    c.drag_border = solid(r.focus);
+    c.drop_target = tone(p.accent, w.tone_rest);
+    c.tiles = solid(p.base);
+    c.danger = solid(p.error);
+    c.danger_hover = tone(p.error, 0.9);
+    c.danger_active = tone(p.error, 0.8);
+    c.danger_foreground = solid(p.on_primary);
+    c.success = solid(p.success);
+    c.success_hover = tone(p.success, 0.9);
+    c.success_active = tone(p.success, 0.8);
+    c.success_foreground = solid(p.on_primary);
+    c.warning = solid(p.warning);
+    c.warning_hover = tone(p.warning, 0.9);
+    c.warning_active = tone(p.warning, 0.8);
+    c.warning_foreground = solid(p.base);
+    c.info = solid(r.info);
+    c.info_hover = tone(r.info, 0.9);
+    c.info_active = tone(r.info, 0.8);
+    c.info_foreground = solid(p.on_primary);
+    c.chart_1 = solid(p.accent);
+    c.chart_2 = solid(p.success);
+    c.chart_3 = solid(p.warning);
+    c.chart_4 = solid(p.busy);
+    c.chart_5 = solid(p.error);
+    c.bullish = solid(p.success);
+    c.bearish = solid(p.error);
 }
 
 fn mono_font() -> &'static str {
@@ -647,6 +756,9 @@ pub struct Workspace {
     projects_scroll: gpui::UniformListScrollHandle,
     _focus_watch: Vec<gpui::Subscription>,
     appearance: Appearance,
+    /// A design forced for this run (`--design-v2`), over the setting.
+    /// Cleared when the setting is switched in Settings.
+    design_override: Option<Design>,
     theme_error: String,
     controller: Controller,
     view: Arc<View>,
@@ -974,6 +1086,7 @@ impl Workspace {
             projects_scroll: gpui::UniformListScrollHandle::new(),
             _focus_watch: focus_watch,
             appearance: Appearance::default(),
+            design_override: None,
             theme_error: String::new(),
             controller,
             view: Arc::new(View::default()),
@@ -1049,9 +1162,47 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.appearance = appearance;
-        configure_theme(appearance, Some(window), cx);
+        configure_theme(appearance, self.design(), Some(window), cx);
         self.apply_typography(cx);
         cx.notify();
+    }
+
+    /// The design this workspace draws: a run's forced design, else the
+    /// `design_v2` setting.
+    pub(crate) fn design(&self) -> Design {
+        self.design_override
+            .unwrap_or_else(|| self.settings.design())
+    }
+
+    /// The palette (colours plus [`Tokens`]) for the theme and design in
+    /// use. Every render reads this, never `self.appearance.palette()`, so a
+    /// theme or design change reaches the whole UI.
+    pub(crate) fn palette(&self) -> Palette {
+        self.appearance.palette_for(self.design())
+    }
+
+    /// The design's tokens (also `self.palette().tokens`).
+    #[allow(dead_code)] // For v2 area work; screens adopt it as they move to tokens.
+    pub(crate) fn tokens(&self) -> Tokens {
+        self.design().tokens()
+    }
+
+    /// Force a design for this run without saving it (`--design-v2`);
+    /// `None` returns to the setting. Call before `set_appearance`, which
+    /// applies it.
+    pub fn force_design(&mut self, design: Option<Design>) {
+        self.design_override = design;
+    }
+
+    /// Settings → Appearance → New design (preview): save the choice and
+    /// re-theme everything, as a theme change does.
+    pub(super) fn set_design_v2(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings.design_v2 = on;
+        self.design_override = None;
+        configure_theme(self.appearance, self.design(), Some(window), cx);
+        self.apply_typography(cx);
+        self.save_settings(cx);
+        window.refresh();
     }
 
     fn choose_theme(
@@ -1791,7 +1942,7 @@ impl Workspace {
         enabled: bool,
         primary: bool,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         chrome::interactive_control(div().id(id.into()), p, enabled)
             .px_3()
             .py_2()

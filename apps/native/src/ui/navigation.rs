@@ -396,7 +396,7 @@ impl Workspace {
     }
 
     pub(super) fn shell(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let viewer = self.viewer_owns_keys(window, cx);
         div()
             .relative()
@@ -609,7 +609,7 @@ impl Workspace {
         // Narrow windows keep each folder's actions to icons.
         let compact = window.viewport_size().width < px(960.);
         let gutter = if short { 16. } else { 24. };
-        let p = self.appearance.palette();
+        let p = self.palette();
         let rows = self.project_rows(cx);
         let count = rows.len();
         let can_write = self.can_write_projects();
@@ -767,7 +767,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let field = self.project_path.read(cx);
         let adding = field.focus_handle(cx).is_focused(window) || !field.value().trim().is_empty();
         div()
@@ -819,7 +819,7 @@ impl Workspace {
 
     /// The path field that pins a folder on the hub.
     fn render_project_form(&self, short: bool, can_write: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .debug_selector(|| "pin-folder-form".into())
             .p(px(if short { 8. } else { 12. }))
@@ -880,7 +880,7 @@ impl Workspace {
     /// Settings and project notices, with the offer to keep projects on
     /// this device when the hub could not take them.
     fn render_project_notices(&self, cx: &mut Context<Self>) -> Vec<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mut notices = Vec::new();
         if !self.settings_error.is_empty() {
             notices.push(chrome::notice_line(
@@ -933,7 +933,7 @@ impl Workspace {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let can_write = self.can_write_projects();
         let can_spawn = self.view.connected && !self.demo;
         let pinned = project.favourite;

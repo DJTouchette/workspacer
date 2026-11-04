@@ -346,7 +346,7 @@ impl Workspace {
             let files = frozen.map_or(&*estimate, |f| &f.files);
             if !files.is_empty() {
                 let estimated = frozen.is_none_or(|f| f.estimated);
-                let p = self.appearance.palette();
+                let p = self.palette();
                 body = body.child(
                     div()
                         .mt_2()
@@ -450,7 +450,7 @@ impl Workspace {
     /// row renders just before the reader reaches it: that is the moment to
     /// fetch the next page, keeping the scroll anchored on the current row.
     fn render_earlier(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let loading = self.view.loading_older;
         if !loading && !self.view.loading && self.view.connected {
             let this = cx.entity().downgrade();
@@ -576,7 +576,7 @@ impl Workspace {
             .items_center()
             .gap_2()
             .text_size(px(11.))
-            .text_color(rgb(self.appearance.palette().disabled))
+            .text_color(rgb(self.palette().disabled))
             .children(duration)
             .when_some(timestamp, |d, timestamp| {
                 d.child(timing::timestamp_label(
@@ -594,7 +594,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let session = self.view.selected.clone().unwrap_or_default();
         let key = format!("{namespace}:{}:{}", self.chat_owner(), row.key);
         // Rows that are not anyone's message: task-list markers, the
@@ -1167,7 +1167,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let owner = self.view.selected.clone().unwrap_or_default();
-        let p = self.appearance.palette();
+        let p = self.palette();
         let label = match &link {
             wks_native::links::Link::File(target) => target.path.clone(),
             _ => label.to_owned(),
@@ -1296,7 +1296,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let copy = text.to_owned();
         let raw_key = format!("{key}-raw");
         let expanded = self.chat.open.get(&raw_key).copied().unwrap_or(false);
@@ -1422,7 +1422,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         self.view
             .pending_messages
             .iter()
@@ -1469,7 +1469,7 @@ impl Workspace {
     }
 
     pub(super) fn render_pending(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mut body = div()
             .w_full()
             .max_w(px(CHAT_WIDTH))

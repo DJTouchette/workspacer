@@ -158,7 +158,7 @@ impl Workspace {
 
     /// The open menu, drawn inside the composer above the input.
     pub(super) fn render_slash_menu(&self, rows: Vec<SlashCommand>, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let highlight = self.slash_highlight(rows.len(), cx);
         div()
             .debug_selector(|| "slash-menu".into())

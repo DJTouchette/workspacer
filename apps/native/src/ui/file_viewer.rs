@@ -1267,7 +1267,7 @@ impl Render for PreviewPane {
                 ],
             };
             (
-                ws.appearance.palette(),
+                ws.palette(),
                 ws.settings.text_size as f32,
                 ws.settings.text_size.clamp(12, 20) as f32,
                 style,
@@ -2398,7 +2398,7 @@ impl Workspace {
             return None;
         }
         let pane = self.chat.viewer.pane.clone()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let viewport = window.viewport_size();
         let width = (viewport.width - px(24.)).min(px(820.)).max(px(280.));
         pane.update(cx, |pane, _| {

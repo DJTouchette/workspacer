@@ -2,6 +2,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+pub use crate::tokens::{Design, Tokens};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Appearance {
@@ -18,7 +20,11 @@ pub enum Appearance {
     CatppuccinLatte,
 }
 
-#[derive(Clone, Copy)]
+/// One theme's colours, plus the design's [`Tokens`] so anything handed a
+/// palette can also read the type scale, spacing, radii and elevation.
+/// [`Appearance::palette`] is the shipped (v1) look; use
+/// [`Appearance::palette_for`] with the workspace's [`Design`].
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Palette {
     pub base: u32,
     pub surface: u32,
@@ -51,6 +57,60 @@ pub struct Palette {
     pub control_radius: f32,
     pub panel_radius: f32,
     pub composer_radius: f32,
+    /// Extra semantic colours the redesign's primitives use. Derived from the
+    /// colours above in v1, where nothing shipped reads them.
+    pub roles: Roles,
+    pub tokens: Tokens,
+}
+
+/// Colour roles beyond the v1 set, as 0xRRGGBB. V1 derives each from an
+/// existing colour; v2 themes may set their own (`Appearance::v2_colors`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Roles {
+    /// Background of a hovered row or quiet control.
+    pub hover: u32,
+    /// Background of a pressed row or quiet control.
+    pub pressed: u32,
+    /// A surface raised above `surface` (menus, popovers, dialogs).
+    pub raised: u32,
+    /// Secondary text: labels and descriptions, one step below `text`.
+    pub text_secondary: u32,
+    /// Tertiary text: timestamps and hints. Not the disabled colour.
+    pub text_tertiary: u32,
+    /// A border that must read on `surface` and `raised` alike.
+    pub border_strong: u32,
+    /// The keyboard focus ring.
+    pub focus: u32,
+    /// Informational tone (neither success nor warning).
+    pub info: u32,
+}
+
+impl Roles {
+    /// Placeholder in the palette literals; `palette()` derives the real values.
+    const UNSET: Self = Self {
+        hover: 0,
+        pressed: 0,
+        raised: 0,
+        text_secondary: 0,
+        text_tertiary: 0,
+        border_strong: 0,
+        focus: 0,
+        info: 0,
+    };
+
+    /// The v1 mapping: every role is an existing palette colour.
+    fn derive(p: &Palette) -> Self {
+        Self {
+            hover: p.selected,
+            pressed: p.border,
+            raised: p.surface,
+            text_secondary: p.muted,
+            text_tertiary: p.disabled,
+            border_strong: p.border,
+            focus: p.accent,
+            info: p.accent,
+        }
+    }
 }
 
 impl Appearance {
@@ -84,9 +144,55 @@ impl Appearance {
         !matches!(self, Self::Light | Self::CatppuccinLatte)
     }
 
+    /// The shipped (v1) palette, with [`Tokens::V1`].
+    pub fn palette(self) -> Palette {
+        let mut p = self.v1_colors();
+        p.roles = Roles::derive(&p);
+        p
+    }
+
+    /// This theme under `design`: the shipped palette, or the redesign's.
+    pub fn palette_for(self, design: Design) -> Palette {
+        match design {
+            Design::V1 => self.palette(),
+            Design::V2 => self.palette_v2(),
+        }
+    }
+
+    /// The redesign's palette: per theme, so all eight keep working. Starts
+    /// from the v1 colours; designers override them in [`Self::v2_colors`].
+    /// Radii follow [`Tokens::V2`] so the palette's radius fields and the
+    /// token set never disagree.
+    pub fn palette_v2(self) -> Palette {
+        let mut p = self.v1_colors();
+        p.roles = Roles::derive(&p);
+        p.tokens = Tokens::V2;
+        p.control_radius = p.tokens.radius.control;
+        p.panel_radius = p.tokens.radius.panel;
+        p.composer_radius = p.tokens.radius.composer;
+        self.v2_colors(&mut p);
+        p
+    }
+
+    /// Per-theme v2 colour overrides, applied over the v1 colours and the
+    /// derived roles. Empty for now: the preview matches v1's colours.
+    fn v2_colors(self, p: &mut Palette) {
+        match self {
+            Self::Dark => {}
+            Self::Light => {}
+            Self::Nord => {}
+            Self::TokyoNight => {}
+            Self::Catppuccin => {}
+            Self::Gruvbox => {}
+            Self::Everforest => {}
+            Self::CatppuccinLatte => {}
+        }
+        let _ = p;
+    }
+
     /// Native semantic palettes. Dark keeps chrome close to the conversation
     /// surface so selection and content, rather than panel fills, lead the eye.
-    pub fn palette(self) -> Palette {
+    fn v1_colors(self) -> Palette {
         match self {
             Self::Dark => Palette {
                 base: 0x101113,
@@ -117,6 +223,8 @@ impl Appearance {
                 control_radius: 12.,
                 panel_radius: 16.,
                 composer_radius: 24.,
+                roles: Roles::UNSET,
+                tokens: Tokens::V1,
             },
             Self::Light => Palette {
                 base: 0xf4f4f5,
@@ -147,6 +255,8 @@ impl Appearance {
                 control_radius: 12.,
                 panel_radius: 16.,
                 composer_radius: 24.,
+                roles: Roles::UNSET,
+                tokens: Tokens::V1,
             },
             Self::Nord => Palette {
                 base: 0x2e3440,
@@ -181,6 +291,8 @@ impl Appearance {
                 control_radius: 12.,
                 panel_radius: 16.,
                 composer_radius: 24.,
+                roles: Roles::UNSET,
+                tokens: Tokens::V1,
             },
             // Omarchy tokyo-night: background 1a1b26 is the conversation,
             // dark_background the chrome, lighter_background raised cards.
@@ -213,6 +325,8 @@ impl Appearance {
                 control_radius: 12.,
                 panel_radius: 16.,
                 composer_radius: 24.,
+                roles: Roles::UNSET,
+                tokens: Tokens::V1,
             },
             // Omarchy catppuccin (Mocha). Selection is Overlay 2 at ~30%, as
             // Catppuccin's style guide specifies; busy is Mocha's mauve.
@@ -245,6 +359,8 @@ impl Appearance {
                 control_radius: 12.,
                 panel_radius: 16.,
                 composer_radius: 24.,
+                roles: Roles::UNSET,
+                tokens: Tokens::V1,
             },
             // Omarchy gruvbox (the Material variant: d4be98 on 282828).
             Self::Gruvbox => Palette {
@@ -276,6 +392,8 @@ impl Appearance {
                 control_radius: 12.,
                 panel_radius: 16.,
                 composer_radius: 24.,
+                roles: Roles::UNSET,
+                tokens: Tokens::V1,
             },
             // Omarchy everforest (dark medium). Headings brighten fg d3c6aa,
             // which is prose here; dark_foreground is too faint for metadata,
@@ -309,6 +427,8 @@ impl Appearance {
                 control_radius: 12.,
                 panel_radius: 16.,
                 composer_radius: 24.,
+                roles: Roles::UNSET,
+                tokens: Tokens::V1,
             },
             // Omarchy catppuccin-latte on its eff1f5 background. Text, green
             // and yellow are darkened from Latte's own values, which fall
@@ -342,6 +462,8 @@ impl Appearance {
                 control_radius: 12.,
                 panel_radius: 16.,
                 composer_radius: 24.,
+                roles: Roles::UNSET,
+                tokens: Tokens::V1,
             },
         }
     }
@@ -610,5 +732,31 @@ mod tests {
         assert!(Appearance::load(&path).is_err());
         assert!(Appearance::Nord.save(&dir).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn design_v1_is_the_shipped_palette_and_v2_covers_every_theme() {
+        for appearance in Appearance::ALL {
+            let v1 = appearance.palette_for(Design::V1);
+            assert_eq!(v1, appearance.palette(), "{appearance:?}");
+            assert_eq!(v1.tokens, Tokens::V1);
+            let v2 = appearance.palette_for(Design::V2);
+            assert_eq!(v2.tokens.design, Design::V2, "{appearance:?}");
+            assert_eq!(v2.control_radius, v2.tokens.radius.control);
+            assert_eq!(v2.panel_radius, v2.tokens.radius.panel);
+            assert_eq!(v2.composer_radius, v2.tokens.radius.composer);
+            // The preview stays at least as readable as v1 in every theme
+            // while designers tune it (floors are v1's weakest theme).
+            for (name, fg, bg, floor) in [
+                ("text", v2.text, v2.chat, 7.),
+                ("muted", v2.muted, v2.chat, 4.3),
+                ("text_secondary", v2.roles.text_secondary, v2.surface, 3.7),
+                ("text_tertiary", v2.roles.text_tertiary, v2.chat, 2.4),
+                ("on_primary", v2.on_primary, v2.primary, 3.),
+            ] {
+                let ratio = contrast(fg, bg);
+                assert!(ratio >= floor, "{appearance:?} v2 {name}: {ratio:.2}");
+            }
+        }
     }
 }

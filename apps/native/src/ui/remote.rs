@@ -69,7 +69,7 @@ impl Workspace {
 
     /// Tailscale status and the HTTPS switch.
     pub(super) fn render_remote_sharing(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.remote_busy();
         let state = self.remote_state();
         let refresh = self
@@ -119,7 +119,7 @@ impl Workspace {
     }
 
     fn render_serve_switch(&self, remote: &Remote, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let serving = remote.serving;
         let enabled = remote.can_serve && !busy;
         let confirm = self.remote.confirm_reset;
@@ -235,7 +235,7 @@ impl Workspace {
 
     /// Scope picker, QR code and link for one pairing.
     pub(super) fn render_phone_pairing(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.remote_busy();
         let Some(remote) = self.remote_state() else {
             return div().child(self.note("Check Tailscale above first.", p.muted));
@@ -357,7 +357,7 @@ impl Workspace {
 
     /// Every pairing token, each revocable.
     pub(super) fn render_paired_devices(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.remote_busy();
         let pairings = self
             .remote_state()

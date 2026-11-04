@@ -34,10 +34,10 @@ fn chat_markdown_follows_the_appearance_syntax_theme(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     for appearance in Appearance::ALL {
         visual.update(|window, cx| {
-            configure_theme(appearance, Some(window), cx);
+            configure_theme(appearance, Design::V1, Some(window), cx);
             assert_eq!(
                 *gpui_component::Theme::global(cx).highlight_theme,
-                *syntax::highlight_theme(appearance)
+                *syntax::highlight_theme(appearance, Design::V1)
             );
             workspace.update(cx, |this, cx| {
                 this.appearance = appearance;
@@ -60,8 +60,8 @@ fn chat_markdown_follows_the_appearance_syntax_theme(cx: &mut TestAppContext) {
         assert!(visual.debug_bounds("markdown-inline-live:a:0-0").is_some());
     }
     assert_ne!(
-        syntax::highlight_theme(Appearance::Dark),
-        syntax::highlight_theme(Appearance::Nord)
+        syntax::highlight_theme(Appearance::Dark, Design::V1),
+        syntax::highlight_theme(Appearance::Nord, Design::V1)
     );
 }
 
@@ -1419,13 +1419,7 @@ fn fleet_wakes_render_as_named_worker_cards_not_user_bubbles(cx: &mut TestAppCon
     let status = |this: &Workspace| {
         let fleet = wks_native::transcript::fleet(BLOCKED_WAKE).unwrap();
         let live = this.view.sessions.iter().find(|s| s.id == "worker-1");
-        fleet_card::entry_status(
-            fleet.kind,
-            &fleet.entries[0],
-            live,
-            this.appearance.palette(),
-        )
-        .0
+        fleet_card::entry_status(fleet.kind, &fleet.entries[0], live, this.palette()).0
     };
     workspace.read_with(&visual, |this, _| {
         assert_eq!(status(this), "Needs approval")

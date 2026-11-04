@@ -138,7 +138,7 @@ impl Workspace {
     ) -> Option<Div> {
         let steps = self.pinned_plan()?;
         let session = self.view.selected.clone()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (done, total) = task_plan::progress(&steps);
         let open = self.plan_open(&session, &steps, compact);
         let active = task_plan::active(&steps);
@@ -245,7 +245,7 @@ impl Workspace {
         if steps.is_empty() {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (done, total) = task_plan::progress(&steps);
         let open_key = format!("{key}-plan");
         let open = self.chat.open.get(&open_key).copied().unwrap_or(false);

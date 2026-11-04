@@ -36,9 +36,9 @@ fn session_clear(session: &Session) -> (String, ClearMark) {
 
 /// Rail rows share one height (it is a uniform_list); sessions take the
 /// larger mark and nested children the smaller.
-const RAIL_ROW: f32 = 44.;
-const RAIL_SESSION: f32 = 30.;
-const RAIL_CHILD: f32 = 22.;
+const RAIL_ROW: f32 = Tokens::V1.layout.rail_row;
+const RAIL_SESSION: f32 = Tokens::V1.layout.rail_session;
+const RAIL_CHILD: f32 = Tokens::V1.layout.rail_child;
 
 /// What a rail mark shows inside its ring.
 enum AvatarGlyph {
@@ -254,7 +254,7 @@ impl Workspace {
         rail: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         // Children inherit the parent's provider unless their model says otherwise.
         let provider = self
             .view
@@ -684,7 +684,7 @@ impl Workspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let rows = self.sidebar_rows(cx);
         div()
             // The same id as the full sidebar, so a control focused in one
@@ -973,7 +973,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let editing = [
             &self.composer,
             &self.search,
@@ -1731,7 +1731,7 @@ impl Workspace {
     fn pending_badge(&self) -> Option<Div> {
         let total = self.pending_total();
         (total > 0).then(|| {
-            let p = self.appearance.palette();
+            let p = self.palette();
             div()
                 .absolute()
                 .top(px(-3.))
@@ -1760,7 +1760,7 @@ impl Workspace {
     /// project's mark, ringed, with a tooltip saying how to clear it.
     fn rail_filter(&self) -> Option<Stateful<Div>> {
         let filter = self.project_filter.clone()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (known, title) = match self.filter_group() {
             Some(group) => (Some(group.as_known()), group.name),
             None => (

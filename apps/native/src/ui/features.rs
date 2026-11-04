@@ -754,7 +754,7 @@ impl Workspace {
     }
     /// The request's loading or error line, toned; empty when settled.
     pub(super) fn feature_message(&self, key: &str) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         match self.view.requests.get(key) {
             Some(s) if s.loading => chrome::notice_line("Loading…", chrome::Tone::Loading, p),
             Some(s) => match s.error.as_ref().filter(|e| !e.is_empty()) {
@@ -766,7 +766,7 @@ impl Workspace {
     }
 
     pub(super) fn render_feature(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let short = window.viewport_size().height < px(620.);
         let session_name = self.selected_session().map(|s| self.session_title(s));
         let handoff_title = self.handoff_title();
@@ -1028,7 +1028,7 @@ impl Workspace {
 
     /// The session's status as a tinted pill, beside its name in the header.
     fn session_status_pill(&self, s: &Session) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (status, color) = if self.view.connected {
             self.status_of(s, p)
         } else {
@@ -1052,7 +1052,7 @@ impl Workspace {
 
     /// Under the session's name: its agent, effort and project at a glance.
     fn session_summary_line(&self, s: &Session) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let sep = || div().text_color(rgb(p.disabled)).child("·");
         let effort = (!s.effort.is_empty())
             .then(|| format!("{} effort", wks_native::launch::effort_label(&s.effort)));
@@ -1089,7 +1089,7 @@ impl Workspace {
 
     /// `narrow`: labels sit above their values instead of in a column.
     fn render_session(&self, narrow: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(s) = self.selected_session() else {
             return empty_note("Select a session in the sidebar first.", p);
         };
@@ -1475,7 +1475,7 @@ impl Workspace {
             .children(mcp)
     }
     fn render_history(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let history = self.view.requests.get("history").cloned();
         let state = history.as_ref();
         let items = state.and_then(|s| s.value["rows"].as_array());
@@ -1583,7 +1583,7 @@ impl Workspace {
             )
     }
     fn render_setup(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         // Recheck lives in the page header, beside the title it refreshes.
         div()
             .flex()
@@ -1603,7 +1603,7 @@ impl Workspace {
 
     /// One provider: whether it is installed, and its connection check.
     fn render_setup_card(&self, provider: &'static str, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self.view.requests.get("setup");
         let busy = state.is_some_and(|s| s.loading);
         let can_check = !busy && self.view.connected;
@@ -1801,7 +1801,7 @@ impl Workspace {
     }
 
     fn render_model(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         if !self.supported_session() {
             return empty_note(
                 "Model switching is available for Claude and Codex sessions.",
@@ -1930,7 +1930,7 @@ impl Workspace {
     /// only be chosen at launch, such as Claude full access for a session
     /// started with approvals on.
     fn render_live_access(&self, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(session) = self.selected_session() else {
             return div();
         };

@@ -531,7 +531,7 @@ impl Workspace {
     }
 
     fn set_terminal_palette(&self, cx: &mut App) {
-        cx.set_global(TerminalPalette(self.appearance.palette()));
+        cx.set_global(TerminalPalette(self.palette()));
     }
 
     /// Popouts keep their palette and font metrics current even while the
@@ -646,7 +646,7 @@ impl Workspace {
         if !self.terminal.open {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         self.set_terminal_palette(cx);
         let agent = self.terminal.agent.clone()?;
         let session = self.view.sessions.iter().find(|s| s.id == agent).cloned();
