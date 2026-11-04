@@ -124,7 +124,9 @@ fn changes_dock_beside_the_chat_with_every_file_stacked(cx: &mut TestAppContext)
     // Split view pairs the sides; the choice is remembered.
     click(&mut visual, "review-split");
     assert!(workspace.read_with(&visual, |this, _| this.settings.review_split));
-    // Expand opens the full page; the dock waits behind it.
+    // Expand (in the header's "…" menu) opens the full page; the dock waits
+    // behind it.
+    click(&mut visual, "review-dock-more");
     click(&mut visual, "review-dock-expand");
     workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Changes));
     bounds_of(&mut visual, "review-view");

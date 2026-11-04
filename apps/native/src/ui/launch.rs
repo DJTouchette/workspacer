@@ -170,10 +170,49 @@ impl Workspace {
         self.effort_picker = picker;
     }
 
+    // r3-pages
+    /// The model picker's rows. Under v2 they match the composer's model
+    /// popover (R3.5): human names, the curated models the catalog does not
+    /// list, and "Custom id…" last.
+    pub(super) fn picker_models(&self) -> Vec<PickerItem> {
+        let mut items = model_items(&self.catalog_models);
+        if !self.design().is_v2() {
+            return items;
+        }
+        let custom = items.pop();
+        for item in items.iter_mut().skip(1) {
+            let default = self
+                .catalog_models
+                .iter()
+                .any(|m| m.id == item.id && m.is_default);
+            let name = wks_native::format::model_name(&item.id);
+            item.label = if default {
+                format!("{name} (default)")
+            } else {
+                name
+            };
+        }
+        items.extend(
+            super::model_popover::listed_models(self.provider, &self.catalog_models)
+                .into_iter()
+                .skip(self.catalog_models.len())
+                .map(|m| PickerItem {
+                    label: wks_native::format::model_name(&m.id),
+                    id: m.id,
+                    kind: "model-option",
+                }),
+        );
+        items.extend(custom.map(|mut c| {
+            c.label = "Custom id…".into();
+            c
+        }));
+        items
+    }
+
     /// A new launch/provider gets a fresh query and scroll state, not the old
     /// dropdown's filtered list. Replacing the subscription also releases it.
     pub(super) fn reset_model_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let items = model_items(&self.catalog_models);
+        let items = self.picker_models();
         let choice = self.model_choice.clone();
         let picker = cx.new(|cx| {
             let mut picker =
@@ -954,7 +993,7 @@ impl Workspace {
                 .update(cx, |input, cx| input.set_value(selected, window, cx));
             self.model_choice = "__custom".into();
         }
-        let items = model_items(&self.catalog_models);
+        let items = self.picker_models();
         self.model_picker.update(cx, |picker, cx| {
             picker.set_items(SearchableVec::new(items), window, cx);
             picker.set_selected_value(&self.model_choice, window, cx);

@@ -785,6 +785,11 @@ impl Workspace {
         let session_name = self.selected_session().map(|s| self.session_title(s));
         let handoff_title = self.handoff_title();
         let (title, description): (&str, Option<SharedString>) = match self.screen {
+            // r3-pages (R3.5): no "connection".
+            Screen::Recent if self.design().is_v2() => (
+                "Session history",
+                Some("Every session you have run, ended ones included.".into()),
+            ),
             Screen::Recent => (
                 "Session history",
                 Some("Every session this connection knows about, including ended ones.".into()),
@@ -800,6 +805,11 @@ impl Workspace {
                 ("Machines", Some(super::hosts::HOSTS_DESCRIPTION.into()))
             }
             Screen::Hosts => ("Hosts", Some(super::hosts::HOSTS_DESCRIPTION.into())),
+            // r3-pages (R3.5): named as the palette names it, and explained.
+            Screen::Scratch if self.design().is_v2() => (
+                "Scratch files",
+                Some(super::scratch::SCRATCH_DESCRIPTION_V2.into()),
+            ),
             Screen::Scratch => ("Scratch", Some(super::scratch::SCRATCH_DESCRIPTION.into())),
             Screen::History => ("Conversation history", Some(HISTORY_DESCRIPTION.into())),
             // The session itself is the hero; its facts follow underneath.
@@ -1400,10 +1410,20 @@ impl Workspace {
             .child(
                 manage_row(
                     if archived { "Archived" } else { "Archive" },
-                    match (archived, s.stopped()) {
-                        (true, _) => "Hidden from the list in every client of this hub.",
-                        (false, true) => "Hides it from the list in every client of this hub.",
-                        (false, false) => {
+                    match (archived, s.stopped(), self.design().is_v2()) {
+                        // r3-pages (R3.5): no "hub".
+                        (true, _, true) => "Hidden from the sidebar everywhere you use Workspacer.",
+                        (false, true, true) => {
+                            "Hides it from the sidebar everywhere you use Workspacer."
+                        }
+                        (false, false, true) => {
+                            "Hides it from the sidebar everywhere you use Workspacer. It keeps running."
+                        }
+                        (true, _, false) => "Hidden from the list in every client of this hub.",
+                        (false, true, false) => {
+                            "Hides it from the list in every client of this hub."
+                        }
+                        (false, false, false) => {
                             "Hides it from the list in every client of this hub. It keeps running."
                         }
                     },
@@ -2531,6 +2551,14 @@ impl Workspace {
                 .child(self.session_summary_line(s)),
             _ => header,
         };
+        // r3-pages: forms keep a readable measure, left-aligned under the
+        // shared header, while tables use the page's width.
+        let body = match self.screen {
+            Screen::Model | Screen::Session | Screen::Handoff | Screen::PullRequest => {
+                div().w_full().max_w(px(t.pages().form)).child(body)
+            }
+            _ => body,
+        };
         if self.screen == Screen::Recent {
             // Its rows are the page's own children, so the keyboard cursor
             // can scroll one into view.
@@ -2539,7 +2567,7 @@ impl Workspace {
             items.extend(self.render_recent(cx));
             return self.page_list(
                 "feature-view",
-                t.layout.page_width,
+                t.pages().wide,
                 false,
                 &self.extras.recent.scroll,
                 items,
@@ -2547,7 +2575,7 @@ impl Workspace {
         }
         self.page_view(
             "feature-view",
-            t.layout.page_width,
+            t.pages().wide,
             false,
             div()
                 .flex()
@@ -2713,7 +2741,9 @@ impl SetupState {
 pub(super) fn session_badge_v2(word: &str) -> StatusBadge {
     let kind = session_kind_v2(word);
     match kind {
-        // "Ready" and "Ended" are both Idle; the word says which.
+        // r3-pages: "Ready" is the lexicon's Idle; "Ended" (and other
+        // specific facts) keep their word.
+        StatusKind::Idle if word.eq_ignore_ascii_case("ready") => StatusBadge::new(kind),
         StatusKind::Idle => StatusBadge::new(kind).label(word.to_owned()),
         // r3-foundation: everything else speaks the one lexicon ("Running",
         // "Thinking" → Working; "Needs approval" → Needs you).
@@ -2764,24 +2794,40 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.palette();
+        let key: String = key.into();
+        let trigger_id = SharedString::from(format!("{key}-more"));
+        let selector = trigger_id.clone();
+        let trigger = primitives::overflow_trigger(trigger_id, &p)
+            .debug_selector(move || selector.to_string());
+        self.page_menu(key, trigger, items, cx)
+    }
+
+    // r3-pages
+    /// Any page control that opens a menu below it (the "…" trigger, the
+    /// Projects page's "Add…"): the trigger toggles `pages.menu` under
+    /// `key`; a click outside closes it.
+    pub(super) fn page_menu(
+        &self,
+        key: impl Into<String>,
+        trigger: Stateful<Div>,
+        items: Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
         let t = p.tokens;
         let key: String = key.into();
         let open = self.extras.pages.menu.as_deref() == Some(key.as_str());
-        let trigger_id = SharedString::from(format!("{key}-more"));
-        let selector = trigger_id.clone();
         let toggle = key.clone();
-        let trigger = primitives::overflow_trigger(trigger_id, &p)
-            .debug_selector(move || selector.to_string())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                let menu = &mut this.extras.pages.menu;
-                *menu = if menu.as_deref() == Some(toggle.as_str()) {
-                    None
-                } else {
-                    Some(toggle.clone())
-                };
-                cx.notify();
-            }));
+        let trigger = trigger.on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            let menu = &mut this.extras.pages.menu;
+            *menu = if menu.as_deref() == Some(toggle.as_str()) {
+                None
+            } else {
+                Some(toggle.clone())
+            };
+            cx.notify();
+        }));
         let menu_selector = format!("{key}-menu");
         div()
             .relative()

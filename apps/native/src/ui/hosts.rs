@@ -761,7 +761,7 @@ pub(super) fn pill(text: String, color: u32, p: Palette) -> Div {
 // column, and the metrics and queue behind Details. Plain words replace the
 // ops terms: the gate is "Accepting work" / "Paused: low memory", PSI lives
 // in tooltips, and queue and session ids sit behind "Copy ID".
-use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
+use super::primitives::{self, ButtonSize, ButtonVariant, Col, StatusBadge, StatusKind, tabular};
 
 impl Workspace {
     fn render_hosts_v2(&self, cx: &mut Context<Self>) -> Div {
@@ -824,9 +824,23 @@ impl Workspace {
                         .debug_selector(|| "hosts-cancel-error".into()),
                 )
             });
+        // r3-pages (R3.6): one dense table, a machine per row; an offline
+        // machine is one muted line.
+        let pg = t.pages();
+        let mut table = primitives::page_table(&p).child(primitives::page_table_head(
+            &[
+                ("Machine", Col::Flex),
+                ("Status", Col::Fixed(pg.status + t.space.xxxl)),
+                ("Agents", Col::Fixed(pg.when)),
+                ("Waiting", Col::Fixed(pg.age)),
+                ("", Col::Keep(pg.age)),
+            ],
+            &p,
+        ));
         for (ix, card) in cards.iter().enumerate() {
-            page = page.child(self.render_host_v2(ix, card, limits.as_ref(), cx));
+            table = table.child(self.render_host_v2(ix, card, limits.as_ref(), cx));
         }
+        page = page.child(table);
         if cards.len() == 1 {
             page = page.child(
                 div()
@@ -901,73 +915,80 @@ impl Workspace {
                 }
             })
             .unwrap_or_else(|| "No resource sample yet".to_owned());
-        let summary = div()
+        let pg = t.pages();
+        let offline = card.connected == Some(false);
+        let ink = if offline {
+            p.roles.text_tertiary
+        } else {
+            p.text
+        };
+        let (agents, waiting) = host_counts(card);
+        let summary = primitives::page_table_row(&p)
             .id(("host-summary", ix))
             .debug_selector(move || format!("host-summary-{ix}"))
-            .px(px(t.space.xl))
-            .py(px(t.space.lg))
-            .flex()
-            .items_center()
-            .gap(px(t.space.lg))
-            .min_w_0()
-            .child(primitives::avatar_tile_sized(&name, t.layout.avatar_lg, &p))
+            .when(ix == 0, |d| d.border_t(px(0.)))
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.xxs))
+                primitives::page_cell(Col::Flex)
+                    .gap(px(t.space.md))
+                    .when(!offline, |d| {
+                        d.child(primitives::avatar_tile_sized(&name, t.layout.avatar, &p))
+                    })
                     .child(
                         div()
-                            .flex()
-                            .items_baseline()
-                            .gap(px(t.space.md))
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(t.text.subheading))
-                                    .font_weight(FontWeight(t.weight.semibold))
-                                    .text_color(rgb(p.text))
-                                    .child(name.clone()),
-                            )
-                            .when(this_machine, |d| {
-                                d.child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .text_size(px(t.text.meta))
-                                        .text_color(rgb(p.roles.text_tertiary))
-                                        .child("This machine"),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .debug_selector(move || format!("host-facts-{ix}"))
                             .min_w_0()
                             .truncate()
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .child(host_summary(card)),
-                    ),
+                            .font_weight(FontWeight(if offline {
+                                t.weight.regular
+                            } else {
+                                t.weight.semibold
+                            }))
+                            .text_color(rgb(ink))
+                            .child(name.clone()),
+                    )
+                    .when(this_machine, |d| {
+                        d.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(t.text.meta))
+                                .text_color(rgb(p.roles.text_tertiary))
+                                .child("This machine"),
+                        )
+                    }),
             )
             .child(
-                div()
+                primitives::page_cell(Col::Fixed(pg.status + t.space.xxxl))
                     .id(("host-gate", ix))
                     .debug_selector(move || format!("host-gate-{ix}"))
-                    .w(px(t.layout.status_column + t.space.xxxl))
-                    .flex_shrink_0()
-                    .flex()
                     .tooltip(primitives::tooltip_view(gate_tooltip, None, &p))
                     .child(status.render(&p)),
             )
-            .child(details);
-        let mut body = primitives::card(&p)
-            .p(px(0.))
-            .gap(px(0.))
-            .overflow_hidden()
+            .child(
+                primitives::page_cell(Col::Fixed(pg.when))
+                    .debug_selector(move || format!("host-facts-{ix}"))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(rgb(if offline {
+                                p.roles.text_tertiary
+                            } else {
+                                p.roles.text_secondary
+                            }))
+                            .child(agents),
+                    ),
+            )
+            .child(primitives::page_cell(Col::Fixed(pg.age)).child(tabular(
+                div().text_color(rgb(p.roles.text_secondary)).child(waiting),
+            )))
+            .child(
+                primitives::page_cell(Col::Keep(pg.age))
+                    .justify_end()
+                    .child(details),
+            );
+        let mut body = div()
+            .w_full()
+            .flex()
+            .flex_col()
             .debug_selector(move || format!("host-card-{ix}"))
             .child(summary);
         if !open {
@@ -1223,13 +1244,13 @@ impl Workspace {
                                     .flex_shrink_0()
                                     .text_size(px(t.text.meta))
                                     .text_color(rgb(p.roles.text_tertiary))
-                                    .child(format!("{} · {}", item.tags(), item.when(now))),
+                                    .child(format!("{} · {}", queue_origin(item), item.when(now))),
                             ),
                     )
                     .child(
                         primitives::truncated(
                             SharedString::from(format!("queue-what-{card}-{row}")),
-                            item.what(),
+                            queue_what(item),
                             &p,
                         )
                         .font_family(mono_font())
@@ -1287,6 +1308,9 @@ impl Workspace {
                 Some(session) => format!("Session: {}", self.session_title(session)),
                 None => "Running in a session".to_owned(),
             };
+        }
+        if item.state == State::Unknown {
+            return "Workspacer restarted while this ran, so how it ended is unknown".to_owned();
         }
         item.note()
     }
@@ -1358,35 +1382,55 @@ fn load_word(value: Option<f64>, limit: f64) -> &'static str {
     }
 }
 
-// r2-pages: plain words ("3 of 4 agents free · 2 waiting"); only an
+// r3-pages: plain words in two columns ("3 of 4 free", "2"); only an
 // exception ("Not taking new work") is said about dispatch.
-/// The machine's one-line summary: agents free and work waiting.
-fn host_summary(card: &Card) -> String {
-    let mut parts = Vec::new();
+/// A machine's agents column and its waiting count.
+fn host_counts(card: &Card) -> (String, String) {
+    let waiting = match card.resources.as_ref().and_then(|r| r.queued) {
+        Some(n) if n > 0 => n.to_string(),
+        _ => "—".to_owned(),
+    };
     if !card.local && card.dispatch == Some(false) {
-        parts.push("Not taking new work".to_owned());
+        return ("Not taking new work".to_owned(), waiting);
     }
-    match &card.resources {
-        Some(r) => {
-            if let (Some(free), Some(slots)) = (r.free_agents(), r.agent_slots) {
-                parts.push(format!(
-                    "{free} of {slots} agent{} free",
-                    if slots == 1 { "" } else { "s" }
-                ));
-            }
-            match r.queued {
-                Some(0) | None => {}
-                Some(n) => parts.push(format!("{n} waiting")),
-            }
-        }
-        None if card.connected == Some(false) => parts.push("Not connected".to_owned()),
-        None => parts.push("Waiting for its first sample".to_owned()),
-    }
-    if parts.is_empty() {
-        "Nothing queued".to_owned()
+    let agents = match &card.resources {
+        Some(r) => match (r.free_agents(), r.agent_slots) {
+            (Some(free), Some(slots)) => format!("{free} of {slots} free"),
+            _ => "—".to_owned(),
+        },
+        None if card.connected == Some(false) => "Not connected".to_owned(),
+        None => "Waiting for its first sample".to_owned(),
+    };
+    (agents, waiting)
+}
+
+/// Where a queue item came from, in words: "Agent · from a job",
+/// "Command · started from chat". No priority codes.
+fn queue_origin(item: &Item) -> String {
+    let kind = if item.kind == "shell" {
+        "Command"
     } else {
-        parts.join(" · ")
+        "Agent"
+    };
+    let source = match (item.source.as_str(), item.origin.as_str()) {
+        ("prompt", _) => "started from chat".to_owned(),
+        ("job", _) => "from a job".to_owned(),
+        ("agent", _) => "started by an agent".to_owned(),
+        ("remote", origin) if !origin.is_empty() => format!("sent from {origin}"),
+        ("remote", _) => "sent from another machine".to_owned(),
+        _ => String::new(),
+    };
+    if source.is_empty() {
+        kind.to_owned()
+    } else {
+        format!("{kind} · {source}")
     }
+}
+
+/// What a queue item runs: "Claude in /work/api", "$ cargo test in /work".
+fn queue_what(item: &Item) -> String {
+    let what = item.what();
+    what.strip_prefix("shell · ").unwrap_or(&what).to_owned()
 }
 
 /// One metric column: label left, value right (never overlapping), the
@@ -1467,7 +1511,7 @@ fn queue_status(state: &State) -> StatusBadge {
         State::Done => StatusBadge::new(StatusKind::Done),
         State::Failed => StatusBadge::new(StatusKind::Failed),
         State::Cancelled => StatusBadge::new(StatusKind::Idle).label("Cancelled"),
-        State::Unknown => StatusBadge::new(StatusKind::Idle).label("Unknown"),
+        State::Unknown => StatusBadge::new(StatusKind::Idle).label("Result unknown"),
         State::Other(other) => StatusBadge::new(StatusKind::Idle).label(other.clone()),
     }
 }

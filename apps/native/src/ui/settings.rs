@@ -347,13 +347,9 @@ impl Workspace {
             themes,
         ));
 
-        entries.push(Entry::new(
-            S::Appearance,
-            "interface-size",
-            "Interface size",
-            "Scales the whole app on top of your display's scaling. Ctrl/Cmd + and − step it; Ctrl/Cmd 0 resets.",
-            "zoom scale dpi size bigger smaller tiny huge display resolution",
-            Layout::Block,
+        let interface_size = if self.design().is_v2() {
+            self.interface_size_v2(cx).into_any_element()
+        } else {
             self.segmented(
                 "interface-size",
                 wks_native::navigation::INTERFACE_SCALES
@@ -363,7 +359,21 @@ impl Workspace {
                 self.settings.interface_scale,
                 |this, pct, window, cx| this.set_interface_scale(pct, window, cx),
                 cx,
-            ),
+            )
+            .into_any_element()
+        };
+        entries.push(Entry::new(
+            S::Appearance,
+            "interface-size",
+            "Interface size",
+            "Scales the whole app on top of your display's scaling. Ctrl/Cmd + and − step it; Ctrl/Cmd 0 resets.",
+            "zoom scale dpi size bigger smaller tiny huge display resolution",
+            if self.design().is_v2() {
+                Layout::Row
+            } else {
+                Layout::Block
+            },
+            interface_size,
         ));
         entries.push(Entry::new(
             S::Appearance,
@@ -402,7 +412,10 @@ impl Workspace {
                     this.save_settings(cx);
                 })),
         ));
-        entries.push(Entry::new(
+        // r3-pages: v2's session tools are the header toolbar; the rail
+        // (and so this setting) is v1's.
+        if !self.design().is_v2() {
+            entries.push(Entry::new(
             S::Appearance,
             "tool-rail",
             "Floating tool rail",
@@ -417,6 +430,7 @@ impl Workspace {
                     this.save_settings(cx);
                 })),
         ));
+        }
         entries.push(Entry::new(
             // r2-pages: under v2 the preview lives in Labs.
             if self.design().is_v2() {
@@ -950,6 +964,98 @@ impl Workspace {
         entries
     }
 
+    // r3-pages
+    /// The notes under a shared setting (failed read, reading, offline);
+    /// v2 says nothing about a hub.
+    fn setting_notes(&self) -> (&'static str, &'static str, &'static str) {
+        if self.design().is_v2() {
+            (
+                "Couldn't read this setting",
+                "Reading this setting…",
+                "Connect to Workspacer to change this.",
+            )
+        } else {
+            (
+                "Couldn't reach the hub's setting",
+                "Reading the hub's setting…",
+                "Connect to a hub to change this.",
+            )
+        }
+    }
+
+    // r3-pages
+    /// Interface size as a stepper (R3.6: not nine stops): smaller, the
+    /// size, larger, and Reset away from 100%.
+    fn interface_size_v2(&self, cx: &mut Context<Self>) -> Div {
+        use wks_native::navigation::{INTERFACE_SCALES, step_interface_scale};
+        let p = self.palette();
+        let t = p.tokens;
+        let current = self.settings.interface_scale;
+        let (min, max) = (
+            INTERFACE_SCALES[0],
+            INTERFACE_SCALES[INTERFACE_SCALES.len() - 1],
+        );
+        let step = |id: &'static str, icon: IconName, tip: &'static str, by: i32, enabled: bool| {
+            primitives::icon_button(id, icon, tip, ButtonVariant::Secondary, enabled, &p)
+                .debug_selector(move || id.into())
+                .when(enabled, |d| {
+                    d.on_click(cx.listener(move |this, _, window, cx| {
+                        let next = step_interface_scale(this.settings.interface_scale, by);
+                        this.set_interface_scale(next, window, cx);
+                    }))
+                })
+        };
+        div()
+            .debug_selector(|| "interface-size".into())
+            .flex()
+            .items_center()
+            .gap(px(t.space.sm))
+            .when(current != 100, |d| {
+                d.child(
+                    primitives::button(
+                        "interface-size-reset",
+                        "Reset",
+                        None,
+                        ButtonVariant::Tertiary,
+                        ButtonSize::Small,
+                        true,
+                        &p,
+                    )
+                    .debug_selector(|| "interface-size-reset".into())
+                    .on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.set_interface_scale(100, window, cx)
+                        }),
+                    ),
+                )
+            })
+            .child(step(
+                "interface-size-smaller",
+                IconName::Minus,
+                "Smaller",
+                -1,
+                current > min,
+            ))
+            .child(primitives::tabular(
+                div()
+                    .debug_selector(|| "interface-size-value".into())
+                    .min_w(px(t.layout.control_height + t.space.lg))
+                    .flex()
+                    .justify_center()
+                    .text_size(px(t.text.body))
+                    .font_weight(FontWeight(t.weight.medium))
+                    .text_color(rgb(p.text))
+                    .child(format!("{current}%")),
+            ))
+            .child(step(
+                "interface-size-larger",
+                IconName::Plus,
+                "Larger",
+                1,
+                current < max,
+            ))
+    }
+
     fn render_child_access(&self, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let state = self.view.requests.get("child-access");
@@ -959,14 +1065,14 @@ impl Workspace {
         let error = state.filter(|s| !s.loading).and_then(|s| s.error.clone());
         let (status, tone) = match (current, &error) {
             (_, Some(error)) => (
-                format!("Couldn't reach the hub's setting: {error}"),
+                format!("{}: {error}", self.setting_notes().0),
                 chrome::Tone::Error,
             ),
             (None, None) if pending || self.view.connected => {
-                ("Reading the hub's setting…".to_owned(), chrome::Tone::Loading)
+                (self.setting_notes().1.to_owned(), chrome::Tone::Loading)
             }
             (None, None) => (
-                "Connect to a hub to change this.".to_owned(),
+                self.setting_notes().2.to_owned(),
                 chrome::Tone::Info,
             ),
             (Some((true, _)), None) => (
@@ -974,7 +1080,12 @@ impl Workspace {
                 chrome::Tone::Warning,
             ),
             (Some((false, true)), None) => (
-                "Off. Fleet Manager workers still start with full access (the hub's Fleet setting).".to_owned(),
+                if self.design().is_v2() {
+                    "Off. Fleet Manager workers still start with full access (the Fleet setting)."
+                } else {
+                    "Off. Fleet Manager workers still start with full access (the hub's Fleet setting)."
+                }
+                .to_owned(),
                 chrome::Tone::Info,
             ),
             (Some((false, false)), None) => (
@@ -1019,17 +1130,13 @@ impl Workspace {
         let error = state.filter(|s| !s.loading).and_then(|s| s.error.clone());
         let (status, tone) = match (current, &error) {
             (_, Some(error)) => (
-                format!("Couldn't reach the hub's setting: {error}"),
+                format!("{}: {error}", self.setting_notes().0),
                 chrome::Tone::Error,
             ),
-            (None, None) if pending || self.view.connected => (
-                "Reading the hub's setting…".to_owned(),
-                chrome::Tone::Loading,
-            ),
-            (None, None) => (
-                "Connect to a hub to change this.".to_owned(),
-                chrome::Tone::Info,
-            ),
+            (None, None) if pending || self.view.connected => {
+                (self.setting_notes().1.to_owned(), chrome::Tone::Loading)
+            }
+            (None, None) => (self.setting_notes().2.to_owned(), chrome::Tone::Info),
             (Some(true), None) => (
                 "On: agents started by jobs skip provider approval prompts.".to_owned(),
                 chrome::Tone::Warning,
@@ -1079,17 +1186,13 @@ impl Workspace {
         let error = state.filter(|s| !s.loading).and_then(|s| s.error.clone());
         let (status, tone) = match (current, &error) {
             (_, Some(error)) => (
-                format!("Couldn't reach the hub's setting: {error}"),
+                format!("{}: {error}", self.setting_notes().0),
                 chrome::Tone::Error,
             ),
-            (None, None) if pending || self.view.connected => (
-                "Reading the hub's setting…".to_owned(),
-                chrome::Tone::Loading,
-            ),
-            (None, None) => (
-                "Connect to a hub to change this.".to_owned(),
-                chrome::Tone::Info,
-            ),
+            (None, None) if pending || self.view.connected => {
+                (self.setting_notes().1.to_owned(), chrome::Tone::Loading)
+            }
+            (None, None) => (self.setting_notes().2.to_owned(), chrome::Tone::Info),
             (Some(true), None) => (
                 "On: new Claude sessions load only workspacer and MCP library servers.".to_owned(),
                 chrome::Tone::Warning,
@@ -1539,6 +1642,49 @@ impl SettingsSection {
     }
 }
 
+// r3-pages (R3.5)
+/// A v2 setting's description as what it does for you, in two lines at
+/// most and without "hub". `None` keeps the entry's own (already short).
+fn outcome_v2(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "interface-size" => {
+            "Make everything bigger or smaller. Ctrl/Cmd + and − change it; Ctrl/Cmd 0 resets it."
+        }
+        "window-layout" => {
+            "Tall puts panels below the conversation, for portrait monitors. Auto picks it when the window is taller than wide."
+        }
+        "reduce-motion" => "Turn off springy and spinning animations. Fades stay.",
+        "sidebar-density" => "Fit more sessions on screen: one short line each.",
+        "keep-running" => {
+            "Closing the window keeps your agents running from the taskbar or Dock. Quit stops them."
+        }
+        "notifications" => {
+            "Get an alert when a session finishes or needs you while this window is in the background."
+        }
+        "terminal-shell" => {
+            "The shell new terminals open with, from those on the machine that runs your agents. Only its owner can change it."
+        }
+        "agent-setup" => "Install and sign in to the agents on the machine that runs them.",
+        "auto-title" => {
+            "Name each session from what you asked, after its first answer. A name you type is never replaced."
+        }
+        "title-model" => "The model that writes those names. A cheap one is plenty.",
+        "child-access" => {
+            "Sessions your agents start skip Claude's and Codex's own approval prompts. Workspacer's approvals still apply."
+        }
+        "job-access" => {
+            "Agents that jobs start skip Claude's and Codex's own approval prompts, from the next run."
+        }
+        "external-mcp" => {
+            "New Claude sessions skip MCP servers from project and user settings, so a broken one can't stop them. Workspacer's tools still load."
+        }
+        "updates" => {
+            "Checks for new versions of the build you installed: nightly builds get nightlies, stable builds get releases."
+        }
+        _ => return None,
+    })
+}
+
 /// A hub that does not know a method answers with an error naming it
 /// ("Unknown method", "Method not found", a fixture's "Unknown fixture
 /// method"): the feature is unavailable there, not broken.
@@ -1750,7 +1896,7 @@ impl Workspace {
                     .text_size(px(t.text.meta))
                     .line_height(gpui::relative(t.text.line_height))
                     .text_color(rgb(p.roles.text_secondary))
-                    .child(entry.description),
+                    .child(outcome_v2(id).unwrap_or(entry.description)),
             );
         div()
             .debug_selector(move || format!("setting-{id}"))
@@ -2023,10 +2169,10 @@ impl Workspace {
         )
         .debug_selector(|| "page-header".into());
         // r2-pages: R2.2 shared page grid; Settings shares every page's
-        // width and left edge.
+        // width and left edge (r3-pages: the wide page measure).
         self.page_view(
             "settings-view",
-            t.layout.page_width,
+            t.pages().wide,
             false,
             div()
                 .flex()
@@ -2081,7 +2227,7 @@ impl Workspace {
                     .gap(px(t.space.xxs))
                     .child(
                         StatusBadge::new(StatusKind::Idle)
-                            .label("Not available on this hub")
+                            .label("Not available here")
                             .render(&p),
                     )
                     .child(
@@ -2089,7 +2235,7 @@ impl Workspace {
                             .text_size(px(t.text.meta))
                             .line_height(gpui::relative(t.text.line_height))
                             .text_color(rgb(p.roles.text_secondary))
-                            .child("This hub can't share over Tailscale. Update Workspacer on the machine that runs it to pair phones from here."),
+                            .child("This version of Workspacer can't share over Tailscale. Update Workspacer on the machine that runs your agents to pair phones from here."),
                     ),
             )
     }
