@@ -2541,6 +2541,14 @@ impl Workspace {
                 .child(self.session_summary_line(s)),
             _ => header,
         };
+        // r3-pages: forms keep a readable measure, left-aligned under the
+        // shared header, while tables use the page's width.
+        let body = match self.screen {
+            Screen::Model | Screen::Session | Screen::Handoff | Screen::PullRequest => {
+                div().w_full().max_w(px(t.pages().form)).child(body)
+            }
+            _ => body,
+        };
         if self.screen == Screen::Recent {
             // Its rows are the page's own children, so the keyboard cursor
             // can scroll one into view.

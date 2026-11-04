@@ -365,6 +365,20 @@ The v2 conversation lives in `ui/transcript_v2.rs`; the v1 renderers
 | Changes | The turn line reads "Changed 2 files This turn +5 −2". Changes has no per-turn filter, so Review's tooltip says it opens every uncommitted change |
 | Task log | A failed task's log header offers Retry (secondary) and **Ask agent to fix** (primary: `fix_prompt` quotes up to 12 `failing_line`s and the log path); failing lines are red on a faint error wash (`task-log-failing`) |
 
+## Pages, Round 3 (r3-pages)
+
+| | |
+|---|---|
+| Width | `p.tokens.pages()` → `PageTokens`: every v2 feature page, Projects and Settings use `wide` (1240), so at 1600px the column fills the space beside the sidebar. Forms (Model, Session details, Handoff, Pull request) keep `form` (760), left-aligned under the shared header |
+| Page tables | `page_table(&p)` (card surface, hairline, clipped) holding `page_table_head(&[(label, Col)], &p)` and `page_table_row(&p)` rows of `page_cell(Col::{Fixed(w), Flex, Auto})`. Column widths come from `pages()` (`status`, `when`, `age`, `runs`, `machine`, `actions`); a head and its rows built from the same columns line up |
+| Jobs | One table per group ("Waiting for your approval", neutral; "Scheduled"): name + command · schedule · last runs (badge + strip) · next · actions. The row opens to the spec and runs |
+| Machines | One table: machine · status · agents · waiting · Details; offline is one muted row. Queue rows say where work came from in words (`queue_origin`: "Agent · from a job"), never priority codes or "spawn". "Projects on other machines" is a table, one row per project × machine (folder, how it was found, Accept / Choose… / Unlink) |
+| History | A column header, a band per project, a row per session (name · status · agent · folder · last active); actions over the row's end on hover |
+| Projects | One "Add…" menu (Project…, Folder…); scratch counts are neutral words; folders inside a project show a folder glyph, not a second monogram; row and project actions (+, gear, star) on hover |
+| Scratch | Titled "Scratch files" and explained; opens on **All projects** (`ALL_SCRATCH`), whose "To run" count is the sidebar badge (`pending_total`, shared scratches listed once); one pill or status per file, kept / sensitive as quiet icons |
+| Settings | `outcome_v2(id)`: descriptions as outcomes, ≤ 2 lines; interface size is a stepper (`interface-size-smaller` / `-larger` / `-reset`); no floating tool rail setting (the tools are the header's) |
+| Changes dock | "Branch +17 −3" (`review-dock-scope`); previous/next change, Refresh and the full page behind `review-dock-more`; one merged status pill and a single stage/unstage icon button per file |
+
 ## Panels (area-panels)
 
 `Tokens::panels` (`src/tokens.rs`) holds the side panels' measures and

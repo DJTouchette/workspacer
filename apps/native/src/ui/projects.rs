@@ -2506,8 +2506,7 @@ impl Workspace {
                     .flex_shrink_0()
                     .flex()
                     .items_center()
-                    // Row actions show on hover and on the keyboard row; a
-                    // pinned star stays, since it carries state.
+                    // Row actions show on hover and on the keyboard row.
                     .when(!selected, |d| {
                         d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.))
                     })
@@ -2550,14 +2549,22 @@ impl Workspace {
                         d.child(self.page_overflow(format!("project-{ix}"), menu, cx))
                     }),
             )
+            // r3-pages: the pinned star shows on hover too, with the rest.
             .when(pinned, |d| {
-                d.child(star(format!("pinned-project-{ix}")).when(can_write, |d| {
-                    let path = project.path.clone();
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.set_project_pin(path.clone(), false, cx);
-                    }))
-                }))
+                d.child(
+                    div()
+                        .flex_shrink_0()
+                        .when(!selected, |d| {
+                            d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.))
+                        })
+                        .child(star(format!("pinned-project-{ix}")).when(can_write, |d| {
+                            let path = project.path.clone();
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.set_project_pin(path.clone(), false, cx);
+                            }))
+                        })),
+                )
             })
     }
 

@@ -53,6 +53,8 @@ LANDMARKS_V2 = {
     "NEW_TASK_FIELD": lambda shot: (900, 200),      # r2-pages: v2's task box leads the form
     "HOSTS_DETAILS": lambda shot: (1520, 207),      # r3-pages: Machines' first "Details" (table row)
     "JOB_OVERFLOW": lambda shot: (1549, 447),       # r3-pages: Jobs table, first scheduled job's "..."
+    "REVIEW_DOCK_MORE": lambda shot: (1535, 30),    # r3-pages: Changes dock header "..."
+    "REVIEW_DOCK_EXPAND_ITEM": lambda shot: (1440, 166),  # r3-pages: its "Open full page" item
 }
 # area-pages: design v2's rail.
 SETTINGS_SECTIONS_V2 = ["Appearance", "Typography", "Workspace", "Remote",
@@ -182,8 +184,11 @@ def shots():
     add("changes-docked", "Changes docked beside the conversation (v2; v1 shows the page)", nav("d"))
     add("changes-docked-split", "Docked Changes, side by side", nav("d"), settings={"review_split": True})
     add("changes-docked-light", "Docked Changes, Light theme", nav("d"), theme="light")
+    # r3-pages: v2's full page sits in the dock header's "…" menu.
     add("changes-page", "Changes full page from the dock's expand button (v2)",
-        nav("d") + [("click", "REVIEW_DOCK_EXPAND"), ("sleep", 1.5)])
+        nav("d") + [("design", [("click", "REVIEW_DOCK_EXPAND")],
+                     [("click", "REVIEW_DOCK_MORE"), ("sleep", 0.5), ("click", "REVIEW_DOCK_EXPAND_ITEM")]),
+                    ("sleep", 1.5)])
     add("changes-discard", "Docked Changes: a file's overflow menu",
         nav("d") + [("click", "REVIEW_FILE_MORE"), ("sleep", 0.5)])
     # area-composer: first run and the composer's menus (appended so v1
