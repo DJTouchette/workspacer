@@ -224,6 +224,9 @@ impl Workspace {
     /// The session's tools in a floating pill at the chat's right edge,
     /// centred between the title and the composer.
     fn render_tool_rail(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
+        if self.design().is_v2() {
+            return self.render_tool_rail_v2(enabled, cx);
+        }
         let p = self.palette();
         div()
             .absolute()
@@ -322,7 +325,7 @@ impl Workspace {
             .justify_center()
             .bg(gpui::linear_gradient(
                 180.,
-                gpui::linear_color_stop(rgb(p.chat), 0.6),
+                gpui::linear_color_stop(rgb(p.chat), self.title_fade_stop()),
                 gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.),
             ))
             // Only the top chrome row drags, with later occluding title pills

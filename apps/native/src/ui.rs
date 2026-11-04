@@ -55,6 +55,11 @@ mod updater;
 mod usage;
 mod window_destroy;
 mod work;
+// area-shell
+mod attention;
+mod capsule;
+mod model_popover;
+mod shell;
 use chrome::ControlTextStyle;
 pub(crate) use chrome::custom_caption;
 use gpui::{
@@ -569,6 +574,9 @@ actions!(
     ]
 );
 
+// area-shell
+actions!(native, [NextNeedsYou, ToggleShortcuts]);
+
 /// How the composer's draft leaves it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Submit {
@@ -721,6 +729,15 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("g t", ToggleTerminal, Some("VimNormal")),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("ctrl-shift-q", Quit, None),
+        // area-shell: design v2 only (the shell adds `DesignV2` to its
+        // context), so v1's keymap is unchanged. Later bindings win, so
+        // `g n` here replaces Scratch's under v2; Scratch moves to `g x`.
+        KeyBinding::new("g n", NextNeedsYou, Some("VimNormal && DesignV2")),
+        KeyBinding::new("g x", ShowScratch, Some("VimNormal && DesignV2")),
+        KeyBinding::new("alt-n", NextNeedsYou, Some("Workspace && DesignV2")),
+        KeyBinding::new("?", ToggleShortcuts, Some("VimNormal && DesignV2")),
+        KeyBinding::new("ctrl-/", ToggleShortcuts, Some("Workspace && DesignV2")),
+        KeyBinding::new("cmd-/", ToggleShortcuts, Some("Workspace && DesignV2")),
     ]);
 }
 
@@ -864,6 +881,9 @@ pub struct Workspace {
     /// Hands terminal output to its views as it arrives, at most once a
     /// frame, without a view republish.
     _terminal_wake: Task<()>,
+    // area-shell
+    /// Design v2's shell: folded groups, cheat sheet, model popover.
+    shell: shell::ShellUi,
     #[cfg(feature = "ui-tests")]
     rendered_rows: std::rc::Rc<std::cell::RefCell<std::collections::BTreeSet<usize>>>,
 }
@@ -1158,6 +1178,8 @@ impl Workspace {
             selection_requested: false,
             _updates: updates,
             _terminal_wake: terminal_wake,
+            // area-shell
+            shell: Default::default(),
             #[cfg(feature = "ui-tests")]
             rendered_rows: Default::default(),
         }
@@ -1896,7 +1918,7 @@ impl Workspace {
             }
             return;
         }
-        let rows = self.visible_sessions(cx);
+        let rows = self.nav_sessions(cx);
         if rows.is_empty() {
             return;
         }

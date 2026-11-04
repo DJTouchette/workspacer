@@ -198,3 +198,14 @@ The Jobs page is the worked example: `ui/jobs.rs` (`jobs_page_v2`,
    `Design::V1`/`V2` (`this.force_design(Some(design))`), and shoot it with
    `scripts/design-shots/shoot-all.py --setting design_v2=true --only <slug>`
    in dark, light and one more theme.
+
+## Shell & navigation (area-shell)
+
+| Piece | Where |
+|---|---|
+| Groups (Needs you · Working · Idle · Ended) | `ui/attention.rs` (`Bucket`, `group`, `next_needing`): pure, unit-tested. A top-level tree goes where its most urgent member belongs; Needs you sorts by `telemetry.last_activity_ms`, oldest first; Ended starts folded |
+| Sidebar, rail, footer, cheat sheet | `ui/shell.rs` (`render_sidebar_v2`, `render_rail_v2`, `render_shortcuts`). `nav_sessions(cx)` is the list's visible order: j/k, Enter in search and `g n` walk it |
+| Density | `Settings::sidebar_compact` (Settings → Appearance → Compact session list): `layout.sidebar_row` 44 or `sidebar_row_compact` 28 |
+| Title capsule, tool rail | `ui/capsule.rs` (`render_title_bar_v2`, `chat_actions_v2`, `render_tool_rail_v2`) |
+| Model popover | `ui/model_popover.rs`; the Model page stays on `g m` and "All model settings" |
+| Keys | `g n` / Alt+N next session that needs you (v1 keeps `g n` for Scratch), `g x` Scratch, `?` / Ctrl+/ cheat sheet |

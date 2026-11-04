@@ -131,6 +131,18 @@ pub(super) fn gauge_color(pct: Option<f64>, p: Palette) -> u32 {
     }
 }
 
+/// The capsule's gauge colour: v2 keeps green for finished work, so a
+/// healthy context reads neutral and only the warning bands take a hue.
+fn capsule_color(pct: Option<f64>, p: Palette) -> u32 {
+    if !p.tokens.design.is_v2() {
+        return gauge_color(pct, p);
+    }
+    match pct {
+        Some(pct) if pct >= WARN_PCT => gauge_color(Some(pct), p),
+        _ => p.roles.text_secondary,
+    }
+}
+
 /// The notice row a nearly full context grows on the island.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ContextNotice {
@@ -195,7 +207,7 @@ pub(super) fn token_label(tokens: u64) -> String {
 /// (bottom of its padding box) so it stays on the title row as notices grow
 /// the island below. `fill` is the animated share of the track.
 pub(super) fn hairline(gauge: Gauge, fill: f32, p: Palette) -> Div {
-    let color = gauge_color(gauge.pct(), p);
+    let color = capsule_color(gauge.pct(), p);
     let reading = matches!(gauge, Gauge::Reading(_));
     div()
         .debug_selector(|| "title-context".into())
@@ -247,7 +259,7 @@ pub(super) fn detail(gauge: Gauge, cold: Option<String>, p: Palette) -> Stateful
         })
         .child(
             div()
-                .text_color(rgb(gauge_color(gauge.pct(), p)))
+                .text_color(rgb(capsule_color(gauge.pct(), p)))
                 .child(share),
         )
         .when_some(rest, |d, rest| d.child("·").child(rest))

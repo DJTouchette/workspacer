@@ -115,9 +115,37 @@ pub fn avatar_index(name: &str, tones: usize) -> usize {
     hash as usize % tones.max(1)
 }
 
+// area-shell
+/// How long ago `at` (epoch ms) was, as a sidebar row's compact age: "now",
+/// "42s", "12m", "5h", "3d", "6w". Future stamps (clock skew) read as "now".
+pub fn age(at: i64, now: i64) -> String {
+    let seconds = (now - at).max(0) / 1000;
+    match seconds {
+        s if s < 10 => "now".into(),
+        s if s < 60 => format!("{s}s"),
+        s if s < 3_600 => format!("{}m", s / 60),
+        s if s < 86_400 => format!("{}h", s / 3_600),
+        s if s < 14 * 86_400 => format!("{}d", s / 86_400),
+        s => format!("{}w", s / (7 * 86_400)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // area-shell
+    #[test]
+    fn ages_are_compact_and_never_negative() {
+        let now = 1_000_000_000_000;
+        assert_eq!(age(now + 5_000, now), "now");
+        assert_eq!(age(now - 3_000, now), "now");
+        assert_eq!(age(now - 42_000, now), "42s");
+        assert_eq!(age(now - 12 * 60_000, now), "12m");
+        assert_eq!(age(now - 5 * 3_600_000, now), "5h");
+        assert_eq!(age(now - 3 * 86_400_000, now), "3d");
+        assert_eq!(age(now - 30 * 86_400_000, now), "4w");
+    }
 
     #[test]
     fn durations_read_like_people_write_them() {

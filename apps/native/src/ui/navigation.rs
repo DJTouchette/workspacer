@@ -213,6 +213,12 @@ impl Workspace {
             cx.notify();
             return;
         }
+        if self.shell.shortcuts || self.shell.model_popover {
+            self.shell.shortcuts = false;
+            self.shell.model_popover = false;
+            cx.notify();
+            return;
+        }
         if self.close_peek(window, cx) {
             return;
         }
@@ -369,7 +375,7 @@ impl Workspace {
             self.projects_scroll
                 .scroll_to_item(self.project_cursor, gpui::ScrollStrategy::Center);
         } else {
-            let rows = self.visible_sessions(cx);
+            let rows = self.nav_sessions(cx);
             let index = if last {
                 rows.len().saturating_sub(1)
             } else {
@@ -406,13 +412,22 @@ impl Workspace {
             .children(self.render_file_viewer(window, cx))
             .children(self.render_tasks_sheet(window, cx))
             .children(self.render_link_menu(cx))
-            .key_context(if viewer {
-                "FileViewer"
-            } else if self.settings.vim_navigation && self.focus.is_focused(window) {
-                "Workspace VimNormal"
-            } else {
-                "Workspace"
-            })
+            .children(self.render_shortcuts(cx))
+            .children(self.render_model_popover(window, cx))
+            .key_context(
+                match (
+                    viewer,
+                    self.settings.vim_navigation && self.focus.is_focused(window),
+                    self.design().is_v2(),
+                ) {
+                    (true, _, _) => "FileViewer",
+                    (false, true, false) => "Workspace VimNormal",
+                    (false, false, false) => "Workspace",
+                    // area-shell: v2's keys (`g n`, `?`) bind under `DesignV2`.
+                    (false, true, true) => "Workspace VimNormal DesignV2",
+                    (false, false, true) => "Workspace DesignV2",
+                },
+            )
             .track_focus(&self.focus)
             .capture_action(
                 cx.listener(|this, _: &gpui_component::input::Paste, window, cx| {
@@ -530,6 +545,14 @@ impl Workspace {
             }))
             .on_action(cx.listener(|this, _: &ShowScratch, window, cx| {
                 this.open_feature(Screen::Scratch, window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &NextNeedsYou, window, cx| this.next_needs_you(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &ToggleShortcuts, _, cx| {
+                if this.design().is_v2() {
+                    this.toggle_shortcuts(cx)
+                }
             }))
             .on_action(cx.listener(|this, _: &ShowConversation, window, cx| {
                 this.show_screen(Screen::Conversation, window, cx)

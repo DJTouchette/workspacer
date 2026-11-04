@@ -259,6 +259,12 @@ impl Workspace {
     /// Open a hover flyout once the pointer rests on the rail, and close it
     /// once the pointer has left both rail and flyout for a moment.
     fn arm_peek(&mut self, cx: &mut Context<Self>) {
+        // v2's rail shows a hover card per session instead; the full list
+        // opens on purpose (search, Ctrl+K, the toggle).
+        if self.design().is_v2() && self.layout.peek != Some(Peek::Hover) {
+            self.layout.hover_timer = None;
+            return;
+        }
         let over = self.layout.rail_hovered || self.layout.flyout_hovered;
         let wait = match (self.layout.peek, over) {
             (None, true) if self.layout.rail_hovered => PEEK_OPEN,
@@ -364,7 +370,7 @@ impl Workspace {
         if self.screen == Screen::Projects && !self.new_session {
             return;
         }
-        let rows = self.visible_sessions(cx);
+        let rows = self.nav_sessions(cx);
         let open = self
             .navigation_selected
             .as_ref()
@@ -397,7 +403,12 @@ impl Workspace {
     ) -> Option<AnyElement> {
         let peek = self.layout.peek.filter(|_| self.sidebar_collapsed)?;
         let p = self.palette();
-        let left = px(8. + RAIL_WIDTH + FLYOUT_GAP);
+        // v2 hides the rail while the full list shows: the flyout covers it.
+        let left = if self.design().is_v2() {
+            px(p.tokens.space.md)
+        } else {
+            px(8. + RAIL_WIDTH + FLYOUT_GAP)
+        };
         let panel = self.render_sidebar_panel(window, cx);
         let flyout = div()
             .id("sidebar-flyout")
@@ -438,7 +449,11 @@ impl Workspace {
                         .top_0()
                         .bottom_0()
                         .right_0()
-                        .left(px(8. + RAIL_WIDTH))
+                        .left(if self.design().is_v2() {
+                            px(0.)
+                        } else {
+                            px(8. + RAIL_WIDTH)
+                        })
                         .occlude()
                         .bg(gpui::Hsla::from(rgb(p.shadow)).opacity(0.25))
                         .on_mouse_down(

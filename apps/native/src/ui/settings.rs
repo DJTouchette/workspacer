@@ -408,6 +408,26 @@ impl Workspace {
                     })),
             ),
         ));
+        // area-shell
+        if self.design().is_v2() {
+            entries.push(Entry::new(
+                S::Appearance,
+                "sidebar-density",
+                "Compact session list",
+                "One short line per session (status, title, project, age) so more fit on screen. Off shows two lines with the model when it differs.",
+                "sidebar density compact comfortable dense rows list sessions height",
+                Layout::Row,
+                div().debug_selector(|| "sidebar-density-switch".into()).child(
+                    Switch::new("settings-sidebar-density")
+                        .checked(self.settings.sidebar_compact)
+                        .tooltip("Compact session list")
+                        .on_click(cx.listener(|this, checked, _, cx| {
+                            this.settings.sidebar_compact = *checked;
+                            this.save_settings(cx);
+                        })),
+                ),
+            ));
+        }
 
         entries.push(Entry::new(
             S::Typography,

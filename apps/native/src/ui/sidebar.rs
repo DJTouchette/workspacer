@@ -4,11 +4,11 @@ use gpui_component::tooltip::Tooltip;
 use std::collections::BTreeMap;
 use wks_native::child_agents::{ChildAgent, ClearMark, clear_key_provider, clear_key_session};
 
-const CLEAR_CHILD: &str = "Clear · hide this finished child here on this device · not archived or stopped · still in Session history";
-const CLEAR_SUBAGENT: &str = "Clear · hide this finished subagent here on this device · nothing is stopped · the parent chat keeps its record";
-const CLEAR_FINISHED: &str = "Clear finished children · hide them here on this device · running children stay · nothing is archived or stopped";
+pub(super) const CLEAR_CHILD: &str = "Clear · hide this finished child here on this device · not archived or stopped · still in Session history";
+pub(super) const CLEAR_SUBAGENT: &str = "Clear · hide this finished subagent here on this device · nothing is stopped · the parent chat keeps its record";
+pub(super) const CLEAR_FINISHED: &str = "Clear finished children · hide them here on this device · running children stay · nothing is archived or stopped";
 
-fn child_limit_note(session: &Session) -> &'static str {
+pub(super) fn child_limit_note(session: &Session) -> &'static str {
     if session
         .subagents
         .as_array()
@@ -20,14 +20,14 @@ fn child_limit_note(session: &Session) -> &'static str {
     }
 }
 
-fn provider_clear(parent: &str, child: &ChildAgent) -> (String, ClearMark) {
+pub(super) fn provider_clear(parent: &str, child: &ChildAgent) -> (String, ClearMark) {
     (
         clear_key_provider(parent, &child.id),
         ClearMark::provider(child, super::timing::now_ms()),
     )
 }
 
-fn session_clear(session: &Session) -> (String, ClearMark) {
+pub(super) fn session_clear(session: &Session) -> (String, ClearMark) {
     (
         clear_key_session(&session.id),
         ClearMark::session(session, super::timing::now_ms()),
@@ -214,7 +214,7 @@ impl Workspace {
 
     /// A session's provider-native children, read from its subagents
     /// inventory once per change rather than on every frame.
-    fn native_children(&self, parent: &Session) -> std::rc::Rc<Vec<ChildAgent>> {
+    pub(super) fn native_children(&self, parent: &Session) -> std::rc::Rc<Vec<ChildAgent>> {
         let mut held = self.sidebar_children.borrow_mut();
         if let Some((inventory, children)) = held.get(&parent.id)
             && Arc::ptr_eq(inventory, &parent.subagents)
@@ -235,6 +235,9 @@ impl Workspace {
     }
 
     pub(super) fn sidebar_session_position(&self, index: usize, cx: &App) -> usize {
+        if self.design().is_v2() {
+            return self.shell_position(index, cx);
+        }
         let sessions = self.visible_sessions(cx);
         self.sidebar_rows(cx)
             .iter()
@@ -962,6 +965,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         if self.sidebar_collapsed {
+            if self.design().is_v2() {
+                return self.render_rail_v2(cx);
+            }
             return self.render_sidebar_rail(window, cx);
         }
         self.render_sidebar_panel(window, cx)
@@ -973,6 +979,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        if self.design().is_v2() {
+            return self.render_sidebar_v2(window, cx);
+        }
         let p = self.palette();
         let editing = [
             &self.composer,
@@ -1678,50 +1687,53 @@ impl Workspace {
                         }),
                     ),
             )
-            .child({
-                let entity = cx.entity().downgrade();
-                let dragging = self.sidebar_drag.is_some();
-                canvas(
-                    |_, _, _| (),
-                    move |_, _, window, _| {
-                        if !dragging {
-                            return;
-                        }
-                        let moving = entity.clone();
-                        window.on_mouse_event(
-                            move |event: &gpui::MouseMoveEvent, phase, window, cx| {
-                                if phase.capture() {
-                                    let _ = moving.update(cx, |this, cx| {
-                                        if let Some((start, width)) = this.sidebar_drag {
-                                            this.settings.sidebar_width =
-                                                wks_native::navigation::sidebar_width(
-                                                    width + unzoom(event.position.x - start),
-                                                    unzoom(window.viewport_size().width),
-                                                );
-                                            cx.stop_propagation();
-                                            cx.notify();
-                                        }
-                                    });
-                                }
-                            },
-                        );
-                        let releasing = entity.clone();
-                        window.on_mouse_event(move |_: &gpui::MouseUpEvent, phase, _, cx| {
-                            if phase.capture() {
-                                let _ = releasing.update(cx, |this, cx| {
-                                    if this.sidebar_drag.take().is_some() {
-                                        this.save_settings(cx);
-                                        cx.stop_propagation();
-                                    }
-                                });
+            .child(self.sidebar_drag_watch(cx))
+            .into_any_element()
+    }
+}
+
+impl Workspace {
+    /// While the sidebar's edge is dragged, follow the pointer anywhere in
+    /// the window and save the width on release.
+    pub(super) fn sidebar_drag_watch(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let entity = cx.entity().downgrade();
+        let dragging = self.sidebar_drag.is_some();
+        canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                if !dragging {
+                    return;
+                }
+                let moving = entity.clone();
+                window.on_mouse_event(move |event: &gpui::MouseMoveEvent, phase, window, cx| {
+                    if phase.capture() {
+                        let _ = moving.update(cx, |this, cx| {
+                            if let Some((start, width)) = this.sidebar_drag {
+                                this.settings.sidebar_width = wks_native::navigation::sidebar_width(
+                                    width + unzoom(event.position.x - start),
+                                    unzoom(window.viewport_size().width),
+                                );
+                                cx.stop_propagation();
+                                cx.notify();
                             }
                         });
-                    },
-                )
-                .absolute()
-                .size(px(0.))
-            })
-            .into_any_element()
+                    }
+                });
+                let releasing = entity.clone();
+                window.on_mouse_event(move |_: &gpui::MouseUpEvent, phase, _, cx| {
+                    if phase.capture() {
+                        let _ = releasing.update(cx, |this, cx| {
+                            if this.sidebar_drag.take().is_some() {
+                                this.save_settings(cx);
+                                cx.stop_propagation();
+                            }
+                        });
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size(px(0.))
     }
 }
 
@@ -1758,7 +1770,7 @@ impl Workspace {
 
     /// The collapsed rail's view of the sidebar's project filter: the
     /// project's mark, ringed, with a tooltip saying how to clear it.
-    fn rail_filter(&self) -> Option<Stateful<Div>> {
+    pub(super) fn rail_filter(&self) -> Option<Stateful<Div>> {
         let filter = self.project_filter.clone()?;
         let p = self.palette();
         let (known, title) = match self.filter_group() {

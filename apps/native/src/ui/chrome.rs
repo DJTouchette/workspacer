@@ -907,6 +907,9 @@ impl Workspace {
         session: Option<&Session>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        if self.design().is_v2() {
+            return self.render_title_bar_v2(narrow, enabled, title, session, cx);
+        }
         let p = self.palette();
         div()
             .id("title-bar")
@@ -1062,6 +1065,9 @@ impl Workspace {
         floating: bool,
         cx: &mut Context<Self>,
     ) -> Div {
+        if self.design().is_v2() {
+            return self.chat_actions_v2(enabled, floating, cx);
+        }
         let selected = self.view.selected.is_some();
         let model_enabled = enabled && self.supported_session();
         div()

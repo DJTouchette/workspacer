@@ -389,6 +389,97 @@ impl Workspace {
         )
     }
 
+    /// Design v2's footer usage: each installed, measured account's most
+    /// pressing window as a mark and a share, neutral until it reaches 95%.
+    /// The tooltip says what the number is ("5-hour limit · 42% · resets
+    /// 15:40"); a click opens the detail modal.
+    pub(super) fn render_usage_compact(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let p = self.palette();
+        let t = p.tokens;
+        let (accounts, now) = self.usage_accounts().unwrap_or_default();
+        let installed = |provider: &str| self.view.installed.get(provider).copied() != Some(false);
+        let shown: Vec<(Account, UsageWindow)> = accounts
+            .into_iter()
+            .filter(|a| installed(&a.provider))
+            .filter_map(|a| {
+                let w = a.primary()?.clone();
+                Some((a, w))
+            })
+            .collect();
+        let error = self.view.usage_error.clone();
+        if shown.is_empty() && error.is_none() {
+            return None;
+        }
+        let twelve = self.settings.twelve_hour_clock;
+        let mut lines: Vec<String> = shown
+            .iter()
+            .map(|(a, w)| {
+                let reset = w
+                    .resets_at
+                    .map(|at| {
+                        format!(
+                            " · resets {}",
+                            wks_native::format::timestamp(Some(at * 1000), now * 1000, twelve)
+                        )
+                    })
+                    .unwrap_or_default();
+                format!(
+                    "{} · {} limit · {}%{reset}",
+                    a.title,
+                    long_label(w),
+                    w.pct.round() as u64
+                )
+            })
+            .collect();
+        if shown.is_empty() {
+            lines.push("Usage unavailable · click to retry".into());
+        }
+        lines.push("How much of each account's rate limit is used. Click for details.".into());
+        let tip = lines.join("\n");
+        Some(
+            chrome::interactive_control(div().id("sidebar-usage"), p, true)
+                .debug_selector(|| "sidebar-usage".into())
+                .h(px(t.layout.icon_button))
+                .px(px(t.space.sm))
+                .rounded(px(t.radius.control))
+                .flex()
+                .items_center()
+                .gap(px(t.space.md))
+                .flex_shrink_0()
+                .text_size(px(t.text.meta))
+                .hover(move |s| s.bg(rgb(p.roles.hover)))
+                .tooltip(super::primitives::tooltip_view(tip, None, &p))
+                .when(shown.is_empty(), |d| {
+                    d.debug_selector(|| "sidebar-usage-error".into()).child(
+                        Icon::new(IconName::TriangleAlert)
+                            .size(px(t.icon.xs))
+                            .text_color(rgb(p.roles.text_tertiary)),
+                    )
+                })
+                .children(shown.iter().map(|(a, w)| {
+                    let selector = format!("sidebar-usage-row-{}", a.provider);
+                    let hot = w.pct >= 95.;
+                    div()
+                        .debug_selector(move || selector.clone())
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.xs))
+                        .child(super::shell::neutral_glyph(&a.provider, t.icon.xs, p))
+                        .child(
+                            div()
+                                .text_color(rgb(if hot { p.error } else { p.roles.text_secondary }))
+                                .font_weight(FontWeight(t.weight.medium))
+                                .child(format!("{}%", w.pct.round() as u64)),
+                        )
+                }))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.usage_open = true;
+                    this.command(Command::RefreshUsage, cx);
+                    cx.notify();
+                })),
+        )
+    }
+
     /// Detail modal over the whole window. Backdrop click, ✕ and Esc close it.
     pub(super) fn render_usage_modal(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         if !self.usage_open {

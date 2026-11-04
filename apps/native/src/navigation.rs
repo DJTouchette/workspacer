@@ -114,6 +114,10 @@ pub struct Settings {
     pub default_codex_access: crate::launch::Permission,
     /// Bookmarks are scoped to the hub endpoint so remote paths do not cross hosts.
     pub projects: BTreeMap<String, Vec<String>>,
+    // area-shell
+    /// Design v2 sidebar density: one 28px line per session instead of the
+    /// comfortable two-line row.
+    pub sidebar_compact: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -143,6 +147,8 @@ impl Default for Settings {
             default_claude_access: crate::launch::Permission::Ask,
             default_codex_access: crate::launch::Permission::Ask,
             projects: BTreeMap::new(),
+            // area-shell
+            sidebar_compact: false,
         }
     }
 }

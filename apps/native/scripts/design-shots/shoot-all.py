@@ -94,7 +94,7 @@ def shots():
     add("projects", "Projects: project groups and folders", nav("p"))
     add("history", "Session history grouped by project", nav("h"))
     add("jobs", "Scheduled jobs: approval, runs, paused", nav("j"))
-    add("scratch", "Scratch files with pending items", nav("n"))
+    add("scratch", "Scratch files with pending items", [("key", "Escape"), ("design_keys", ("g", "n"), ("g", "x")), ("sleep", 1.5)])
     add("hosts", "Hosts: resources and work queues", nav("o"))
     add("changes", "Changes: diff review with stage/commit panel", nav("d"))
     add("setup", "Agent setup (first-run provider checks)", nav("a"))
@@ -115,6 +115,15 @@ def shots():
     add("conversation-nord", "Rich conversation, Nord", theme="nord")
     add("conversation-catppuccin-latte", "Rich conversation, Catppuccin Latte", theme="catppuccin-latte")
     add("settings-tokyo-night", "Settings: Appearance, Tokyo Night", nav("s"), theme="tokyo-night")
+    # Shell & navigation (design v2 surfaces; v1 shows its own equivalents).
+    add("title-hover", "Title capsule hovered: model chip, access, background work", [("move", "TITLE_PILL")])
+    add("model-popover", "Model, effort and access from the title's model chip",
+        [("move", "TITLE_PILL"), ("click", "TITLE_MODEL"), ("sleep", 1.5)])
+    add("shortcuts", "Keyboard cheat sheet (? in Normal mode)", [("key", "Escape"), ("key", "question"), ("sleep", 0.8)])
+    add("sidebar-compact", "Compact session list (28px rows)", settings={"sidebar_compact": True})
+    add("sidebar-row-hover", "A session row's actions on hover", [("move", "SIDEBAR_ROW_BUS")])
+    add("rail-hover-card", "Collapsed rail: a session's hover card",
+        [("click", "RAIL_TOGGLE"), ("move", "RAIL_FIRST_MARK"), ("sleep", 1.5)])
     return s
 
 
@@ -189,6 +198,9 @@ class Rig:
             if kind == "key":
                 self.xdo("key", *rest)
                 time.sleep(0.3)
+            elif kind == "design_keys":  # (v1 keys, v2 keys): design v2 moved Scratch to g x
+                self.xdo("key", "--delay", "120", *(rest[1] if shot.get("v2") else rest[0]))
+                time.sleep(0.3)
             elif kind == "keys":
                 self.xdo("key", "--delay", "120", *rest)
                 time.sleep(0.3)
@@ -262,7 +274,8 @@ class Rig:
             time.sleep(shot.get("settle", args.settle))
             # Park the pointer in the bottom-right corner so no hover state shows.
             self.park(width, height)
-            self.run_steps(window, shot["steps"], dict(shot, width=width, height=height))
+            self.run_steps(window, shot["steps"], dict(shot, width=width, height=height,
+                                                         v2=bool(settings.get("design_v2"))))
             time.sleep(shot.get("capture_after", args.wait))
             if app.poll() is not None:
                 raise RuntimeError(f"app exited ({app.returncode}); see {home / 'app.log'}")
@@ -290,15 +303,17 @@ class Rig:
 # Kept in one place so a redesign that moves a control only edits here.
 LANDMARKS = {
     "RAIL_TOGGLE": lambda shot: (286, 35),          # sidebar header, rightmost icon
-    "SIDEBAR_ROW_BUS": lambda shot: (110, 468),     # "Bus fan-out backpressure"
+    # Design v2 groups the list (Needs you, then Idle): Bus fan-out sits higher.
+    "SIDEBAR_ROW_BUS": lambda shot: (110, 411 if shot.get("v2") else 468),
     "SIDEBAR_ROW_CHILD": lambda shot: (110, 212),   # "Inspect transcript parsing"
     # The title pill grows when hovered (context meter appears), so hover it
     # first; these two are the chips' positions once it has grown.
     "TITLE_PILL": lambda shot: (900, 30),
-    "TITLE_MODEL": lambda shot: (1005, 30),         # "Sonnet" chip
-    "TITLE_TASKS_BADGE": lambda shot: (1078, 30),   # background-task count
+    "TITLE_MODEL": lambda shot: (880 if shot.get("v2") else 1005, 30),  # "Sonnet" chip
+    "TITLE_TASKS_BADGE": lambda shot: (1160 if shot.get("v2") else 1078, 30),  # background work
     "APPROVAL_DETAILS": lambda shot: (1361, 749),   # approval dock "Details"
     "APPROVAL_DENY_NOTE": lambda shot: (740, 795),  # approval dock "Deny with note..."
+    "RAIL_FIRST_MARK": lambda shot: (35, 205 if shot.get("v2") else 219),  # first session in the rail
     "README_LINK": lambda shot: (591, 497),         # README.md link, last assistant message
     "TALL_README_LINK": lambda shot: (169, 1097),   # same link in the 1000x1600 tall layout
     "TASK_ROW_DEV": lambda shot: (1200, 85),        # "npm run dev" in the tasks panel
