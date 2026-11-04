@@ -49,14 +49,14 @@ V2 on the direction's scale.
 
 | Group | V2 values |
 |---|---|
-| `text: TypeScale` | `title` 22, `title_short` 16, `heading` 16, `subheading` 14 (card/row/dialog titles), `body` 13, `meta` 12, `caption` 12, `overline` 11 (keycaps, compact meta: the floor), `ui` 14, `mono` 13, `line_height` 1.5 |
+| `text: TypeScale` | The R2.2 scale **12/13/14/15/17/20/24**: `title` 24 (page titles, the welcome question), `title_short` 20, `heading` 17, `lead` 15 (decision headlines), `subheading` 14 (card/row/dialog titles), `body` 13, `meta` 12, `caption` 12, `overline` 12 (keycaps: nothing is smaller, nothing is uppercase), `ui` 14, `mono` 13, `line_height` 1.5. Times, counts and stats use tabular numerals (`primitives::tabular`) |
 | `weight: Weights` | `regular` 400, `medium` 500, `semibold` 600, `title` 600 (v1 700). Use `FontWeight(t.weight.medium)` |
 | `space: Spacing` | `xxs` 2, `xs` 4, `sm` 6, `md` 8, `lg` 12, `xl` 16, `xxl` 24, `xxxl` 32, `huge` 48 |
 | `icon: IconSizes` | `xs` 12 (status), `sm` 14 (buttons, inline), `md` 16 (nav, card icons), `lg` 20, `xl` 24 (empty states) |
 | `radius: Radii` | `xs` 4, `sm` 6, `control` **8**, `panel` 12, `composer` 16, `full` (chips, badges, dots) |
 | `elevation: Elevation` | `raised` 1/2/0 ×0.35, `floating` 8/24/−6, `modal` 16/48/−12 ×1.25, `glow_*`, `scrim_alpha` 0.5 |
-| `wash: Washes` | `disabled` .04, `rest` .06, `hover` .09, `pressed` .13, `tone_rest` .12, `tone_hover` .18, `tone_pressed` .24 |
-| `stroke: Strokes` | `hairline` 1, `focus` 2 |
+| `wash: Washes` | `disabled` .04, `rest` .06, `hover` .09, `pressed` .13, `tone_rest` .12, `tone_hover` .18, `tone_pressed` .24, `attention_edge` .35 (the waiting container's border), `yielded` .6 (the composer's opacity while a decision waits) |
+| `stroke: Strokes` | `hairline` 1, `focus` 2, `stripe` 3 (the attention stripe) |
 | `layout: Layout` | controls `control_height_sm` **28** / `control_height` **36**, `icon_button` 28, `row_height` 32; reading `chat_width` 760 (comfortable), `reading_wide` 1040, `reading_full` (no cap); pages `page_width` 880, `page_top` 40, `page_gutter` 32; sidebar `sidebar_row` 44 / `sidebar_row_compact` 28, `footer_height` 44, `sidebar_width` 304; status `status_dot` 6, `status_box` 12, `status_column` 112; `avatar` 24 / `avatar_lg` 32; `fade` 32; plus rail, menu, dialog and meter measures; Settings `settings_rail` 192, `settings_width` 1104, `theme_tile` 160 (area-pages) |
 | `motion: Motion` | `pulse_ms` 1400 (the Working pulse) |
 
@@ -80,8 +80,8 @@ everywhere:
 | Edges | `border` (dividers), `roles.border_strong` (inputs, secondary buttons, popovers), `roles.card_border` (the 1px card edge; visible in Light) |
 | Text tiers | `text`, `prose` (chat copy), `roles.text_secondary` (= `muted`), `roles.text_tertiary` (= `disabled`, so v1 code under v2 inherits the hierarchy) |
 | One accent | `accent` (links, focus = `roles.focus`), `primary` / `primary_hover` / `primary_pressed` (hover and press move away from the label colour), `on_primary` |
-| Status | attention = `warning` (amber), running = `busy` (blue; also `roles.info`), success = `success` (terminal only), error = `error`. **No purple.** |
-| Identity | `roles.provider` (= tertiary: provider glyphs and model names), `roles.avatar[6]` (muted monogram fills) |
+| Status (R2.1) | `roles.status: StatusRoles { attention, fault, working, done, idle }`, aliased by `warning` / `error` / `busy` / `success` / `text_tertiary`: attention amber (Light #B45309), fault red, working **cyan/teal, never the accent hue** (Gruvbox and Everforest take their aqua), done muted green, idle grey. Status colours are only for status; **accent blue means interactive**. No purple |
+| Identity | `roles.provider` (= tertiary: provider glyphs and model names); avatars: `Palette::avatar_fill(name)` = OKLCH at the fixed `roles.avatar_tone` (lightness, chroma) with a hue hashed from the name (`format::avatar_hue`, purple band skipped); `roles.avatar[6]` keeps six sample tones |
 | Code | `code_block` = `surface` (with a `border` edge), `code_header` = raised, `code_inline` |
 
 Per-theme notes: Light has off-white canvas, white cards with a 1px
@@ -91,7 +91,9 @@ Everforest's accent is its blue (green is success only).
 
 `appearance::tests::v2_meets_the_direction_floors` enforces, in all 8 themes,
 on chat / surface / base / raised: text and prose ≥ 4.5:1, secondary ≥ 4.5:1,
-tertiary ≥ 3:1, accent and status colours ≥ 3:1; primary button vs surface
+tertiary (meta text) ≥ 4.5:1, five distinct status roles with working ≥ 25°
+from the accent and from done, Light attention = #B45309, Nord's label on
+primary ≥ 4.5:1, accent and status colours ≥ 3:1; primary button vs surface
 and chat ≥ 3:1; on-accent label ≥ 4.5:1 (rest, hover and pressed); visible
 borders and selection; a real tier hierarchy; code on the card surface;
 neutral providers; one accent hue; nothing purple; neutral selected/hover
@@ -132,10 +134,10 @@ the 2px border, Enter/Space activation, pointer cursor when enabled).
 | Split button | `let (main, menu) = split_button_parts(id, label, icon, variant, size, enabled, &p);` wire both, then `split_button(main, menu, &p) -> Div` |
 | Overflow | `overflow_trigger(id, &p) -> Stateful<Div>` ("…", ghost, tooltip "More actions"); open a `menu(&p)` from it |
 | Status | `status(StatusKind, &p) -> Div` (dot + vocabulary label); `StatusBadge::new(kind).label("Succeeded 3h ago").render(&p)`; `status_indicator(kind, &p)` (the fixed 12px box alone, for rails and dense rows) |
-| Status kinds | `StatusKind::{NeedsYou, Working, Idle, Done, Failed, Paused, Queued}` with `.label()`, `.color(&p)`, `.text_color(&p)`. NeedsYou amber, Working blue + pulse (reduced motion holds still; never the brand mark), Done green, Failed red, Idle/Paused tertiary, Paused/Queued hollow rings |
+| Status kinds | `StatusKind::{NeedsYou, Working, Idle, Done, Failed, Stalled, Paused, Queued}` with `.label()`, `.color(&p)`, `.text_color(&p)`, `.needs_attention()`. Colour AND shape: NeedsYou amber filled dot; Failed red filled dot; **Stalled** red ring with a bar, label "Not responding" (`format::not_responding` → "Not responding · 2m"; never also Working); Working teal pulsing ring (reduced motion holds still); Queued teal still ring; Done muted-green check; Idle grey hollow dot; Paused grey pause bars |
 | Page header | `page_header(back: Option<AnyElement>, title, description: Option<SharedString>, actions: Vec<AnyElement>, &p) -> Div` (22/600 title; back row height kept even without a back link, so titles share one y), `back_link(id, label, &p)`, `page_column(&p)` (shared `page_width`, `page_top`) |
 | Card anatomy | `CardHead::new(title).icon(IconName)` or `.avatar(name)`, `.status(StatusBadge)`, `.meta(text)`, `.action(el)`…, `.render(&p) -> Div`; put it in `card(&p)` |
-| Avatar | `avatar_tile(name, &p)`, `avatar_tile_sized(name, size, &p)`: monogram, deterministic muted hue, 8px radius, no emoji |
+| Avatar | `avatar_tile(name, &p)`, `avatar_tile_sized(name, size, &p)`: the one avatar (projects, rail, cards): rounded-square monogram on `p.avatar_fill(name)` (hash hue, fixed OKLCH lightness/chroma), no emoji |
 | Fade mask | `fade_mask(FadeEdge::{Top, Bottom}, color, &p) -> Div`: absolute, full width, `layout.fade` tall, colour → clear. Put it behind floating chrome |
 | Tooltip | `tooltip_view(label, shortcut: Option<&'static str>, &p)` for `.tooltip(…)`; `with_tooltip(control, label, shortcut, &p)` for a control without one (GPUI allows one tooltip per element). Spaces in the shortcut separate keycaps ("g n") |
 | Truncation | `truncated(id, text, &p) -> Stateful<Div>`: one line, ellipsis, full value in a tooltip |
@@ -144,7 +146,7 @@ the 2px border, Enter/Space activation, pointer cursor when enabled).
 | Badge (count) | `badge(label, Intent, &p) -> Div` |
 | Meter | `meter(fraction 0–1, Intent, &p) -> Div` (give it a width) |
 | Empty state | `empty_state(IconName, title, body: Option<SharedString>, &p) -> Div` |
-| Section label | `section_label(label, &p) -> Div` (caps: page sections only) |
+| Section header | `section_header(label, count: Option<SharedString>, &p)`: THE section header, sentence case 12/600 secondary, count tertiary in tabular numerals. `section_label(label, &p)` is the same, padded (no uppercase anywhere) |
 | Card | `card(&p) -> Div` (surface, `card_border`), `card_header(title, description, &p) -> Div` |
 | List row | `list_row(id, selected, enabled, &p) -> Stateful<Div>` |
 | Segmented | `segmented(&p) -> Div` holding `segment(id, label, selected, &p) -> Stateful<Div>` |
@@ -154,6 +156,13 @@ the 2px border, Enter/Space activation, pointer cursor when enabled).
 | Helpers | `Intent::{Neutral, Accent, Info, Success, Warning, Danger, Busy}` with `.color(&p)`, `wash(color, alpha)`, `tonal(&p, alpha)`, `elevation(&p, Shadow) -> Vec<BoxShadow>` |
 | Review | `gallery(&p) -> AnyElement` renders every primitive once (`ui::tests::design`) |
 | Keyed button | `keyed_button(id, key, label, variant, size, enabled, &p)`: a button led by the key that triggers it ("1 Allow" on the approval strip) |
+| Button roles (R2.2) | `ButtonVariant::{PRIMARY, SECONDARY, TERTIARY, DESTRUCTIVE}` (= `Primary`, `Secondary`, `Ghost`, `DangerGhost`), plus `Danger` (filled red) only inside a confirm step. Approval chips: 1 Allow primary, 2 Always allow secondary, 3 Deny destructive, 4 Deny with note tertiary |
+| Inset | `inset(&p) -> Div`: the one recessed well inside a card (plan body, approval details). One card level plus this, never more |
+| Table | `table(headers, rows, &p)`; `table_style(&p) -> TableStyle` is the one table style: `configure_theme_v2` maps Markdown tables from it, so both match (header on `base`, 12/600 secondary; hairline row dividers; no zebra, no outer border) |
+| Event row | `EventRow::new(icon, verb).argument(…).summary(…).status(kind).duration(…).render(&p)`: icon · verb · mono argument · result summary · right-aligned duration (tabular) and status. Group them under `event_group_header(id, format::worked_summary(ms, tools), expanded, &p)` ("Worked 2m 14s · 18 tools") |
+| Figures | `tabular(el)`: tabular numerals for times, counts and stats |
+| Page grid | `page_grid(columns, &p)`: equal tracks at `space.lg`, rows stretched so card actions line up; inside `page_column` |
+| Waiting on you | `waiting_card(compact, &p)` (neutral surface, 3px attention stripe, attention edge at 35%), `waiting_head(headline, where_why, pager, trailing, &p)`, `headline(vec![Headline::Text(…), Headline::Code(…)], &p)` (15/600, code spans truncate), `waiting_actions(&p)`. Used by approval, plan (+ limit), limit and questions; see below |
 | Toolbar chip | `toolbar_chip(id, leading: Option<AnyElement>, label, opens, enabled, &p)`: a quiet chip in the composer toolbar (folder, model); `opens` adds a chevron and hover |
 
 ## Formatting (`wks_native::format`)
@@ -166,7 +175,10 @@ Pure and unit-tested; use these instead of ad-hoc `format!`s.
 | `is_stale(last_beat: Option<i64>, now)` / `stale_after(…, threshold)` | true past `HEARTBEAT_STALE_MS` (5 min): show `LOST_HEARTBEAT` ("Lost heartbeat") in `warning` instead of a growing timer |
 | `timestamp(at: Option<i64>, now, twelve_hour)` | `"14:07"` today, `"Oct 14 · 14:07"` otherwise; never seconds |
 | `truncate_end(text, max)` / `truncate_middle(text, max)` | `Some(cut…)` when it did not fit (then add a tooltip with the full value), `None` when it did |
-| `monogram(name)`, `avatar_index(name, tones)` | what `avatar_tile` draws |
+| `monogram(name)`, `avatar_index(name, tones)`, `avatar_hue(name)` | what `avatar_tile` draws |
+| `model_name(id)` | the one human model name ("Sonnet 4.6", "GPT-5.6 Luna"); the raw id goes in a tooltip |
+| `not_responding(last_beat, now)` | "Not responding · 2m" for a Stalled agent |
+| `worked_summary(ms, tools)` | "Worked 2m 14s · 18 tools" |
 
 ## Migrating a screen (recipe)
 
@@ -254,3 +266,15 @@ header), `files_width`, `slide_ms`, `terminal_line` and `cursor_alpha`.
   `code_block` with a tertiary gutter (`syntax::highlight_theme`).
 - **Terminal** (`ui/terminal/v2.rs`): panel header with a StatusBadge, and
   ANSI colours derived from the theme (`ansi_v2`).
+
+## Waiting on you, composer and welcome (r2-systems)
+
+| | |
+|---|---|
+| One container | Approval (`render_approval_strip`), plan (`render_plan_card_v2`), usage limit (`render_limit_card_v2`) and questions (`render_questions_v2`) are all `waiting_card`s in the dock above the composer, in that order. Each has a question headline, an always-visible where/why line, a pager ("2/3") when more than one waits, and actions in the four roles with number keys |
+| Approval | `approval_headline` ("Run `cargo test` in apps/native?", "Edit `src/ui.rs`?") and `approval_context` (reason · folder on machine). Details (tertiary) opens an `inset` of facts |
+| Plan + limit | ONE card (`decision_cards` folds Limit into Plan): Approve plan primary; "Approve · run with Codex" secondary only while a limit applies; Keep planning tertiary. A limit alone asks "Continue with Codex while Claude is paused?" A limit *warning* is a neutral note |
+| Questions | A stepper: one question at a time (`ComposerUi::question_step`), headline = the question, "Choose one, or press its number", number keys pick (a single choice moves on), Back tertiary, Next / Send primary; no inner scroll |
+| Composer | While a decision waits it yields: `wash.yielded` opacity until focused or typed in, placeholder from `composer_placeholder`, send drops to secondary. Idle: "Send". Working: "Queue" (secondary, Tab) and a split "Send now" whose menu holds Steer (Enter) and Queue with explanations. The slash menu floats in a popover above the composer (deferred), never between a decision and the input. The model chip shows the human name, raw id on hover |
+| Welcome | One 24px question ("What should we work on in workspacer?"), no wordmark or "Your sessions" capsule. Agents read `Workspace::agent_setup` (`AgentSetup`: Ready / Needs sign-in / Not installed / Not checked), the same source and words as Setup, with the next step and a copyable install or sign-in command |
+| Syntax | `syntax_v2` keeps every token ≥ 24 RGB units from the four status roles (`v2_syntax_never_borrows_a_status_colour`) |

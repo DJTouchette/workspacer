@@ -274,6 +274,12 @@ impl Workspace {
             .map(|s| self.session_title(s))
             .unwrap_or_else(|| "Your sessions".into());
         let notice = self.title_notice();
+        // r2-systems: the welcome has its own question; no stray "Your
+        // sessions" capsule above it (a notice still shows).
+        let bare_welcome = self.design().is_v2()
+            && selected.is_none()
+            && notice.is_empty()
+            && self.view.child.is_none();
         let (title_bar, title_actions) = match self.render_child_title_bar(cx) {
             Some(bar) => (bar, None),
             None => (
@@ -379,7 +385,7 @@ impl Workspace {
                                     changed
                                 },
                             ))
-                            .child(title_island),
+                            .when(!bare_welcome, |d| d.child(title_island)),
                     )
                     // Centred under the capsule, so it takes the same nudge.
                     .children(plan.map(|plan| plan.relative().left(nudge))),
@@ -466,17 +472,11 @@ impl Workspace {
             .when(self.view.child.is_none(), |d| {
                 d.child(self.render_pending(window, cx))
             })
-            // Design v2 joins a tool approval to the composer instead.
-            .when_some(
-                selected
-                    .and_then(|s| s.approval.as_ref())
-                    .filter(|approval| {
-                        !(self.design().is_v2()
-                            && composer_docked
-                            && composer_v2::plan_text(approval).is_none())
-                    }),
-                |d, approval| d.child(self.render_approval_card(approval, layout, window, cx)),
-            )
+            // r2-systems: under v2 every decision, the approval included, is
+            // a "waiting on you" card here, above the composer.
+            .when_some(selected.and_then(|s| s.approval.as_ref()), |d, approval| {
+                d.child(self.render_approval_card(approval, layout, window, cx))
+            })
             .children(selected.and_then(|session| self.render_limit_card(session, compact, cx)))
             .when_some(selected.filter(|s| s.questions.is_some()), |d, session| {
                 d.child(self.render_questions(session, layout.enabled, compact, window, cx))
@@ -594,7 +594,7 @@ impl Workspace {
                         .selected_session()
                         .map(|s| self.decisions(s))
                         .unwrap_or_default();
-                    self.render_approval_strip(approval, layout, false, &decisions, cx)
+                    self.render_approval_strip(approval, layout, &decisions, cx)
                 }
             };
         }
@@ -1073,6 +1073,13 @@ impl Workspace {
     ) -> Div {
         if self.design().is_v2() {
             return self.render_composer_v2(layout, window, cx);
+        }
+        // r2-systems: v2 may have named a pending decision in the
+        // placeholder; v1 keeps its own.
+        if self.composer_ui.placeholder.take().is_some() {
+            self.composer.update(cx, |input, cx| {
+                input.set_placeholder(composer_v2::DEFAULT_PLACEHOLDER, window, cx)
+            });
         }
         let p = self.palette();
         let ChatLayout {

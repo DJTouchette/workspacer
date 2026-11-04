@@ -380,7 +380,7 @@ LANDMARKS = {
     "TITLE_MODEL": lambda shot: (880 if shot.get("v2") else 1005, 30),  # "Sonnet" chip
     "TITLE_TASKS_BADGE": lambda shot: (1160 if shot.get("v2") else 1078, 30),  # background work
     # v1: the approval card above the composer; v2: the strip on the composer.
-    "APPROVAL_DETAILS": lambda shot: (1289, 833) if shot["v2"] else (1361, 749),
+    "APPROVAL_DETAILS": lambda shot: (1289, 805) if shot["v2"] else (1361, 749),  # r2-systems: the approval is a card above the composer
     "APPROVAL_DENY_NOTE": lambda shot: (1032, 869) if shot["v2"] else (910, 795),
     "RAIL_FIRST_MARK": lambda shot: (35, 205 if shot.get("v2") else 219),  # first session in the rail
     "README_LINK": lambda shot: (651, 629) if shot["v2"] else (591, 497),  # README.md link, last assistant message

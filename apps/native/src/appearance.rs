@@ -91,14 +91,40 @@ pub struct Roles {
     /// Monogram avatar fills, muted, picked by a hash of the name
     /// (`wks_native::format::avatar_index`). Text on them is `text`.
     pub avatar: [u32; AVATAR_TONES],
+    /// The fixed OKLCH (lightness, chroma) of avatar tiles; the hue comes
+    /// from a hash of the name (`format::avatar_hue`, `Palette::avatar_fill`).
+    pub avatar_tone: (f32, f32),
+    /// The five status roles. Colour AND shape encode status; nothing else
+    /// may borrow these hues (blue/accent means "interactive" only).
+    pub status: StatusRoles,
+}
+
+/// The status roles of `design-v2-direction.md` R2.1, as 0xRRGGBB. Each
+/// pairs with a shape in `ui::primitives::status_indicator`:
+/// attention = filled dot (+ amber stripe on its container), fault = filled
+/// dot / ring with bar, working = pulsing ring, done = check / filled dot,
+/// idle = hollow dot. In v1 they alias the shipped status colours.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StatusRoles {
+    /// Blocked on the user: approval, question, plan, a failure needing a
+    /// decision. Amber. Also readable as text (≥ 4.5:1 in Light).
+    pub attention: u32,
+    /// Failed, stalled ("Not responding"), offline, error. Red.
+    pub fault: u32,
+    /// Actively running. Cyan/teal, never the accent hue.
+    pub working: u32,
+    /// Finished successfully. Muted green.
+    pub done: u32,
+    /// Nothing to do / ended. Tertiary grey.
+    pub idle: u32,
 }
 
 /// How many muted avatar fills a palette carries.
 pub const AVATAR_TONES: usize = 6;
 
-/// The avatar hues in degrees: blue, teal, green, sand, clay, rose. No
-/// purple, which v2 retires.
-const AVATAR_HUES: [f32; AVATAR_TONES] = [212., 174., 128., 40., 18., 346.];
+/// The avatar hues in OKLCH degrees: blue, teal, green, sand, clay, rose.
+/// No purple, which v2 retires.
+const AVATAR_HUES: [f32; AVATAR_TONES] = [250., 190., 145., 85., 45., 10.];
 
 impl Roles {
     /// Placeholder in the palette literals; `palette()` derives the real values.
@@ -114,6 +140,14 @@ impl Roles {
         card_border: 0,
         provider: 0,
         avatar: [0; AVATAR_TONES],
+        avatar_tone: (0., 0.),
+        status: StatusRoles {
+            attention: 0,
+            fault: 0,
+            working: 0,
+            done: 0,
+            idle: 0,
+        },
     };
 
     /// The v1 mapping: every role is an existing palette colour.
@@ -130,6 +164,14 @@ impl Roles {
             card_border: p.border,
             provider: p.muted,
             avatar: [p.selected; AVATAR_TONES],
+            avatar_tone: (0., 0.),
+            status: StatusRoles {
+                attention: p.warning,
+                fault: p.error,
+                working: p.busy,
+                done: p.success,
+                idle: p.disabled,
+            },
         }
     }
 }
@@ -164,11 +206,14 @@ struct V2Colors {
     /// Primary buttons and the text on them.
     primary: u32,
     on_primary: u32,
-    /// Status: attention (needs you), error, success (terminal only), running.
+    /// Status roles (design-v2-direction R2.1), used only for status:
+    /// attention amber (blocked on the user), fault red (failed, stalled,
+    /// offline), working cyan/teal (distinct from the accent), done muted
+    /// green. Idle is `tertiary`.
     attention: u32,
-    error: u32,
-    success: u32,
-    running: u32,
+    fault: u32,
+    done: u32,
+    working: u32,
     /// The user's message bubble and inline code.
     user: u32,
     code_inline: u32,
@@ -183,22 +228,45 @@ fn mix(a: u32, b: u32, t: f32) -> u32 {
     ch(16) | ch(8) | ch(0)
 }
 
-/// An HSL colour (hue in degrees, saturation and lightness 0–1) as 0xRRGGBB.
-fn hsl(hue: f32, saturation: f32, lightness: f32) -> u32 {
-    let c = (1. - (2. * lightness - 1.).abs()) * saturation;
-    let h = hue.rem_euclid(360.) / 60.;
-    let x = c * (1. - (h % 2. - 1.).abs());
-    let (r, g, b) = match h as u32 {
-        0 => (c, x, 0.),
-        1 => (x, c, 0.),
-        2 => (0., c, x),
-        3 => (0., x, c),
-        4 => (x, 0., c),
-        _ => (c, 0., x),
+/// An OKLCH colour (lightness 0–1, chroma, hue in degrees) as 0xRRGGBB,
+/// clipped to sRGB.
+pub fn oklch(lightness: f32, chroma: f32, hue: f32) -> u32 {
+    let (a, b) = {
+        let h = hue.to_radians();
+        (chroma * h.cos(), chroma * h.sin())
     };
-    let m = lightness - c / 2.;
-    let byte = |v: f32| (((v + m) * 255.).round().clamp(0., 255.)) as u32;
-    byte(r) << 16 | byte(g) << 8 | byte(b)
+    let l_ = lightness + 0.396_337_78 * a + 0.215_803_76 * b;
+    let m_ = lightness - 0.105_561_346 * a - 0.063_854_17 * b;
+    let s_ = lightness - 0.089_484_18 * a - 1.291_485_5 * b;
+    let (l, m, s) = (l_.powi(3), m_.powi(3), s_.powi(3));
+    let linear = [
+        4.076_741_7 * l - 3.307_711_6 * m + 0.230_969_94 * s,
+        -1.268_438 * l + 2.609_757_4 * m - 0.341_319_38 * s,
+        -0.004_196_086_3 * l - 0.703_418_6 * m + 1.707_614_7 * s,
+    ];
+    let byte = |v: f32| {
+        let v = v.clamp(0., 1.);
+        let v = if v <= 0.003_130_8 {
+            12.92 * v
+        } else {
+            1.055 * v.powf(1. / 2.4) - 0.055
+        };
+        (v * 255.).round().clamp(0., 255.) as u32
+    };
+    byte(linear[0]) << 16 | byte(linear[1]) << 8 | byte(linear[2])
+}
+
+impl Palette {
+    /// The avatar tile colour for `name`: a hue hashed from the name at the
+    /// palette's fixed OKLCH lightness and chroma (`roles.avatar_tone`).
+    /// V1 (which never draws avatars) answers with its tone table.
+    pub fn avatar_fill(&self, name: &str) -> u32 {
+        let (lightness, chroma) = self.roles.avatar_tone;
+        if chroma <= 0. {
+            return self.roles.avatar[crate::format::avatar_index(name, AVATAR_TONES)];
+        }
+        oklch(lightness, chroma, crate::format::avatar_hue(name))
+    }
 }
 
 impl Appearance {
@@ -284,15 +352,17 @@ impl Appearance {
         p.primary_pressed = mix(c.primary, away, 0.2);
         p.on_primary = c.on_primary;
         p.warning = c.attention;
-        p.error = c.error;
-        p.success = c.success;
-        p.busy = c.running;
+        p.error = c.fault;
+        p.success = c.done;
+        p.busy = c.working;
         p.user = c.user;
         p.code_inline = c.code_inline;
         p.code_block = c.surface;
         p.code_header = c.raised;
         let dark = self.is_dark();
-        let (saturation, lightness) = if dark { (0.24, 0.27) } else { (0.42, 0.86) };
+        // r2-systems: one OKLCH lightness and chroma per mode; only the hue
+        // varies, so every tile weighs the same.
+        let avatar_tone = if dark { (0.38, 0.055) } else { (0.9, 0.045) };
         p.roles = Roles {
             hover: c.hover,
             pressed: c.pressed,
@@ -301,10 +371,18 @@ impl Appearance {
             text_tertiary: c.tertiary,
             border_strong: c.border_strong,
             focus: c.accent,
-            info: c.running,
+            info: c.working,
             card_border: c.card_border,
             provider: c.tertiary,
-            avatar: AVATAR_HUES.map(|hue| hsl(hue, saturation, lightness)),
+            avatar: AVATAR_HUES.map(|hue| oklch(avatar_tone.0, avatar_tone.1, hue)),
+            avatar_tone,
+            status: StatusRoles {
+                attention: c.attention,
+                fault: c.fault,
+                working: c.working,
+                done: c.done,
+                idle: c.tertiary,
+            },
         };
         p
     }
@@ -327,15 +405,15 @@ impl Appearance {
                 card_border: 0x25262b,
                 text: 0xededef,
                 prose: 0xd2d3d7,
-                secondary: 0xa1a2a9,
-                tertiary: 0x74767f,
+                secondary: 0xa5a6ac,
+                tertiary: 0x85878f,
                 accent: 0x6aa1f8,
                 primary: 0x2f6ee5,
                 on_primary: 0xffffff,
                 attention: 0xe9b464,
-                error: 0xf27a7a,
-                success: 0x4cc38a,
-                running: 0x6aa1f8,
+                fault: 0xf27a7a,
+                done: 0x72b48c,
+                working: 0x45c4c8,
                 user: 0x1d1e22,
                 code_inline: 0x202125,
             },
@@ -354,15 +432,15 @@ impl Appearance {
                 card_border: 0xdedee3,
                 text: 0x18181b,
                 prose: 0x2c2c31,
-                secondary: 0x5d5e66,
-                tertiary: 0x84858e,
+                secondary: 0x54555c,
+                tertiary: 0x6e6f77,
                 accent: 0x1f5fd6,
                 primary: 0x2563eb,
                 on_primary: 0xffffff,
-                attention: 0xa85200,
-                error: 0xc81e1e,
-                success: 0x15803d,
-                running: 0x2563eb,
+                attention: 0xb45309,
+                fault: 0xc81e1e,
+                done: 0x2f7a4f,
+                working: 0x0d7a80,
                 user: 0xf1f1f3,
                 code_inline: 0xefeff1,
             },
@@ -381,15 +459,15 @@ impl Appearance {
                 card_border: 0x414857,
                 text: 0xeceff4,
                 prose: 0xd8dee9,
-                secondary: 0xb2bac8,
-                tertiary: 0x8f99ab,
-                accent: 0x88c0d0,
-                primary: 0x88c0d0,
+                secondary: 0xc2c9d5,
+                tertiary: 0xa8b0bf,
+                accent: 0x81a1c1,
+                primary: 0x81a1c1,
                 on_primary: 0x242933,
                 attention: 0xebcb8b,
-                error: 0xe0828a,
-                success: 0xa3be8c,
-                running: 0x81a1c1,
+                fault: 0xe0828a,
+                done: 0xa3be8c,
+                working: 0x8fbcbb,
                 user: 0x3b4252,
                 code_inline: 0x3b4252,
             },
@@ -406,15 +484,15 @@ impl Appearance {
                 card_border: 0x292d3e,
                 text: 0xc8d0f5,
                 prose: 0xb0b8dc,
-                secondary: 0x9aa2c8,
-                tertiary: 0x737aa2,
+                secondary: 0xa8b0d6,
+                tertiary: 0x878fb6,
                 accent: 0x7aa2f7,
                 primary: 0x7aa2f7,
                 on_primary: 0x16161e,
                 attention: 0xe0af68,
-                error: 0xf7768e,
-                success: 0x9ece6a,
-                running: 0x7aa2f7,
+                fault: 0xf7768e,
+                done: 0x9ece6a,
+                working: 0x73daca,
                 user: 0x24283b,
                 code_inline: 0x24283b,
             },
@@ -431,15 +509,15 @@ impl Appearance {
                 card_border: 0x313244,
                 text: 0xcdd6f4,
                 prose: 0xbac2de,
-                secondary: 0xa6adc8,
-                tertiary: 0x7f849c,
+                secondary: 0xadb5d0,
+                tertiary: 0x8e94ad,
                 accent: 0x89b4fa,
                 primary: 0x89b4fa,
                 on_primary: 0x1e1e2e,
                 attention: 0xf9e2af,
-                error: 0xf38ba8,
-                success: 0xa6e3a1,
-                running: 0x89b4fa,
+                fault: 0xf38ba8,
+                done: 0x8fc48b,
+                working: 0x94e2d5,
                 user: 0x2a2b3d,
                 code_inline: 0x313244,
             },
@@ -456,15 +534,15 @@ impl Appearance {
                 card_border: 0x3c3836,
                 text: 0xddc7a1,
                 prose: 0xd4be98,
-                secondary: 0xbdae93,
-                tertiary: 0x928374,
+                secondary: 0xcbb999,
+                tertiary: 0xa89781,
                 accent: 0x7daea3,
                 primary: 0x7daea3,
                 on_primary: 0x1d2021,
                 attention: 0xd8a657,
-                error: 0xea6962,
-                success: 0xa9b665,
-                running: 0x7daea3,
+                fault: 0xea6962,
+                done: 0xa9b665,
+                working: 0x89b482,
                 user: 0x32302f,
                 code_inline: 0x3a3735,
             },
@@ -482,15 +560,15 @@ impl Appearance {
                 card_border: 0x414b50,
                 text: 0xe0d5bc,
                 prose: 0xd3c6aa,
-                secondary: 0xb0b8ad,
-                tertiary: 0x8f9a92,
+                secondary: 0xc4c6b4,
+                tertiary: 0xabaea0,
                 accent: 0x7fbbb3,
                 primary: 0x7fbbb3,
                 on_primary: 0x232a2e,
                 attention: 0xdbbc7f,
-                error: 0xe67e80,
-                success: 0xa7c080,
-                running: 0x7fbbb3,
+                fault: 0xe67e80,
+                done: 0xa7c080,
+                working: 0x83c092,
                 user: 0x374145,
                 code_inline: 0x3d484d,
             },
@@ -507,15 +585,15 @@ impl Appearance {
                 card_border: 0xd3d7e0,
                 text: 0x41445e,
                 prose: 0x4c4f69,
-                secondary: 0x5c5f77,
-                tertiary: 0x7c7f93,
+                secondary: 0x52556d,
+                tertiary: 0x63667d,
                 accent: 0x1e66f5,
                 primary: 0x1e66f5,
                 on_primary: 0xffffff,
                 attention: 0x9a5400,
-                error: 0xc8102f,
-                success: 0x2f7d1f,
-                running: 0x1e66f5,
+                fault: 0xc8102f,
+                done: 0x3d7a3a,
+                working: 0x157f86,
                 user: 0xe4e7ed,
                 code_inline: 0xe4e7ed,
             },
@@ -1128,7 +1206,8 @@ mod tests {
                     bg,
                     4.5,
                 );
-                floor(&format!("tertiary on {surface}"), r.text_tertiary, bg, 3.);
+                // R2.2: meta text (tertiary) is ≥ 4.5:1 everywhere.
+                floor(&format!("tertiary on {surface}"), r.text_tertiary, bg, 4.5);
                 for (tone, color) in [
                     ("accent", p.accent),
                     ("attention", p.warning),
@@ -1209,6 +1288,34 @@ mod tests {
                     "{appearance:?} {name} saturation {saturation:.2}"
                 );
             }
+            // R2.1: the status roles are the palette's status colours, and
+            // working is cyan/teal, never the accent's hue.
+            let st = r.status;
+            assert_eq!(
+                (st.attention, st.fault, st.working, st.done, st.idle),
+                (p.warning, p.error, p.busy, p.success, r.text_tertiary),
+                "{appearance:?}"
+            );
+            let (working_hue, _) = hue_saturation(st.working);
+            let gap = (working_hue - accent_hue).abs();
+            assert!(
+                gap.min(360. - gap) >= 25.,
+                "{appearance:?} working {working_hue:.0}° too close to accent {accent_hue:.0}°"
+            );
+            // …and never reads as done: the themes whose only cyan is their
+            // accent (Gruvbox, Everforest) take their aqua instead.
+            let (done_hue, _) = hue_saturation(st.done);
+            assert!(
+                (working_hue - done_hue).abs() >= 25.,
+                "{appearance:?} working {working_hue:.0}° too close to done {done_hue:.0}°"
+            );
+            // Five distinct roles.
+            let all = [st.attention, st.fault, st.working, st.done, st.idle];
+            for (i, a) in all.iter().enumerate() {
+                for b in &all[i + 1..] {
+                    assert_ne!(a, b, "{appearance:?} status roles collide");
+                }
+            }
             // Avatar monograms read on every tile.
             for &tile in &r.avatar {
                 floor("avatar text", p.text, tile, 4.5);
@@ -1219,10 +1326,13 @@ mod tests {
         let light = Appearance::Light.palette_v2();
         assert!(contrast(light.roles.card_border, light.surface) >= 1.25);
         assert!(contrast(light.warning, light.surface) >= 4.5);
-        // Nord: a saturated primary that never reads as disabled.
+        // R2.2: Light amber text sits near amber-700 (#B45309).
+        assert_eq!(light.roles.status.attention, 0xb45309);
+        // Nord: a primary that never reads as disabled, with a ≥ 4.5:1 label.
         let nord = Appearance::Nord.palette_v2();
         let (_, saturation) = hue_saturation(nord.primary);
-        assert!(saturation >= 0.4, "Nord primary saturation {saturation:.2}");
+        assert!(saturation >= 0.3, "Nord primary saturation {saturation:.2}");
         assert!(contrast(nord.primary, nord.surface) >= 4.);
+        assert!(contrast(nord.on_primary, nord.primary) >= 4.5);
     }
 }

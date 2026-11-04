@@ -155,7 +155,7 @@ fn syntax_v2(appearance: Appearance) -> &'static Syntax {
         Appearance::Nord => &V2_NORD,
         Appearance::TokyoNight => &V2_TOKYO_NIGHT,
         Appearance::Catppuccin => &V2_CATPPUCCIN_MOCHA,
-        Appearance::Gruvbox => &GRUVBOX_MATERIAL,
+        Appearance::Gruvbox => &V2_GRUVBOX,
         Appearance::Everforest => &V2_EVERFOREST,
         Appearance::CatppuccinLatte => &V2_CATPPUCCIN_LATTE,
     }
@@ -163,92 +163,108 @@ fn syntax_v2(appearance: Appearance) -> &'static Syntax {
 
 const V2_DARK: Syntax = Syntax {
     foreground: "#d2d3d7",
-    keyword: "#ef8f80",
-    string: "#9ccf98",
-    escape: "#e3b778",
-    comment: "#80848d",
-    function: "#7fb0f5",
-    constant: "#e6b673",
-    kind: "#6fc3bb",
-    tag: "#ef8f80",
-    heading: "#7fb0f5",
+    keyword: "#dd9a96",
+    string: "#a3c99a",
+    escape: "#d9b98a",
+    comment: "#868a93",
+    function: "#8bb4ee",
+    constant: "#d8a98f",
+    kind: "#86c0c8",
+    tag: "#dd9a96",
+    heading: "#8bb4ee",
 };
 
 const V2_LIGHT: Syntax = Syntax {
     foreground: "#2c2c31",
-    keyword: "#b3301f",
-    string: "#2b6b2e",
+    keyword: "#a8402f",
+    string: "#3b6e1f",
     escape: "#8a5300",
     comment: "#6b6f78",
     function: "#1f5fd6",
-    constant: "#93520a",
-    kind: "#0d6c66",
-    tag: "#b3301f",
+    constant: "#8f5a2e",
+    kind: "#3a6f7f",
+    tag: "#a8402f",
     heading: "#1f5fd6",
 };
 
 const V2_NORD: Syntax = Syntax {
     foreground: "#d8dee9",
     keyword: "#81a1c1",
-    string: "#a3be8c",
-    escape: "#ebcb8b",
+    string: "#bad19e",
+    escape: "#d8c4a0",
     comment: "#8b95a8",
-    function: "#88c0d0",
+    function: "#9fb8d8",
     constant: "#d08770",
-    kind: "#8fbcbb",
+    kind: "#a9c6d6",
     tag: "#81a1c1",
     heading: "#88c0d0",
 };
 
 const V2_TOKYO_NIGHT: Syntax = Syntax {
     foreground: "#c0caf5",
-    keyword: "#f7768e",
-    string: "#9ece6a",
+    keyword: "#e195b0",
+    string: "#b0d48a",
     escape: "#89ddff",
     comment: "#737ca8",
     function: "#7aa2f7",
     constant: "#ff9e64",
     kind: "#2ac3de",
-    tag: "#f7768e",
+    tag: "#e195b0",
     heading: "#7aa2f7",
 };
 
 const V2_CATPPUCCIN_MOCHA: Syntax = Syntax {
     foreground: "#cdd6f4",
-    keyword: "#f38ba8",
+    keyword: "#e6a8c0",
     string: "#a6e3a1",
-    escape: "#94e2d5",
+    escape: "#b4befe",
     comment: "#9399b2",
     function: "#89b4fa",
     constant: "#fab387",
-    kind: "#f9e2af",
-    tag: "#f38ba8",
+    kind: "#d9c3a0",
+    tag: "#e6a8c0",
     heading: "#89b4fa",
+};
+
+// r2-systems: syntax keeps clear of the status roles (red, amber, teal,
+// green read as fault, attention, working, done), so code never looks like
+// a state.
+const V2_GRUVBOX: Syntax = Syntax {
+    foreground: "#d4be98",
+    keyword: "#e3897f",
+    string: "#b8bf7a",
+    escape: "#e78a4e",
+    comment: "#928374",
+    function: "#7daea3",
+    constant: "#d3869b",
+    kind: "#c9a77a",
+    tag: "#e78a4e",
+    heading: "#7daea3",
 };
 
 const V2_EVERFOREST: Syntax = Syntax {
     foreground: "#d3c6aa",
-    keyword: "#e67e80",
-    string: "#a7c080",
-    escape: "#dbbc7f",
+    keyword: "#d99a8f",
+    string: "#b7c892",
+    escape: "#c8b48f",
     comment: "#9da9a0",
-    function: "#83c092",
+    function: "#7fbbb3",
     constant: "#e69875",
-    kind: "#dbbc7f",
+    kind: "#c6b9a0",
     tag: "#e69875",
     heading: "#7fbbb3",
 };
 
 const V2_CATPPUCCIN_LATTE: Syntax = Syntax {
     foreground: "#4c4f69",
-    keyword: "#c50f37",
-    string: "#3d7f26",
-    escape: "#0f7a80",
+    keyword: "#b63e5c",
+    string: "#4f7f1c",
+    escape: "#2a7a9a",
     comment: "#6c6f85",
     function: "#1e66f5",
     constant: "#b8450a",
-    kind: "#93590a",
-    tag: "#c50f37",
+    kind: "#7d6420",
+    tag: "#b63e5c",
     heading: "#1e66f5",
 };
 
@@ -604,6 +620,36 @@ diff --git a/notes.unknown b/notes.unknown
     // area-transcript
     /// V2 code reads on the v2 card surface in every theme and nothing in it
     /// is purple.
+    // r2-systems
+    #[test]
+    fn v2_syntax_never_borrows_a_status_colour() {
+        let distance = |a: u32, b: u32| {
+            [16, 8, 0]
+                .map(|s| ((a >> s) & 0xff) as f64 - ((b >> s) & 0xff) as f64)
+                .iter()
+                .map(|d| d * d)
+                .sum::<f64>()
+                .sqrt()
+        };
+        for appearance in Appearance::ALL {
+            let r = appearance.palette_for(Design::V2).roles.status;
+            let s = syntax_for(appearance, Design::V2);
+            for color in [
+                s.keyword, s.string, s.escape, s.function, s.constant, s.kind, s.tag,
+            ] {
+                for (role, status) in [
+                    ("attention", r.attention),
+                    ("fault", r.fault),
+                    ("working", r.working),
+                    ("done", r.done),
+                ] {
+                    let d = distance(hex(color), status);
+                    assert!(d >= 24., "{appearance:?} {color} reads as {role} ({d:.0})");
+                }
+            }
+        }
+    }
+
     #[test]
     fn v2_syntax_reads_on_the_card_surface_and_is_never_purple() {
         let hue_saturation = |color: u32| {

@@ -3,8 +3,8 @@
 //! [`Tokens::V1`] reproduces the shipped look exactly; each value names the
 //! literal it replaces (fields v1 never draws carry the v2 value and say so).
 //! [`Tokens::V2`] is the redesign's set, selected by the `design_v2` setting
-//! (Settings → Appearance → New design (preview)): a 22/16/14/13/12 type
-//! scale (11 for keycaps and meta) at weights 400/500/600, two control
+//! (Settings → Appearance → New design (preview)): a 12/13/14/15/17/20/24
+//! type scale at weights 400/500/600 with tabular numerals for figures, two control
 //! heights (28/36), two radii (8 for controls, full for chips and badges),
 //! quiet elevation and narrower reading widths. Designers tune V2 here and
 //! nowhere else. Per-theme colours live on
@@ -50,13 +50,16 @@ pub struct TypeScale {
     pub heading: f32,
     /// Card, row and dialog titles (v2: 14).
     pub subheading: f32,
+    /// Emphasised body: decision headlines, the composer's input (v2: 15;
+    /// v1 never draws it and carries the v2 value).
+    pub lead: f32,
     /// Body copy and control labels on pages.
     pub body: f32,
     /// Descriptions, metadata, notices, button labels.
     pub meta: f32,
     /// Captions, chips and hints.
     pub caption: f32,
-    /// Uppercase overlines, keycaps, compact meta (v2: 11, the floor).
+    /// Keycaps and compact meta (v2: 12, the floor; nothing is uppercase).
     pub overline: f32,
     /// gpui-component's base size before the reader's text-size setting
     /// replaces it (`configure_theme`).
@@ -166,6 +169,12 @@ pub struct Washes {
     pub tone_rest: f32,
     pub tone_hover: f32,
     pub tone_pressed: f32,
+    /// The edge of a "waiting on you" container: attention at this alpha
+    /// (v2: 0.35; v1 never draws it).
+    pub attention_edge: f32,
+    /// A control that yields to a pending decision (the composer while
+    /// something waits on the user), as an opacity (v2: 0.6; v1: 1).
+    pub yielded: f32,
 }
 
 /// Border widths in logical px.
@@ -174,6 +183,9 @@ pub struct Strokes {
     pub hairline: f32,
     /// The reserved keyboard focus ring (`interactive_control`).
     pub focus: f32,
+    /// The attention stripe on a "waiting on you" container's left edge
+    /// (v2: 3; v1 never draws it).
+    pub stripe: f32,
 }
 
 /// Fixed control and layout measures in logical px.
@@ -313,6 +325,7 @@ impl Tokens {
             title_short: 18.,
             heading: 15.,
             subheading: 14.,
+            lead: 15.,
             body: 13.,
             meta: 12.,
             caption: 11.,
@@ -385,10 +398,13 @@ impl Tokens {
             tone_rest: 0.08,
             tone_hover: 0.14,
             tone_pressed: 0.2,
+            attention_edge: 0.35,
+            yielded: 1.,
         },
         stroke: Strokes {
             hairline: 1.,
             focus: 2.,
+            stripe: 3.,
         },
         layout: Layout {
             chat_width: 900.,
@@ -456,14 +472,16 @@ impl Tokens {
     pub const V2: Self = Self {
         design: Design::V2,
         text: TypeScale {
-            title: 22.,
-            title_short: 16.,
-            heading: 16.,
+            // r2-systems: the 12/13/14/15/17/20/24 scale (R2.2).
+            title: 24.,
+            title_short: 20.,
+            heading: 17.,
             subheading: 14.,
+            lead: 15.,
             body: 13.,
             meta: 12.,
             caption: 12.,
-            overline: 11.,
+            overline: 12.,
             ui: 14.,
             mono: 13.,
             line_height: 1.5,
@@ -532,10 +550,13 @@ impl Tokens {
             tone_rest: 0.12,
             tone_hover: 0.18,
             tone_pressed: 0.24,
+            attention_edge: 0.35,
+            yielded: 0.6,
         },
         stroke: Strokes {
             hairline: 1.,
             focus: 2.,
+            stripe: 3.,
         },
         layout: Layout {
             chat_width: 760.,
@@ -676,12 +697,13 @@ mod tests {
     #[test]
     fn v2_holds_the_direction_scale() {
         let t = Tokens::V2;
-        // 22 / 16 / 14 / 13 / 12, with 11 only for keycaps and meta.
+        // R2.2: 12 / 13 / 14 / 15 / 17 / 20 / 24, nothing smaller.
         let mut sizes = vec![
             t.text.title,
             t.text.title_short,
             t.text.heading,
             t.text.subheading,
+            t.text.lead,
             t.text.body,
             t.text.meta,
             t.text.caption,
@@ -691,7 +713,7 @@ mod tests {
         ];
         sizes.sort_by(f32::total_cmp);
         sizes.dedup();
-        assert_eq!(sizes, [11., 12., 13., 14., 16., 22.]);
+        assert_eq!(sizes, [12., 13., 14., 15., 17., 20., 24.]);
         for w in [
             t.weight.regular,
             t.weight.medium,
