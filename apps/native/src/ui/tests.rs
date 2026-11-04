@@ -45,6 +45,8 @@ mod viewer;
 mod window;
 // area-shell
 mod shell_v2;
+// area-pages
+mod pages_v2;
 
 /// A demo workspace in a 1000×700 window, with the commands it issues and
 /// the sender that feeds it views.

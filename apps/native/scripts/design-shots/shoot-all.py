@@ -39,6 +39,13 @@ FIXTURES = {
 
 SETTINGS_SECTIONS = ["Appearance", "Typography", "Workspace", "Remote",
                      "Agents", "Chat", "Keyboard", "About"]
+# area-pages: controls design v2 moved (used when --setting design_v2=true).
+LANDMARKS_V2 = {
+    "END_SESSION": lambda shot: (1324, 634),        # Session details "End session..."
+}
+# area-pages: design v2's rail.
+SETTINGS_SECTIONS_V2 = ["Appearance", "Typography", "Workspace", "Remote",
+                        "Agents", "Keyboard", "About"]
 
 
 def nav(letter):
@@ -124,6 +131,18 @@ def shots():
     add("sidebar-row-hover", "A session row's actions on hover", [("move", "SIDEBAR_ROW_BUS")])
     add("rail-hover-card", "Collapsed rail: a session's hover card",
         [("click", "RAIL_TOGGLE"), ("move", "RAIL_FIRST_MARK"), ("sleep", 1.5)])
+    # area-pages: design v2 page states (run with --setting design_v2=true).
+    add("hosts-details", "Hosts: this machine's details open (design v2)",
+        nav("o") + [("click", "HOSTS_DETAILS")])
+    add("jobs-overflow", "Jobs: a job's overflow menu open (design v2)",
+        nav("j") + [("click", "JOB_OVERFLOW")])
+    add("settings-remote-light", "Settings: Remote, Light theme", nav("s") + [("settings_section", 3)],
+        theme="light")
+    add("projects-nord", "Projects, Nord", nav("p"), theme="nord")
+    add("settings-about-offline", "Settings: About after an offline update check",
+        nav("s") + [("settings_section", 7), ("sleep", 8)])
+    add("new-session-nord", "New session form, Nord", [("key", "Escape"), ("key", "ctrl+n"), ("sleep", 2)],
+        theme="nord")
     return s
 
 
@@ -192,6 +211,10 @@ class Rig:
         self.xdo("mousemove", int(self.px(width)) - 3, int(self.px(height)) - 3)
         time.sleep(0.2)
 
+    def design_v2(self, shot):
+        """The shot runs with design_v2 on (run() sets shot["v2"] from its settings)."""
+        return bool(shot.get("v2"))
+
     def run_steps(self, window, steps, shot):
         for step in steps:
             kind, *rest = step
@@ -210,7 +233,10 @@ class Rig:
             elif kind == "sleep":
                 time.sleep(rest[0])
             elif kind in ("click", "move"):
-                x, y = rest if len(rest) == 2 else LANDMARKS[rest[0]](shot)
+                landmarks = LANDMARKS
+                if len(rest) != 2 and self.design_v2(shot) and rest[0] in LANDMARKS_V2:
+                    landmarks = LANDMARKS_V2  # area-pages: v2 moved this control
+                x, y = rest if len(rest) == 2 else landmarks[rest[0]](shot)
                 self.xdo("mousemove", "--window", window, self.px(x), self.px(y))
                 # Hover first: the title capsule springs open under the pointer.
                 time.sleep(0.8)
@@ -221,7 +247,13 @@ class Rig:
                     time.sleep(0.8)
                     self.park(shot["width"], shot["height"])
             elif kind == "settings_section":
-                x, y = LANDMARKS["settings_section"](shot, rest[0])
+                if self.design_v2(shot):
+                    # area-pages: v2's rail folds Chat into Appearance.
+                    name = SETTINGS_SECTIONS[rest[0]]
+                    index = SETTINGS_SECTIONS_V2.index(name if name in SETTINGS_SECTIONS_V2 else "Appearance")
+                    x, y = LANDMARKS["settings_section_v2"](shot, index)
+                else:
+                    x, y = LANDMARKS["settings_section"](shot, rest[0])
                 self.xdo("mousemove", "--window", window, self.px(x), self.px(y))
                 self.xdo("click", "1")
                 time.sleep(1.0)
@@ -320,8 +352,13 @@ LANDMARKS = {
     "MODEL_SELECT": lambda shot: (955, 207),        # Change model page, model select
     "NEW_TASK_FIELD": lambda shot: (1150, 560),     # New agent form, Task box
     "END_SESSION": lambda shot: (1337, 679),        # Session details "End session..."
+    # area-pages (design v2 layouts)
+    "HOSTS_DETAILS": lambda shot: (1345, 211),      # Hosts: first machine's "Details"
+    "JOB_OVERFLOW": lambda shot: (1366, 420),       # Jobs: first scheduled job's "..."
     # Settings category rail; rows are ~37.7 px apart starting at Appearance.
     "settings_section": lambda shot, index: (570, 114 + round(index * 37.7)),
+    # area-pages: the design v2 rail (Chat folds into Appearance).
+    "settings_section_v2": lambda shot, index: (476, 158 + round(index * 34.4)),
 }
 
 

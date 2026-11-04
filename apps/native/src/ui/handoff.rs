@@ -239,7 +239,7 @@ impl Workspace {
             format!("Continue with {}", handoff::provider_name(target))
         });
         Some(
-            self.primary_button("handoff-continue", label, enabled)
+            self.pprimary("handoff-continue", label, enabled)
                 .debug_selector(|| "handoff-continue".into())
                 .flex_shrink_0()
                 .when(enabled, |d| {
@@ -295,7 +295,8 @@ impl Workspace {
                         .child(value),
                 )
         };
-        let from = chrome::card(p)
+        let from = self
+            .page_card()
             .p_4()
             .flex()
             .flex_col()
@@ -407,7 +408,8 @@ impl Workspace {
                 p,
             ),
         };
-        let successor = chrome::card(p)
+        let successor = self
+            .page_card()
             .p_4()
             .flex()
             .flex_col()
@@ -443,7 +445,7 @@ impl Workspace {
                     )
                     .when(missing, |d| {
                         d.child(
-                            self.button("handoff-setup", "Agent setup", true)
+                            self.pbutton("handoff-setup", "Agent setup", true)
                                 .flex_shrink_0()
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.open_feature(Screen::Setup, window, cx)
@@ -523,7 +525,8 @@ impl Workspace {
                     )
             };
         let fallback = "If that fails, the hub uses the quick summary and says so.";
-        let brief_card = chrome::card(p)
+        let brief_card = self
+            .page_card()
             .p_4()
             .flex()
             .flex_col()

@@ -200,7 +200,11 @@ impl Workspace {
         let wide = window.viewport_size().width >= px(1100.);
         // Short windows give the form, not the heading, the height.
         let short = window.viewport_size().height < px(620.);
+        let v2 = self.v2_palette();
         let card = || {
+            if let Some(p) = v2 {
+                return primitives::card(&p).gap(px(p.tokens.space.lg));
+            }
             div()
                 .p(px(if short { 12. } else { 16. }))
                 .rounded(px(p.panel_radius))
@@ -223,8 +227,40 @@ impl Workspace {
                     this.show_screen(Screen::Conversation, window, cx)
                 }))
             });
-        let header = self
-            .page_header(
+        let header = if let Some(p) = v2 {
+            let close = primitives::icon_button_with_shortcut(
+                "cancel-create",
+                IconName::Close,
+                "Back to the conversation",
+                Some("Esc"),
+                ButtonVariant::Ghost,
+                !busy,
+                &p,
+            )
+            .when(!busy, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| {
+                    this.show_screen(Screen::Conversation, window, cx)
+                }))
+            });
+            primitives::page_header(
+                None,
+                if resume {
+                    "Continue a session"
+                } else {
+                    "New session"
+                },
+                Some(if resume {
+                    "Pick up where you left off, on the same agent and folder.".into()
+                } else {
+                    "Choose where it runs, the project and the agent, then describe the task."
+                        .into()
+                }),
+                vec![close.into_any_element()],
+                &p,
+            )
+            .debug_selector(|| "launch-title".into())
+        } else {
+            self.page_header(
                 None,
                 Some(if resume {
                     "CONTINUE A CONVERSATION"
@@ -240,9 +276,14 @@ impl Workspace {
                 Some(close.into_any_element()),
                 short,
             )
-            .debug_selector(|| "launch-title".into());
+            .debug_selector(|| "launch-title".into())
+        };
+        let label = |text: &'static str| match v2 {
+            Some(p) => card_title(text, &p),
+            None => projects::section_label(text, p),
+        };
         let agent = card()
-            .child(projects::section_label("Agent", p))
+            .child(label("Agent"))
             .child(self.render_provider_choice(busy, cx))
             .child(self.render_model_select(busy, true, cx));
         let task = card()
@@ -251,7 +292,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(projects::section_label("Task", p))
+                    .child(label("Task"))
                     .child(
                         div()
                             .text_size(px(chrome::scale::CAPTION))
@@ -281,7 +322,7 @@ impl Workspace {
         let gutter = if short { 12. } else { 20. };
         let content = div()
             .debug_selector(|| "launch-content".into())
-            .max_w(px(if wide { 980. } else { 720. }))
+            .max_w(px(self.launch_width(wide)))
             .mx_auto()
             .py_2()
             .flex()
@@ -289,8 +330,12 @@ impl Workspace {
             .gap_4()
             .child(header)
             .children(
-                self.render_host_picker(busy, cx)
-                    .map(|picker| card().child(picker)),
+                if v2.is_some() {
+                    self.render_host_picker_v2(busy, cx)
+                } else {
+                    self.render_host_picker(busy, cx)
+                }
+                .map(|picker| card().child(picker)),
             )
             .child(card().child(match self.launch_peer() {
                 Some(peer) => self.render_peer_folders(&peer, busy, cx),
@@ -694,6 +739,8 @@ impl Workspace {
                                 "Submitting…"
                             } else if busy {
                                 "Starting…"
+                            } else if queued.is_some() && self.design().is_v2() {
+                                "Queue session"
                             } else if queued.is_some() {
                                 "Queue agent"
                             } else if uncertain {
@@ -702,6 +749,8 @@ impl Workspace {
                                 "Start anyway"
                             } else if self.extras.resume.is_some() {
                                 "Continue"
+                            } else if self.design().is_v2() {
+                                "Start session"
                             } else {
                                 "Start agent"
                             },
@@ -724,7 +773,7 @@ impl Workspace {
             .shadow(chrome::floating_shadow(p))
             .flex_1()
             .min_w_0()
-            .max_w(px(if wide { 980. } else { 720. }))
+            .max_w(px(self.launch_width(wide)))
             .px(px(if short { 12. } else { 16. }))
             .py(px(if short { 8. } else { 12. }))
             .flex()
@@ -962,6 +1011,9 @@ impl Workspace {
                 p.muted,
             )
         };
+        if let Some(v2) = self.v2_palette() {
+            return self.render_model_select_v2(busy, with_effort, status, status_color, &v2, cx);
+        }
         let model = div()
             .flex_1()
             .min_w(px(180.))
@@ -1680,5 +1732,412 @@ impl Workspace {
             Err(error) => self.spawn_error = error,
         }
         cx.notify();
+    }
+}
+
+// area-pages: the New session form under design v2. Machines are equal-width
+// cards with their status in the shared vocabulary (a closed gate is muted,
+// not hidden: queued work waits for it), and Best fit is a separate
+// Auto-place switch rather than a fifth "machine".
+use super::primitives::{self, ButtonVariant, StatusBadge, StatusKind};
+use gpui_component::{Disableable as _, switch::Switch};
+
+/// One machine card's facts, from `queue.targets`.
+struct HostCard {
+    choice: HostChoice,
+    name: String,
+    status: StatusBadge,
+    /// Selectable: connected and dispatching.
+    enabled: bool,
+    /// A closed gate or an offline peer: drawn quietly.
+    muted: bool,
+}
+
+fn host_cards(targets: &hosts::Targets) -> Vec<HostCard> {
+    let status = |t: &hosts::Target| -> (StatusBadge, bool) {
+        if !t.local && !t.connected {
+            return (StatusBadge::new(StatusKind::Idle).label("Offline"), true);
+        }
+        if !t.local && !t.eligible {
+            let why = t.reasons.first().cloned().unwrap_or_else(|| {
+                if t.dispatch {
+                    "Unavailable".into()
+                } else {
+                    "Not taking work".into()
+                }
+            });
+            return (StatusBadge::new(StatusKind::Idle).label(why), true);
+        }
+        match &t.resources {
+            Some(r) => match &r.gate {
+                Some(g) if !g.open => (
+                    StatusBadge::new(StatusKind::Paused)
+                        .label(super::hosts::paused_label(&g.reasons)),
+                    true,
+                ),
+                _ => {
+                    let label = match (r.free_agents(), r.agent_slots) {
+                        (Some(free), Some(_)) => format!("{free} free"),
+                        _ => "Accepting work".to_owned(),
+                    };
+                    (StatusBadge::new(StatusKind::Idle).label(label), false)
+                }
+            },
+            None => (
+                StatusBadge::new(StatusKind::Idle).label("No sample yet"),
+                false,
+            ),
+        }
+    };
+    let mut cards = Vec::new();
+    if let Some(local) = targets.targets.iter().find(|t| t.local) {
+        let (badge, muted) = status(local);
+        cards.push(HostCard {
+            choice: HostChoice::Local,
+            name: "This machine".into(),
+            status: badge,
+            enabled: true,
+            muted,
+        });
+    } else {
+        cards.push(HostCard {
+            choice: HostChoice::Local,
+            name: "This machine".into(),
+            status: StatusBadge::new(StatusKind::Idle).label("Accepting work"),
+            enabled: true,
+            muted: false,
+        });
+    }
+    for peer in targets.peers() {
+        let (badge, muted) = status(peer);
+        cards.push(HostCard {
+            choice: HostChoice::Peer(peer.host.clone()),
+            name: peer.host.clone(),
+            status: badge,
+            enabled: peer.eligible,
+            muted,
+        });
+    }
+    cards
+}
+
+impl Workspace {
+    /// "Run on": Auto-place, then one equal-width card per machine.
+    fn render_host_picker_v2(&self, busy: bool, cx: &mut Context<Self>) -> Option<Div> {
+        if self.extras.resume.is_some() {
+            return None;
+        }
+        let targets = self.launch_targets()?;
+        let p = self.palette();
+        let t = p.tokens;
+        let auto = self.extras.launch_host == HostChoice::Best;
+        let any = targets.targets.iter().any(|t| t.eligible);
+        let best_now = match (&targets.best, any) {
+            (_, false) => "No machine can take it now".to_owned(),
+            (Some(best), true) if best == hosts::LOCAL => "Now: this machine".to_owned(),
+            (Some(best), true) => format!("Now: {best}"),
+            (None, true) => "The hub picks when it starts".to_owned(),
+        };
+        let cards = host_cards(&targets);
+        let card_views = cards.into_iter().enumerate().map(|(ix, card)| {
+            let selected = !auto && self.extras.launch_host == card.choice;
+            let enabled = card.enabled && !busy && !auto;
+            let choice = card.choice.clone();
+            chrome::interactive_control(div().id(("launch-host", ix)), p, enabled)
+                .debug_selector(move || format!("launch-host-{ix}"))
+                .flex_1()
+                .flex_basis(px(0.))
+                .min_w_0()
+                .px(px(t.space.lg))
+                .py(px(t.space.md + t.space.xxs))
+                .rounded(px(t.radius.control))
+                .bg(rgb(if selected { p.selected } else { p.surface }))
+                .border_color(rgb(if selected {
+                    p.accent
+                } else {
+                    p.roles.border_strong
+                }))
+                .flex()
+                .flex_col()
+                .gap(px(t.space.xs))
+                .when(enabled && !selected, |d| {
+                    d.hover(move |s| s.bg(rgb(p.roles.hover)))
+                })
+                .when(enabled, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        this.choose_launch_host(choice.clone(), cx)
+                    }))
+                })
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.xs))
+                        .min_w_0()
+                        .text_size(px(t.text.body))
+                        .font_weight(FontWeight(t.weight.semibold))
+                        .text_color(rgb(if card.muted || auto {
+                            p.roles.text_tertiary
+                        } else {
+                            p.text
+                        }))
+                        .child(div().min_w_0().truncate().child(card.name.clone()))
+                        .child(div().flex_1())
+                        .when(selected, |d| {
+                            d.child(
+                                Icon::new(IconName::Check)
+                                    .size(px(t.icon.sm))
+                                    .text_color(rgb(p.accent)),
+                            )
+                        }),
+                )
+                .child(card.status.render(&p))
+        });
+        let local = self.extras.launch_host == HostChoice::Local;
+        let queue = self.extras.launch_queue;
+        let can_refresh = !busy && self.view.connected;
+        Some(
+            div()
+                .debug_selector(|| "launch-hosts".into())
+                .flex()
+                .flex_col()
+                .gap(px(t.space.lg))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.md))
+                        .child(card_title("Run on", &p))
+                        .child(div().flex_1())
+                        .child(
+                            div()
+                                .id("launch-auto-place")
+                                .debug_selector(|| "launch-auto-place".into())
+                                .flex()
+                                .items_center()
+                                .gap(px(t.space.md))
+                                .tooltip(primitives::tooltip_view(
+                                    format!("Let the hub place it on the best machine. {best_now}"),
+                                    None,
+                                    &p,
+                                ))
+                                .child(
+                                    div()
+                                        .text_size(px(t.text.body))
+                                        .text_color(rgb(p.roles.text_secondary))
+                                        .child("Auto-place"),
+                                )
+                                .child(
+                                    Switch::new("launch-auto-place-switch")
+                                        .checked(auto)
+                                        .disabled(busy || (!any && !auto))
+                                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                            this.choose_launch_host(
+                                                if *checked {
+                                                    HostChoice::Best
+                                                } else {
+                                                    HostChoice::Local
+                                                },
+                                                cx,
+                                            )
+                                        })),
+                                ),
+                        )
+                        .child(
+                            primitives::icon_button(
+                                "launch-hosts-refresh",
+                                IconName::Redo,
+                                "Refresh machines",
+                                ButtonVariant::Ghost,
+                                can_refresh,
+                                &p,
+                            )
+                            .debug_selector(|| "launch-hosts-refresh".into())
+                            .when(can_refresh, |d| {
+                                d.on_click(
+                                    cx.listener(|this, _, _, cx| this.refresh_launch_targets(cx)),
+                                )
+                            }),
+                        ),
+                )
+                .child(div().flex().gap(px(t.space.md)).children(card_views))
+                .when(auto, |d| {
+                    d.child(
+                        div()
+                            .debug_selector(|| "launch-auto-place-note".into())
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_secondary))
+                            .child(format!(
+                                "The hub places it on the best machine. {best_now}."
+                            )),
+                    )
+                })
+                .when(local, |d| {
+                    d.child(
+                        div()
+                            .debug_selector(|| "launch-queue".into())
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.md))
+                            .child(
+                                Switch::new("launch-queue-switch")
+                                    .checked(queue)
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                        this.extras.launch_queue = *checked;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(t.text.body))
+                                    .text_color(rgb(p.text))
+                                    .child("Queue if busy"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(t.text.meta))
+                                    .text_color(rgb(p.roles.text_tertiary))
+                                    .child("Waits for a free slot instead of starting now"),
+                            ),
+                    )
+                }),
+        )
+    }
+}
+
+/// A launch card's title, sentence case (v2).
+fn card_title(text: &'static str, p: &Palette) -> Div {
+    let t = p.tokens;
+    div()
+        .text_size(px(t.text.subheading))
+        .font_weight(FontWeight(t.weight.semibold))
+        .text_color(rgb(p.text))
+        .child(text)
+}
+
+impl Workspace {
+    /// The form's and footer's width: v1's two widths, v2's page width.
+    fn launch_width(&self, wide: bool) -> f32 {
+        match self.v2_palette() {
+            Some(p) => p.tokens.layout.page_width,
+            None if wide => 980.,
+            None => 720.,
+        }
+    }
+
+    /// Model and effort under v2: the labels above, Refresh inside the
+    /// model select (models come from the agent's CLI and can change).
+    fn render_model_select_v2(
+        &self,
+        busy: bool,
+        with_effort: bool,
+        status: String,
+        status_color: u32,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = p.tokens;
+        let catalog = &self.view.catalog;
+        let loading = catalog.key == self.catalog_key(cx) && catalog.loading;
+        let can_reload = !busy && !loading && self.view.connected;
+        let field_label = |text: &'static str| {
+            div()
+                .text_size(px(t.text.meta))
+                .font_weight(FontWeight(t.weight.medium))
+                .text_color(rgb(p.roles.text_secondary))
+                .child(text)
+        };
+        let refresh = primitives::icon_button(
+            "reload-models",
+            IconName::Redo,
+            if loading {
+                "Loading models…"
+            } else {
+                "Refresh the model list"
+            },
+            ButtonVariant::Ghost,
+            can_reload,
+            p,
+        )
+        .debug_selector(|| "reload-models".into())
+        .when(can_reload, |d| {
+            d.on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.load_models(true, cx)
+            }))
+        });
+        let model = div()
+            .flex_1()
+            .min_w(px(t.layout.status_column * 2.))
+            .flex()
+            .flex_col()
+            .gap(px(t.space.sm))
+            .child(field_label("Model"))
+            .child(
+                div()
+                    .debug_selector(|| "launch-model-picker".into())
+                    .relative()
+                    .child(
+                        Select::new(&self.model_picker)
+                            .disabled(busy)
+                            .search_placeholder("Find a model…"),
+                    )
+                    // Inside the select, left of its chevron.
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .right(px(t.layout.icon_button))
+                            .flex()
+                            .items_center()
+                            .child(refresh),
+                    ),
+            );
+        let effort = with_effort.then(|| {
+            div()
+                .w(px(t.layout.status_column * 1.5))
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.sm))
+                .child(field_label("Effort"))
+                .child(
+                    div()
+                        .debug_selector(|| "launch-effort-picker".into())
+                        .child(Select::new(&self.effort_picker).disabled(busy)),
+                )
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.md))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(t.space.lg))
+                    .child(model)
+                    .children(effort),
+            )
+            .when(self.model_choice == "__custom", |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "launch-custom-model".into())
+                        .child(Input::new(&self.model).disabled(busy)),
+                )
+            })
+            .child(
+                div()
+                    .debug_selector(|| "launch-model-status".into())
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(if status_color == self.palette().muted {
+                        p.roles.text_tertiary
+                    } else {
+                        status_color
+                    }))
+                    .child(status),
+            )
     }
 }

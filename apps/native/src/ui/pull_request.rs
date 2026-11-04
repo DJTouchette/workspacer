@@ -232,7 +232,7 @@ impl Workspace {
         } else {
             link.title.clone()
         };
-        chrome::card(p)
+        self.page_card()
             .debug_selector(|| "pr-header".into())
             .p_4()
             .flex()
@@ -296,16 +296,11 @@ impl Workspace {
                     .items_center()
                     .gap_1()
                     .child(
-                        self.quiet_button(
-                            "pr-open",
-                            "Open in browser",
-                            IconName::ExternalLink,
-                            true,
-                        )
-                        .on_click(move |_, _, cx| cx.open_url(&open)),
+                        self.pquiet("pr-open", "Open in browser", IconName::ExternalLink, true)
+                            .on_click(move |_, _, cx| cx.open_url(&open)),
                     )
                     .child(
-                        self.quiet_button("pr-refresh", "Refresh", IconName::Redo, connected)
+                        self.pquiet("pr-refresh", "Refresh", IconName::Redo, connected)
                             .when(connected, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
                                     this.request(
@@ -318,7 +313,7 @@ impl Workspace {
                             }),
                     )
                     .child(
-                        self.quiet_button("pr-change", "Change", IconName::Replace, connected)
+                        self.pquiet("pr-change", "Change", IconName::Replace, connected)
                             .when(connected, |d| {
                                 d.on_click(cx.listener(|this, _, _, cx| {
                                     this.pr.relinking = !this.pr.relinking;
@@ -333,19 +328,15 @@ impl Workspace {
                     )
                     .child(div().flex_1())
                     .child(
-                        self.danger_button(
-                            "pr-unlink",
-                            "Unlink",
-                            connected && !self.pr_busy("pr-link"),
-                        )
-                        .debug_selector(|| "pr-unlink".into())
-                        .when(connected, |d| {
-                            d.on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(session) = this.view.selected.clone() {
-                                    this.request(Request::PrLink { session, url: None }, cx);
-                                }
-                            }))
-                        }),
+                        self.pdanger("pr-unlink", "Unlink", connected && !self.pr_busy("pr-link"))
+                            .debug_selector(|| "pr-unlink".into())
+                            .when(connected, |d| {
+                                d.on_click(cx.listener(|this, _, _, cx| {
+                                    if let Some(session) = this.view.selected.clone() {
+                                        this.request(Request::PrLink { session, url: None }, cx);
+                                    }
+                                }))
+                            }),
                     ),
             )
     }
@@ -401,7 +392,7 @@ impl Workspace {
         };
         let typed = !self.pr.url.read(cx).value().trim().is_empty();
         let can_link = connected && typed;
-        let mut card = chrome::card(p)
+        let mut card = self.page_card()
             .debug_selector(|| "pr-linker".into())
             .p_4()
             .flex()
@@ -488,7 +479,7 @@ impl Workspace {
                             ),
                     )
                     .child(
-                        self.primary_button("pr-link-suggested", "Link", connected)
+                        self.pprimary("pr-link-suggested", "Link", connected)
                             .debug_selector(|| "pr-link-suggested".into())
                             .when(connected, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
@@ -578,7 +569,7 @@ impl Workspace {
                 )
                 .when(resolved > 0, |d| {
                     d.child(
-                        self.quiet_button(
+                        self.pquiet(
                             "pr-toggle-resolved",
                             if show_resolved {
                                 "Hide resolved"
@@ -629,7 +620,7 @@ impl Workspace {
         let comment = self.pr.comment.clone();
         let url = link.url.clone();
         column.child(
-            chrome::card(p)
+            self.page_card()
                 .p_3()
                 .flex()
                 .flex_col()
@@ -678,7 +669,8 @@ impl Workspace {
         let replying = self.pr.replying.as_deref() == Some(id.as_str());
         let busy = self.pr_busy("pr-action");
         let key = format!("pr-thread-{id}");
-        let mut card = chrome::card(p)
+        let mut card = self
+            .page_card()
             .debug_selector({
                 let key = key.clone();
                 move || key.clone()
@@ -783,7 +775,7 @@ impl Workspace {
                 }),
             )
             .child(
-                self.quiet_button(
+                self.pquiet(
                     SharedString::from(format!("{key}-agent")),
                     "Send to agent",
                     IconName::Bot,
@@ -807,7 +799,7 @@ impl Workspace {
             let resolve_id = id.clone();
             let resolved = thread.resolved;
             actions = actions.child(div().flex_1()).child(
-                self.quiet_button(
+                self.pquiet(
                     SharedString::from(format!("{key}-resolve")),
                     if resolved { "Reopen" } else { "Resolve" },
                     if resolved {
@@ -848,7 +840,7 @@ impl Workspace {
                     .child(Input::new(&self.pr.reply))
                     .child(
                         div().flex().justify_end().child(
-                            self.primary_button(
+                            self.pprimary(
                                 SharedString::from(format!("{key}-reply-send")),
                                 "Post reply",
                                 connected && !busy,
