@@ -101,7 +101,7 @@ impl Workspace {
                 } else if super::attention::needs_you(session) {
                     StatusKind::NeedsYou
                 } else if self.stalled_for(session, now).is_some() {
-                    StatusKind::Failed
+                    StatusKind::Stalled
                 } else {
                     match super::attention::bucket(session, false) {
                         super::attention::Bucket::Working => StatusKind::Working,
@@ -110,7 +110,7 @@ impl Workspace {
                 };
                 let label = if !self.view.connected {
                     "Offline".to_owned()
-                } else if kind == StatusKind::Failed {
+                } else if kind == StatusKind::Stalled {
                     "Not responding".to_owned()
                 } else {
                     self.status_of(session, p).0.to_owned()

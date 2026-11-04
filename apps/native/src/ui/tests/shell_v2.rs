@@ -172,7 +172,9 @@ fn the_palette_finds_sessions_and_actions(cx: &mut TestAppContext) {
     visual.simulate_keystrokes("enter");
     visual.run_until_parked();
     assert_eq!(selected(&mut commands), ["d"]);
-    assert!(visual.debug_bounds("command-palette").is_none());
+    // (gpui's test `debug_bounds` keeps an element's last bounds after it
+    // stops drawing, so closed overlays are checked by state.)
+    workspace.read_with(&visual, |this, _| assert!(!this.shell.palette.open));
     // `>` scopes to actions: the Jobs page opens.
     visual.simulate_keystrokes("ctrl-k");
     visual.run_until_parked();
@@ -186,7 +188,7 @@ fn the_palette_finds_sessions_and_actions(cx: &mut TestAppContext) {
     visual.run_until_parked();
     visual.simulate_keystrokes("escape");
     visual.run_until_parked();
-    assert!(visual.debug_bounds("command-palette").is_none());
+    workspace.read_with(&visual, |this, _| assert!(!this.shell.palette.open));
 }
 
 #[gpui::test]
@@ -223,8 +225,9 @@ fn g_n_means_needs_you_under_v2_and_scratch_under_v1(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     open_v2(&workspace, &mut visual, attention_state(), Design::V2);
     // Modal keys are a choice under v2.
-    workspace.update(&mut visual, |this, _| {
-        this.settings.vim_navigation_v2 = true
+    workspace.update(&mut visual, |this, cx| {
+        this.settings.vim_navigation_v2 = true;
+        cx.notify();
     });
     visual.run_until_parked();
     effects(&mut commands);
@@ -306,8 +309,16 @@ fn the_cheat_sheet_opens_and_closes(cx: &mut TestAppContext) {
     visual.update(|_, cx| workspace.update(cx, |this, cx| this.toggle_shortcuts(cx)));
     visual.run_until_parked();
     assert!(visual.debug_bounds("shortcuts-dialog").is_some());
+    // The close button sits inside the dialog (a long description must not
+    // push it out of the panel).
+    let dialog = visual.debug_bounds("shortcuts-dialog").unwrap();
+    let close = visual.debug_bounds("shortcuts-close").unwrap();
+    assert!(
+        dialog.contains(&close.center()),
+        "{close:?} inside {dialog:?}"
+    );
     click(&mut visual, "shortcuts-close");
-    assert!(visual.debug_bounds("shortcuts-dialog").is_none());
+    workspace.read_with(&visual, |this, _| assert!(!this.shell.shortcuts));
 }
 
 #[gpui::test]

@@ -270,7 +270,7 @@ impl Workspace {
             let status = if attention::needs_you(s) {
                 StatusKind::NeedsYou
             } else if self.stalled_for(s, now).is_some() {
-                StatusKind::Failed
+                StatusKind::Stalled
             } else if s.working() {
                 StatusKind::Working
             } else if self.paused(s) {

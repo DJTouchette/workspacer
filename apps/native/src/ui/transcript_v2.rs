@@ -404,25 +404,6 @@ pub(super) fn event_guide(p: &Palette) -> Div {
         .border_color(rgb(p.border))
 }
 
-/// r2-transcript: a stalled agent is a fault, never "Working". `systems`
-/// adds `StatusKind::Stalled`; until it lands this maps onto `Failed` (the
-/// same red fault dot), so consolidating is this one line.
-pub(super) fn stalled_kind() -> StatusKind {
-    StatusKind::Failed
-}
-
-/// "Not responding · 2m": how long a stalled agent has been silent.
-pub(super) fn not_responding(silent_ms: i64) -> String {
-    format!("Not responding · {}", format::age(0, silent_ms.max(0)))
-}
-
-/// r2-transcript: the human model name ("Sonnet 4.6"). `shell` adds
-/// `format::model_name`; until it lands this reads the session model's
-/// formatter.
-pub(super) fn model_name(id: &str) -> String {
-    wks_native::model::model_display_name(id)
-}
-
 impl Workspace {
     // ----- The reading column -------------------------------------------
 
@@ -2028,11 +2009,8 @@ pub(super) fn child_view(child: &ChildAgent, connected: bool, now: i64) -> Child
         .or(child.telemetry.started_at_ms);
     if connected && child.running() && format::is_stale(last, now) {
         return ChildView {
-            kind: stalled_kind(),
-            word: match last {
-                Some(at) => not_responding(now - at),
-                None => "Not responding".into(),
-            },
+            kind: StatusKind::Stalled,
+            word: format::not_responding(last, now),
             stalled: true,
             clock: None,
         };
@@ -2083,7 +2061,7 @@ pub(super) fn children_badge(views: &[ChildView]) -> Option<StatusBadge> {
             None
         };
         return Some(
-            StatusBadge::new(stalled_kind())
+            StatusBadge::new(StatusKind::Stalled)
                 .label(word.unwrap_or_else(|| format!("{stalled} not responding"))),
         );
     }
@@ -2105,7 +2083,7 @@ pub(super) fn child_names(child: &ChildAgent, parent_title: Option<&str>) -> (St
     let same = |a: &str| {
         parent_title.is_some_and(|t| !a.is_empty() && t.trim().eq_ignore_ascii_case(a.trim()))
     };
-    let model = model_name(&child.model);
+    let model = format::model_name(&child.model);
     let role = [child.agent_type.as_str(), child.label.as_str()]
         .into_iter()
         .find(|r| !r.is_empty() && !same(r) && *r != child.description)
@@ -2642,13 +2620,13 @@ mod tests {
         child.telemetry.last_activity_ms = Some(now - 7 * 60_000);
         let view = child_view(&child, true, now);
         assert!(view.stalled);
-        assert_eq!(view.kind, stalled_kind());
+        assert_eq!(view.kind, StatusKind::Stalled);
         assert_ne!(view.kind, StatusKind::Working);
         assert_eq!(view.word, "Not responding · 7m");
         assert_eq!(view.clock, None);
         // The batch says so too, before anything else.
         let badge = children_badge(std::slice::from_ref(&view)).unwrap();
-        assert_eq!(badge.kind, stalled_kind());
+        assert_eq!(badge.kind, StatusKind::Stalled);
         assert_eq!(
             badge.label.as_ref().map(|l| l.as_ref()),
             Some("Not responding · 7m")

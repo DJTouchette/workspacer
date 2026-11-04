@@ -77,6 +77,15 @@ tables and code, and its asynchronous parse cache:
   painting applies it, so in right/center-aligned text (table cells) the
   quads are shifted by the same per-line alignment offset.
 
+- `layout: Option<ProseLayout>`: the native v2 transcript's prose rhythm. A
+  reading `measure` caps the width of top-level paragraphs, headings, lists
+  and quotes while code blocks, tables and rules keep the full view width;
+  `heading_space` adds room above a heading that follows other blocks,
+  `heading_gap` below it, and `heading_rule: false` drops the level 1-2
+  underline; with a layout, bold headings render semibold. `None` keeps
+  upstream rendering (v1 passes `None`). Files: `src/text/style.rs`
+  (`ProseLayout`, `TextViewStyle::layout`) and `src/text/node.rs`.
+
 - `TextView::handle()` returns a `TextViewHandle` over the view's state:
   top-level heading text with block indices (`Node::heading` in `node.rs`),
   top-level block kinds (`Node::kind_name`, used by native UI tests), and
@@ -186,9 +195,3 @@ Native interaction polish also patches:
   costs a comparison per visible message instead of a channel send.
 
 Reapply these interaction changes explicitly when upgrading the component.
-- `layout: Option<ProseLayout>`: the native v2 transcript's prose rhythm. A
-  reading `measure` caps the width of top-level paragraphs, headings, lists
-  and quotes while code blocks, tables and rules keep the full view width;
-  `heading_space` adds room above a heading that follows other blocks,
-  `heading_gap` below it, and `heading_rule: false` drops the level 1-2
-  underline. `None` keeps upstream rendering (v1 passes `None`).

@@ -1871,12 +1871,35 @@ impl Workspace {
 // area-pages: the Projects page under design v2. Each project is one card
 // with its folders nested inside it; folders in no project share a single
 // "Ungrouped" card. Monogram tiles, no emoji; pending scratch items read
-// "1 needs you" and open the scratch they wait in.
+// "1 in scratch" and open the scratch they wait in, while "needs you" and
+// "working" count sessions exactly as the sidebar groups them.
 use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
 use super::project_groups::group_filter;
 use gpui::AnyElement;
 
 impl Workspace {
+    /// r2 integration: what runs in `folders`, counted the way the sidebar
+    /// groups it (`session_bucket`): working sessions only (idle ones are
+    /// not "working"), and the sessions the sidebar's Needs you holds.
+    fn fleet_in(&self, folders: &[String]) -> (usize, usize) {
+        let now = timing::now_ms();
+        let (mut working, mut needs) = (0, 0);
+        for session in self.view.sessions.iter() {
+            if !folders
+                .iter()
+                .any(|f| wks_native::projects::same_dir(f, &session.cwd))
+            {
+                continue;
+            }
+            match self.session_bucket(session, now) {
+                super::attention::Bucket::Working => working += 1,
+                super::attention::Bucket::NeedsYou => needs += 1,
+                _ => {}
+            }
+        }
+        (working, needs)
+    }
+
     pub(super) fn render_projects_v2(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
@@ -2099,7 +2122,8 @@ impl Workspace {
     ) -> Div {
         let p = self.palette();
         let t = p.tokens;
-        let (all, live) = sessions.unwrap_or_default();
+        let (all, _) = sessions.unwrap_or_default();
+        let (live, needs) = self.fleet_in(&group.folders);
         let pending = self.pending_in(&group.folders);
         let count = group.folders.len();
         let mut meta = vec![format!(
@@ -2169,6 +2193,13 @@ impl Workspace {
                             .min_w_0()
                             .text_size(px(t.text.meta))
                             .text_color(rgb(p.roles.text_tertiary))
+                            .when(needs > 0, |d| {
+                                d.child(
+                                    StatusBadge::new(StatusKind::NeedsYou)
+                                        .label(format!("{needs} needs you"))
+                                        .render(&p),
+                                )
+                            })
                             .when(live > 0, |d| {
                                 d.child(
                                     StatusBadge::new(StatusKind::Working)
@@ -2297,8 +2328,8 @@ impl Workspace {
         let can_spawn = self.view.connected && !self.demo;
         let pinned = project.favourite;
         let on_device = project.source == wks_native::projects::Source::Device;
-        let live = project.live_sessions;
-        let ended = project.sessions.saturating_sub(live);
+        let (live, needs) = self.fleet_in(std::slice::from_ref(&project.path));
+        let ended = project.sessions.saturating_sub(project.live_sessions);
         let pending = self.pending_in(std::slice::from_ref(&project.path));
         let path = project.path.clone();
         let new_path = path.clone();
@@ -2306,11 +2337,20 @@ impl Workspace {
         let pin_path = path.clone();
         let forget = project.clone();
         // Quiet facts; the project card carries the working dot.
-        let activity = match (live, ended) {
-            (0, 0) => "No sessions yet".to_owned(),
-            (0, n) => format!("{n} ended"),
-            (live, 0) => format!("{live} working"),
-            (live, n) => format!("{live} working · {n} ended"),
+        let mut facts = Vec::new();
+        if needs > 0 {
+            facts.push(format!("{needs} needs you"));
+        }
+        if live > 0 {
+            facts.push(format!("{live} working"));
+        }
+        if ended > 0 {
+            facts.push(format!("{ended} ended"));
+        }
+        let activity = if facts.is_empty() && project.sessions == 0 {
+            "No sessions yet".to_owned()
+        } else {
+            facts.join(" · ")
         };
         let selected = ix == self.project_cursor;
         let group = SharedString::from(format!("project-row-{ix}"));
@@ -2477,7 +2517,7 @@ impl Workspace {
             })
     }
 
-    /// "1 needs you" as a link: pending scratch items, opening the scratch
+    /// "1 in scratch" as a link: pending scratch items, opening the scratch
     /// of `scope` (a folder, or a project's `group:` filter).
     fn needs_you_link(
         &self,
@@ -2508,7 +2548,7 @@ impl Workspace {
                 &p,
             ))
             .child(primitives::status_indicator(StatusKind::NeedsYou, &p))
-            .child(format!("{count} needs you"))
+            .child(format!("{count} in scratch"))
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.extras.scratch_preset = Some(scope.clone());

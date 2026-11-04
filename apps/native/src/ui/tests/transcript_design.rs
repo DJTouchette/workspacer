@@ -174,24 +174,57 @@ fn v2_user_bubbles_hug_their_text(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn v2_reading_width_widens_the_column(cx: &mut TestAppContext) {
-    let width_for = |cx: &mut TestAppContext, reading: ReadingWidth| {
+    let width_for = |cx: &mut TestAppContext, window: f32, reading: ReadingWidth| {
         let (workspace, mut visual, _, _) = fixture(cx);
-        visual.simulate_resize(size(px(1800.), px(900.)));
+        visual.simulate_resize(size(px(window), px(900.)));
         visual
             .update(|_, cx| workspace.update(cx, |this, _| this.settings.reading_width = reading));
         v2(&workspace, &mut visual, user_view("Hello"));
-        visual
-            .debug_bounds("chat-content-column")
-            .unwrap()
-            .size
-            .width
+        f32::from(
+            visual
+                .debug_bounds("chat-content-column")
+                .unwrap()
+                .size
+                .width,
+        )
     };
-    let comfortable = width_for(cx, ReadingWidth::Comfortable);
-    let wide = width_for(cx, ReadingWidth::Wide);
-    let full = width_for(cx, ReadingWidth::Full);
-    assert!(f32::from(comfortable) <= Tokens::V2.layout.chat_width + 1.);
-    assert!(comfortable < wide, "{comfortable:?} < {wide:?}");
-    assert!(wide < full, "{wide:?} < {full:?}");
+    let tt = Tokens::V2.transcript();
+    // r2-transcript: Comfortable is fluid. It grows with the window, past
+    // the old fixed 760 measure, and stops at the ~1100 cap.
+    let roomy = width_for(cx, 2400., ReadingWidth::Comfortable);
+    assert!(
+        roomy <= tt.reading_max + 1.,
+        "{roomy} capped at {}",
+        tt.reading_max
+    );
+    assert!(
+        roomy >= tt.reading_max - 1.,
+        "{roomy} reaches the cap in a wide window"
+    );
+    let snug = width_for(cx, 1500., ReadingWidth::Comfortable);
+    assert!(
+        snug < roomy,
+        "{snug} < {roomy}: the column grows with the window"
+    );
+    assert!(
+        snug >= tt.reading_min - 1.,
+        "{snug} never under the {} minimum",
+        tt.reading_min
+    );
+    assert!(
+        snug > Tokens::V2.layout.chat_width,
+        "{snug} wider than the old fixed measure"
+    );
+    // Wide and Full raise the cap further.
+    let wide = width_for(cx, 2400., ReadingWidth::Wide);
+    let full = width_for(cx, 2400., ReadingWidth::Full);
+    assert!(roomy < wide, "{roomy} < {wide}");
+    assert!(
+        wide <= tt.reading_wide + 1.,
+        "{wide} capped at {}",
+        tt.reading_wide
+    );
+    assert!(wide < full, "{wide} < {full}");
 }
 
 #[test]

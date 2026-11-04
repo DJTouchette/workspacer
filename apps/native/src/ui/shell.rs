@@ -91,8 +91,10 @@ pub(super) enum ShellRow {
 fn child_kind(child: &ChildAgent, connected: bool, now: i64) -> StatusKind {
     if !connected {
         StatusKind::Idle
-    } else if child.failed() || attention::child_stalled(child, now) {
+    } else if child.failed() {
         StatusKind::Failed
+    } else if attention::child_stalled(child, now) {
+        StatusKind::Stalled
     } else if child.running() {
         StatusKind::Working
     } else if child.settled() {
@@ -314,7 +316,7 @@ impl Workspace {
             return StatusKind::NeedsYou;
         }
         if self.stalled_for(session, now).is_some() {
-            return StatusKind::Failed;
+            return StatusKind::Stalled;
         }
         match attention::bucket(session, false) {
             Bucket::Working => StatusKind::Working,
@@ -451,7 +453,10 @@ impl Workspace {
                 found.push(Descendant {
                     row: SidebarRow::Session { index: ix, depth },
                     kind,
-                    loud: matches!(kind, StatusKind::NeedsYou | StatusKind::Failed),
+                    loud: matches!(
+                        kind,
+                        StatusKind::NeedsYou | StatusKind::Failed | StatusKind::Stalled
+                    ),
                     matches: !query.is_empty()
                         && self.session_title(s).to_lowercase().contains(query),
                     active: self.is_active(&s.id),
@@ -478,8 +483,7 @@ impl Workspace {
                         depth: depth + 1,
                     },
                     kind,
-                    loud: kind == StatusKind::NeedsYou
-                        || (kind == StatusKind::Failed && attention::child_stalled(child, now)),
+                    loud: kind == StatusKind::NeedsYou || kind == StatusKind::Stalled,
                     matches: !query.is_empty() && title.to_lowercase().contains(query),
                     active: self.view.child.as_ref().is_some_and(|t| {
                         t.parent == s.id
@@ -506,11 +510,7 @@ impl Workspace {
             }
             total += 1;
             match (&d.row, d.kind) {
-                (SidebarRow::Provider { child, .. }, StatusKind::Failed)
-                    if attention::child_stalled(child, now) =>
-                {
-                    stalled += 1
-                }
+                (_, StatusKind::Stalled) => stalled += 1,
                 (_, StatusKind::Failed) => failed += 1,
                 (_, StatusKind::Working) => working += 1,
                 _ => {}
@@ -1638,7 +1638,7 @@ impl Workspace {
             lines.push(format!(
                 "{provider} · {} · {}",
                 wks_native::format::model_name(&session.display_model()),
-                if kind == StatusKind::Failed {
+                if kind == StatusKind::Stalled {
                     "Not responding"
                 } else {
                     status_label
@@ -1842,7 +1842,10 @@ impl Workspace {
         } else {
             self.single_height()
         };
-        let stripe = matches!(kind, StatusKind::NeedsYou | StatusKind::Failed) && reason.is_some();
+        let stripe = matches!(
+            kind,
+            StatusKind::NeedsYou | StatusKind::Failed | StatusKind::Stalled
+        ) && reason.is_some();
         let control = chrome::interactive_control(
             div().id(SharedString::from(format!("session-{}", session.id))),
             p,
@@ -2090,18 +2093,21 @@ impl Workspace {
         if self.shell.setup_dismissed {
             return None;
         }
-        let all = self.usage_accounts().map(|(a, _)| a).unwrap_or_default();
-        let notes = self.usage_notes(&all);
+        // R2.3: the one setup source the welcome and Setup read too.
+        let notes: Vec<String> = [("claude", "Claude Code"), ("codex", "Codex")]
+            .into_iter()
+            .filter_map(|(id, name)| match self.agent_setup(id) {
+                super::states::AgentSetup::Missing => Some(format!("Install {name}")),
+                super::states::AgentSetup::NeedsSignIn => Some(format!("Sign in to {name}")),
+                _ => None,
+            })
+            .collect();
         if notes.is_empty() {
             return None;
         }
         let p = self.palette();
         let t = p.tokens;
-        let tip = notes
-            .iter()
-            .map(|(_, text)| text.clone())
-            .collect::<Vec<_>>()
-            .join(" · ");
+        let tip = notes.join(" · ");
         Some(
             div()
                 .px(px(t.space.sm))
@@ -2769,7 +2775,7 @@ impl Workspace {
                 div()
                     .flex()
                     .items_start()
-                    .child(div().flex_1().child(primitives::dialog_header(
+                    .child(div().flex_1().min_w_0().child(primitives::dialog_header(
                         "Keyboard shortcuts",
                         Some(if self.vim() {
                             "Modal keys are on: Esc leaves the message box, i returns to it.".into()

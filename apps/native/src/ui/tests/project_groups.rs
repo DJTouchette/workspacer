@@ -283,7 +283,7 @@ fn projects_v2_nest_folders_under_their_project_and_link_pending_to_scratch(
     assert!(!group.contains(&other.center()));
     let ungrouped = visual.debug_bounds("project-ungrouped").unwrap();
     assert!(ungrouped.contains(&other.center()), "one Ungrouped section");
-    // "n needs you" is a link to the project's scratch.
+    // "n in scratch" is a link to the project's scratch.
     click(&mut visual, "project-group-pending-0");
     workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Scratch));
 }
