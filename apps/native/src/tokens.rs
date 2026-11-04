@@ -662,6 +662,50 @@ impl Tokens {
     }
 }
 
+// r2-shell
+/// The shell's own measures (sidebar inbox, rail, palette, tool rail). Read
+/// with `p.tokens.shell()`; v1 draws none of them, so both designs carry
+/// the v2 values.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShellTokens {
+    /// An Idle/Ended session: one line.
+    pub row_single: f32,
+    /// A Needs you / Working session: title, then its reason or activity.
+    pub row_double: f32,
+    /// A global destination in the sidebar's navigation list.
+    pub nav_row: f32,
+    /// Idle sessions shown before "Show n more".
+    pub idle_visible: usize,
+    /// Rail tiles before "+n".
+    pub rail_visible: usize,
+    /// The usage meter in the footer.
+    pub meter_width: f32,
+    /// The command palette: width, its list's tallest, distance from the top.
+    pub palette_width: f32,
+    pub palette_list: f32,
+    pub palette_top: f32,
+    /// Rows the palette lists per scope before it stops.
+    pub palette_limit: usize,
+}
+
+impl Tokens {
+    /// The shell's measures.
+    pub const fn shell(&self) -> ShellTokens {
+        ShellTokens {
+            row_single: 30.,
+            row_double: 46.,
+            nav_row: 30.,
+            idle_visible: 8,
+            rail_visible: 8,
+            meter_width: 48.,
+            palette_width: 600.,
+            palette_list: 420.,
+            palette_top: 96.,
+            palette_limit: 40,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

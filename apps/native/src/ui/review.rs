@@ -117,6 +117,16 @@ fn parse_changes(value: &serde_json::Value, root: &str) -> Vec<Change> {
 }
 
 impl Workspace {
+    // r2-shell: the tool rail badges Changes with this count.
+    /// Changed files in `cwd`, when its status has been read.
+    pub(super) fn changes_count(&self, cwd: &str) -> Option<usize> {
+        self.review
+            .status
+            .as_ref()
+            .filter(|s| s.cwd == cwd)
+            .map(|s| s.changes.len())
+    }
+
     /// The project being reviewed and the root its status paths hang from.
     fn review_paths(&self) -> Option<(String, String)> {
         let state = self.view.requests.get("changes");

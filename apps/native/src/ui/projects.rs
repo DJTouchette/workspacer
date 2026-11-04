@@ -2057,7 +2057,7 @@ impl Workspace {
                     ),
             });
         }
-        let hint = if self.settings.vim_navigation {
+        let hint = if self.vim() {
             "j / k navigate · Enter open · n new session · / filter · i add folder · Ctrl Enter pin"
         } else {
             "Click a folder to see its sessions"

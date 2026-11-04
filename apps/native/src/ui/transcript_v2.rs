@@ -111,7 +111,8 @@ impl Workspace {
     /// The transcript's reading measure in px, gutters included: the
     /// reading-width setting, never so wide that the floating tool rail
     /// would cover it.
-    fn reading_max(&self) -> Pixels {
+    pub(super) fn reading_max(&self) -> Pixels {
+        // r2-shell: the tool rail docks to it
         let t = self.tokens();
         let gutter = t.layout.chat_gutter;
         let cap = px(self.settings.reading_width.measure(&t) + 2. * gutter);

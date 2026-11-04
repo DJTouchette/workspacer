@@ -797,10 +797,10 @@ impl Workspace {
             "vim keys modal normal insert hjkl",
             Layout::Row,
             Switch::new("toggle-vim")
-                .checked(self.settings.vim_navigation)
+                .checked(self.vim()) // r2-shell
                 .tooltip("Vim navigation")
                 .on_click(cx.listener(|this, checked, window, cx| {
-                    this.settings.vim_navigation = *checked;
+                    this.settings.set_vim(this.design(), *checked); // r2-shell
                     window.focus(&this.focus);
                     this.save_settings(cx);
                 })),

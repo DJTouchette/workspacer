@@ -130,9 +130,36 @@ pub fn age(at: i64, now: i64) -> String {
     }
 }
 
+// r2-shell
+/// A model's human name, the one formatter every surface uses: "Sonnet 4.6"
+/// for `claude-sonnet-4-6`, "GPT-5.6 Luna" for `gpt-5.6-luna`, "Opus" for
+/// the bare alias. Provider prefixes (`anthropic/…`), context suffixes
+/// (`[1m]`) and date stamps are dropped; an id it does not know comes back
+/// as given (put the raw id in a tooltip). Empty reads "Default model".
+pub fn model_name(id: &str) -> String {
+    let id = id.trim();
+    if id.is_empty() {
+        return "Default model".into();
+    }
+    let name = crate::model::model_display_name(id);
+    if name.is_empty() { id.to_owned() } else { name }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // r2-shell
+    #[test]
+    fn model_names_are_human() {
+        assert_eq!(model_name("claude-sonnet-4-6"), "Sonnet 4.6");
+        assert_eq!(model_name("gpt-5.6-luna"), "GPT-5.6 Luna");
+        assert_eq!(model_name("claude-opus-4-1-20250805"), "Opus 4.1");
+        assert_eq!(model_name("anthropic/claude-haiku-4-5[1m]"), "Haiku 4.5");
+        assert_eq!(model_name("opus"), "Opus");
+        assert_eq!(model_name("  "), "Default model");
+        assert_eq!(model_name("my-local-model"), "my-local-model");
+    }
 
     // area-shell
     #[test]

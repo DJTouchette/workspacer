@@ -213,6 +213,10 @@ impl Workspace {
             cx.notify();
             return;
         }
+        if self.shell.palette.open {
+            self.close_palette(window, cx);
+            return;
+        }
         if self.shell.shortcuts || self.shell.model_popover {
             self.shell.shortcuts = false;
             self.shell.model_popover = false;
@@ -387,10 +391,7 @@ impl Workspace {
                 0
             };
             if let Some(&ix) = rows.get(index) {
-                self.sidebar_scroll.scroll_to_item(
-                    self.sidebar_session_position(index, cx),
-                    gpui::ScrollStrategy::Center,
-                );
+                self.reveal_sidebar_row(index, cx);
                 self.command(Command::Select(self.view.sessions[ix].id.clone()), cx);
             }
         }
@@ -419,10 +420,11 @@ impl Workspace {
             .children(self.render_link_menu(cx))
             .children(self.render_shortcuts(cx))
             .children(self.render_model_popover(window, cx))
+            .children(self.render_palette(window, cx))
             .key_context(
                 match (
                     viewer,
-                    self.settings.vim_navigation && self.focus.is_focused(window),
+                    self.vim() && self.focus.is_focused(window), // r2-shell
                     self.design().is_v2(),
                 ) {
                     (true, _, _) => "FileViewer",
@@ -469,6 +471,7 @@ impl Workspace {
         shell
             // area-composer: number keys on a v2 approval strip.
             .on_key_down(cx.listener(Self::decision_keys))
+            .on_key_down(cx.listener(Self::shell_keys))
             .on_action(cx.listener(Self::send))
             .on_action(cx.listener(Self::send_now))
             .on_action(cx.listener(Self::queue_message))
@@ -506,7 +509,8 @@ impl Workspace {
             }))
             .on_action(cx.listener(|this, _: &ToggleVim, window, cx| {
                 if this.screen == Screen::Settings {
-                    this.settings.vim_navigation = !this.settings.vim_navigation;
+                    let on = !this.vim(); // r2-shell
+                    this.settings.set_vim(this.design(), on);
                     window.focus(&this.focus);
                     this.save_settings(cx);
                 }
@@ -600,9 +604,14 @@ impl Workspace {
             .on_action(
                 cx.listener(|this, _: &OpenProject, window, cx| this.open_project(window, cx)),
             )
-            .on_action(
-                cx.listener(|this, _: &SwitchSession, window, cx| this.open_switcher(window, cx)),
-            )
+            .on_action(cx.listener(|this, _: &SwitchSession, window, cx| {
+                // r2-shell: v2's Ctrl+K is the command palette.
+                if this.design().is_v2() {
+                    this.open_palette(window, cx)
+                } else {
+                    this.open_switcher(window, cx)
+                }
+            }))
             .on_action(
                 cx.listener(|this, _: &SearchEnter, window, cx| this.open_search_match(window, cx)),
             )
@@ -679,7 +688,7 @@ impl Workspace {
         } else {
             "No folders match the sidebar search."
         };
-        let hint = if self.settings.vim_navigation {
+        let hint = if self.vim() {
             "j / k navigate · Enter open · n new agent · / filter · i add folder · Ctrl Enter pin"
         } else {
             "Click a folder to see its sessions · New agent starts another there"

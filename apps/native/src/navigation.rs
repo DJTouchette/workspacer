@@ -127,6 +127,11 @@ pub struct Settings {
     pub review_dock_width: Option<f32>,
     /// Changes shows old and new side by side instead of one column (v2).
     pub review_split: bool,
+    // r2-shell
+    /// Vim-style modal keys under design v2: off by default there (v1 keeps
+    /// `vim_navigation`, on by default). Settings → Keyboard sets whichever
+    /// the current design reads (`Settings::vim`).
+    pub vim_navigation_v2: bool,
 }
 // area-transcript
 /// The transcript's reading measure under design v2: Settings -> Chat.
@@ -194,6 +199,8 @@ impl Default for Settings {
             // area-panels
             review_dock_width: None,
             review_split: false,
+            // r2-shell
+            vim_navigation_v2: false,
         }
     }
 }
@@ -214,6 +221,23 @@ impl Settings {
     /// The design these settings select.
     pub fn design(&self) -> crate::tokens::Design {
         crate::tokens::Design::from_flag(self.design_v2)
+    }
+    // r2-shell
+    /// Whether modal (vim) keys are on for `design`.
+    pub fn vim(&self, design: crate::tokens::Design) -> bool {
+        if design.is_v2() {
+            self.vim_navigation_v2
+        } else {
+            self.vim_navigation
+        }
+    }
+    /// Turn modal keys on or off for `design`.
+    pub fn set_vim(&mut self, design: crate::tokens::Design, on: bool) {
+        if design.is_v2() {
+            self.vim_navigation_v2 = on;
+        } else {
+            self.vim_navigation = on;
+        }
     }
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         match std::fs::read(path) {
@@ -390,6 +414,8 @@ mod tests {
         // scripts/smoke.py `--setting design_v2=true` writes exactly this.
         let seeded: Settings = serde_json::from_str(r#"{"design_v2":true}"#).unwrap();
         assert_eq!(seeded.design(), Design::V2);
+        // r2-shell: modal keys are off under v2 until chosen; v1 keeps them.
+        assert!(!seeded.vim(Design::V2) && seeded.vim(Design::V1));
     }
     #[test]
     fn settings_defaults_and_persistence() {
