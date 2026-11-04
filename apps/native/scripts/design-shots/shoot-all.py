@@ -51,7 +51,8 @@ SETTINGS_SECTIONS = ["Appearance", "Typography", "Workspace", "Remote",
 LANDMARKS_V2 = {
     "END_SESSION": lambda shot: (1324, 634),        # Session details "End session..."
     "NEW_TASK_FIELD": lambda shot: (900, 200),      # r2-pages: v2's task box leads the form
-    "HOSTS_DETAILS": lambda shot: (1340, 181),      # r2: Machines' first "Details" on the page grid
+    "HOSTS_DETAILS": lambda shot: (1520, 207),      # r3-pages: Machines' first "Details" (table row)
+    "JOB_OVERFLOW": lambda shot: (1549, 447),       # r3-pages: Jobs table, first scheduled job's "..."
 }
 # area-pages: design v2's rail.
 SETTINGS_SECTIONS_V2 = ["Appearance", "Typography", "Workspace", "Remote",

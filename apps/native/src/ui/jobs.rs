@@ -7,7 +7,7 @@
 //! A Runs tab shows every job's runs together, newest first and grouped by
 //! day, each opening to its full output; each job row carries a strip of its
 //! last runs so a failing job stands out without opening it.
-use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
+use super::primitives::{self, ButtonSize, ButtonVariant, Col, StatusBadge, StatusKind, tabular};
 use super::*;
 use wks_native::features::{JobAction, Request};
 use wks_native::jobs::{self, Job, Run};
@@ -681,6 +681,9 @@ impl Workspace {
         runs: Option<&[Run]>,
         cx: &mut Context<Self>,
     ) -> Div {
+        if self.design().is_v2() {
+            return self.job_row_v2(ix, job, all, runs, cx);
+        }
         let p = self.palette();
         let expanded = self.extras.job_expanded.as_deref() == Some(job.id.as_str());
         let target = job
@@ -705,9 +708,7 @@ impl Workspace {
         }
         let toggle = job.id.clone();
         // r2-pages: v2 reads as a sentence, the command in an inset.
-        let header = if self.design().is_v2() {
-            self.job_header_v2(ix, job, target, when, runs, expanded, paused, cx)
-        } else {
+        let header = {
             div()
                 .id(("job-row", ix))
                 .min_w_0()
@@ -785,32 +786,6 @@ impl Workspace {
                 )
                 .child(self.job_actions(ix, job, target, cx))
         };
-        if self.design().is_v2() {
-            let t = p.tokens;
-            let card = primitives::card(&p)
-                .p(px(0.))
-                .gap(px(0.))
-                .debug_selector(move || format!("job-row-{ix}"))
-                .overflow_hidden()
-                .child(header)
-                .when(expanded, |d| d.child(self.job_detail(job, target)));
-            if !proposal {
-                return card;
-            }
-            // Needs you: a warning rule down the edge on the card surface.
-            return card
-                .border_color(primitives::wash(p.warning, t.wash.tone_hover * 2.))
-                .relative()
-                .child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(px(t.stroke.focus + t.stroke.hairline))
-                        .bg(rgb(p.warning)),
-                );
-        }
         let card = chrome::card(p)
             .debug_selector(move || format!("job-row-{ix}"))
             .overflow_hidden()
@@ -835,110 +810,6 @@ impl Workspace {
                     .w(px(3.))
                     .bg(rgb(p.warning)),
             )
-    }
-
-    // r2-pages
-    /// A v2 job row: name with its state, the schedule, a plain sentence of
-    /// what it does, the command in a mono inset, and actions on the right.
-    #[allow(clippy::too_many_arguments)]
-    fn job_header_v2(
-        &self,
-        ix: usize,
-        job: &Job,
-        target: Option<&Job>,
-        when: String,
-        runs: Option<&[Run]>,
-        expanded: bool,
-        paused: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let p = self.palette();
-        let t = p.tokens;
-        let now = now_ms();
-        let toggle = job.id.clone();
-        let (sentence, command) = job.describe();
-        let dim = |c: u32| if paused { p.roles.text_tertiary } else { c };
-        div()
-            .id(("job-row", ix))
-            .min_w_0()
-            .px(px(t.space.xl))
-            .py(px(t.space.lg))
-            .flex()
-            .items_start()
-            .gap(px(t.space.lg))
-            .cursor_pointer()
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx)))
-            .child(
-                div()
-                    .h(px(t.text.subheading * t.text.line_height))
-                    .flex()
-                    .items_center()
-                    .child(
-                        Icon::new(if expanded {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        })
-                        .size(px(t.icon.sm))
-                        .text_color(rgb(p.roles.text_tertiary)),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.xs))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(t.space.md))
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(t.text.subheading))
-                                    .font_weight(FontWeight(t.weight.semibold))
-                                    .text_color(rgb(dim(p.text)))
-                                    .child(job.name.clone()),
-                            )
-                            .children(self.job_chip(job, p))
-                            .child(div().flex_1())
-                            .child(self.job_status(job, now))
-                            .children(
-                                (!job.proposal())
-                                    .then(|| self.run_strip(&job.id, runs))
-                                    .flatten(),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(t.text.body))
-                            .text_color(rgb(dim(p.roles.text_secondary)))
-                            .child(format!("{when} · {sentence}")),
-                    )
-                    .children(command.map(|command| {
-                        div()
-                            .debug_selector(move || format!("job-action-{ix}"))
-                            .mt(px(t.space.xs))
-                            .min_w_0()
-                            .px(px(t.space.md))
-                            .py(px(t.space.xs))
-                            .rounded(px(t.radius.sm))
-                            .bg(primitives::tonal(&p, t.wash.rest))
-                            .font_family(mono_font())
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(dim(p.roles.text_secondary)))
-                            .truncate()
-                            .child(format!("$ {command}"))
-                    })),
-            )
-            .child(self.job_actions(ix, job, target, cx))
     }
 
     /// The state beside a job's name: waiting for approval, running, or
@@ -1628,16 +1499,44 @@ impl Workspace {
                 .child(self.new_job_button(cx)),
             );
         }
+        // r3-pages (R3.6): one dense table per group, a job per row: name,
+        // schedule, last runs, next run and actions. Proposals wait in their
+        // own table above, neutral (R3.1: amber is only for what blocks you).
         let waiting = rows.iter().filter(|j| j.proposal()).count();
         let mut page = page;
+        let mut table: Option<Div> = None;
         for (ix, job) in rows.iter().enumerate() {
-            if waiting > 0 && ix == 0 {
-                page = page.child(primitives::section_label("Needs your approval", &p));
-            } else if waiting > 0 && ix == waiting {
-                page = page.child(primitives::section_label("Scheduled", &p).pt(px(t.space.lg)));
+            if ix == 0 || ix == waiting {
+                if let Some(done) = table.take() {
+                    page = page.child(done);
+                }
+                let proposals = ix < waiting;
+                let label = if proposals {
+                    "Waiting for your approval"
+                } else {
+                    "Scheduled"
+                };
+                page = page.child(
+                    primitives::section_header(
+                        label,
+                        Some(
+                            if proposals {
+                                waiting
+                            } else {
+                                rows.len() - waiting
+                            }
+                            .to_string()
+                            .into(),
+                        ),
+                        &p,
+                    )
+                    .when(ix > 0, |d| d.pt(px(t.space.md))),
+                );
+                table = Some(primitives::page_table(&p).child(self.job_table_head(proposals)));
             }
-            page = page.child(self.render_job(ix, job, &rows, runs.as_deref(), cx));
+            table = table.map(|tb| tb.child(self.render_job(ix, job, &rows, runs.as_deref(), cx)));
         }
+        page = page.children(table);
         page.child(
             div()
                 .pt(px(t.space.xs))
@@ -1645,6 +1544,169 @@ impl Workspace {
                 .text_color(rgb(p.roles.text_tertiary))
                 .child(JOBS_FOOTER_V2),
         )
+    }
+
+    /// The column labels over a jobs table.
+    fn job_table_head(&self, proposals: bool) -> Div {
+        let p = self.palette();
+        let pg = p.tokens.pages();
+        primitives::page_table_head(
+            &[
+                ("", Col::Fixed(p.tokens.icon.sm)),
+                ("Job", Col::Flex),
+                ("Schedule", Col::Fixed(pg.when)),
+                (
+                    if proposals {
+                        "Proposed by"
+                    } else {
+                        "Last runs"
+                    },
+                    Col::Fixed(pg.runs),
+                ),
+                (if proposals { "" } else { "Next" }, Col::Fixed(pg.age)),
+                ("", Col::Fixed(pg.actions)),
+            ],
+            &p,
+        )
+    }
+
+    /// A v2 job as one table row (R3.6): its name and what it does, the
+    /// schedule, the last runs (strip and the newest result), the next run,
+    /// and actions; the row opens to the whole spec and its runs.
+    fn job_row_v2(
+        &self,
+        ix: usize,
+        job: &Job,
+        all: &[Job],
+        runs: Option<&[Run]>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let pg = t.pages();
+        let now = now_ms();
+        let expanded = self.extras.job_expanded.as_deref() == Some(job.id.as_str());
+        let target = job
+            .change()
+            .then(|| all.iter().find(|j| j.id == job.replaces))
+            .flatten();
+        let proposal = job.proposal();
+        let paused = !job.enabled && !proposal;
+        let dim = |c: u32| if paused { p.roles.text_tertiary } else { c };
+        let when = schedule(&job.spec["trigger"], self.settings.twelve_hour_clock)
+            .unwrap_or_else(|| job.trigger_summary());
+        let next = if proposal {
+            String::new()
+        } else if paused {
+            "—".to_owned()
+        } else {
+            job.next_run_at
+                .map_or_else(|| "—".to_owned(), |at| jobs::until(at, now))
+        };
+        let (sentence, command) = job.describe();
+        let what = if job.change() {
+            let name = target.map_or("a removed job", |t| t.name.as_str());
+            format!("Changes {name} · {sentence}")
+        } else {
+            sentence
+        };
+        let toggle = job.id.clone();
+        let secondary = |text: String| {
+            div()
+                .min_w_0()
+                .truncate()
+                .text_size(px(t.text.meta))
+                .text_color(rgb(dim(p.roles.text_secondary)))
+                .child(text)
+        };
+        let row = primitives::page_table_row(&p)
+            .id(("job-row", ix))
+            .py(px(t.space.sm))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(p.roles.hover)))
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx)))
+            .child(
+                primitives::page_cell(Col::Fixed(t.icon.sm)).child(
+                    Icon::new(if expanded {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    })
+                    .size(px(t.icon.sm))
+                    .text_color(rgb(p.roles.text_tertiary)),
+                ),
+            )
+            .child(
+                primitives::page_cell(Col::Flex)
+                    .flex_col()
+                    .items_start()
+                    .gap(px(t.space.xxs))
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.md))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_weight(FontWeight(t.weight.semibold))
+                                    .text_color(rgb(dim(p.text)))
+                                    .child(job.name.clone()),
+                            )
+                            .children(self.job_chip(job, p)),
+                    )
+                    .child(match command {
+                        Some(command) => div()
+                            .w_full()
+                            .min_w_0()
+                            .truncate()
+                            .debug_selector(move || format!("job-action-{ix}"))
+                            .font_family(mono_font())
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(dim(p.roles.text_secondary)))
+                            .child(format!("$ {command}")),
+                        None => secondary(what.clone()).w_full(),
+                    }),
+            )
+            .child(
+                primitives::page_cell(Col::Fixed(pg.when))
+                    .child(secondary(when).text_size(px(t.text.body))),
+            )
+            .child(if proposal {
+                primitives::page_cell(Col::Fixed(pg.runs)).child(
+                    primitives::truncated(
+                        SharedString::from(format!("job-proposer-{ix}")),
+                        job.proposed_by.clone(),
+                        &p,
+                    )
+                    .text_color(rgb(p.roles.text_secondary)),
+                )
+            } else {
+                primitives::page_cell(Col::Fixed(pg.runs))
+                    .flex_col()
+                    .items_start()
+                    .gap(px(t.space.xxs))
+                    .child(self.job_status(job, now))
+                    .children(self.run_strip(&job.id, runs))
+            })
+            .child(primitives::page_cell(Col::Fixed(pg.age)).child(tabular(
+                div().text_color(rgb(p.roles.text_secondary)).child(next),
+            )))
+            .child(
+                primitives::page_cell(Col::Fixed(pg.actions))
+                    .justify_end()
+                    .child(self.job_actions(ix, job, target, cx)),
+            );
+        div()
+            .debug_selector(move || format!("job-row-{ix}"))
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(row)
+            .when(expanded, |d| d.child(self.job_detail(job, target)))
     }
 
     /// Jobs / Runs as the shared segmented control, each with its count.

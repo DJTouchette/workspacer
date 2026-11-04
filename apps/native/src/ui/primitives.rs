@@ -2232,6 +2232,81 @@ pub(crate) fn table(headers: Vec<SharedString>, rows: Vec<Vec<AnyElement>>, p: &
         }))
 }
 
+// r3-pages
+/// A page-table column's width: a fixed measure from `tokens.pages()`, or
+/// a share of what is left (the name column).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Col {
+    Fixed(f32),
+    Flex,
+    /// Whatever its content needs (the actions column), right-aligned.
+    Auto,
+}
+
+/// A dense page table (R3.6: Jobs, Machines, History): the card surface
+/// with its hairline edge, clipped, holding a [`page_table_head`] and
+/// [`page_table_row`]s.
+pub(crate) fn page_table(p: &Palette) -> Div {
+    let t = p.tokens;
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .rounded(px(t.radius.panel))
+        .border(px(t.stroke.hairline))
+        .border_color(rgb(p.roles.card_border))
+        .bg(rgb(p.surface))
+        .overflow_hidden()
+}
+
+/// One cell of a page table, sized by its column. Cells share the row's
+/// gap, so a head and its rows line up when built from the same columns.
+pub(crate) fn page_cell(col: Col) -> Div {
+    let cell = div().min_w_0().flex().items_center();
+    match col {
+        Col::Fixed(w) => cell.w(px(w)).flex_shrink_0(),
+        Col::Flex => cell.flex_1(),
+        Col::Auto => cell.flex_shrink_0().justify_end(),
+    }
+}
+
+/// A page table's header row: 12/600 secondary labels on `base`, the same
+/// columns as its rows.
+pub(crate) fn page_table_head(columns: &[(&'static str, Col)], p: &Palette) -> Div {
+    let s = table_style(p);
+    let t = p.tokens;
+    page_table_row(p)
+        .h(px(t.layout.row_height))
+        .bg(rgb(s.head_bg))
+        .border_t(px(0.))
+        .text_size(px(t.text.meta))
+        .font_weight(FontWeight(t.weight.semibold))
+        .text_color(rgb(s.head_fg))
+        .children(
+            columns
+                .iter()
+                .map(|(label, col)| page_cell(*col).child(*label)),
+        )
+}
+
+/// A page table's body row: `pages().row` tall at least, cells at the
+/// table's padding, a hairline above. Add `.id(…)` for hover or clicks.
+pub(crate) fn page_table_row(p: &Palette) -> Div {
+    let s = table_style(p);
+    let t = p.tokens;
+    div()
+        .w_full()
+        .min_h(px(t.pages().row))
+        .px(px(s.cell_x))
+        .flex()
+        .items_center()
+        .gap(px(t.space.lg))
+        .border_t(px(t.stroke.hairline))
+        .border_color(rgb(s.divider))
+        .text_size(px(t.text.body))
+        .text_color(rgb(p.text))
+}
+
 /// One agent or tool event as a single row: icon, verb, primary argument,
 /// result summary, and the status/duration right-aligned
 /// (`docs/design-v2-direction.md` R2.2). Consecutive rows sit under one

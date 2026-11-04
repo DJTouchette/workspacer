@@ -836,6 +836,52 @@ impl Tokens {
     }
 }
 
+// r3-pages
+/// Secondary pages use the width (R3.6): the wide page measure and the
+/// columns of the dense page tables (Jobs, Machines, History, projects on
+/// other machines). Read with `p.tokens.pages()`; v1 keeps its centred
+/// `layout.page_width` column and draws none of these.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageTokens {
+    /// Every v2 feature page's max width: at 1600px the column fills the
+    /// space beside the sidebar instead of leaving dead gutters.
+    pub wide: f32,
+    /// A forms column inside the wide page (session details, model picker):
+    /// left-aligned, so its edge is the page header's.
+    pub form: f32,
+    /// One dense table row.
+    pub row: f32,
+    /// A table's status column (glyph and word).
+    pub status: f32,
+    /// A time or schedule column ("Weekdays at 07:00", "next in 14h").
+    pub when: f32,
+    /// A short time column ("3h ago", "in 14h").
+    pub age: f32,
+    /// The run-history strip column.
+    pub runs: f32,
+    /// A machine name column.
+    pub machine: f32,
+    /// A row's actions column (Pause · Run now · ⋯), right-aligned.
+    pub actions: f32,
+}
+
+impl Tokens {
+    /// The page tables' measures.
+    pub const fn pages(&self) -> PageTokens {
+        PageTokens {
+            wide: 1240.,
+            form: 760.,
+            row: 40.,
+            status: 152.,
+            when: 208.,
+            age: 104.,
+            runs: 176.,
+            machine: 160.,
+            actions: 232.,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

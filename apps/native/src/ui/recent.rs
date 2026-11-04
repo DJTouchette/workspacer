@@ -2,6 +2,7 @@
 //! and searchable from the page itself. Grouping, ordering and matching live
 //! in `wks_native::history`; this is the page, its keyboard cursor and the
 //! per-group collapse and "Show more" state.
+use super::primitives::{self, Col, tabular};
 use super::*;
 use gpui::AnyElement;
 use gpui_component::input::{InputEvent, MoveDown, MoveUp};
@@ -474,6 +475,8 @@ impl Workspace {
         items.push(self.feature_message("session-forget").into_any_element());
         if page.groups.is_empty() && !loading {
             items.push(self.render_recent_empty(&page, cx).into_any_element());
+        } else if self.design().is_v2() {
+            items.push(self.recent_head_v2().into_any_element());
         }
         let mut row_ix = 0;
         for (g, group) in page.groups.iter().enumerate() {
@@ -485,10 +488,13 @@ impl Workspace {
                         .find(|k| projects::same_dir(&k.path, &group.path))
                 })
                 .flatten();
-            items.push(
+            items.push(if self.design().is_v2() {
+                self.render_recent_group_v2(g, group, project, collapsed, page.searching, cx)
+                    .into_any_element()
+            } else {
                 self.render_recent_group(g, group, project, collapsed, page.searching, cx)
-                    .into_any_element(),
-            );
+                    .into_any_element()
+            });
             if collapsed {
                 continue;
             }
@@ -504,10 +510,13 @@ impl Workspace {
                 if selected && self.extras.recent.reveal.replace(false) {
                     self.extras.recent.scroll.scroll_to_item(items.len());
                 }
-                items.push(
+                items.push(if self.design().is_v2() {
+                    self.render_recent_row_v2(row_ix, entry, group, selected, now, cx)
+                        .into_any_element()
+                } else {
                     self.render_recent_row(row_ix, entry, group, selected, now, cx)
-                        .into_any_element(),
-                );
+                        .into_any_element()
+                });
                 row_ix += 1;
             }
             let hidden = group.entries.len().saturating_sub(limit);
@@ -869,8 +878,6 @@ impl Workspace {
         let p = self.palette();
         let s = &entry.session;
         let open = s.clone();
-        let resume = s.clone();
-        let id = s.id.clone();
         let connected = self.view.connected;
         // Inside its group the header names the folder; a row says only
         // where it differs: a subfolder, or which worktree.
@@ -883,49 +890,7 @@ impl Workspace {
         // session's state is worth reading.
         let live = connected && !s.stopped();
         let reveal = selected || confirming;
-        let mut actions: Vec<Stateful<Div>> = Vec::new();
-        // A child cleared from the sidebar on this device comes back here;
-        // that is not an archive restore.
-        if self.clear_marked(&s.id) {
-            let id = s.id.clone();
-            actions.push(
-                self.row_action("unclear-recent", "Show in sidebar", true, false)
-                    .tooltip(|window, cx| {
-                        gpui_component::tooltip::Tooltip::new(CLEARED_TOOLTIP).build(window, cx)
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.unclear_session(&id, cx)
-                    })),
-            );
-        }
-        if s.stopped() && matches!(s.provider.as_str(), "claude" | "codex") {
-            actions.push(
-                self.row_action("resume-recent", "Resume…", connected, false)
-                    .when(connected, |d| {
-                        d.on_click(cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.resume_session(&resume, window, cx)
-                        }))
-                    }),
-            );
-        }
-        actions.push(
-            self.row_action(
-                "archive-recent",
-                if hidden { "Unhide" } else { "Hide" },
-                true,
-                false,
-            )
-            .debug_selector(move || format!("recent-hide-{ix}"))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.toggle_archive(&id, cx)
-            })),
-        );
-        if self.history_available() {
-            actions.extend(self.render_forget_controls(ix, s, confirming, cx));
-        }
+        let actions = self.recent_actions(ix, s, hidden, confirming, cx);
         div()
             .id(("recent-row", ix))
             .group(ROW_GROUP)
@@ -1085,7 +1050,66 @@ impl Workspace {
             })
     }
 
-    /// A row's text action: no fill until hovered, so a list of rows never
+    /// A history row's actions: Show in sidebar (a cleared child), Resume…,
+    /// Hide / Unhide, and Delete… or its confirmation.
+    fn recent_actions(
+        &self,
+        ix: usize,
+        s: &Session,
+        hidden: bool,
+        confirming: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<Stateful<Div>> {
+        let resume = s.clone();
+        let id = s.id.clone();
+        let connected = self.view.connected;
+        let mut actions: Vec<Stateful<Div>> = Vec::new();
+        // A child cleared from the sidebar on this device comes back here;
+        // that is not an archive restore.
+        if self.clear_marked(&s.id) {
+            let id = s.id.clone();
+            actions.push(
+                self.row_action("unclear-recent", "Show in sidebar", true, false)
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new(CLEARED_TOOLTIP).build(window, cx)
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.unclear_session(&id, cx)
+                    })),
+            );
+        }
+        if s.stopped() && matches!(s.provider.as_str(), "claude" | "codex") {
+            actions.push(
+                self.row_action("resume-recent", "Resume…", connected, false)
+                    .when(connected, |d| {
+                        d.on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.resume_session(&resume, window, cx)
+                        }))
+                    }),
+            );
+        }
+        actions.push(
+            self.row_action(
+                "archive-recent",
+                if hidden { "Unhide" } else { "Hide" },
+                true,
+                false,
+            )
+            .debug_selector(move || format!("recent-hide-{ix}"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.toggle_archive(&id, cx)
+            })),
+        );
+        if self.history_available() {
+            actions.extend(self.render_forget_controls(ix, s, confirming, cx));
+        }
+        actions
+    }
+
+    /// A history row's text action: no fill until hovered, so a list of rows never
     /// repeats a column of buttons. Muted, or error-toned when destructive.
     fn row_action(
         &self,
@@ -1217,4 +1241,244 @@ pub(super) fn recent_place(cwd: &str, group: &Group, worktree_root: &str) -> Str
         return key[base.len() + 1..].to_owned();
     }
     key
+}
+
+// r3-pages (R3.6): history as one dense, left-aligned table: a column
+// header, each project a band, each session a row (name, state, agent,
+// folder, last active), actions over the row's end while hovered.
+impl Workspace {
+    fn recent_columns(&self) -> [(&'static str, Col); 5] {
+        let t = self.tokens();
+        let pg = t.pages();
+        [
+            ("Session", Col::Flex),
+            ("Status", Col::Fixed(pg.status)),
+            ("Agent", Col::Fixed(pg.machine)),
+            ("Folder", Col::Fixed(pg.when)),
+            ("Last active", Col::Fixed(pg.age)),
+        ]
+    }
+
+    fn recent_head_v2(&self) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        primitives::page_table_head(&self.recent_columns(), &p)
+            .debug_selector(|| "history-head".into())
+            .border_t(px(0.))
+            .rounded(px(t.radius.control))
+            .mt(px(t.space.sm))
+    }
+
+    fn render_recent_group_v2(
+        &self,
+        g: usize,
+        group: &Group,
+        project: Option<&KnownProject>,
+        collapsed: bool,
+        searching: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = self.palette();
+        let t = p.tokens;
+        let key = group.key.clone();
+        let count = if searching {
+            format!("{} of {}", group.entries.len(), group.total)
+        } else {
+            group.total.to_string()
+        };
+        let hint = match group.kind {
+            GroupKind::NoFolder => String::new(),
+            GroupKind::Worktrees => format!("{} · worktrees", group.path),
+            GroupKind::Project | GroupKind::Folder => group.path.clone(),
+        };
+        let s = primitives::table_style(&p);
+        chrome::interactive_control(div().id(("history-group", g)), p, !searching)
+            .debug_selector(move || format!("history-group-{g}"))
+            .mt(px(if g > 0 { t.space.lg } else { t.space.xs }))
+            .h(px(t.pages().row))
+            .px(px(s.cell_x))
+            .rounded(px(t.radius.control))
+            .flex()
+            .items_center()
+            .gap(px(t.space.md))
+            .when(!searching, |d| {
+                d.hover(move |s| s.bg(rgb(p.roles.hover)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_recent_group(&key, cx)))
+            })
+            .child(
+                Icon::new(if collapsed {
+                    IconName::ChevronRight
+                } else {
+                    IconName::ChevronDown
+                })
+                .size(px(t.icon.sm))
+                .text_color(rgb(p.roles.text_tertiary)),
+            )
+            .child(self.project_mark(project, &group.path, t.layout.avatar))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .max_w(px(t.pages().when))
+                    .truncate()
+                    .text_size(px(t.text.body))
+                    .font_weight(FontWeight(t.weight.semibold))
+                    .text_color(rgb(p.text))
+                    .child(group.name.clone()),
+            )
+            .child(tabular(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .debug_selector(move || format!("history-count-{g}"))
+                    .child(count),
+            ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .font_family(mono_font())
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(hint),
+            )
+    }
+
+    fn render_recent_row_v2(
+        &self,
+        ix: usize,
+        entry: &Entry,
+        group: &Group,
+        selected: bool,
+        now: i64,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = self.palette();
+        let t = p.tokens;
+        let [_, status_col, agent_col, folder_col, age_col] = self.recent_columns();
+        let s = &entry.session;
+        let open = s.clone();
+        let connected = self.view.connected;
+        let place = recent_place(&s.cwd, group, self.worktree_root());
+        let age = history::age(entry.updated_at, now);
+        let hidden = self.history_hidden(&s.id, None);
+        let confirming = self.extras.recent.confirm_delete.as_deref() == Some(s.id.as_str());
+        let live = connected && !s.stopped();
+        let reveal = selected || confirming;
+        let actions = self.recent_actions(ix, s, hidden, confirming, cx);
+        let cluster = div()
+            .id("recent-actions")
+            .flex()
+            .items_center()
+            .gap(px(t.space.xs))
+            .on_click(|_, _, cx| cx.stop_propagation());
+        let fill = if selected { p.selected } else { p.roles.hover };
+        primitives::page_table_row(&p)
+            .id(("recent-row", ix))
+            .group(ROW_GROUP)
+            .debug_selector(move || format!("recent-row-{ix}"))
+            .relative()
+            .rounded(px(t.radius.control))
+            .border_t(px(0.))
+            .when(connected, |d| {
+                d.cursor_pointer()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_recent(open.clone(), window, cx)
+                    }))
+            })
+            .map(|d| {
+                if selected {
+                    d.bg(rgb(p.selected))
+                } else {
+                    d.hover(move |s| s.bg(rgb(p.roles.hover)))
+                }
+            })
+            .child(
+                primitives::page_cell(Col::Flex)
+                    .gap(px(t.space.md))
+                    // Rows sit under their band's name.
+                    .pl(px(t.icon.sm + t.space.md))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(FontWeight(t.weight.medium))
+                            .text_color(rgb(p.text))
+                            .child(entry.title.clone()),
+                    )
+                    .when(hidden && !self.extras.show_archived, |d| {
+                        d.child(
+                            primitives::pill("Hidden", primitives::Intent::Neutral, &p)
+                                .flex_shrink_0()
+                                .debug_selector(move || format!("recent-hidden-{ix}")),
+                        )
+                    }),
+            )
+            .child(
+                primitives::page_cell(status_col.1)
+                    .when(live, |d| d.child(self.session_status_v2(s).render(&p))),
+            )
+            .child(
+                primitives::page_cell(agent_col.1)
+                    .text_size(px(t.text.meta))
+                    .child(self.page_model(s, t.text.meta)),
+            )
+            .child(
+                primitives::page_cell(folder_col.1).child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .font_family(mono_font())
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(if place.is_empty() {
+                            "—".to_owned()
+                        } else {
+                            place
+                        }),
+                ),
+            )
+            .child(
+                primitives::page_cell(age_col.1)
+                    .justify_end()
+                    .child(tabular(
+                        div()
+                            .whitespace_nowrap()
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_secondary))
+                            .when(!reveal, |d| d.group_hover(ROW_GROUP, |s| s.opacity(0.)))
+                            .child(age),
+                    )),
+            )
+            .child(
+                // Hovered (or under the cursor), the actions cover the row's
+                // end on its own fill; only the cursor's row is in the Tab order.
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .right_0()
+                    .flex()
+                    .items_center()
+                    .when(!reveal, |d| {
+                        d.opacity(0.).group_hover(ROW_GROUP, |s| s.opacity(1.))
+                    })
+                    .child(
+                        div().h_full().flex().bg(rgb(p.chat)).child(
+                            cluster
+                                .h_full()
+                                .pl(px(t.space.md))
+                                .pr(px(t.space.xs))
+                                .rounded(px(t.radius.control))
+                                .bg(rgb(fill))
+                                .children(
+                                    actions
+                                        .into_iter()
+                                        .map(|a| if reveal { a } else { a.tab_stop(false) }),
+                                ),
+                        ),
+                    ),
+            )
+    }
 }

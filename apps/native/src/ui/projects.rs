@@ -1926,44 +1926,66 @@ impl Workspace {
         };
         let field = self.project_path.read(cx);
         let adding = field.focus_handle(cx).is_focused(window) || !field.value().trim().is_empty();
-        let add_folder = primitives::button(
+        // r3-pages: one "Add…" menu; each item says what it adds.
+        let add_folder = primitives::menu_item(
             "add-folder",
-            "Add folder",
+            "Folder… (list one with no sessions yet)",
             Some(IconName::FolderOpen),
-            ButtonVariant::Secondary,
-            ButtonSize::Small,
+            false,
             can_write,
             &p,
         )
         .debug_selector(|| "add-folder".into())
         .when(can_write, |d| {
             d.on_click(cx.listener(|this, _, window, cx| {
+                this.close_page_menu(cx);
                 this.project_path
                     .update(cx, |input, cx| input.focus(window, cx));
                 cx.notify();
             }))
         });
-        let new_project = primitives::button(
+        let new_project = primitives::menu_item(
             "new-project-group",
-            "New project",
+            "Project… (group folders that belong together)",
             Some(IconName::Plus),
-            ButtonVariant::Primary,
-            ButtonSize::Small,
+            false,
             can_new_group,
             &p,
         )
         .debug_selector(|| "new-project-group".into())
         .when(can_new_group, |d| {
-            d.on_click(cx.listener(|this, _, window, cx| this.edit_group(None, window, cx)))
+            d.on_click(cx.listener(|this, _, window, cx| {
+                this.close_page_menu(cx);
+                this.edit_group(None, window, cx)
+            }))
         });
+        let add = primitives::button(
+            "projects-add",
+            "Add…",
+            Some(IconName::Plus),
+            ButtonVariant::Primary,
+            ButtonSize::Small,
+            can_write || can_new_group,
+            &p,
+        )
+        .debug_selector(|| "projects-add".into());
+        let add = self.page_menu(
+            "projects-add",
+            add,
+            vec![
+                new_project.into_any_element(),
+                add_folder.into_any_element(),
+            ],
+            cx,
+        );
         let header = primitives::page_header(
             None,
             "Projects",
             Some(
-                "Group the folders that belong together. Every folder you pinned or ran a session in is listed here."
+                "A project groups the folders that belong together, like an app's api and web. Every folder you pinned or ran a session in is listed here."
                     .into(),
             ),
-            vec![add_folder.into_any_element(), new_project.into_any_element()],
+            vec![add.into_any_element()],
             &p,
         )
         .debug_selector(|| "page-header".into());
@@ -2076,7 +2098,7 @@ impl Workspace {
                     .children(
                         ungrouped
                             .iter()
-                            .map(|(ix, project)| self.render_folder_v2(*ix, project, cx)),
+                            .map(|(ix, project)| self.render_folder_v2(*ix, project, false, cx)),
                     ),
             });
         }
@@ -2106,7 +2128,7 @@ impl Workspace {
                     .text_color(rgb(p.roles.text_tertiary))
                     .child(hint),
             );
-        self.page_view("projects-top", t.layout.page_width, false, content)
+        self.page_view("projects-top", t.pages().wide, false, content)
     }
 
     /// A project: its tile, name, what runs there and "n needs you", its
@@ -2139,8 +2161,10 @@ impl Workspace {
         let scratch = group.id.clone();
         let can_spawn = self.view.connected && !self.demo && spawn.is_some();
         let group_id = group.id.clone();
+        let hover = SharedString::from(format!("project-group-head-{ix}"));
         let head = div()
             .id(("project-group", ix))
+            .group(hover.clone())
             .px(px(t.space.xl))
             .py(px(t.space.lg))
             .flex()
@@ -2192,7 +2216,7 @@ impl Workspace {
                             .gap(px(t.space.md))
                             .min_w_0()
                             .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_tertiary))
+                            .text_color(rgb(p.roles.text_secondary))
                             .when(needs > 0, |d| {
                                 d.child(
                                     StatusBadge::new(StatusKind::NeedsYou)
@@ -2216,6 +2240,9 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap(px(t.space.xs))
+                    // r3-pages: a project's actions show on hover only.
+                    .opacity(0.)
+                    .group_hover(hover, |s| s.opacity(1.))
                     .child(
                         primitives::button(
                             SharedString::from(format!("project-group-new-agent-{ix}")),
@@ -2283,7 +2310,7 @@ impl Workspace {
                         .children(
                             folders
                                 .iter()
-                                .map(|(ix, project)| self.render_folder_v2(*ix, project, cx)),
+                                .map(|(ix, project)| self.render_folder_v2(*ix, project, true, cx)),
                         )
                         .children(unlisted.into_iter().map(|folder| {
                             div()
@@ -2320,6 +2347,7 @@ impl Workspace {
         &self,
         ix: usize,
         project: &KnownProject,
+        nested: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = self.palette();
@@ -2386,7 +2414,7 @@ impl Workspace {
                 can_write,
                 &p,
             )
-            .when(pinned, |d| d.text_color(rgb(p.accent)))
+            .when(pinned, |d| d.text_color(rgb(p.roles.text_secondary)))
         };
         let pin = star(format!("pin-project-{ix}")).when(can_write, |d| {
             d.on_click(cx.listener(move |this, _, _, cx| {
@@ -2401,7 +2429,23 @@ impl Workspace {
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_project_path(path.clone(), window, cx)
             }))
-            .child(primitives::avatar_tile(project.title(), &p))
+            // r3-pages: a folder inside a project shows a folder glyph; its
+            // project's tile is the identity (no second "WO" beside it).
+            .child(if nested {
+                div()
+                    .size(px(t.layout.avatar))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Icon::new(IconName::Folder)
+                            .size(px(t.icon.sm))
+                            .text_color(rgb(p.roles.text_tertiary)),
+                    )
+            } else {
+                primitives::avatar_tile(project.title(), &p)
+            })
             .child(
                 div()
                     .flex_1()
@@ -2453,7 +2497,7 @@ impl Workspace {
                     div()
                         .flex_shrink_0()
                         .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_tertiary))
+                        .text_color(rgb(p.roles.text_secondary))
                         .child(activity),
                 )
             })
@@ -2529,7 +2573,9 @@ impl Workspace {
         let p = self.palette();
         let t = p.tokens;
         let selector = id.clone();
-        let hover = p.warning;
+        // r3-pages (R3.1): bookkeeping, not attention: neutral words, no
+        // amber dot.
+        let hover = p.text;
         chrome::interactive_control(div().id(id), p, true)
             .debug_selector(move || selector.to_string())
             .flex_shrink_0()
@@ -2539,16 +2585,18 @@ impl Workspace {
             .px(px(t.space.xs))
             .rounded(px(t.radius.xs))
             .text_size(px(t.text.meta))
-            .font_weight(FontWeight(t.weight.medium))
-            .text_color(rgb(p.warning))
+            .text_color(rgb(p.roles.text_secondary))
             .hover(move |s| s.underline().text_color(rgb(hover)))
             .tooltip(primitives::tooltip_view(
-                "Open the scratch items waiting for you",
+                "Open the scratch files waiting for you to run them",
                 None,
                 &p,
             ))
-            .child(primitives::status_indicator(StatusKind::NeedsYou, &p))
-            .child(format!("{count} in scratch"))
+            .child(if count == 1 {
+                "1 scratch file to run".to_owned()
+            } else {
+                format!("{count} scratch files to run")
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.extras.scratch_preset = Some(scope.clone());
