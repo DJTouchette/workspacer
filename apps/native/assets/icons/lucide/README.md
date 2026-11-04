@@ -13,3 +13,7 @@ directory.
 
 `git-pull-request.svg` (the title bar's pull request button and chip, and the
 Pull request page) comes from the same `icons/` directory.
+
+`file-text.svg`, `pencil.svg`, `sparkles.svg` and `wrench.svg` (the v2
+transcript tool event rows: read, edit, skill and other tools) come from the
+same `icons/` directory.

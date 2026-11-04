@@ -265,6 +265,21 @@ impl Workspace {
             ))
     }
 
+    /// The work group row `ix` belongs to (r2-transcript: v2 groups hold
+    /// a whole burst; v1 keeps its card cap).
+    pub(super) fn work_span(
+        &self,
+        rows: &std::collections::VecDeque<Arc<wks_native::model::Row>>,
+        ix: usize,
+    ) -> Option<Range<usize>> {
+        let merge = self.settings.merge_turn_tools;
+        if self.design().is_v2() {
+            tool_preview::group_span_capped(rows, ix, merge, tool_preview::V2_GROUP_CAP)
+        } else {
+            tool_preview::group_span(rows, ix, merge)
+        }
+    }
+
     pub(super) fn render_work_card(
         &mut self,
         span: Range<usize>,

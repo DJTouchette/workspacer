@@ -306,7 +306,7 @@ impl Workspace {
         let Some(row) = rows.get(ix) else {
             return div().into_any_element();
         };
-        let group = wks_native::tool_preview::group_span(rows, ix, self.settings.merge_turn_tools);
+        let group = self.work_span(rows, ix);
         // Preserve raw list indices for bookmarks and selection. The final slot
         // owns the group, so the existing tail probe still tracks its painted end.
         if group.as_ref().is_some_and(|span| ix + 1 < span.end) {
@@ -793,7 +793,8 @@ impl Workspace {
             // Orchestration detail; live cards hold it inside the card body.
             let mut lead: Vec<gpui::AnyElement> = Vec::new();
             let mut trail: Vec<gpui::AnyElement> = Vec::new();
-            if tool.category() == "Skill" {
+            // r2-transcript: v2's skill row says enough on its own line.
+            if tool.category() == "Skill" && !self.design().is_v2() {
                 let target = tool.target();
                 if let Some(skill) = self
                     .selected_session()
@@ -837,43 +838,64 @@ impl Workspace {
                     let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
                     let v2 = self.design().is_v2();
                     let brief_max = p.tokens.transcript().brief_max;
-                    lead.push(
-                        div()
-                            .pl(px(10.))
-                            .border_l_2()
-                            .border_color(gpui::Hsla::from(rgb(p.accent)).opacity(0.45))
-                            .when(v2, |d| {
-                                d.pl(px(p.tokens.space.lg))
-                                    .border_l(px(p.tokens.stroke.focus))
-                                    .border_color(rgb(p.border))
-                                    .text_size(px(p.tokens.text.body))
-                            })
-                            .text_color(rgb(p.prose))
-                            .child(
-                                div()
-                                    .when(long && !open, |d| {
-                                        d.max_h(px(brief_max)).overflow_hidden()
-                                    })
-                                    .child(literal(format!("{key}-task"), description, window, cx)),
-                            )
-                            .when(long, |d| {
-                                d.child(
+                    // r2-transcript: one quiet line, the whole brief on click.
+                    if v2 {
+                        lead.push(self.dispatch_brief_v2(
+                            &key,
+                            description,
+                            open_key,
+                            open,
+                            window,
+                            cx,
+                        ));
+                    } else {
+                        lead.push(
+                            div()
+                                .pl(px(10.))
+                                .border_l_2()
+                                .border_color(gpui::Hsla::from(rgb(p.accent)).opacity(0.45))
+                                .when(v2, |d| {
+                                    d.pl(px(p.tokens.space.lg))
+                                        .border_l(px(p.tokens.stroke.focus))
+                                        .border_color(rgb(p.border))
+                                        .text_size(px(p.tokens.text.body))
+                                })
+                                .text_color(rgb(p.prose))
+                                .child(
                                     div()
-                                        .id(SharedString::from(format!("{open_key}-toggle")))
-                                        .debug_selector(|| "task-brief-toggle".into())
-                                        .mt_1()
-                                        .text_size(px(11.))
-                                        .text_color(rgb(p.accent))
-                                        .cursor_pointer()
-                                        .hover(|s| s.underline())
-                                        .child(if open { "Show less" } else { "Show full task" })
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.toggle_open(open_key.clone(), false, cx)
-                                        })),
+                                        .when(long && !open, |d| {
+                                            d.max_h(px(brief_max)).overflow_hidden()
+                                        })
+                                        .child(literal(
+                                            format!("{key}-task"),
+                                            description,
+                                            window,
+                                            cx,
+                                        )),
                                 )
-                            })
-                            .into_any_element(),
-                    );
+                                .when(long, |d| {
+                                    d.child(
+                                        div()
+                                            .id(SharedString::from(format!("{open_key}-toggle")))
+                                            .debug_selector(|| "task-brief-toggle".into())
+                                            .mt_1()
+                                            .text_size(px(11.))
+                                            .text_color(rgb(p.accent))
+                                            .cursor_pointer()
+                                            .hover(|s| s.underline())
+                                            .child(if open {
+                                                "Show less"
+                                            } else {
+                                                "Show full task"
+                                            })
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.toggle_open(open_key.clone(), false, cx)
+                                            })),
+                                    )
+                                })
+                                .into_any_element(),
+                        );
+                    }
                 }
             }
             if let Some(path) = input["file_path"]
@@ -891,10 +913,15 @@ impl Workspace {
                 );
             }
             if live && let Some(children) = self.child_ui.agents.by_tool.get(&tool.id).cloned() {
-                trail.push(
+                // r2-transcript: child rows under a delegation never repeat
+                // its title.
+                let rows = if self.design().is_v2() {
+                    let title = tool.target();
+                    self.render_children_v2(&session, &key, &children, Some(&title), window, cx)
+                } else {
                     self.render_children(&session, &key, &children, window, cx)
-                        .into_any_element(),
-                );
+                };
+                trail.push(rows.into_any_element());
             }
             if tool.category() == "Workflow" {
                 let result =
@@ -1156,9 +1183,18 @@ impl Workspace {
                                     window,
                                     cx,
                                 )
-                                .style(gpui_component::text::TextViewStyle {
-                                    on_link_click: Some(self.link_handler(cx)),
-                                    ..Default::default()
+                                .style(if v2 {
+                                    // r2-transcript: one table style, the
+                                    // chat's own, inside cards too.
+                                    let mut style =
+                                        self.markdown_style(self.link_handler(cx), false, cx);
+                                    style.linkify = None;
+                                    style
+                                } else {
+                                    gpui_component::text::TextViewStyle {
+                                        on_link_click: Some(self.link_handler(cx)),
+                                        ..Default::default()
+                                    }
                                 })
                                 .selectable(true),
                             ),
@@ -1191,6 +1227,25 @@ impl Workspace {
                                 ),
                             };
                             let selector = format!("card-action-{block_key}-{i}");
+                            // r2-transcript: the shared button, plain words.
+                            if v2 {
+                                return super::primitives::button(
+                                    SharedString::from(format!("{block_key}-action-{i}")),
+                                    super::transcript_v2::card_action_label(&action),
+                                    None,
+                                    super::primitives::ButtonVariant::Secondary,
+                                    super::primitives::ButtonSize::Small,
+                                    enabled,
+                                    &p,
+                                )
+                                .debug_selector(move || selector)
+                                .tooltip(super::primitives::tooltip_view(effect, None, &p))
+                                .when(enabled, |d| {
+                                    d.on_click(cx.listener(move |this, _, window, cx| {
+                                        this.card_action(&owner, &action, window, cx)
+                                    }))
+                                });
+                            }
                             chrome::interactive_control(
                                 div().id(SharedString::from(format!("{block_key}-action-{i}"))),
                                 p,
@@ -1226,7 +1281,18 @@ impl Workspace {
                             })
                         })
                         .collect::<Vec<_>>();
-                    if !actions.is_empty() {
+                    if !actions.is_empty() && v2 {
+                        let t = p.tokens;
+                        card_body = card_body.child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap(px(t.space.sm))
+                                .pt(px(t.space.xs))
+                                .children(actions),
+                        );
+                    } else if !actions.is_empty() {
                         card_body = card_body.child(
                             div()
                                 .flex()

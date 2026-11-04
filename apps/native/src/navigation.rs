@@ -138,7 +138,7 @@ pub struct Settings {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReadingWidth {
-    /// A book-like measure (`layout.chat_width`).
+    /// The fluid default: grows with the window up to `reading_max`.
     #[default]
     Comfortable,
     /// Room for wide tables and code (`layout.reading_wide`).
@@ -157,9 +157,11 @@ impl ReadingWidth {
     }
     /// The column's content width cap in logical px.
     pub fn measure(self, tokens: &crate::tokens::Tokens) -> f32 {
+        // r2-transcript: the fluid column's caps (it grows with the window).
+        let tt = tokens.transcript();
         match self {
-            Self::Comfortable => tokens.layout.chat_width,
-            Self::Wide => tokens.layout.reading_wide,
+            Self::Comfortable => tt.reading_max,
+            Self::Wide => tt.reading_wide,
             Self::Full => tokens.layout.reading_full,
         }
     }

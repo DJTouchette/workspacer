@@ -35,6 +35,26 @@ pub(super) fn tool_result_meta(category: &str, name: &str, output: &str) -> Opti
     }
 }
 
+/// A response card action in plain words (r2-transcript: no "Prefill").
+pub(super) fn card_action_label(action: &wks_native::transcript::CardAction) -> String {
+    use wks_native::transcript::CardAction;
+    match action {
+        CardAction::OpenWorker { label, .. } => format!("Open {label}"),
+        CardAction::ViewDiff { label, .. } => format!("View diff · {label}"),
+        CardAction::FillComposer { label, .. } => format!("Reply “{label}”"),
+    }
+}
+
+/// A work group's headline: "Working" while a call runs, then "Worked
+/// 2m 14s" (just "Worked" under a second).
+pub(super) fn work_headline(running: bool, duration_ms: Option<i64>) -> String {
+    match duration_ms {
+        _ if running => "Working".into(),
+        Some(ms) if ms >= 1000 => format!("Worked {}", format::duration(ms)),
+        _ => "Worked".into(),
+    }
+}
+
 /// A subagent's status in the shared vocabulary, with the word to show.
 pub(super) fn child_status(status: &str, connected: bool) -> (StatusKind, &'static str) {
     if !connected {
@@ -105,23 +125,330 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+// ----- r2-transcript: the event row ----------------------------------------
+//
+// One line per agent or tool event: a bare 14px glyph, the verb, the primary
+// argument (mono), the result in a few words, then status or duration on the
+// right. Tool calls, skills, delegations, subagents, turn changes and settled
+// fleet wakes all use it, so the transcript reads as one log. `systems` builds
+// a shared event-row primitive in parallel; this one is token-only and meant
+// to fold into it.
+
+/// What an event row leads with: a bare glyph, never a tile.
+#[derive(Clone)]
+pub(super) enum Glyph {
+    Named(IconName),
+    Asset(&'static str),
+    /// A status indicator in the glyph's place (subagent rows).
+    Status(StatusKind),
+}
+
+/// A call's glyph by what it does.
+pub(super) fn tool_glyph(name: &str, category: &str) -> Glyph {
+    let short = short_tool_name(name);
+    match category {
+        "Read" => Glyph::Asset("lucide/file-text.svg"),
+        "Edit" => Glyph::Asset("lucide/pencil.svg"),
+        "Command" => Glyph::Named(IconName::SquareTerminal),
+        "Search" => Glyph::Named(IconName::Search),
+        "Skill" => Glyph::Asset("lucide/sparkles.svg"),
+        "Subagent" => Glyph::Named(IconName::Bot),
+        "Workflow" => Glyph::Named(IconName::GalleryVerticalEnd),
+        _ if short.starts_with("web") || short.contains("fetch") => Glyph::Named(IconName::Globe),
+        _ if short.contains("todo") || short.contains("plan") => {
+            Glyph::Named(IconName::GalleryVerticalEnd)
+        }
+        _ => Glyph::Asset("lucide/wrench.svg"),
+    }
+}
+
+/// `mcp__server__read_file` / `functions.exec` → `read_file` / `exec`,
+/// lower-cased.
+fn short_tool_name(name: &str) -> String {
+    let short = name.rsplit("__").next().unwrap_or(name);
+    short
+        .rsplit('.')
+        .next()
+        .unwrap_or(short)
+        .to_ascii_lowercase()
+}
+
+/// The event's verb, past tense once it has finished ("Read", "Edited",
+/// "Ran"), progressive while it runs. `None` for tools with no stock verb
+/// (the row then uses the tool's own title).
+pub(super) fn tool_verb(name: &str, category: &str, running: bool) -> Option<&'static str> {
+    let short = short_tool_name(name);
+    let pick = |done: &'static str, live: &'static str| Some(if running { live } else { done });
+    match short.as_str() {
+        "write" | "write_file" | "create_file" => pick("Wrote", "Writing"),
+        "glob" | "list" | "list_directory" | "ls" => pick("Listed", "Listing"),
+        "webfetch" | "web_fetch" | "fetch" => pick("Fetched", "Fetching"),
+        "websearch" | "web_search" => pick("Searched web", "Searching web"),
+        "todowrite" | "update_plan" => pick("Updated plan", "Updating plan"),
+        _ => match category {
+            "Read" => pick("Read", "Reading"),
+            "Edit" => pick("Edited", "Editing"),
+            "Command" => pick("Ran", "Running"),
+            "Search" => pick("Searched", "Searching"),
+            "Skill" => pick("Used skill", "Using skill"),
+            "Subagent" => pick("Delegated", "Delegating"),
+            "Workflow" => pick("Ran workflow", "Running workflow"),
+            _ => None,
+        },
+    }
+}
+
+/// What sits on an event row's right edge.
+#[derive(Clone, Debug)]
+pub(super) enum EventEnd {
+    Nothing,
+    /// A quiet duration or age, tertiary.
+    Quiet(String),
+    /// A status (Working pulses, a fault is red).
+    Badge(StatusBadge),
+}
+
+/// One event row's content; [`event_row`] draws it.
+pub(super) struct EventRow {
+    pub id: SharedString,
+    pub glyph: Glyph,
+    pub verb: SharedString,
+    /// The primary argument, drawn in the mono face when `mono` is set.
+    pub target: Option<SharedString>,
+    pub mono: Option<SharedString>,
+    pub diff: (usize, usize),
+    /// The result in a few words ("42 lines", "3 matches").
+    pub summary: Option<SharedString>,
+    pub end: EventEnd,
+    /// `Some(open)` draws a disclosure chevron (on hover while closed).
+    pub disclosure: Option<bool>,
+    /// The call failed: glyph and verb turn the fault red.
+    pub failed: bool,
+    /// Regular-weight verb (child rows, whose title is not a verb).
+    pub quiet: bool,
+    /// Controls after the status (Check / Stop, Review).
+    pub trailing: Vec<AnyElement>,
+}
+
+impl EventRow {
+    pub(super) fn new(
+        id: impl Into<SharedString>,
+        glyph: Glyph,
+        verb: impl Into<SharedString>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            glyph,
+            verb: verb.into(),
+            target: None,
+            mono: None,
+            diff: (0, 0),
+            summary: None,
+            end: EventEnd::Nothing,
+            disclosure: None,
+            failed: false,
+            quiet: false,
+            trailing: Vec::new(),
+        }
+    }
+}
+
+/// A glyph in the event row's fixed icon column.
+pub(super) fn glyph_box(glyph: Glyph, color: u32, p: &Palette) -> Div {
+    let t = p.tokens;
+    let tt = t.transcript();
+    let size = px(t.icon.sm);
+    div()
+        .size(px(tt.event_icon))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(rgb(color))
+        .child(match glyph {
+            Glyph::Named(name) => Icon::new(name).size(size).into_any_element(),
+            Glyph::Asset(path) => gpui::svg()
+                .path(path)
+                .size(size)
+                .text_color(rgb(color))
+                .into_any_element(),
+            Glyph::Status(kind) => primitives::status_indicator(kind, p).into_any_element(),
+        })
+}
+
+/// Draws one [`EventRow`]: CLI-dense, one line, the hover fill hanging into
+/// the gutter so glyphs line up with the prose's left edge.
+pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
+    let p = *p;
+    let t = p.tokens;
+    let tt = t.transcript();
+    let glyph_color = if row.failed {
+        p.error
+    } else {
+        p.roles.text_tertiary
+    };
+    let mono = row.mono.clone();
+    div()
+        .id(row.id)
+        .group("event-row")
+        .h(px(tt.tool_row))
+        .ml(px(-t.space.sm))
+        .px(px(t.space.sm))
+        .rounded(px(t.radius.control))
+        .flex()
+        .items_center()
+        .gap(px(t.space.md))
+        .min_w_0()
+        .cursor_pointer()
+        .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
+        .active(move |s| s.bg(primitives::tonal(&p, t.wash.pressed)))
+        .child(glyph_box(row.glyph, glyph_color, &p))
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_size(px(t.text.body))
+                .font_weight(FontWeight(if row.quiet {
+                    t.weight.regular
+                } else {
+                    t.weight.medium
+                }))
+                .text_color(rgb(if row.failed { p.error } else { p.text }))
+                .child(row.verb),
+        )
+        .when_some(row.target, |d, target| {
+            d.child(
+                div()
+                    .min_w_0()
+                    .flex_shrink()
+                    .truncate()
+                    .when_some(mono, |d, mono| d.font_family(mono))
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_secondary))
+                    .child(target),
+            )
+        })
+        .when(row.diff.0 > 0, |d| {
+            d.child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.success))
+                    .child(format!("+{}", row.diff.0)),
+            )
+        })
+        .when(row.diff.1 > 0, |d| {
+            d.child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.error))
+                    .child(format!("−{}", row.diff.1)),
+            )
+        })
+        .when_some(row.summary, |d, summary| {
+            d.child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(SharedString::from(format!("· {summary}"))),
+            )
+        })
+        .child(div().flex_1())
+        .map(|d| match row.end {
+            EventEnd::Nothing => d,
+            EventEnd::Quiet(label) => d.child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(label),
+            ),
+            EventEnd::Badge(badge) => d.child(badge.render(&p)),
+        })
+        .children(row.trailing)
+        // The chevron's slot is always kept, so every row's right edge
+        // (durations, states) lines up down the log.
+        .child(
+            div()
+                .w(px(t.icon.xs))
+                .flex_shrink_0()
+                .text_color(rgb(p.roles.text_tertiary))
+                .when_some(row.disclosure, |d, open| {
+                    d.when(!open, |d| {
+                        d.opacity(0.).group_hover("event-row", |s| s.opacity(1.))
+                    })
+                    .child(
+                        Icon::new(if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .size(px(t.icon.xs)),
+                    )
+                }),
+        )
+}
+
+/// The hairline guide that holds a group's rows under its header, from the
+/// header glyph's centre down.
+pub(super) fn event_guide(p: &Palette) -> Div {
+    let t = p.tokens;
+    let tt = t.transcript();
+    div()
+        .flex()
+        .flex_col()
+        .ml(px(tt.event_icon / 2.))
+        .pl(px(tt.event_icon / 2. + t.space.md - t.stroke.hairline))
+        .border_l(px(t.stroke.hairline))
+        .border_color(rgb(p.border))
+}
+
+/// r2-transcript: a stalled agent is a fault, never "Working". `systems`
+/// adds `StatusKind::Stalled`; until it lands this maps onto `Failed` (the
+/// same red fault dot), so consolidating is this one line.
+pub(super) fn stalled_kind() -> StatusKind {
+    StatusKind::Failed
+}
+
+/// "Not responding · 2m": how long a stalled agent has been silent.
+pub(super) fn not_responding(silent_ms: i64) -> String {
+    format!("Not responding · {}", format::age(0, silent_ms.max(0)))
+}
+
+/// r2-transcript: the human model name ("Sonnet 4.6"). `shell` adds
+/// `format::model_name`; until it lands this reads the session model's
+/// formatter.
+pub(super) fn model_name(id: &str) -> String {
+    wks_native::model::model_display_name(id)
+}
+
 impl Workspace {
     // ----- The reading column -------------------------------------------
 
     /// The transcript's reading measure in px, gutters included: the
     /// reading-width setting, never so wide that the floating tool rail
     /// would cover it.
+    ///
+    /// r2-transcript: the column is fluid. It fills the pane (less room for
+    /// the floating rail) between `reading_min` and the setting's cap, so it
+    /// grows with the window and gives way gracefully when Changes docks.
     pub(super) fn reading_max(&self) -> Pixels {
         // r2-shell: the tool rail docks to it
         let t = self.tokens();
+        let tt = t.transcript();
         let gutter = t.layout.chat_gutter;
         let cap = px(self.settings.reading_width.measure(&t) + 2. * gutter);
-        if self.settings.tool_rail && self.chat_width > px(0.) {
-            let room = self.chat_width - px(2. * (t.layout.rail_width + t.space.md));
-            cap.min(room.max(px(t.layout.chat_width + 2. * gutter)))
-        } else {
-            cap
+        if self.chat_width <= px(0.) {
+            return cap;
         }
+        let rail = if self.tools_float_v2(false) {
+            2. * (t.layout.rail_width + t.space.md)
+        } else {
+            0.
+        };
+        let room = self.chat_width - px(rail);
+        cap.min(room.max(px(tt.reading_min + 2. * gutter)))
     }
 
     /// The column's outer measure without its gutters (v1: `chat_frame`).
@@ -237,38 +564,40 @@ impl Workspace {
         } else {
             preview.target.clone()
         };
-        let kind = if tool.is_error {
-            StatusKind::Failed
-        } else if !tool.complete {
-            StatusKind::Working
-        } else {
-            StatusKind::Idle
-        };
-        let meta = if tool.is_error {
-            Some("Failed".to_owned())
-        } else if tool.complete {
-            tool_result_meta(tool.category(), &tool.name, &tool.output)
-        } else {
-            Some("Running".to_owned())
-        };
+        // r2-transcript: one event row: glyph, verb, argument, result, and
+        // the status or duration on the right.
+        let running = !tool.complete && !tool.is_error;
+        let verb = tool_verb(&tool.name, tool.category(), running)
+            .map(str::to_owned)
+            .unwrap_or_else(|| preview.title.clone());
         let duration = match (row.timestamp_ms, tool.completed_at_ms) {
             (Some(start), Some(end)) if end - start >= 1000 => Some(format::duration(end - start)),
             _ => None,
         };
         let key = row.key;
         let mono = gpui_component::Theme::global(cx).mono_font_family.clone();
-        let header = self
-            .tool_line(
-                SharedString::from(format!("{element_key}-step")),
-                kind,
-                preview.title.clone(),
-                target,
-                mono,
-                (preview.added, preview.removed),
-                meta,
-                duration,
-                Some(expanded),
-            )
+        let mut event = EventRow::new(
+            format!("{element_key}-step"),
+            tool_glyph(&tool.name, tool.category()),
+            verb,
+        );
+        event.target = (!target.is_empty()).then(|| target.into());
+        event.mono = Some(mono);
+        event.diff = (preview.added, preview.removed);
+        event.summary = (tool.complete && !tool.is_error)
+            .then(|| tool_result_meta(tool.category(), &tool.name, &tool.output))
+            .flatten()
+            .map(Into::into);
+        event.failed = tool.is_error;
+        event.disclosure = Some(expanded);
+        event.end = if tool.is_error {
+            EventEnd::Badge(StatusBadge::new(StatusKind::Failed))
+        } else if running {
+            EventEnd::Badge(StatusBadge::new(StatusKind::Working).label("Running"))
+        } else {
+            duration.map_or(EventEnd::Nothing, EventEnd::Quiet)
+        };
+        let header = event_row(event, &p)
             .debug_selector(move || format!("tool-toggle-{key}"))
             .on_click(
                 cx.listener(move |this, _, _, cx| this.toggle_tool(identity.clone(), expanded, cx)),
@@ -305,7 +634,7 @@ impl Workspace {
             step = step.child(
                 div()
                     // Under the verb, past the status column.
-                    .pl(px(t.layout.status_box + t.space.md))
+                    .pl(px(t.transcript().event_icon + t.space.md))
                     .pt(px(t.space.xxs))
                     .pb(px(t.space.sm))
                     .max_h(px(tt.details_max + t.space.xxl))
@@ -313,122 +642,6 @@ impl Workspace {
             );
         }
         step
-    }
-
-    /// The shared line anatomy of tool rows and work-card headers.
-    #[allow(clippy::too_many_arguments)]
-    fn tool_line(
-        &self,
-        id: SharedString,
-        kind: StatusKind,
-        verb: String,
-        target: String,
-        mono: SharedString,
-        (added, removed): (usize, usize),
-        meta: Option<String>,
-        duration: Option<String>,
-        expanded: Option<bool>,
-    ) -> Stateful<Div> {
-        let p = self.palette();
-        let t = p.tokens;
-        let tt = t.transcript();
-        let failed = kind == StatusKind::Failed;
-        div()
-            .id(id)
-            .group("tool-line")
-            .h(px(tt.tool_row))
-            // The status dot lines up with the prose's left edge; the hover
-            // fill hangs into the gutter.
-            .ml(px(-t.space.sm))
-            .px(px(t.space.sm))
-            .rounded(px(t.radius.control))
-            .flex()
-            .items_center()
-            .gap(px(t.space.md))
-            .min_w_0()
-            .cursor_pointer()
-            .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
-            .active(move |s| s.bg(primitives::tonal(&p, t.wash.pressed)))
-            .child(primitives::status_indicator(kind, &p))
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .text_size(px(t.text.body))
-                    .font_weight(FontWeight(t.weight.medium))
-                    .text_color(rgb(if failed { p.error } else { p.text }))
-                    .child(verb),
-            )
-            .when(!target.is_empty(), |d| {
-                d.child(
-                    div()
-                        .min_w_0()
-                        .flex_shrink()
-                        .truncate()
-                        .font_family(mono)
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_secondary))
-                        .child(target),
-                )
-            })
-            .when(added > 0, |d| {
-                d.child(
-                    div()
-                        .flex_shrink_0()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.success))
-                        .child(format!("+{added}")),
-                )
-            })
-            .when(removed > 0, |d| {
-                d.child(
-                    div()
-                        .flex_shrink_0()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.error))
-                        .child(format!("−{removed}")),
-                )
-            })
-            .when_some(meta, |d, meta| {
-                d.child(
-                    div()
-                        .flex_shrink_0()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(if failed {
-                            p.error
-                        } else {
-                            p.roles.text_tertiary
-                        }))
-                        .child(format!("· {meta}")),
-                )
-            })
-            .child(div().flex_1())
-            .when_some(duration, |d, label| {
-                d.child(
-                    div()
-                        .flex_shrink_0()
-                        .text_size(px(t.text.overline))
-                        .text_color(rgb(p.roles.text_tertiary))
-                        .child(label),
-                )
-            })
-            .when_some(expanded, |d, open| {
-                d.child(
-                    div()
-                        .flex_shrink_0()
-                        .text_color(rgb(p.roles.text_tertiary))
-                        .when(!open, |d| {
-                            d.opacity(0.).group_hover("tool-line", |s| s.opacity(1.))
-                        })
-                        .child(
-                            Icon::new(if open {
-                                IconName::ChevronDown
-                            } else {
-                                IconName::ChevronRight
-                            })
-                            .size(px(t.icon.xs)),
-                        ),
-                )
-            })
     }
 
     /// A tool's input and output, opened under its line: on the card
@@ -589,56 +802,53 @@ impl Workspace {
             .flex()
             .flex_col();
         if steps > 1 {
-            let kind = if summary.running > 0 {
-                StatusKind::Working
-            } else if summary.failed > 0 {
-                StatusKind::Failed
-            } else {
-                StatusKind::Idle
-            };
-            let mut meta = Vec::new();
-            if summary.running > 0 {
-                meta.push(format!("{} running", summary.running));
-            }
-            if summary.failed > 0 {
-                meta.push(format!("{} failed", summary.failed));
-            }
+            // r2-transcript: "Worked 2m 14s · 18 tools · 3 files changed".
             let toggle_key = card_key.clone();
-            let mono = gpui_component::Theme::global(cx).mono_font_family.clone();
-            card =
-                card.child(
-                    self.tool_line(
-                        SharedString::from(format!("{card_key}-header")),
-                        kind,
-                        plural(steps, "step", "steps"),
-                        String::new(),
-                        mono,
-                        (summary.added, summary.removed),
-                        (!summary.text.is_empty() || !meta.is_empty()).then(|| {
-                            [summary.text.clone()]
-                                .into_iter()
-                                .chain(meta)
-                                .filter(|s| !s.is_empty())
-                                .collect::<Vec<_>>()
-                                .join(" · ")
-                        }),
-                        summary.duration_ms.map(format::duration),
-                        Some(open),
-                    )
+            let mut event = EventRow::new(
+                format!("{card_key}-header"),
+                Glyph::Named(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                }),
+                work_headline(summary.running > 0, summary.duration_ms),
+            );
+            event.summary = Some(
+                std::iter::once(plural(steps, "tool", "tools"))
+                    .chain((!summary.text.is_empty()).then(|| summary.text.clone()))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+                    .into(),
+            );
+            event.diff = (summary.added, summary.removed);
+            event.end = if summary.running > 0 {
+                EventEnd::Badge(
+                    StatusBadge::new(StatusKind::Working)
+                        .label(format!("{} running", summary.running)),
+                )
+            } else if summary.failed > 0 {
+                EventEnd::Badge(
+                    StatusBadge::new(StatusKind::Failed)
+                        .label(format!("{} failed", summary.failed)),
+                )
+            } else {
+                EventEnd::Nothing
+            };
+            card = card.child(
+                event_row(event, &p)
                     .debug_selector(|| "work-card-toggle".into())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle_open(toggle_key.clone(), true, cx)
                     })),
-                );
+            );
         }
         if open {
-            let mut list = div().flex().flex_col().when(steps > 1, |d| {
-                // A hairline guide from the summary's dot down its steps.
-                d.ml(px(t.layout.status_box / 2.))
-                    .pl(px(t.layout.status_box / 2. + t.space.md - t.stroke.hairline))
-                    .border_l(px(t.stroke.hairline))
-                    .border_color(rgb(p.border))
-            });
+            let mut list = if steps > 1 {
+                // A hairline guide from the header's glyph down its calls.
+                event_guide(&p)
+            } else {
+                div().flex().flex_col()
+            };
             if hidden > 0 {
                 list = list.child(
                     div()
@@ -655,17 +865,14 @@ impl Workspace {
                         .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
                         .text_size(px(t.text.meta))
                         .text_color(rgb(p.roles.text_tertiary))
-                        .child(
-                            div()
-                                .size(px(t.layout.status_box))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(Icon::new(IconName::ChevronUp).size(px(t.icon.xs))),
-                        )
+                        .child(glyph_box(
+                            Glyph::Named(IconName::Ellipsis),
+                            p.roles.text_tertiary,
+                            &p,
+                        ))
                         .child(match hidden_steps {
                             0 => "Earlier notes".to_owned(),
-                            n => plural(n, "earlier step", "earlier steps"),
+                            n => plural(n, "earlier tool", "earlier tools"),
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.toggle_open(earlier_key.clone(), false, cx)
@@ -706,8 +913,9 @@ impl Workspace {
             ))
     }
 
-    /// Skill, Subagent and Workflow calls. A skill is one more tool line; a
-    /// subagent or workflow is a card: icon, title, status, meta, actions.
+    /// Skill, Subagent and Workflow calls (r2-transcript): one event row like
+    /// any other call ("Delegated Session creation review"), its brief and
+    /// its agents on the hairline guide beneath. No card, no icon tiles.
     pub(super) fn render_orchestration_v2(
         &mut self,
         row: &Row,
@@ -734,155 +942,182 @@ impl Workspace {
         preview.target = tool.target();
         let key = row.key;
         let duration = match (row.timestamp_ms, tool.completed_at_ms) {
-            (Some(start), Some(end)) if end >= start => Some(format::duration(end - start)),
+            (Some(start), Some(end)) if end - start >= 1000 => Some(format::duration(end - start)),
             _ => None,
         };
         let toggle = {
             let identity = identity.clone();
             cx.listener(move |this, _, _, cx| this.toggle_tool(identity.clone(), expanded, cx))
         };
-        if tool.category() == "Skill" {
-            let kind = if tool.is_error {
-                StatusKind::Failed
-            } else if tool.complete {
-                StatusKind::Idle
-            } else {
-                StatusKind::Working
-            };
-            let mono = gpui_component::Theme::global(cx).mono_font_family.clone();
-            let line = self
-                .tool_line(
-                    SharedString::from(format!("{element_key}-toggle")),
-                    kind,
-                    "Skill".into(),
-                    preview.target.clone(),
-                    mono,
-                    (0, 0),
-                    tool.is_error.then(|| "Failed".to_owned()),
-                    duration.filter(|_| tool.complete),
-                    Some(expanded),
-                )
-                .debug_selector(move || format!("tool-toggle-{key}"))
-                .on_click(toggle);
-            return div()
-                .debug_selector(|| "orchestration-card".into())
-                .w_full()
-                .flex()
-                .flex_col()
-                .child(line)
-                .when(!extras.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .pl(px(t.layout.status_box + t.space.md))
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .flex()
-                            .flex_col()
-                            .gap(px(t.space.sm))
-                            .children(extras),
-                    )
-                })
-                .when(expanded, |d| {
-                    d.child(
-                        div()
-                            .pl(px(t.layout.status_box + t.space.md))
-                            .pt(px(t.space.xs))
-                            .child(self.tool_details_v2(&preview, tool, &element_key, window, cx)),
-                    )
-                });
-        }
+        let category = tool.category();
+        let running = !tool.complete && !tool.is_error;
         let origin = wks_native::child_agents::tool_kind(tool);
         let native = origin.is_some_and(|o| o != wks_native::child_agents::ChildKind::Workspacer);
-        let status = if tool.is_error {
-            StatusBadge::new(StatusKind::Failed)
-        } else if tool.complete && tool.category() == "Subagent" {
-            StatusBadge::new(StatusKind::Idle).label("Dispatched")
-        } else if tool.complete {
-            StatusBadge::new(StatusKind::Done)
-        } else {
-            StatusBadge::new(StatusKind::Working)
-        };
-        let title = if tool.category() == "Subagent" && preview.description.is_empty() {
+        let children = self
+            .child_ui
+            .agents
+            .by_tool
+            .get(&tool.id)
+            .cloned()
+            .unwrap_or_default();
+        let now = timing::now_ms();
+        let connected = self.view.connected;
+        let views: Vec<ChildView> = children
+            .iter()
+            .map(|c| child_view(c, connected, now))
+            .collect();
+        let verb = tool_verb(&tool.name, category, running)
+            .unwrap_or("Used")
+            .to_owned();
+        let title = if category == "Skill" || preview.description.is_empty() {
             preview.target.clone()
         } else {
-            preview.title.clone()
+            preview.description.clone()
         };
-        let mut meta = vec![match (tool.category(), native) {
-            ("Workflow", _) => "Workflow".to_owned(),
-            (_, true) => "Provider subagent".to_owned(),
-            _ => "Workspacer agent".to_owned(),
-        }];
-        if title != preview.target && !preview.target.is_empty() {
-            meta.push(preview.target.clone());
-        }
-        meta.extend(duration);
-        let chevron = div()
-            .id(SharedString::from(format!("{element_key}-toggle")))
-            .debug_selector(move || format!("tool-toggle-{key}"))
-            .size(px(t.layout.icon_button))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(t.radius.control))
-            .cursor_pointer()
-            .text_color(rgb(p.roles.text_tertiary))
-            .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
-            .tooltip(primitives::tooltip_view(
-                if expanded { "Hide call" } else { "Show call" },
-                None,
-                &p,
-            ))
-            .child(
-                Icon::new(if expanded {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                })
-                .size(px(t.icon.sm)),
-            )
-            .on_click(toggle);
-        let head = CardHead::new(title)
-            .icon(if native {
-                IconName::SquareTerminal
-            } else if tool.category() == "Workflow" {
-                IconName::GalleryVerticalEnd
-            } else {
-                IconName::Bot
-            })
-            .status(status)
-            .meta(meta.join(" · "))
-            .action(chevron)
-            .render(&p);
+        let role = tool.value()["subagent_type"]
+            .as_str()
+            .filter(|r| !r.is_empty() && !r.eq_ignore_ascii_case("general-purpose"))
+            .map(str::to_owned);
+        let mut event = EventRow::new(
+            format!("{element_key}-toggle"),
+            tool_glyph(&tool.name, category),
+            verb,
+        );
+        event.target = (!title.is_empty()).then(|| title.clone().into());
+        event.summary = role.map(Into::into);
+        event.failed = tool.is_error;
+        event.disclosure = Some(expanded);
+        event.end = if tool.is_error {
+            EventEnd::Badge(StatusBadge::new(StatusKind::Failed))
+        } else if running {
+            EventEnd::Badge(StatusBadge::new(StatusKind::Working).label("Running"))
+        } else if let Some(badge) = (views.len() > 1).then(|| children_badge(&views)).flatten() {
+            EventEnd::Badge(badge)
+        } else {
+            duration.map_or(EventEnd::Nothing, EventEnd::Quiet)
+        };
         let selector = if native {
             "native-spawn-icon"
         } else {
             "workspacer-spawn-icon"
         };
-        transcript_card(&p)
+        let line = event_row(event, &p)
+            .debug_selector(move || format!("tool-toggle-{key}"))
+            .tooltip(primitives::tooltip_view(
+                match (category, native) {
+                    ("Skill", _) => "Skill",
+                    ("Workflow", _) => "Workflow",
+                    (_, true) => "Subagent run by the agent's own tools",
+                    _ => "Agent session started by Workspacer",
+                },
+                None,
+                &p,
+            ))
+            .child(div().debug_selector(move || selector.into()))
+            .on_click(toggle);
+        let below = !extras.is_empty() || row.truncated || expanded;
+        div()
             .debug_selector(|| "orchestration-card".into())
-            .child(head.child(div().debug_selector(move || selector.into())))
-            .when(!extras.is_empty(), |d| {
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(line)
+            .when(below, |d| {
                 d.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(t.space.md))
+                    event_guide(&p)
+                        .gap(px(t.space.xxs))
+                        .pb(px(t.space.xs))
                         .text_size(px(t.text.meta))
                         .text_color(rgb(p.roles.text_secondary))
-                        .children(extras),
+                        .children(extras)
+                        .when(row.truncated, |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(t.text.meta))
+                                    .text_color(rgb(p.roles.text_tertiary))
+                                    .child(
+                                        "Tool content was clipped to the retained-history limit.",
+                                    ),
+                            )
+                        })
+                        .when(expanded, |d| {
+                            d.child(div().pt(px(t.space.xs)).child(self.tool_details_v2(
+                                &preview,
+                                tool,
+                                &element_key,
+                                window,
+                                cx,
+                            )))
+                        }),
                 )
             })
-            .when(row.truncated, |d| {
+    }
+}
+impl Workspace {
+    /// A delegation's brief (r2-transcript): one quiet line on the guide,
+    /// the whole task (selectable) once opened.
+    pub(super) fn dispatch_brief_v2(
+        &self,
+        key: &str,
+        brief: &str,
+        open_key: String,
+        open: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let t = p.tokens;
+        let tt = t.transcript();
+        let line = brief.split_whitespace().collect::<Vec<_>>().join(" ");
+        let long = brief.trim().lines().count() > 1 || line.chars().count() > 120;
+        div()
+            .debug_selector(|| "task-brief".into())
+            .min_h(px(tt.tool_row))
+            .flex()
+            .items_start()
+            .gap(px(t.space.md))
+            .text_size(px(t.text.body))
+            .text_color(rgb(p.roles.text_secondary))
+            .child(div().w(px(tt.event_icon)).flex_shrink_0())
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .py(px((tt.tool_row - t.text.body * t.text.line_height) / 2.))
+                    .line_height(relative(t.text.line_height))
+                    .map(|d| {
+                        if open {
+                            d.child(super::transcript::literal(
+                                format!("{key}-task"),
+                                brief,
+                                window,
+                                cx,
+                            ))
+                        } else {
+                            d.truncate().child(line)
+                        }
+                    }),
+            )
+            .when(long, |d| {
                 d.child(
                     div()
+                        .id(SharedString::from(format!("{open_key}-toggle")))
+                        .debug_selector(|| "task-brief-toggle".into())
+                        .flex_shrink_0()
+                        .h(px(tt.tool_row))
+                        .flex()
+                        .items_center()
                         .text_size(px(t.text.meta))
-                        .text_color(rgb(p.warning))
-                        .child("Tool content was clipped to the retained-history limit."),
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .cursor_pointer()
+                        .hover(move |s| s.text_color(rgb(p.text)))
+                        .child(if open { "Show less" } else { "Show full task" })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_open(open_key.clone(), false, cx)
+                        })),
                 )
             })
-            .when(expanded, |d| {
-                d.child(self.tool_details_v2(&preview, tool, &element_key, window, cx))
-            })
+            .into_any_element()
     }
 }
 
@@ -1071,7 +1306,9 @@ impl Workspace {
             .children(panel.map(|panel| div().w_full().child(panel)))
     }
 
-    /// What the turn changed: one compact card under its last message.
+    /// What the turn changed (r2-transcript): one event row ("Changed 3
+    /// files +12 −4", Review on the right) with the files on its guide. How
+    /// the count was made stays on hover, never as default copy.
     pub(super) fn render_turn_changes_v2(
         &self,
         files: &[wks_native::transcript::FileChange],
@@ -1080,100 +1317,110 @@ impl Workspace {
     ) -> Div {
         let p = self.palette();
         let t = p.tokens;
+        let tt = t.transcript();
         let added: usize = files.iter().map(|f| f.added).sum();
         let removed: usize = files.iter().map(|f| f.removed).sum();
         let mono = gpui_component::Theme::global(cx).mono_font_family.clone();
-        let count = |n: usize, color: u32, sign: &str| {
-            div()
-                .flex_shrink_0()
-                .text_size(px(t.text.meta))
-                .text_color(rgb(color))
-                .child(format!("{sign}{n}"))
-        };
         let connected = self.view.connected;
-        transcript_card(&p)
+        let mut event = EventRow::new(
+            "turn-changes-line",
+            Glyph::Asset("lucide/file-diff.svg"),
+            format!("Changed {}", plural(files.len(), "file", "files")),
+        );
+        event.diff = (added, removed);
+        if let [file] = files {
+            // One file: named on the line itself.
+            event.target = Some(file.path.clone().into());
+            event.mono = Some(mono.clone());
+        }
+        event.trailing.push(
+            primitives::button(
+                "turn-changes",
+                "Review",
+                Some(IconName::ArrowRight),
+                ButtonVariant::Ghost,
+                ButtonSize::Small,
+                connected,
+                &p,
+            )
+            .when(connected, |d| {
+                d.on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.open_feature(Screen::Changes, window, cx)
+                    }),
+                )
+            })
+            .into_any_element(),
+        );
+        let header = event_row(event, &p)
+            .tooltip(primitives::tooltip_view(
+                if estimated {
+                    "Counted from the agent's edits this turn. Review shows the diff on disk."
+                } else {
+                    "Read from the working tree when the turn ended."
+                },
+                None,
+                &p,
+            ))
+            .cursor_default();
+        let shown = files.len().min(tt.visible_steps);
+        div()
             .debug_selector(|| "turn-changes-card".into())
-            .mt(px(t.space.md))
-            .gap(px(t.space.sm))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(t.space.md))
-                    .child(
-                        gpui::svg()
-                            .path("lucide/file-diff.svg")
-                            .size(px(t.icon.sm))
-                            .flex_shrink_0()
-                            .text_color(rgb(p.roles.text_tertiary)),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_size(px(t.text.body))
-                            .font_weight(FontWeight(t.weight.medium))
-                            .text_color(rgb(p.text))
-                            .child(plural(files.len(), "file changed", "files changed")),
-                    )
-                    .child(count(added, p.success, "+"))
-                    .child(count(removed, p.error, "−"))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(t.text.overline))
-                            .text_color(rgb(p.roles.text_tertiary))
-                            .child(if estimated {
-                                "Estimated from tools"
-                            } else {
-                                "Captured at turn end"
-                            }),
-                    )
-                    .child(
-                        primitives::button(
-                            "turn-changes",
-                            "Review",
-                            Some(IconName::ArrowRight),
-                            ButtonVariant::Ghost,
-                            ButtonSize::Small,
-                            connected,
-                            &p,
-                        )
-                        .when(connected, |d| {
-                            d.on_click(cx.listener(|this, _, window, cx| {
-                                this.open_feature(Screen::Changes, window, cx)
-                            }))
-                        }),
-                    ),
-            )
-            .child(
-                div()
-                    .pl(px(t.icon.sm + t.space.md))
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.xxs))
-                    .children(files.iter().map(|f| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(t.space.md))
-                            .min_w_0()
-                            .text_size(px(t.text.meta))
-                            .child(
+            .mt(px(t.space.xs))
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(header)
+            .when(files.len() > 1, |d| {
+                d.child(
+                    event_guide(&p)
+                        .children(files.iter().take(shown).map(|f| {
+                            div()
+                                .h(px(tt.tool_row - t.space.xs))
+                                .flex()
+                                .items_center()
+                                .gap(px(t.space.md))
+                                .min_w_0()
+                                .text_size(px(t.text.meta))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .font_family(mono.clone())
+                                        .text_color(rgb(p.roles.text_secondary))
+                                        .child(f.path.clone()),
+                                )
+                                .when(f.added > 0, |d| {
+                                    d.child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_color(rgb(p.roles.text_tertiary))
+                                            .child(format!("+{}", f.added)),
+                                    )
+                                })
+                                .when(f.removed > 0, |d| {
+                                    d.child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_color(rgb(p.roles.text_tertiary))
+                                            .child(format!("−{}", f.removed)),
+                                    )
+                                })
+                        }))
+                        .when(files.len() > shown, |d| {
+                            d.child(
                                 div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .font_family(mono.clone())
-                                    .text_color(rgb(p.roles.text_secondary))
-                                    .child(f.path.clone()),
+                                    .h(px(tt.tool_row - t.space.xs))
+                                    .flex()
+                                    .items_center()
+                                    .text_size(px(t.text.meta))
+                                    .text_color(rgb(p.roles.text_tertiary))
+                                    .child(plural(files.len() - shown, "more file", "more files")),
                             )
-                            .child(count(f.added, p.roles.text_tertiary, "+"))
-                            .child(count(f.removed, p.roles.text_tertiary, "−"))
-                    })),
-            )
+                        }),
+                )
+            })
     }
-
     /// The top-of-chat pager as a quiet centred link.
     pub(super) fn render_earlier_v2(&self, loading: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let p = self.palette();
@@ -1372,7 +1619,7 @@ impl Workspace {
                     .min_w_0()
                     .cursor_pointer()
                     .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
-                    .child(primitives::status_indicator(summary, &p))
+                    .child(glyph_box(Glyph::Status(summary), p.roles.text_tertiary, &p))
                     .child(
                         div()
                             .flex_shrink_0()
@@ -1434,7 +1681,7 @@ impl Workspace {
             )
         });
         // The status sits on the right, where the one-line form keeps it.
-        let mut head = CardHead::new(title).icon(icon);
+        let mut head = CardHead::new(title);
         if !single {
             head = head.meta(names.join(", "));
         }
@@ -1473,10 +1720,15 @@ impl Workspace {
                     .flex_col()
                     .gap(px(t.space.xs))
                     .child(
+                        // r2-transcript: a bare glyph beside the eyebrow, no tile.
                         div()
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.sm))
                             .text_size(px(t.text.meta))
                             .font_weight(FontWeight(t.weight.medium))
                             .text_color(rgb(eyebrow_color))
+                            .child(Icon::new(icon).size(px(t.icon.sm)))
                             .child(eyebrow),
                     )
                     .child(head),
@@ -1555,7 +1807,11 @@ impl Workspace {
                         .gap(px(t.space.md))
                         .min_w_0()
                         .when(!single, |d| {
-                            d.child(primitives::avatar_tile(&names[index], &p))
+                            d.child(glyph_box(
+                                Glyph::Named(IconName::Bot),
+                                p.roles.text_tertiary,
+                                &p,
+                            ))
                         })
                         .child(
                             div()
@@ -1618,7 +1874,7 @@ impl Workspace {
             let indent = if single {
                 0.
             } else {
-                t.layout.avatar + t.space.md
+                t.transcript().event_icon + t.space.md
             };
             if let Some(failed) = &entry.failed {
                 row = row.child(
@@ -1753,21 +2009,35 @@ impl Workspace {
 
 // ----- Subagents -----------------------------------------------------------------
 
-/// A subagent's elapsed time, or "Lost heartbeat" once a running one has
-/// gone quiet past `HEARTBEAT_STALE_MS` (never a timer counting into days).
-pub(super) fn child_clock(child: &ChildAgent, connected: bool, now: i64) -> Option<(String, bool)> {
-    if connected
-        && child.running()
-        && format::is_stale(
-            child
-                .telemetry
-                .last_activity_ms
-                .or(child.telemetry.started_at_ms),
-            now,
-        )
-    {
-        return Some((format::LOST_HEARTBEAT.to_owned(), true));
+/// How one subagent reads right now (r2-transcript): one honest state. A
+/// running agent that has gone quiet past `HEARTBEAT_STALE_MS` is stalled,
+/// a fault reading "Not responding · 2m", never "Working" beside a warning.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ChildView {
+    pub kind: StatusKind,
+    pub word: String,
+    pub stalled: bool,
+    /// Elapsed (running) or total (finished) time, when known.
+    pub clock: Option<String>,
+}
+
+pub(super) fn child_view(child: &ChildAgent, connected: bool, now: i64) -> ChildView {
+    let last = child
+        .telemetry
+        .last_activity_ms
+        .or(child.telemetry.started_at_ms);
+    if connected && child.running() && format::is_stale(last, now) {
+        return ChildView {
+            kind: stalled_kind(),
+            word: match last {
+                Some(at) => not_responding(now - at),
+                None => "Not responding".into(),
+            },
+            stalled: true,
+            clock: None,
+        };
     }
+    let (kind, word) = child_status(&child.status, connected);
     let at = if connected {
         Some(now)
     } else {
@@ -1776,8 +2046,110 @@ pub(super) fn child_clock(child: &ChildAgent, connected: bool, now: i64) -> Opti
             .last_activity_ms
             .or(child.telemetry.completed_at_ms)
     };
-    at.and_then(|at| child.duration_ms(at))
-        .map(|ms| (format::duration(ms.min(i64::MAX as u64) as i64), false))
+    ChildView {
+        kind,
+        word: word.into(),
+        stalled: false,
+        clock: at
+            .and_then(|at| child.duration_ms(at))
+            .map(|ms| format::duration(ms.min(i64::MAX as u64) as i64)),
+    }
+}
+
+/// A batch of subagents in one status, most urgent first: stalled, then
+/// blocked on you, working, failed, done. `None` while nothing has started.
+pub(super) fn children_badge(views: &[ChildView]) -> Option<StatusBadge> {
+    let count = |f: &dyn Fn(&ChildView) -> bool| views.iter().filter(|v| f(v)).count();
+    let stalled = count(&|v| v.stalled);
+    let blocked = count(&|v| v.kind == StatusKind::NeedsYou);
+    let working = count(&|v| v.kind == StatusKind::Working);
+    let failed = count(&|v| v.kind == StatusKind::Failed && !v.stalled);
+    let done = count(&|v| v.kind == StatusKind::Done);
+    let label = |n: usize, word: &str| {
+        if views.len() == 1 {
+            let mut w = word.to_owned();
+            if let Some(first) = w.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+            w
+        } else {
+            format!("{n} {word}")
+        }
+    };
+    if stalled > 0 {
+        let word = if views.len() == 1 {
+            views.iter().find(|v| v.stalled).map(|v| v.word.clone())
+        } else {
+            None
+        };
+        return Some(
+            StatusBadge::new(stalled_kind())
+                .label(word.unwrap_or_else(|| format!("{stalled} not responding"))),
+        );
+    }
+    if blocked > 0 {
+        return Some(StatusBadge::new(StatusKind::NeedsYou).label(label(blocked, "need you")));
+    }
+    if working > 0 {
+        return Some(StatusBadge::new(StatusKind::Working).label(label(working, "working")));
+    }
+    if failed > 0 {
+        return Some(StatusBadge::new(StatusKind::Failed).label(label(failed, "failed")));
+    }
+    (done > 0 && done == views.len()).then(|| StatusBadge::new(StatusKind::Done))
+}
+
+/// A child row's name and its quieter context, never repeating the title
+/// of the delegation it sits under: then it is named by role or model.
+pub(super) fn child_names(child: &ChildAgent, parent_title: Option<&str>) -> (String, String) {
+    let same = |a: &str| {
+        parent_title.is_some_and(|t| !a.is_empty() && t.trim().eq_ignore_ascii_case(a.trim()))
+    };
+    let model = model_name(&child.model);
+    let role = [child.agent_type.as_str(), child.label.as_str()]
+        .into_iter()
+        .find(|r| !r.is_empty() && !same(r) && *r != child.description)
+        .unwrap_or("")
+        .to_owned();
+    let task = if same(&child.description) {
+        ""
+    } else {
+        child.description.as_str()
+    };
+    let primary = [task, role.as_str(), model.as_str()]
+        .into_iter()
+        .find(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| "Agent".into());
+    let context = [role.as_str(), model.as_str()]
+        .into_iter()
+        .filter(|s| !s.is_empty() && *s != primary)
+        .collect::<Vec<_>>()
+        .join(" · ");
+    (primary, context)
+}
+
+/// Diagnostics a child row keeps for hover: raw model id, tools, tokens,
+/// cost and where it runs.
+fn child_details(child: &ChildAgent, managed: bool) -> String {
+    let mut parts = vec![if managed {
+        "Agent session started by Workspacer".to_owned()
+    } else {
+        "Subagent run by the agent's own tools".to_owned()
+    }];
+    if !child.model.is_empty() {
+        parts.push(child.model.clone());
+    }
+    if let Some(tools) = child.telemetry.tool_calls {
+        parts.push(plural(tools as usize, "tool call", "tool calls"));
+    }
+    if let Some(tokens) = child.telemetry.tokens {
+        parts.push(format!("{} tokens", compact_count(tokens)));
+    }
+    if let Some(cost) = child.telemetry.cost_usd {
+        parts.push(format!("${cost:.3}"));
+    }
+    parts.join(" · ")
 }
 
 fn compact_count(value: u64) -> String {
@@ -1791,13 +2163,16 @@ fn compact_count(value: u64) -> String {
 }
 
 impl Workspace {
-    /// Subagents under their dispatch: one row each with the shared
-    /// anatomy (icon, title, status, one meta line, open on the right).
+    /// Subagents as event rows (r2-transcript): a status glyph, the task
+    /// (or role/model under a delegation that already names it), what it
+    /// is doing now, and its time or state on the right. A stalled agent
+    /// offers Check and Stop in place.
     pub(super) fn render_children_v2(
         &mut self,
         parent: &str,
         key: &str,
         children: &[ChildAgent],
+        parent_title: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -1805,7 +2180,7 @@ impl Workspace {
         let t = p.tokens;
         let now = timing::now_ms();
         let connected = self.view.connected;
-        let mut body = div().flex().flex_col().gap(px(t.space.xxs));
+        let mut body = div().flex().flex_col();
         for child in children {
             let child_key = format!("{key}-child-{}", child.id);
             let managed = child.session_id.is_some();
@@ -1824,200 +2199,150 @@ impl Workspace {
                         .is_some_and(|items| items.iter().any(|s| s["id"] == child.id))
                 });
             let enabled = connected && known;
-            let (kind, word) = child_status(&child.status, connected);
-            let label = if child.description.is_empty() || child.description == child.label {
-                child.label.clone()
-            } else {
-                format!("{} · {}", child.label, child.description)
-            };
-            let label = if label.is_empty() {
-                child.id.clone()
-            } else {
-                label
-            };
-            let mut meta = Vec::new();
-            if !child.model.is_empty() {
-                meta.push(child.model.clone());
-            }
-            if let Some(tools) = child.telemetry.tool_calls {
-                let noun = if tools == 1 { "tool" } else { "tools" };
-                meta.push(format!("{} {noun}", compact_count(tools)));
-            }
-            if let Some(tokens) = child.telemetry.tokens {
-                meta.push(format!("{} tokens", compact_count(tokens)));
-            }
-            if let Some(cost) = child.telemetry.cost_usd {
-                meta.push(format!("${cost:.3}"));
-            }
-            let clock = child_clock(child, connected, now);
-            let stale = clock.as_ref().is_some_and(|(_, stale)| *stale);
-            let last_tool = (!child.telemetry.last_tool_name.is_empty()).then(|| {
-                if child.telemetry.last_tool_summary.is_empty() {
-                    child.telemetry.last_tool_name.clone()
-                } else {
-                    format!(
-                        "{} {}",
-                        child.telemetry.last_tool_name, child.telemetry.last_tool_summary
-                    )
-                }
-            });
-            let owner = parent.to_owned();
-            let child_id = child.id.clone();
-            let target = child.session_id.clone();
-            let title = label.clone();
-            let source = if managed {
-                "Workspacer child session"
-            } else {
-                "Provider-native subagent"
-            };
-            let row = chrome::interactive_control(
-                div().id(SharedString::from(format!("{child_key}-open"))),
-                p,
-                enabled,
-            )
-            .debug_selector(move || {
-                if managed {
-                    "open-spawned-session".into()
-                } else {
-                    "open-provider-subagent".into()
-                }
-            })
-            .group("child-row")
-            .ml(px(-t.space.sm))
-            .px(px(t.space.sm))
-            .py(px(t.space.sm))
-            .rounded(px(t.radius.control))
-            .flex()
-            .items_start()
-            .gap(px(t.space.md))
-            .when(enabled, |d| {
-                d.cursor_pointer()
-                    .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.view.selected.as_deref() != Some(&owner) || !this.view.connected {
-                            return;
-                        }
-                        if let Some(id) = &target {
-                            if this.view.sessions.iter().any(|s| {
-                                &s.id == id
-                                    && (s.parent_session_id.is_empty()
-                                        || s.parent_session_id == owner)
-                            }) {
-                                this.command(Command::Select(id.clone()), cx);
-                            }
-                        } else {
-                            this.child_ui.page = 0;
-                            this.child_ui.closed = None;
-                            this.request(
-                                wks_native::features::Request::SubagentHistory {
-                                    session: owner.clone(),
-                                    agent: child_id.clone(),
-                                },
-                                cx,
-                            );
-                        }
-                    }))
-            })
-            .child(
-                div()
-                    .id(SharedString::from(format!("{child_key}-source")))
-                    .debug_selector(move || {
-                        if managed {
-                            "workspacer-child-icon".into()
-                        } else {
-                            "provider-child-icon".into()
-                        }
-                    })
-                    .size(px(t.layout.avatar))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(t.radius.control))
-                    .bg(primitives::tonal(&p, t.wash.rest))
-                    .text_color(rgb(p.roles.text_secondary))
-                    .tooltip(primitives::tooltip_view(source, None, &p))
-                    .child(
-                        Icon::new(if managed {
-                            IconName::Bot
-                        } else {
-                            IconName::SquareTerminal
-                        })
-                        .size(px(t.icon.sm)),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.xxs))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(t.space.md))
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(t.text.body))
-                                    .font_weight(FontWeight(t.weight.medium))
-                                    .text_color(rgb(p.text))
-                                    .child(label),
-                            )
-                            .child(StatusBadge::new(kind).label(word).render(&p)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(t.space.sm))
-                            .min_w_0()
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_tertiary))
-                            .when(!meta.is_empty(), |d| {
-                                d.child(div().min_w_0().truncate().child(meta.join(" · ")))
-                            })
-                            .when_some(clock, |d, (clock, stale)| {
-                                d.child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .when(stale, |d| d.text_color(rgb(p.warning)))
-                                        .child(if meta.is_empty() {
-                                            clock
-                                        } else {
-                                            format!("· {clock}")
-                                        }),
-                                )
-                            }),
-                    )
-                    .when_some(last_tool.filter(|_| !stale), |d, tool| {
-                        d.child(
-                            div()
-                                .min_w_0()
-                                .truncate()
-                                .font_family(super::mono_font())
-                                .text_size(px(t.text.meta))
-                                .text_color(rgb(p.roles.text_secondary))
-                                .child(tool),
+            let view = child_view(child, connected, now);
+            let (primary, context) = child_names(child, parent_title);
+            let title = primary.clone();
+            let last_tool = (!child.telemetry.last_tool_name.is_empty()
+                && view.kind == StatusKind::Working)
+                .then(|| {
+                    if child.telemetry.last_tool_summary.is_empty() {
+                        child.telemetry.last_tool_name.clone()
+                    } else {
+                        format!(
+                            "{} {}",
+                            child.telemetry.last_tool_name, child.telemetry.last_tool_summary
                         )
-                    }),
-            )
-            .child(
+                    }
+                });
+            let mut event = EventRow::new(
+                format!("{child_key}-open"),
+                Glyph::Status(view.kind),
+                primary,
+            );
+            event.quiet = true;
+            event.target = (!context.is_empty()).then(|| context.into());
+            event.summary = last_tool.map(Into::into);
+            event.end = match view.kind {
+                _ if view.stalled => {
+                    EventEnd::Badge(StatusBadge::new(view.kind).label(view.word.clone()))
+                }
+                StatusKind::Failed | StatusKind::NeedsYou => {
+                    EventEnd::Badge(StatusBadge::new(view.kind).label(view.word.clone()))
+                }
+                StatusKind::Working | StatusKind::Done => view
+                    .clock
+                    .clone()
+                    .map_or(EventEnd::Nothing, EventEnd::Quiet),
+                _ => EventEnd::Quiet(view.word.clone()),
+            };
+            let open = {
+                let owner = parent.to_owned();
+                let child_id = child.id.clone();
+                let target = child.session_id.clone();
+                move |this: &mut Self, cx: &mut Context<Self>| {
+                    if this.view.selected.as_deref() != Some(&owner) || !this.view.connected {
+                        return;
+                    }
+                    if let Some(id) = &target {
+                        if this.view.sessions.iter().any(|s| {
+                            &s.id == id
+                                && (s.parent_session_id.is_empty() || s.parent_session_id == owner)
+                        }) {
+                            this.command(Command::Select(id.clone()), cx);
+                        }
+                    } else {
+                        this.child_ui.page = 0;
+                        this.child_ui.closed = None;
+                        this.request(
+                            wks_native::features::Request::SubagentHistory {
+                                session: owner.clone(),
+                                agent: child_id.clone(),
+                            },
+                            cx,
+                        );
+                    }
+                }
+            };
+            let open = std::rc::Rc::new(open);
+            let actions = view.stalled.then(|| {
+                let check = open.clone();
+                let stop_target = child.session_id.clone();
                 div()
-                    .flex_shrink_0()
-                    .h(px(t.layout.avatar))
                     .flex()
                     .items_center()
-                    .text_color(rgb(p.roles.text_tertiary))
-                    .when(enabled, |d| {
-                        d.opacity(0.).group_hover("child-row", |s| s.opacity(1.))
+                    .gap(px(t.space.xs))
+                    .flex_shrink_0()
+                    .child(
+                        primitives::button(
+                            SharedString::from(format!("{child_key}-check")),
+                            "Check",
+                            None,
+                            ButtonVariant::Secondary,
+                            ButtonSize::Small,
+                            enabled,
+                            &p,
+                        )
+                        .debug_selector(|| "stalled-child-check".into())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            check(this, cx)
+                        })),
+                    )
+                    .when_some(stop_target, |d, id| {
+                        d.child(
+                            primitives::button(
+                                SharedString::from(format!("{child_key}-stop")),
+                                "Stop",
+                                None,
+                                ButtonVariant::DangerGhost,
+                                ButtonSize::Small,
+                                connected,
+                                &p,
+                            )
+                            .debug_selector(|| "stalled-child-stop".into())
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.command(
+                                        Command::Act {
+                                            session: id.clone(),
+                                            action: Action::Stop,
+                                        },
+                                        cx,
+                                    );
+                                },
+                            )),
+                        )
                     })
-                    .child(Icon::new(IconName::ArrowRight).size(px(t.icon.sm))),
-            );
+            });
+            event
+                .trailing
+                .extend(actions.map(IntoElement::into_any_element));
+            let row = chrome::interactive_control(event_row(event, &p), p, enabled)
+                .px(px(t.space.sm - t.stroke.focus))
+                .debug_selector(move || {
+                    if managed {
+                        "open-spawned-session".into()
+                    } else {
+                        "open-provider-subagent".into()
+                    }
+                })
+                .tooltip(primitives::tooltip_view(
+                    child_details(child, managed),
+                    None,
+                    &p,
+                ))
+                .child(div().debug_selector(move || {
+                    if managed {
+                        "workspacer-child-icon".into()
+                    } else {
+                        "provider-child-icon".into()
+                    }
+                }))
+                .when(enabled, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| open(this, cx)))
+                })
+                .when(!enabled, |d| d.cursor_default());
             let mut item = div()
                 .id(SharedString::from(child_key.clone()))
                 .debug_selector({
@@ -2026,7 +2351,6 @@ impl Workspace {
                 })
                 .flex()
                 .flex_col()
-                .gap(px(t.space.xs))
                 .child(row);
             if child.session_id.is_none() {
                 item = item.child(
@@ -2038,8 +2362,9 @@ impl Workspace {
         body
     }
 
-    /// A batch of subagents with no dispatch in view: one card, open while
-    /// any works, folded to its head once they have all settled.
+    /// A batch of subagents with no delegation in view (r2-transcript): an
+    /// event row ("3 subagents · 1 working") over their rows, open while any
+    /// works, folded once they have all settled.
     pub(super) fn render_overview_v2(
         &mut self,
         session: &str,
@@ -2051,12 +2376,14 @@ impl Workspace {
         let t = p.tokens;
         let total = children.len();
         let settled = children.iter().all(ChildAgent::settled);
-        let working = children.iter().filter(|c| c.running()).count();
-        let failed = children.iter().filter(|c| c.failed()).count();
         let first = children.first().map(|c| c.id.as_str()).unwrap_or_default();
         let key = format!("overview:{session}:{first}:{settled}");
         let open = self.chat.open.get(&key).copied().unwrap_or(!settled);
-        let tools: u64 = children.iter().filter_map(|c| c.telemetry.tool_calls).sum();
+        let now = timing::now_ms();
+        let views: Vec<ChildView> = children
+            .iter()
+            .map(|c| child_view(c, self.view.connected, now))
+            .collect();
         let span = || {
             let start = children
                 .iter()
@@ -2066,71 +2393,44 @@ impl Workspace {
                 .iter()
                 .filter_map(|c| c.telemetry.completed_at_ms.or(c.telemetry.last_activity_ms))
                 .max()?;
-            (end > start).then(|| format::duration(end - start))
+            (end - start >= 1000).then(|| format::duration(end - start))
         };
-        let status = if failed > 0 && settled {
-            StatusBadge::new(StatusKind::Failed).label(format!("{failed} failed"))
-        } else if settled {
-            StatusBadge::new(StatusKind::Done)
-        } else if working > 0 {
-            StatusBadge::new(StatusKind::Working).label(format!("{working} working"))
-        } else {
-            StatusBadge::new(StatusKind::Queued).label("Waiting")
-        };
-        let mut meta = Vec::new();
-        if tools > 0 {
-            meta.push(format!("{} tools", compact_count(tools)));
-        }
-        if let Some(span) = settled.then(span).flatten() {
-            meta.push(span);
-        }
         let toggle = key.clone();
-        let chevron = div()
-            .id(SharedString::from(format!("{key}-toggle")))
-            .debug_selector(|| "subagent-overview-toggle".into())
-            .size(px(t.layout.icon_button))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(t.radius.control))
-            .cursor_pointer()
-            .text_color(rgb(p.roles.text_tertiary))
-            .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
-            .child(
-                Icon::new(if open {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                })
-                .size(px(t.icon.sm)),
-            )
-            .on_click(
-                cx.listener(move |this, _, _, cx| this.toggle_open(toggle.clone(), !settled, cx)),
-            );
-        let mut head = CardHead::new(plural(total, "subagent", "subagents"))
-            .icon(IconName::Bot)
-            .status(status);
-        if !meta.is_empty() {
-            head = head.meta(meta.join(" · "));
-        }
-        let head = head.action(chevron).render(&p);
+        let mut event = EventRow::new(
+            format!("{key}-toggle"),
+            Glyph::Named(IconName::Bot),
+            plural(total, "subagent", "subagents"),
+        );
+        event.disclosure = Some(open);
+        event.end = match children_badge(&views) {
+            Some(badge) => EventEnd::Badge(badge),
+            None => settled
+                .then(span)
+                .flatten()
+                .map_or(EventEnd::Nothing, EventEnd::Quiet),
+        };
         div()
             .id(SharedString::from(format!("{key}-card")))
             .debug_selector(|| "subagent-overview".into())
-            .mt(px(t.space.md))
             .w_full()
-            .child(transcript_card(&p).child(head).when(open, |d| {
+            .flex()
+            .flex_col()
+            .child(
+                event_row(event, &p)
+                    .debug_selector(|| "subagent-overview-toggle".into())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_open(toggle.clone(), !settled, cx)
+                    })),
+            )
+            .when(open, |d| {
                 d.child(
-                    div()
-                        .pt(px(t.space.sm))
-                        .border_t(px(t.stroke.hairline))
-                        .border_color(rgb(p.border))
-                        .child(self.render_children_v2(session, &key, children, window, cx)),
+                    event_guide(&p)
+                        .pb(px(t.space.xs))
+                        .child(self.render_children_v2(session, &key, children, None, window, cx)),
                 )
-            }))
+            })
     }
 }
-
 // ----- Reasoning ---------------------------------------------------------------
 
 impl Workspace {
@@ -2183,7 +2483,7 @@ impl Workspace {
                     .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
                     .child(
                         div()
-                            .size(px(t.layout.status_box))
+                            .size(px(t.transcript().event_icon))
                             .flex_shrink_0()
                             .flex()
                             .items_center()
@@ -2230,8 +2530,10 @@ impl Workspace {
                         .debug_selector(|| "thinking-body".into())
                         .mt(px(t.space.xxs))
                         .mb(px(t.space.sm))
-                        .ml(px(t.layout.status_box / 2.))
-                        .pl(px(t.layout.status_box / 2. + t.space.md - t.stroke.hairline))
+                        .ml(px(t.transcript().event_icon / 2.))
+                        .pl(px(
+                            t.transcript().event_icon / 2. + t.space.md - t.stroke.hairline
+                        ))
                         .border_l(px(t.stroke.hairline))
                         .border_color(rgb(p.border))
                         .child(
@@ -2330,25 +2632,72 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_subagent_reads_lost_heartbeat_not_a_growing_timer() {
+    fn a_stalled_subagent_is_a_fault_not_working() {
         let now = 1_000_000_000_000;
         let mut child = ChildAgent {
             status: "running".into(),
             ..Default::default()
         };
         child.telemetry.started_at_ms = Some(now - 35 * 86_400_000);
-        child.telemetry.last_activity_ms = Some(now - 3 * 3_600_000);
+        child.telemetry.last_activity_ms = Some(now - 7 * 60_000);
+        let view = child_view(&child, true, now);
+        assert!(view.stalled);
+        assert_eq!(view.kind, stalled_kind());
+        assert_ne!(view.kind, StatusKind::Working);
+        assert_eq!(view.word, "Not responding · 7m");
+        assert_eq!(view.clock, None);
+        // The batch says so too, before anything else.
+        let badge = children_badge(std::slice::from_ref(&view)).unwrap();
+        assert_eq!(badge.kind, stalled_kind());
         assert_eq!(
-            child_clock(&child, true, now),
-            Some((format::LOST_HEARTBEAT.to_owned(), true))
+            badge.label.as_ref().map(|l| l.as_ref()),
+            Some("Not responding · 7m")
         );
         // A live one shows its humanised duration.
         child.telemetry.started_at_ms = Some(now - 125_000);
         child.telemetry.last_activity_ms = Some(now - 1_000);
+        let view = child_view(&child, true, now);
+        assert_eq!((view.kind, view.stalled), (StatusKind::Working, false));
+        assert_eq!(view.clock.as_deref(), Some("2m 05s"));
+        // Offline is never a fault on the agent's part.
+        assert!(!child_view(&child, false, now + 3_600_000).stalled);
+    }
+
+    #[test]
+    fn child_rows_never_repeat_their_delegations_title() {
+        let child = ChildAgent {
+            label: "Session creation review".into(),
+            description: "Session creation review".into(),
+            model: "gpt-5.6-sol".into(),
+            ..Default::default()
+        };
+        let (primary, context) = child_names(&child, Some("Session creation review"));
+        assert_eq!(primary, "GPT-5.6 Sol");
+        assert_eq!(context, "");
+        let explore = ChildAgent {
+            label: "Explore".into(),
+            description: "Audit settings search".into(),
+            model: "claude-haiku-4-5".into(),
+            ..Default::default()
+        };
+        let (primary, context) = child_names(&explore, None);
+        assert_eq!(primary, "Audit settings search");
+        assert_eq!(context, "Explore · Haiku 4.5");
+    }
+
+    #[test]
+    fn events_read_as_verbs_and_groups_as_worked() {
+        assert_eq!(tool_verb("Read", "Read", false), Some("Read"));
+        assert_eq!(tool_verb("Edit", "Edit", true), Some("Editing"));
+        assert_eq!(tool_verb("Bash", "Command", false), Some("Ran"));
         assert_eq!(
-            child_clock(&child, true, now),
-            Some(("2m 05s".into(), false))
+            tool_verb("mcp__fs__write_file", "Edit", false),
+            Some("Wrote")
         );
+        assert_eq!(tool_verb("custom_tool", "Tool", false), None);
+        assert_eq!(work_headline(false, Some(134_000)), "Worked 2m 14s");
+        assert_eq!(work_headline(true, None), "Working");
+        assert_eq!(work_headline(false, Some(300)), "Worked");
     }
 
     #[test]

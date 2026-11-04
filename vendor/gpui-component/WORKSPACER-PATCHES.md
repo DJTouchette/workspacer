@@ -186,3 +186,9 @@ Native interaction polish also patches:
   costs a comparison per visible message instead of a channel send.
 
 Reapply these interaction changes explicitly when upgrading the component.
+- `layout: Option<ProseLayout>`: the native v2 transcript's prose rhythm. A
+  reading `measure` caps the width of top-level paragraphs, headings, lists
+  and quotes while code blocks, tables and rules keep the full view width;
+  `heading_space` adds room above a heading that follows other blocks,
+  `heading_gap` below it, and `heading_rule: false` drops the level 1-2
+  underline. `None` keeps upstream rendering (v1 passes `None`).

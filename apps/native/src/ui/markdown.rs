@@ -131,6 +131,7 @@ impl Workspace {
                 .bg(rgb(p.code_block))
                 .style()
                 .clone(),
+            layout: None,
         }
     }
 }
@@ -383,6 +384,15 @@ impl Workspace {
                 .border_color(rgb(p.roles.card_border))
                 .style()
                 .clone(),
+            // r2-transcript: prose stops at ~80ch while code and tables span
+            // the column; headings get room above and lose the underline.
+            layout: Some(gpui_component::text::ProseLayout {
+                measure: (!document)
+                    .then(|| px(self.settings.text_size as f32 * tt.prose_measure_em)),
+                heading_space: px(tt.heading_space),
+                heading_gap: px(tt.heading_gap),
+                heading_rule: false,
+            }),
         }
     }
 }
