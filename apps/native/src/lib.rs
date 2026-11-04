@@ -38,6 +38,7 @@ pub mod terminal;
 pub mod transcript;
 
 pub mod timing;
+pub mod tokens;
 pub mod tool_preview;
 pub mod ui_requests;
 pub mod updates;

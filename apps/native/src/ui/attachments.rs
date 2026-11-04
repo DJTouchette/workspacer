@@ -176,7 +176,7 @@ impl Workspace {
         cwd: &str,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.view.busy;
         let remove = |this: &Self, ix: usize, cx: &mut Context<Self>| {
             this.icon_button(

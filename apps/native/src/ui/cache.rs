@@ -159,7 +159,7 @@ impl Workspace {
     /// The note above the composer when the selected session's cache has
     /// gone cold and its context is large: what the next message costs.
     pub(super) fn render_cold_note(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let now = now();
         let (session, cache) = self.cold_note_cache(now)?;
         let key = dismissal(session, cache);

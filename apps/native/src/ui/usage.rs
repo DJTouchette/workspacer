@@ -222,7 +222,7 @@ impl Workspace {
         if strip.is_none() && notes.is_empty() {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         Some(
             // A hairline above, like the footer's: the session list scrolls
             // under this strip, and without an edge a half-clipped row reads
@@ -289,7 +289,7 @@ impl Workspace {
         accounts: Vec<Account>,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let error = self.view.usage_error.clone();
         if accounts.is_empty() && error.is_none() {
             return None;
@@ -394,7 +394,7 @@ impl Workspace {
         if !self.usage_open {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (accounts, now) = self.usage_accounts().unwrap_or_default();
         let updated = self
             .view

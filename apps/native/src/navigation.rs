@@ -94,6 +94,9 @@ pub struct Settings {
     /// Wide windows float the session's tools at the chat's right edge
     /// instead of revealing them in the title capsule.
     pub tool_rail: bool,
+    /// Draw the redesign preview (`Design::V2` tokens and palettes) instead
+    /// of the shipped look. Off by default; `--design-v2` forces it for a run.
+    pub design_v2: bool,
     /// Client-local session organization, scoped by hub identity.
     pub names: BTreeMap<String, BTreeMap<String, String>>,
     pub archived: BTreeMap<String, Vec<String>>,
@@ -121,7 +124,7 @@ impl Default for Settings {
             twelve_hour_clock: false,
             merge_turn_tools: false,
             interface_scale: 100,
-            sidebar_width: 304.,
+            sidebar_width: crate::tokens::Tokens::V1.layout.sidebar_width,
             window_layout: WindowLayout::Auto,
             portrait_dock_share: PORTRAIT_DOCK_SHARE,
             vim_navigation: true,
@@ -131,6 +134,7 @@ impl Default for Settings {
             review_panel: true,
             reduce_motion: false,
             tool_rail: true,
+            design_v2: false,
             names: BTreeMap::new(),
             archived: BTreeMap::new(),
             cleared_children: BTreeMap::new(),
@@ -155,6 +159,10 @@ impl Settings {
         } else {
             Permission::Ask
         }
+    }
+    /// The design these settings select.
+    pub fn design(&self) -> crate::tokens::Design {
+        crate::tokens::Design::from_flag(self.design_v2)
     }
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         match std::fs::read(path) {
@@ -321,6 +329,16 @@ mod tests {
         settings.add_project("hub-b", "C:\\work\\app").unwrap();
         assert_eq!(settings.bookmarks("hub-a"), ["/work/app"]);
         assert_eq!(settings.bookmarks("hub-b"), ["C:\\work\\app"]);
+    }
+    #[test]
+    fn design_v2_defaults_off_and_reads_as_smoke_seeds_it() {
+        use crate::tokens::Design;
+        assert!(!Settings::default().design_v2);
+        let old: Settings = serde_json::from_str(r#"{"vim_navigation":false}"#).unwrap();
+        assert_eq!(old.design(), Design::V1);
+        // scripts/smoke.py `--setting design_v2=true` writes exactly this.
+        let seeded: Settings = serde_json::from_str(r#"{"design_v2":true}"#).unwrap();
+        assert_eq!(seeded.design(), Design::V2);
     }
     #[test]
     fn settings_defaults_and_persistence() {

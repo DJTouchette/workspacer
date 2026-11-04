@@ -156,7 +156,7 @@ impl Workspace {
         on_pick: impl Fn(&mut Self, T, &mut Window, &mut Context<Self>) + Clone + 'static,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .flex_shrink_0()
             .flex()
@@ -200,7 +200,7 @@ impl Workspace {
 
     fn settings_entries(&self, cx: &mut Context<Self>) -> Vec<Entry> {
         use SettingsSection as S;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mut entries = Vec::new();
 
         let themes = div()
@@ -216,7 +216,7 @@ impl Workspace {
                     .flex_wrap()
                     .gap_2()
                     .children(Appearance::ALL.into_iter().map(|appearance| {
-                        let colors = appearance.palette();
+                        let colors = appearance.palette_for(self.design());
                         let active = self.appearance == appearance;
                         chrome::interactive_control(div().id(appearance.label()), p, true)
                             .debug_selector(move || format!("theme-{}", appearance.label()))
@@ -391,6 +391,22 @@ impl Workspace {
                     this.settings.tool_rail = *checked;
                     this.save_settings(cx);
                 })),
+        ));
+        entries.push(Entry::new(
+            S::Appearance,
+            "design-v2",
+            "New design (preview)",
+            "Try the redesigned interface while it is being built. Every theme works with it; switch it off to return to the current look.",
+            "new design redesign preview v2 beta experimental look style tokens",
+            Layout::Row,
+            div().debug_selector(|| "design-v2-switch".into()).child(
+                Switch::new("settings-design-v2")
+                    .checked(self.design().is_v2())
+                    .tooltip("New design (preview)")
+                    .on_click(cx.listener(|this, checked, window, cx| {
+                        this.set_design_v2(*checked, window, cx);
+                    })),
+            ),
         ));
 
         entries.push(Entry::new(
@@ -853,7 +869,7 @@ impl Workspace {
     }
 
     fn render_child_access(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self.view.requests.get("child-access");
         let pending = state.is_some_and(|s| s.loading);
         let can_write = self.view.connected && !self.demo && !pending;
@@ -913,7 +929,7 @@ impl Workspace {
     }
 
     fn render_job_access(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self.view.requests.get("job-access");
         let pending = state.is_some_and(|s| s.loading);
         let can_write = self.view.connected && !self.demo && !pending;
@@ -973,7 +989,7 @@ impl Workspace {
     /// The `agents.ignoreExternalMcp` switch and its status line; also shown
     /// on the Session page's MCP card.
     pub(super) fn render_external_mcp(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self.view.requests.get("external-mcp");
         let pending = state.is_some_and(|s| s.loading);
         let can_write = self.view.connected && !self.demo && !pending;
@@ -1036,7 +1052,7 @@ impl Workspace {
     }
 
     fn render_entry(&self, entry: Entry, first: bool) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let id = entry.id;
         let text = div()
             .flex_1()
@@ -1073,7 +1089,7 @@ impl Workspace {
     }
 
     fn settings_card(&self, entries: Vec<Entry>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .rounded(px(p.panel_radius))
             .border_1()
@@ -1089,7 +1105,7 @@ impl Workspace {
     }
 
     pub(super) fn render_settings(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let short = window.viewport_size().height < px(620.);
         // Beside a wide sidebar the category rail shrinks to icons, so the
         // preferences themselves keep a readable measure.

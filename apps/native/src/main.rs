@@ -10,7 +10,7 @@ use clap::Parser;
 use gpui::{AppContext, Application, Bounds, WindowBounds, WindowOptions, px, size};
 use gpui_component::Root;
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
-use wks_native::appearance::{Appearance, preference_path};
+use wks_native::appearance::{Appearance, Design, preference_path};
 use wks_native::navigation::{Settings, settings_path};
 use wks_native::{
     bus::Config,
@@ -58,6 +58,10 @@ struct Args {
     /// Pin initial conversation selection; New session explicitly leaves the pin.
     #[arg(long)]
     session: Option<String>,
+    /// Draw the redesign preview for this run without saving the choice,
+    /// as Settings → Appearance → New design (preview) does.
+    #[arg(long)]
+    design_v2: bool,
 }
 
 fn token_path() -> Option<PathBuf> {
@@ -341,6 +345,10 @@ fn main() -> Result<()> {
             url.path()
         )
     };
+    // Read before the first configure_theme so the first frame already
+    // draws the chosen design.
+    let forced_design = args.design_v2.then_some(Design::V2);
+    let design = forced_design.unwrap_or_else(|| settings.design());
     let keep_running = Rc::new(std::cell::Cell::new(
         args.keep_running || settings.keep_running,
     ));
@@ -355,7 +363,7 @@ fn main() -> Result<()> {
         stop_backend_on_quit(quitting_backend, cx);
         quit_on_termination_signals(cx);
         gpui_component::init(cx);
-        ui::configure_theme(appearance, None, cx);
+        ui::configure_theme(appearance, design, None, cx);
         ui::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
         let main = cx
@@ -396,6 +404,7 @@ fn main() -> Result<()> {
                         let mut view = ui::Workspace::new(controller, args.demo, window, cx);
                         view.configure_settings(settings, settings_path, project_scope, window, cx);
                         view.configure_local(local_requested, keep_running.clone());
+                        view.force_design(forced_design);
                         view.set_appearance(appearance, window, cx);
                         view.open_session(args.session);
                         view.start_update_checks(cx);

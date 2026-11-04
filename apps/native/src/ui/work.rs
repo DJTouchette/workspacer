@@ -72,7 +72,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let tool = row.tool.as_ref().expect("tool row");
         let session = self.chat_owner();
         let identity = tools::identity(row);
@@ -246,7 +246,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let key = row.key;
         div()
             .debug_selector(move || format!("work-note-{key}"))
@@ -271,7 +271,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let view = self.view.clone();
         let rows = &view.transcript.rows;
         let session = self.chat_owner();

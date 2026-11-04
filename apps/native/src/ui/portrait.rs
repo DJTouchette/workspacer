@@ -22,8 +22,8 @@ const MIN_CHAT_ABOVE: f32 = 280.;
 /// fit both, the panel is a sheet as in narrow windows.
 const MIN_DOCK_BELOW: f32 = 220.;
 /// The rail, and the gap between it and the flyout.
-pub(super) const RAIL_WIDTH: f32 = 56.;
-const FLYOUT_GAP: f32 = 6.;
+pub(super) const RAIL_WIDTH: f32 = Tokens::V1.layout.rail_width;
+const FLYOUT_GAP: f32 = Tokens::V1.layout.flyout_gap;
 
 /// How the rail's flyout was opened, which decides how it closes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,7 +144,7 @@ impl Workspace {
         panel: impl IntoElement,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .id(id)
             .debug_selector(move || id.into())
@@ -396,7 +396,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let peek = self.layout.peek.filter(|_| self.sidebar_collapsed)?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let left = px(8. + RAIL_WIDTH + FLYOUT_GAP);
         let panel = self.render_sidebar_panel(window, cx);
         let flyout = div()

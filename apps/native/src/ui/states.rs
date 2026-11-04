@@ -75,7 +75,7 @@ impl Workspace {
     }
 
     pub(super) fn render_connection_banner(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let copy = self.connection_copy();
         div()
             .debug_selector(|| "connection-banner".into())
@@ -113,7 +113,7 @@ impl Workspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let copy = self.connection_copy();
         let conversation_error =
             self.view.connected && self.view.notice.starts_with("Conversation unavailable:");

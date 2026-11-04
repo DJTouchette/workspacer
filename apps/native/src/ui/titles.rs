@@ -213,7 +213,7 @@ impl Workspace {
     }
 
     pub(super) fn render_title_model(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let writable = self.titles_writable();
         let pinned = self
             .title_value()

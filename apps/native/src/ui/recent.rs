@@ -405,7 +405,7 @@ impl Workspace {
 
     /// The page's items below its header: toolbar, status, groups, footer.
     pub(super) fn render_recent(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let page = self.recent_page(cx);
         // Until the first answer there is nothing to call empty.
         let loading = self.view.requests.get("recent").is_none_or(|s| s.loading);
@@ -616,7 +616,7 @@ impl Workspace {
     /// "142 sessions in 12 projects", or how many a search found, with
     /// fold-all and clear-search actions.
     fn render_recent_summary(&self, page: &RecentPage, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let plural =
             |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
         let groups = plural(page.groups.len(), "project", "projects");
@@ -704,7 +704,7 @@ impl Workspace {
     /// Nothing to list: a search that found nothing, an empty Hidden
     /// filter, or a hub with no sessions yet. Says which, and the way out.
     fn render_recent_empty(&self, page: &RecentPage, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (icon, title, body) = match (page.searching, self.extras.show_archived) {
             (true, _) => (
                 IconName::Search,
@@ -779,7 +779,7 @@ impl Workspace {
         searching: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let key = group.key.clone();
         let count = if searching {
             format!("{} of {}", group.entries.len(), group.total)
@@ -866,7 +866,7 @@ impl Workspace {
         now: i64,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let s = &entry.session;
         let open = s.clone();
         let resume = s.clone();
@@ -1091,7 +1091,7 @@ impl Workspace {
         enabled: bool,
         danger: bool,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (wash, ink) = if danger {
             (gpui::Hsla::from(rgb(p.error)).opacity(0.12), p.error)
         } else {

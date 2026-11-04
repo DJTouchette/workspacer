@@ -233,7 +233,7 @@ impl Workspace {
         interactive: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let message = Elicitation {
             server: server.to_owned(),
             kind: Kind::Url(url.to_owned()),
@@ -426,7 +426,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let list = session
             .questions
             .as_ref()
@@ -736,7 +736,7 @@ impl Workspace {
         children: &mut Vec<AnyElement>,
         focused: &mut Option<usize>,
     ) {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let multiple = q["multiSelect"].as_bool().unwrap_or(false);
         let options = q["options"].as_array().cloned().unwrap_or_default();
         let header = q["header"]
@@ -898,7 +898,7 @@ impl Workspace {
         focus: Option<&FocusHandle>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let label = option["label"]
             .as_str()
             .or(option.as_str())

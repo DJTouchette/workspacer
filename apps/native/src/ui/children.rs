@@ -154,7 +154,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mut body = div()
             .ml_3()
             .pl_3()
@@ -411,7 +411,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(state)=self.view.requests.get("subagent-history").filter(|s|matches!(&s.request,Request::SubagentHistory{session,agent:target} if session==parent && target==agent)).cloned() else{return div().into_any_element();};
         if self.child_ui.closed == Some(state.number) {
             return div()
@@ -637,7 +637,7 @@ impl Workspace {
     /// subagent's title and model, and refresh.
     pub(super) fn render_child_title_bar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let (parent, child) = self.viewed_child()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let title = Self::child_title(child.as_ref());
         let status = child
             .as_ref()
@@ -736,7 +736,7 @@ impl Workspace {
     /// Stands in for the composer: provider-native subagents take no input.
     pub(super) fn render_child_bar(&self, cx: &mut Context<Self>) -> Option<Div> {
         let (_, child) = self.viewed_child()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let running = child.as_ref().is_some_and(ChildAgent::running);
         Some(
             div()
@@ -804,7 +804,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let total = children.len();
         let settled = children.iter().all(ChildAgent::settled);
         let working = children.iter().filter(|c| c.running()).count();

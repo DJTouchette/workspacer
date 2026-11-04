@@ -18,6 +18,7 @@ mod cold_cache;
 mod composer;
 mod connection;
 mod controls;
+mod design;
 mod history_screen;
 mod history_store;
 mod hosts_view;
@@ -198,7 +199,7 @@ fn accent_border(
     bounds: gpui::Bounds<gpui::Pixels>,
 ) -> bool {
     let accent: gpui::Hsla =
-        rgb(workspace.read_with(visual, |this, _| this.appearance.palette().accent)).into();
+        rgb(workspace.read_with(visual, |this, _| this.palette().accent)).into();
     let near = |a: gpui::Pixels, b: gpui::Pixels| (a - b).abs() < px(0.5);
     visual.update(|window, _| {
         window.rendered_borders().into_iter().any(|(quad, color)| {

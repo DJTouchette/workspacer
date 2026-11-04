@@ -271,7 +271,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let session = self.view.selected.clone().unwrap_or_default();
         let key = card_key(&session, &row.item_id);
         let live = live && !row.item_id.is_empty() && self.view.child.is_none();

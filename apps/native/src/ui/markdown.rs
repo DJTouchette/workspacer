@@ -13,7 +13,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mut style = self.markdown_style(self.link_handler(cx), false, cx);
         let (hover, menu) = super::link_menu::link_events(cx.entity().downgrade(), None);
         style.on_link_hover = Some(hover);
@@ -66,7 +66,7 @@ impl Workspace {
         document: bool,
         cx: &App,
     ) -> TextViewStyle {
-        let p = self.appearance.palette();
+        let p = self.palette();
         TextViewStyle {
             on_link_click: Some(on_link_click),
             // Chat paths resolve against the session's cwd on click. A
@@ -131,7 +131,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let copy = raw.to_owned();
         let mut card = div()
             .id(SharedString::from(format!("result-{key}")))

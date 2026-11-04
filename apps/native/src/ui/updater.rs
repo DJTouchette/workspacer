@@ -170,7 +170,7 @@ impl Workspace {
 
     /// Settings → About: channel, versions, status and actions.
     pub(super) fn render_update_card(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let installed = wks_native::features::installed_version();
         let channel = wks_native::updates::Channel::of(&installed);
         let checking = self.view.requests.get("updates").is_some_and(|s| s.loading);

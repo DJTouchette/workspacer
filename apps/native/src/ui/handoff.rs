@@ -249,7 +249,7 @@ impl Workspace {
     }
 
     pub(super) fn render_handoff(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(source) = self.selected_session().cloned() else {
             return div().child(chrome::notice_line(
                 "Choose a session to continue.",

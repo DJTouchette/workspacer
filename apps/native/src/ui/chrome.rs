@@ -160,20 +160,23 @@ pub(super) fn brand_badge(provider: &str, name: String, p: Palette, size: f32) -
 
 /// Native type scale for chrome outside the conversation. Chat prose follows
 /// the reader's text-size setting instead; these keep pages consistent.
+/// The v1 (shipped) values of `Tokens::text`: v2 styles read
+/// `p.tokens.text.*` instead, so the redesign can retune them.
 pub(super) mod scale {
+    use wks_native::tokens::Tokens;
     /// Page titles (Settings, Projects, Changes…); `TITLE_SHORT` in short windows.
-    pub const TITLE: f32 = 22.;
-    pub const TITLE_SHORT: f32 = 18.;
+    pub const TITLE: f32 = Tokens::V1.text.title;
+    pub const TITLE_SHORT: f32 = Tokens::V1.text.title_short;
     /// Card and section headings.
-    pub const HEADING: f32 = 15.;
+    pub const HEADING: f32 = Tokens::V1.text.heading;
     /// Body copy and control labels on pages.
-    pub const BODY: f32 = 13.;
+    pub const BODY: f32 = Tokens::V1.text.body;
     /// Descriptions, metadata and notices.
-    pub const META: f32 = 12.;
+    pub const META: f32 = Tokens::V1.text.meta;
     /// Captions, chips and hints.
-    pub const CAPTION: f32 = 11.;
+    pub const CAPTION: f32 = Tokens::V1.text.caption;
     /// Uppercase overlines.
-    pub const OVERLINE: f32 = 10.;
+    pub const OVERLINE: f32 = Tokens::V1.text.overline;
 }
 
 /// The shared raised surface for page content: settings groups, launch
@@ -389,7 +392,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let compact = unzoom(window.viewport_size().height) < 300.;
         let omitted = if self.view.transcript.omitted && !self.view.transcript.has_older {
             OMITTED_NOTICE
@@ -861,7 +864,7 @@ impl Workspace {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .debug_selector(move || format!("island-notice-{slot}"))
             .flex_shrink_0()
@@ -904,7 +907,7 @@ impl Workspace {
         session: Option<&Session>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .id("title-bar")
             .debug_selector(|| "title-bar".into())
@@ -1108,7 +1111,7 @@ impl Workspace {
                 )
                 .debug_selector(|| "open-terminal".into())
                 .when(self.terminal.open, |d| {
-                    d.text_color(rgb(self.appearance.palette().accent))
+                    d.text_color(rgb(self.palette().accent))
                 })
                 .when(selected, |d| {
                     d.on_click(cx.listener(move |this, event, window, cx| {
@@ -1196,7 +1199,7 @@ impl Workspace {
         icon: impl Into<Icon>,
         enabled: bool,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         interactive_control(div().id(id.into()), p, enabled)
             .px_2()
             .py_2()
@@ -1226,7 +1229,7 @@ impl Workspace {
         enabled: bool,
         primary: bool,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (bg, fg, hover, pressed) = match (enabled, primary) {
             (false, _) => (p.selected, p.disabled, p.selected, p.selected),
             (true, true) => (p.primary, p.on_primary, p.primary_hover, p.primary_pressed),
@@ -1282,7 +1285,7 @@ impl Workspace {
         enabled: bool,
         primary: bool,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         interactive_control(div().id(id.into()), p, enabled)
             .size(px(28.))
             .rounded_full()
@@ -1318,7 +1321,7 @@ impl Workspace {
         label: impl Into<SharedString>,
         enabled: bool,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let tint = |alpha: f32| gpui::Hsla::from(rgb(p.error)).opacity(alpha);
         interactive_control(div().id(id.into()), p, enabled)
             .px_3()
@@ -1391,7 +1394,7 @@ impl Workspace {
     }
 
     fn page_frame(&self, scroller: Stateful<Div>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .relative()
             .flex_1()
@@ -1413,7 +1416,7 @@ impl Workspace {
         trailing: Option<AnyElement>,
         short: bool,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .debug_selector(|| "page-header".into())
             .w_full()
@@ -1523,7 +1526,7 @@ impl Workspace {
         if !custom_caption() {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         let native = cfg!(target_os = "windows");
         let maximized = window.is_maximized();
         let button = |id: &'static str, icon: IconName, area: gpui::WindowControlArea| {

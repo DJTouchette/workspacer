@@ -162,7 +162,7 @@ impl Workspace {
     pub(super) fn render_link_status(&self) -> Option<Div> {
         let (_, link) = self.links.hovered.as_ref()?;
         let text = links::describe(link)?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         Some(
             div()
                 .absolute()
@@ -194,7 +194,7 @@ impl Workspace {
     /// The open link menu over everything, with a backdrop that closes it.
     pub(super) fn render_link_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let menu = self.links.menu.as_ref()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let local = match &menu.link {
             Link::File(target) => std::path::Path::new(&target.path).exists(),
             _ => false,

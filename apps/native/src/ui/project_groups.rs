@@ -321,7 +321,7 @@ impl Workspace {
     /// The Projects page's projects: a card per group, the New project
     /// action, and the editor when it is open.
     pub(super) fn render_project_groups(&self, compact: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let groups = self.project_groups();
         let can_write = self.view.connected
             && !self.demo
@@ -429,7 +429,7 @@ impl Workspace {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (all, live) = sessions.unwrap_or_default();
         let pending = self.pending_in(&group.folders);
         let folders = group.folders.len();
@@ -649,7 +649,7 @@ impl Workspace {
     }
 
     fn render_group_editor(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(draft) = self.extras.group_draft.clone() else {
             return div();
         };
