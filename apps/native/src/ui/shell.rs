@@ -1419,8 +1419,8 @@ impl Workspace {
                 d.child(
                     div()
                         .absolute()
-                        .top(-px(t.space.xxs))
-                        .right(-px(t.space.xxs))
+                        .top(-px(t.space.xs))
+                        .right(-px(t.space.xs))
                         .debug_selector(|| "scratch-pending-badge".into())
                         .child(primitives::badge(
                             if total > 99 {
