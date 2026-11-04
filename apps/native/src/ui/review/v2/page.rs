@@ -216,10 +216,7 @@ impl Workspace {
                 .child(if files == 0 {
                     "Working tree".to_owned()
                 } else {
-                    format!(
-                        "{files} changed file{}",
-                        if files == 1 { "" } else { "s" }
-                    )
+                    format!("{files} changed file{}", if files == 1 { "" } else { "s" })
                 })
                 .into_any_element()
         };
@@ -383,7 +380,10 @@ impl Workspace {
             GitAction::Unstage { cwd, path }
         };
         let badges = change_badges(change);
-        let (label, intent) = badges.last().copied().unwrap_or(("Modified", Intent::Neutral));
+        let (label, intent) = badges
+            .last()
+            .copied()
+            .unwrap_or(("Modified", Intent::Neutral));
         let clicked = change.path.clone();
         primitives::list_row(("review-change", ix), active, true, &p)
             .debug_selector({
@@ -423,7 +423,11 @@ impl Workspace {
             .child(
                 primitives::icon_button(
                     ("review-stage", ix),
-                    if stage { IconName::Plus } else { IconName::Minus },
+                    if stage {
+                        IconName::Plus
+                    } else {
+                        IconName::Minus
+                    },
                     if stage { "Stage" } else { "Unstage" },
                     ButtonVariant::Ghost,
                     !busy,

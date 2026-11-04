@@ -19,6 +19,8 @@ use gpui_component::tooltip::Tooltip;
 use wks_native::background_tasks::{self as bg, Kind, Log, Source};
 use wks_native::features::Request;
 
+mod v2;
+
 /// Same slide as the file viewer.
 const SLIDE: std::time::Duration = std::time::Duration::from_millis(240);
 /// Characters of one log line drawn (the rest stays in the copy).
@@ -378,6 +380,10 @@ impl Workspace {
         } else {
             bg::running(&session.tasks)
         };
+        if self.design().is_v2() {
+            let total = session.tasks.len().max(session.background_tasks as usize);
+            return Some(self.render_tasks_chip_v2(running, total, cx));
+        }
         let open = self.tasks.open;
         let tip: SharedString = match running {
             0 => "Background tasks".into(),
@@ -414,6 +420,9 @@ impl Workspace {
         now: i64,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if self.design().is_v2() {
+            return self.render_task_row_v2(ix, task, now, cx);
+        }
         let p = self.palette();
         let opens = task.shows_log() || task.subagent_id.is_some();
         let confirming = self.tasks.confirm_stop.as_deref() == Some(task.id.as_str());
@@ -557,6 +566,9 @@ impl Workspace {
     }
 
     fn render_tasks_header(&self, cx: &mut Context<Self>) -> Div {
+        if self.design().is_v2() {
+            return self.render_tasks_header_v2(cx);
+        }
         let p = self.palette();
         let log_title = self.tasks.log.as_ref().map(|log| {
             self.task_session()
@@ -672,58 +684,64 @@ impl Workspace {
             .requests
             .get("task-output")
             .is_some_and(|s| s.loading);
+        let v2 = self.design().is_v2();
+        let t = p.tokens;
+        let meta_v2 = v2.then(|| self.render_task_log_meta_v2(log, task.as_ref(), cx));
         div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .flex()
-                    .items_start()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .text_size(px(chrome::scale::CAPTION))
-                            .text_color(rgb(p.muted))
-                            .when_some(task.as_ref(), |d, task| {
-                                d.child(
-                                    div()
-                                        .debug_selector(|| "task-log-meta".into())
-                                        .truncate()
-                                        .child(meta_line_with(
-                                            task,
-                                            now,
-                                            log.process.is_none() || !running,
-                                        )),
-                                )
-                            })
-                            .when_some(log.process.filter(|_| running), |d, process| {
-                                d.child(
-                                    div()
-                                        .debug_selector(|| "task-log-process".into())
-                                        .truncate()
-                                        .child(process_line(&process)),
-                                )
-                            }),
-                    )
-                    .when(running, |d| {
-                        d.child(self.render_stop_control(
-                            &log.task,
-                            confirming,
-                            "task-log-stop",
-                            0,
-                            cx,
-                        ))
-                    }),
-            )
+            .children(meta_v2)
+            .when(!v2, |d| {
+                d.child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.))
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.muted))
+                                .when_some(task.as_ref(), |d, task| {
+                                    d.child(
+                                        div()
+                                            .debug_selector(|| "task-log-meta".into())
+                                            .truncate()
+                                            .child(meta_line_with(
+                                                task,
+                                                now,
+                                                log.process.is_none() || !running,
+                                            )),
+                                    )
+                                })
+                                .when_some(log.process.filter(|_| running), |d, process| {
+                                    d.child(
+                                        div()
+                                            .debug_selector(|| "task-log-process".into())
+                                            .truncate()
+                                            .child(process_line(&process)),
+                                    )
+                                }),
+                        )
+                        .when(running, |d| {
+                            d.child(self.render_stop_control(
+                                &log.task,
+                                confirming,
+                                "task-log-stop",
+                                0,
+                                cx,
+                            ))
+                        }),
+                )
+            })
             .when_some(
                 task.as_ref()
                     .and_then(|t| Some((t.redirect_file.clone()?, t.has_output))),
@@ -750,6 +768,13 @@ impl Workspace {
                     .mb_2()
                     .rounded(px(p.control_radius))
                     .bg(rgb(p.code_block))
+                    .when(v2, |d| {
+                        d.mx(px(t.space.lg))
+                            .mb(px(t.space.lg))
+                            .rounded(px(t.radius.control))
+                            .border(px(t.stroke.hairline))
+                            .border_color(rgb(p.border))
+                    })
                     .overflow_hidden()
                     .child(if count == 0 {
                         div()
@@ -904,6 +929,8 @@ impl Workspace {
             Some(log) => self.render_task_log(log, cx),
             None => self.render_task_list(cx),
         };
+        let t = p.tokens;
+        let v2 = self.design().is_v2();
         div()
             .id("tasks-panel-card")
             .size_full()
@@ -913,6 +940,11 @@ impl Workspace {
             .bg(rgb(p.surface))
             .border_1()
             .border_color(rgb(p.border))
+            .when(v2, |d| {
+                d.rounded(px(t.radius.panel))
+                    .border(px(t.stroke.hairline))
+                    .border_color(rgb(p.roles.card_border))
+            })
             .overflow_hidden()
             .child(self.render_tasks_header(cx))
             .when_some(self.tasks.notice.clone(), |d, (text, tone)| {

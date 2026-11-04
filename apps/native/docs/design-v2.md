@@ -198,3 +198,29 @@ The Jobs page is the worked example: `ui/jobs.rs` (`jobs_page_v2`,
    `Design::V1`/`V2` (`this.force_design(Some(design))`), and shoot it with
    `scripts/design-shots/shoot-all.py --setting design_v2=true --only <slug>`
    in dark, light and one more theme.
+
+## Panels (area-panels)
+
+`Tokens::panels` (`src/tokens.rs`) holds the side panels' measures and
+tints: `diff_row` (one stacked-diff slot), `diff_gutter`, `diff_marker`,
+`diff_bar`, `diff_line_alpha` / `diff_emphasis_alpha` (the tone washes of a
+changed line and of its changed words), `dock_min` / `dock_share` /
+`dock_max` / `dock_handle` (the Changes dock), `header_height` (every panel
+header), `files_width`, `slide_ms`, `terminal_line` and `cursor_alpha`.
+
+- **Changes** (`ui/review/v2.rs`, `ui/review/v2/page.rs`, pure model in
+  `ui/review/stack.rs`): under v2, `open_feature(Screen::Changes)` opens a
+  resizable dock beside the conversation (`Workspace::open_changes_dock`);
+  `review.v2.page_once` forces the page, as commit links and the dock's
+  expand button do. Every changed file is read at once
+  (`Request::DiffSet`, slot `diff-set`) and stacked in one `uniform_list`;
+  file headers are drawn by a `UniformListDecoration` so they stick to the
+  top. `Settings::review_dock_width` and `Settings::review_split` persist.
+- **Tasks** (`ui/tasks/v2.rs`): a `StatusBadge` per task (`task_kind`),
+  Copy for shell commands, Open log and Retry on failed tasks (Retry drafts
+  a request in the composer), and Stop behind Keep / Stop task.
+- **File viewer** (`ui/file_viewer/v2.rs`): breadcrumb header, icon
+  actions, one primary (Save, only when dirty); the editor sits on
+  `code_block` with a tertiary gutter (`syntax::highlight_theme`).
+- **Terminal** (`ui/terminal/v2.rs`): panel header with a StatusBadge, and
+  ANSI colours derived from the theme (`ansi_v2`).

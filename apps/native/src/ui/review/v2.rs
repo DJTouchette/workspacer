@@ -9,7 +9,7 @@ use super::stack::{self, FileChange, Item, Layout, Section};
 use super::*;
 use crate::ui::primitives::{self, ButtonSize, ButtonVariant, Intent, tonal, wash};
 use gpui::{
-    Bounds, HighlightStyle, Hsla, Pixels, ListHorizontalSizingBehavior, UniformListDecoration,
+    Bounds, HighlightStyle, Hsla, ListHorizontalSizingBehavior, Pixels, UniformListDecoration,
     WeakEntity, anchored, canvas, deferred, point,
 };
 use std::ops::Range;
@@ -322,14 +322,10 @@ fn stack_item(item: &Item, ix: usize, cache: &Cache, p: &Palette) -> Stateful<Di
                     .size(px(t.icon.xs))
                     .flex_shrink_0(),
             )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .child(format!(
-                        "{hidden} unchanged line{}",
-                        if *hidden == 1 { "" } else { "s" }
-                    )),
-            )
+            .child(div().flex_shrink_0().child(format!(
+                "{hidden} unchanged line{}",
+                if *hidden == 1 { "" } else { "s" }
+            )))
             .when(!context.is_empty(), |d| {
                 d.child(div().min_w_0().truncate().child(context.clone()))
             }),
@@ -576,6 +572,14 @@ fn file_header(
         .children(stage)
         .children(open)
         .child(more)
+}
+
+impl StackUi {
+    /// The stack's current layout, for tests.
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(in crate::ui) fn laid_out(&self) -> Option<Arc<Layout>> {
+        self.layout.as_ref().map(|(_, l)| l.clone())
+    }
 }
 
 impl Workspace {
@@ -826,7 +830,10 @@ impl Workspace {
     fn stack_headers(&self, cache: &Cache, layout: &Layout) -> Vec<HeaderData> {
         let changes = self.review_changes();
         let cwd = self.review_paths().map(|(cwd, _)| cwd).unwrap_or_default();
-        let root = self.review_paths().map(|(_, root)| root).unwrap_or_default();
+        let root = self
+            .review_paths()
+            .map(|(_, root)| root)
+            .unwrap_or_default();
         cache
             .sections
             .iter()
@@ -885,11 +892,7 @@ impl Workspace {
     }
 
     /// The stacked diff list, or the state that stands in for it.
-    fn render_stack(
-        &mut self,
-        slot: &'static str,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_stack(&mut self, slot: &'static str, cx: &mut Context<Self>) -> AnyElement {
         let p = self.palette();
         let t = p.tokens;
         let state = self.view.requests.get(slot);
@@ -899,7 +902,12 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(primitives::empty_state(icon, title, body.map(Into::into), &p))
+                .child(primitives::empty_state(
+                    icon,
+                    title,
+                    body.map(Into::into),
+                    &p,
+                ))
                 .into_any_element()
         };
         if slot == COMMIT && self.review.commit.is_none() {
@@ -918,8 +926,7 @@ impl Workspace {
                 .into_any_element();
         }
         let Some(cache) = self.stack_cache(slot, cx) else {
-            if slot == SET && self.review_status().is_some() && self.review_changes().is_empty()
-            {
+            if slot == SET && self.review_status().is_some() && self.review_changes().is_empty() {
                 return quiet(
                     IconName::CircleCheck,
                     "No uncommitted changes",
@@ -935,7 +942,10 @@ impl Workspace {
                 .gap(px(t.space.md))
                 .text_size(px(t.text.meta))
                 .text_color(rgb(p.roles.text_tertiary))
-                .child(primitives::status_indicator(primitives::StatusKind::Working, &p))
+                .child(primitives::status_indicator(
+                    primitives::StatusKind::Working,
+                    &p,
+                ))
                 .child("Reading changes…")
                 .into_any_element();
         };
@@ -957,7 +967,10 @@ impl Workspace {
         let items = layout.clone();
         let rows = cache.clone();
         let truncated = cache.diff.truncated;
-        let skipped = self.review_changes().len().saturating_sub(DIFF_SET_MAX_FILES);
+        let skipped = self
+            .review_changes()
+            .len()
+            .saturating_sub(DIFF_SET_MAX_FILES);
         let list = uniform_list(
             "review-stack",
             items.items.len(),
@@ -1314,10 +1327,7 @@ impl Workspace {
         let meta = {
             let mut parts = Vec::new();
             if files > 0 {
-                parts.push(format!(
-                    "{files} file{}",
-                    if files == 1 { "" } else { "s" }
-                ));
+                parts.push(format!("{files} file{}", if files == 1 { "" } else { "s" }));
             }
             if let Some(branch) = branch {
                 parts.push(branch);
@@ -1535,34 +1545,39 @@ impl Workspace {
                                 &p,
                             )
                             .debug_selector(|| "review-discard".into())
-                            .when_some(target.filter(|_| discardable), |d, target| {
-                                d.on_click(cx.listener(move |this, _, _, cx| {
-                                    this.review.v2.menu = None;
-                                    this.review.v2.confirm = Some(target.clone());
-                                    cx.notify();
-                                }))
-                            }),
+                            .when_some(
+                                target.filter(|_| discardable),
+                                |d, target| {
+                                    d.on_click(cx.listener(move |this, _, _, cx| {
+                                        this.review.v2.menu = None;
+                                        this.review.v2.confirm = Some(target.clone());
+                                        cx.notify();
+                                    }))
+                                },
+                            ),
                         )
                     });
                 let width = px(t.layout.menu_width);
                 let left = (menu.position.x - width).max(px(t.space.md));
                 out.push(
                     deferred(
-                        anchored().position(point(Pixels::ZERO, Pixels::ZERO)).child(
-                            div()
-                                .id("review-menu-backdrop")
-                                .w(viewport.width)
-                                .h(viewport.height)
-                                .occlude()
-                                .on_mouse_down(gpui::MouseButton::Left, close)
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .left(left)
-                                        .top(menu.position.y + px(t.space.sm))
-                                        .child(items),
-                                ),
-                        ),
+                        anchored()
+                            .position(point(Pixels::ZERO, Pixels::ZERO))
+                            .child(
+                                div()
+                                    .id("review-menu-backdrop")
+                                    .w(viewport.width)
+                                    .h(viewport.height)
+                                    .occlude()
+                                    .on_mouse_down(gpui::MouseButton::Left, close)
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left(left)
+                                            .top(menu.position.y + px(t.space.sm))
+                                            .child(items),
+                                    ),
+                            ),
                     )
                     .with_priority(3)
                     .into_any_element(),
@@ -1644,22 +1659,24 @@ impl Workspace {
                 );
             out.push(
                 deferred(
-                    anchored().position(point(Pixels::ZERO, Pixels::ZERO)).child(
-                        div()
-                            .id("review-discard-scrim")
-                            .relative()
-                            .w(viewport.width)
-                            .h(viewport.height)
-                            .occlude()
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(|this, _, _, cx| {
-                                    this.review.v2.confirm = None;
-                                    cx.notify();
-                                }),
-                            )
-                            .child(primitives::scrim(&p).child(dialog)),
-                    ),
+                    anchored()
+                        .position(point(Pixels::ZERO, Pixels::ZERO))
+                        .child(
+                            div()
+                                .id("review-discard-scrim")
+                                .relative()
+                                .w(viewport.width)
+                                .h(viewport.height)
+                                .occlude()
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.review.v2.confirm = None;
+                                        cx.notify();
+                                    }),
+                                )
+                                .child(primitives::scrim(&p).child(dialog)),
+                        ),
                 )
                 .with_priority(3)
                 .into_any_element(),

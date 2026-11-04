@@ -209,6 +209,17 @@ pub(super) fn highlight_theme(appearance: Appearance, design: Design) -> Arc<Hig
     theme.name = format!("Workspacer {}", appearance.label());
     theme.style.syntax = colors(s);
     theme.style.editor_foreground = serde_json::from_value(serde_json::json!(s.foreground)).ok();
+    // area-panels: v2's editor sits on the panel's own surface, with a
+    // quiet gutter, instead of the highlighter's stock background.
+    if design.is_v2() {
+        let p = appearance.palette_for(design);
+        let solid = |c: u32| Some(gpui::Hsla::from(gpui::rgb(c)));
+        theme.style.editor_background = solid(p.code_block);
+        theme.style.editor_line_number = solid(p.roles.text_tertiary);
+        theme.style.editor_active_line_number = solid(p.roles.text_secondary);
+        theme.style.editor_active_line =
+            Some(gpui::Hsla::from(gpui::rgb(p.text)).opacity(p.tokens.wash.disabled));
+    }
     Arc::new(theme)
 }
 

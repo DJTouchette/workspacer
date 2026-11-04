@@ -966,30 +966,33 @@ impl Request {
             Self::PrProviders => backend.call("pr.providers", json!({})).await,
             // area-panels
             Self::DiffSet { cwd, files } => {
-                let reads = files.iter().take(DIFF_SET_MAX_FILES).map(|file| async move {
-                    let answer = backend
-                        .call(
-                            "git.diff",
-                            json!({
-                                "cwd": cwd,
-                                "path": file.path,
-                                "staged": file.staged,
-                                "untracked": file.untracked,
-                            }),
-                        )
-                        .await;
-                    let (diff, error) = match answer {
-                        Ok(value) => (value["diff"].as_str().unwrap_or("").to_owned(), None),
-                        Err(e) => (String::new(), Some(e.to_string())),
-                    };
-                    json!({
-                        "path": file.path,
-                        "staged": file.staged,
-                        "untracked": file.untracked,
-                        "diff": diff,
-                        "error": error,
-                    })
-                });
+                let reads = files
+                    .iter()
+                    .take(DIFF_SET_MAX_FILES)
+                    .map(|file| async move {
+                        let answer = backend
+                            .call(
+                                "git.diff",
+                                json!({
+                                    "cwd": cwd,
+                                    "path": file.path,
+                                    "staged": file.staged,
+                                    "untracked": file.untracked,
+                                }),
+                            )
+                            .await;
+                        let (diff, error) = match answer {
+                            Ok(value) => (value["diff"].as_str().unwrap_or("").to_owned(), None),
+                            Err(e) => (String::new(), Some(e.to_string())),
+                        };
+                        json!({
+                            "path": file.path,
+                            "staged": file.staged,
+                            "untracked": file.untracked,
+                            "diff": diff,
+                            "error": error,
+                        })
+                    });
                 let files = futures_util::future::join_all(reads).await;
                 Ok(json!({ "files": files }))
             }

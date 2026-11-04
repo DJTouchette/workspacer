@@ -557,10 +557,7 @@ deleted file mode 100644
         assert_eq!(e[5], None);
         assert_eq!(e[7], None);
         // A pure insertion emphasises only the added side.
-        assert_eq!(
-            changed_spans("foo()", "foo(x)"),
-            Some((None, Some(4..5)))
-        );
+        assert_eq!(changed_spans("foo()", "foo(x)"), Some((None, Some(4..5))));
         // Multi-byte text stays on char boundaries.
         assert_eq!(changed_spans("é1é", "é2é"), Some((Some(2..3), Some(2..3))));
     }

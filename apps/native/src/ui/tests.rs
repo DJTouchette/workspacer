@@ -26,6 +26,8 @@ mod job_list;
 mod kept_sessions;
 mod message_queue;
 mod new_agent;
+// area-panels
+mod panels;
 mod portrait;
 mod preferences;
 mod project_groups;
