@@ -1461,6 +1461,20 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
             snapshot["lastToolSummary"] = json!("apps/native/src/launch.rs");
             snapshot["usage"] = json!({"inputTokens":15800,"outputTokens":2400,"costUSD":0.046,"contextTokens":183000,"contextLimit":200000});
         }
+        // r3-fleet: the catalog's other working sessions report what they
+        // are doing, as session 1 does (the Fleet's tiles and the sidebar's
+        // activity line read it).
+        4 | 5 => {
+            let now = chrono::Utc::now().timestamp_millis();
+            let (started, tool, summary) = if index == 4 {
+                (23, "Bash", "cargo test -p hub-rs federation::handshake")
+            } else {
+                (6, "Bash", "fly deploy --dry-run --app wks-hub")
+            };
+            snapshot["startedAt"] = json!(now - started * 60_000);
+            snapshot["lastToolName"] = json!(tool);
+            snapshot["lastToolSummary"] = json!(summary);
+        }
         _ => (),
     }
     snapshot

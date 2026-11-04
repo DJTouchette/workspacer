@@ -787,6 +787,40 @@ impl Tokens {
     }
 }
 
+// r3-fleet
+/// The Fleet view's measures (R3.7): a responsive grid of session tiles.
+/// v2 only; v1 never draws it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FleetTokens {
+    /// A tile is never narrower than this: the grid drops a column first.
+    pub tile_min: f32,
+    /// Every tile is at least this tall, so a row of them lines up whether
+    /// or not one carries an ask.
+    pub tile_height: f32,
+    /// At most this many columns (3×3 at the widest).
+    pub columns_max: usize,
+    /// The grid's widest, centred in the page.
+    pub grid_max: f32,
+    /// The latest event lines a tile shows.
+    pub event_lines: usize,
+    /// One event line's height.
+    pub event_row: f32,
+}
+
+impl Tokens {
+    /// The Fleet view's measures.
+    pub const fn fleet(&self) -> FleetTokens {
+        FleetTokens {
+            tile_min: 320.,
+            tile_height: 136.,
+            columns_max: 3,
+            grid_max: 1440.,
+            event_lines: 3,
+            event_row: 22.,
+        }
+    }
+}
+
 // r3-foundation
 /// The status language and signal measures (R3.1, R3.2): the 8px status
 /// glyph, the attention bar, keycap hints and the warning/fault thresholds

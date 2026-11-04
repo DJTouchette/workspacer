@@ -449,16 +449,16 @@ fn the_header_is_a_strip_with_a_labelled_toolbar(cx: &mut TestAppContext) {
 }
 
 /// r3-shell: the destinations stay labelled in a short block, and the
-/// footer carries no modal-key label.
+/// footer carries no modal-key label. r3-fleet: Fleet makes it four rows.
 #[gpui::test]
 fn the_destinations_are_a_short_labelled_block(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     visual.simulate_resize(size(px(1200.), px(900.)));
     open_v2(&workspace, &mut visual, attention_state(), Design::V2);
     let block = visual.debug_bounds("sidebar-destinations").unwrap();
-    let rows = Tokens::V2.layout.control_height_sm * 3.;
+    let rows = Tokens::V2.layout.control_height_sm * 4.;
     assert!(
-        f32::from(block.size.height) <= rows + 3. * Tokens::V2.space.sm,
+        f32::from(block.size.height) <= rows + 4. * Tokens::V2.space.sm,
         "{block:?}"
     );
     visual.update(|_, cx| {
