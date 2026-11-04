@@ -395,9 +395,6 @@ pub(super) struct EmptyV2 {
     pub ended: bool,
 }
 
-/// The welcome's one-line promise.
-pub(super) const WELCOME_VALUE: &str = "Run and supervise coding agents across your machines";
-
 /// Three starter tasks under the welcome composer: each fills the task.
 pub(super) const STARTERS: [(&str, &str); 3] = [
     (
@@ -412,9 +409,14 @@ pub(super) const STARTERS: [(&str, &str); 3] = [
 ];
 
 /// An agent's row in the welcome checklist.
+/// One agent's setup state, from one source (the hub's install report or
+/// the Setup page's last check), with one set of words everywhere: Ready /
+/// Needs sign-in / Not installed (`docs/design-v2-direction.md` R2.3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AgentSetup {
     Installed,
+    /// Installed but not signed in.
+    NeedsSignIn,
     Missing,
     Unknown,
 }
@@ -425,6 +427,54 @@ impl AgentSetup {
             Some(true) => Self::Installed,
             Some(false) => Self::Missing,
             None => Self::Unknown,
+        }
+    }
+
+    /// From an install report row (`found`, and `authenticated` when the
+    /// hub knows it).
+    pub(super) fn of_row(found: Option<bool>, authenticated: Option<bool>) -> Self {
+        match (Self::of(found), authenticated) {
+            (Self::Installed, Some(false)) => Self::NeedsSignIn,
+            (setup, _) => setup,
+        }
+    }
+
+    // r2-systems
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Installed => "Ready",
+            Self::NeedsSignIn => "Needs sign-in",
+            Self::Missing => "Not installed",
+            Self::Unknown => "Not checked",
+        }
+    }
+
+    /// Ready is done; the rest are neutral unless nothing can run (then the
+    /// user must act: attention).
+    pub(super) fn kind(self, nothing_ready: bool) -> primitives::StatusKind {
+        match self {
+            Self::Installed => primitives::StatusKind::Done,
+            Self::NeedsSignIn | Self::Missing if nothing_ready => primitives::StatusKind::NeedsYou,
+            _ => primitives::StatusKind::Idle,
+        }
+    }
+
+    /// What to do next, and the command that does it (copyable).
+    pub(super) fn next_step(self, provider: &str) -> Option<(&'static str, &'static str)> {
+        let codex = provider == "codex";
+        match self {
+            Self::Missing => Some((
+                "Install it with",
+                if codex {
+                    "npm install -g @openai/codex"
+                } else {
+                    "npm install -g @anthropic-ai/claude-code"
+                },
+            )),
+            Self::NeedsSignIn => {
+                Some(("Sign in with", if codex { "codex login" } else { "claude" }))
+            }
+            Self::Installed | Self::Unknown => None,
         }
     }
 }
@@ -468,6 +518,19 @@ impl Workspace {
             .into_iter()
             .find(|p| !p.worktree)
             .map(|p| p.path)
+    }
+
+    /// An agent's setup state: the one source the welcome, Setup and the
+    /// sidebar read (r2-systems).
+    pub(super) fn agent_setup(&self, provider: &str) -> AgentSetup {
+        let authenticated = self.view.requests.get("setup").and_then(|state| {
+            state.value["installed"]
+                .as_array()?
+                .iter()
+                .find(|row| row["provider"] == provider)?["authenticated"]
+                .as_bool()
+        });
+        AgentSetup::of_row(self.agent_installed(provider), authenticated)
     }
 
     /// Whether an agent is installed where the hub runs, from the hub's
@@ -710,33 +773,6 @@ impl Workspace {
             Some(name) => format!("What should we work on in {name}?"),
             None => "What should we work on?".to_owned(),
         };
-        let wordmark = div()
-            .debug_selector(|| "welcome-wordmark".into())
-            .flex()
-            .items_center()
-            .gap(px(t.space.md))
-            .child(brand_mark(t.text.title, p))
-            .child(
-                div()
-                    .text_size(px(t.text.title))
-                    .font_weight(FontWeight(t.weight.title))
-                    .text_color(rgb(p.text))
-                    .child("Workspacer"),
-            );
-        let intro = div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(t.space.sm))
-            .child(wordmark)
-            .child(
-                div()
-                    .debug_selector(|| "welcome-value".into())
-                    .text_size(px(t.text.subheading))
-                    .text_color(rgb(p.roles.text_secondary))
-                    .child(WELCOME_VALUE),
-            );
-
         // The composer: the task, then where and with whom it runs.
         let agents = primitives::segmented(&p)
             .debug_selector(|| "welcome-agent".into())
@@ -886,7 +922,6 @@ impl Workspace {
             .flex_col()
             .items_center()
             .gap(px(t.space.xxl))
-            .child(intro)
             .child(
                 div()
                     .w_full()
@@ -896,8 +931,11 @@ impl Workspace {
                     .child(
                         div()
                             .debug_selector(|| "welcome-headline".into())
-                            .px(px(t.space.xs))
-                            .text_size(px(t.text.heading))
+                            .w_full()
+                            .text_center()
+                            .pb(px(t.space.sm))
+                            // r2-systems: the one 24px question.
+                            .text_size(px(t.text.title))
                             .font_weight(FontWeight(t.weight.semibold))
                             .text_color(rgb(p.text))
                             .child(headline),
@@ -909,21 +947,20 @@ impl Workspace {
             .child(self.render_agent_checklist(first_run, cx))
     }
 
-    /// The agents and whether each is ready, from the Setup page's data.
+    /// The agents and whether each is ready, from the one setup source
+    /// ([`Self::agent_setup`]): Ready / Needs sign-in / Not installed, the
+    /// next step in words and its command, copyable.
     fn render_agent_checklist(&self, first_run: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
-        let rows = [
-            ("claude", "Claude Code", "claude"),
-            ("codex", "Codex CLI", "codex login"),
-        ]
-        .map(|(id, name, command)| {
-            let setup = AgentSetup::of(self.agent_installed(id));
-            let (kind, label) = match setup {
-                AgentSetup::Installed => (primitives::StatusKind::Done, "Installed"),
-                AgentSetup::Missing => (primitives::StatusKind::NeedsYou, "Not installed"),
-                AgentSetup::Unknown => (primitives::StatusKind::Idle, "Not checked"),
-            };
+        let agents = [("claude", "Claude Code"), ("codex", "Codex CLI")];
+        let setups = agents.map(|(id, _)| self.agent_setup(id));
+        let ready = setups
+            .iter()
+            .filter(|s| **s == AgentSetup::Installed)
+            .count();
+        let rows = agents.into_iter().zip(setups).map(|((id, name), setup)| {
+            let next = setup.next_step(id);
             div()
                 .debug_selector(move || format!("welcome-agent-row-{id}"))
                 .flex()
@@ -941,31 +978,52 @@ impl Workspace {
                         .child(name),
                 )
                 .child(
-                    primitives::StatusBadge::new(kind)
-                        .label(label)
+                    primitives::StatusBadge::new(setup.kind(ready == 0))
+                        .label(setup.label())
                         .render(&p)
                         .debug_selector(move || format!("welcome-agent-status-{id}")),
                 )
                 .child(div().flex_1())
-                .when(setup == AgentSetup::Missing, |d| {
+                .when_some(next, |d, (words, command)| {
                     d.child(
                         div()
-                            .px(px(t.space.sm))
-                            .rounded(px(t.radius.xs))
-                            .bg(rgb(p.chat))
-                            .border(px(t.stroke.hairline))
-                            .border_color(rgb(p.roles.card_border))
-                            .font_family(mono_font())
+                            .flex_shrink_0()
                             .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .child(command),
+                            .text_color(rgb(p.roles.text_tertiary))
+                            .child(words),
+                    )
+                    .child(
+                        chrome::interactive_control(
+                            div().id(SharedString::from(format!("welcome-copy-{id}"))),
+                            p,
+                            true,
+                        )
+                        .debug_selector(move || format!("welcome-command-{id}"))
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.sm))
+                        .px(px(t.space.sm))
+                        .h(px(t.layout.control_height_sm))
+                        .rounded(px(t.radius.control))
+                        .bg(rgb(p.chat))
+                        .border_color(rgb(p.roles.card_border))
+                        .font_family(mono_font())
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary))
+                        .hover(|s| s.text_color(rgb(p.text)))
+                        .tooltip(primitives::tooltip_view("Copy the command", None, &p))
+                        .child(command)
+                        .child(Icon::new(IconName::Copy).size(px(t.icon.xs)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                command.to_owned(),
+                            ));
+                            this.local_notice = format!("Copied “{command}”");
+                            cx.notify();
+                        })),
                     )
                 })
         });
-        let ready = [("claude"), ("codex")]
-            .iter()
-            .filter(|id| self.agent_installed(id) == Some(true))
-            .count();
         primitives::card(&p)
             .debug_selector(|| "welcome-setup-checklist".into())
             .w_full()
@@ -976,23 +1034,17 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(t.text.meta))
-                            .font_weight(FontWeight(t.weight.medium))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .child(if first_run {
-                                format!("Agents · {ready} of 2 ready")
-                            } else {
-                                "Agents".to_owned()
-                            }),
-                    )
+                    .child(primitives::section_header(
+                        "Agents",
+                        first_run.then(|| format!("{ready} of 2 ready").into()),
+                        &p,
+                    ))
                     .child(
                         primitives::button(
                             "welcome-setup",
                             "Set up agents",
                             None,
-                            ButtonVariant::Ghost,
+                            ButtonVariant::TERTIARY,
                             ButtonSize::Small,
                             true,
                             &p,

@@ -274,6 +274,12 @@ impl Workspace {
             .map(|s| self.session_title(s))
             .unwrap_or_else(|| "Your sessions".into());
         let notice = self.title_notice();
+        // r2-systems: the welcome has its own question; no stray "Your
+        // sessions" capsule above it (a notice still shows).
+        let bare_welcome = self.design().is_v2()
+            && selected.is_none()
+            && notice.is_empty()
+            && self.view.child.is_none();
         let (title_bar, title_actions) = match self.render_child_title_bar(cx) {
             Some(bar) => (bar, None),
             None => (
@@ -379,7 +385,7 @@ impl Workspace {
                                     changed
                                 },
                             ))
-                            .child(title_island),
+                            .when(!bare_welcome, |d| d.child(title_island)),
                     )
                     // Centred under the capsule, so it takes the same nudge.
                     .children(plan.map(|plan| plan.relative().left(nudge))),

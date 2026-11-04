@@ -1654,25 +1654,62 @@ mod tests {
 
     #[test]
     fn stacked_decisions_count_from_one() {
+        // A plan absorbs a spent limit: one card, no pager.
         let both = [Decision::Plan, Decision::Limit];
+        assert_eq!(decision_cards(&both), [Decision::Plan]);
+        assert_eq!(position_label(&both, Decision::Plan), None);
+        assert_eq!(position_label(&both, Decision::Limit), None);
+        let three = [Decision::Approval, Decision::Limit, Decision::Questions];
         assert_eq!(
-            position_label(&both, Decision::Limit).as_deref(),
-            Some("2 of 2")
+            position_label(&three, Decision::Questions).as_deref(),
+            Some("3/3")
         );
-        assert_eq!(position_label(&both[..1], Decision::Plan), None);
-        assert_eq!(position_label(&both, Decision::Questions), None);
+        assert_eq!(position_label(&three[..1], Decision::Approval), None);
+        assert_eq!(pager(1, 3).as_deref(), Some("2/3"));
+        assert_eq!(pager(0, 1), None);
     }
 
     #[test]
     fn the_send_button_names_what_it_does() {
         assert_eq!(send_copy(false).0, "Send");
-        assert_eq!(send_copy(true).0, "Steer");
-        assert!(send_copy(true).1.contains("without stopping"));
+        assert_eq!(send_copy(true).0, "Send now");
+        assert!(STEER_COPY.contains("without stopping"));
         assert_eq!(
             waiting_label(Decision::Approval),
             "Waiting for your approval"
         );
+        assert_eq!(composer_placeholder(None), DEFAULT_PLACEHOLDER);
+        assert!(composer_placeholder(Some(Decision::Approval)).contains("Allow or deny"));
         assert_eq!(sentence_case("run_in_background"), "Run in background");
         assert_eq!(sentence_case("oldString"), "Old string");
+    }
+
+    #[test]
+    fn approvals_read_as_questions_with_where_and_why() {
+        let bash = json!({"toolName":"Bash","toolInput":{
+            "command":"cargo test","description":"Run the tests before committing"}});
+        let cwd = "/home/dev/src/workspacer/apps/native";
+        assert_eq!(
+            approval_headline(&bash, cwd),
+            [
+                ("Run".to_owned(), false),
+                ("cargo test".to_owned(), true),
+                ("in apps/native?".to_owned(), false)
+            ]
+        );
+        assert_eq!(
+            approval_context(&bash, cwd, "This machine"),
+            "Run the tests before committing · apps/native on This machine"
+        );
+        let edit = json!({"toolName":"Edit","toolInput":{"file_path":"/home/dev/src/workspacer/apps/native/src/ui.rs"}});
+        assert_eq!(
+            approval_headline(&edit, cwd)[1],
+            ("src/ui.rs".to_owned(), true)
+        );
+        assert_eq!(
+            approval_headline(&json!({"toolName":"Mystery"}), ""),
+            [("Allow Mystery to run?".to_owned(), false)]
+        );
+        assert_eq!(approval_context(&json!({}), "", ""), "");
     }
 }

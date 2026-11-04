@@ -1691,16 +1691,16 @@ impl Workspace {
                     div()
                         .debug_selector(move || format!("setup-installed-{provider}"))
                         .flex_shrink_0()
-                        .child(
-                            match found {
-                                Some(true) => StatusBadge::new(StatusKind::Done).label("Installed"),
-                                Some(false) => {
-                                    StatusBadge::new(StatusKind::NeedsYou).label("Not found")
-                                }
-                                None => StatusBadge::new(StatusKind::Idle).label("Not checked"),
-                            }
-                            .render(&v2),
-                        ),
+                        .child({
+                            // r2-systems: the one setup vocabulary and source.
+                            let setup = self.agent_setup(provider);
+                            let nothing_ready = ["claude", "codex"].iter().all(|id| {
+                                self.agent_setup(id) != super::states::AgentSetup::Installed
+                            });
+                            StatusBadge::new(setup.kind(nothing_ready))
+                                .label(setup.label())
+                                .render(&v2)
+                        }),
                 )
             })
             .when(!self.design().is_v2(), |d| {
