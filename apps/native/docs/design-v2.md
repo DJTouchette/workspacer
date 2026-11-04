@@ -211,6 +211,14 @@ The Jobs page is the worked example: `ui/jobs.rs` (`jobs_page_v2`,
 | Title capsule, tool rail | `ui/capsule.rs` (`render_title_bar_v2`, `chat_actions_v2`, `render_tool_rail_v2`) |
 | Model popover | `ui/model_popover.rs`; the Model page stays on `g m` and "All model settings" |
 | Keys | `g n` / Alt+N next session that needs you (v1 keeps `g n` for Scratch), `g x` Scratch, `?` / Ctrl+/ cheat sheet |
+| Inbox (round 2) | `attention::reason` (why a session waits, and its one action: Allow / Answer / Open), `child_stalled` / `session_stalled` (no heartbeat past `HEARTBEAT_STALE_MS` = fault, lands in Needs you), `children_summary` ("4 subagents · 1 stalled"), `disambiguate` (repeated titles get their age or "#2"), `match_ranges` (search highlights). Idle/Ended sort most recent first; Idle shows `shell().idle_visible` (8) then "Show n more" |
+| Rows | `Tokens::shell()`: `row_single` 30 (Idle, Ended, children), `row_double` 46 (Needs you, Working). The list is a plain scrolled div (`ShellUi::scroll`, rows have two heights); `reveal_sidebar_row` scrolls whichever list the design draws |
+| Destinations, footer | One labelled list at the top (New session, Projects, Jobs, Machines, Scratch, Settings; selectors `new-session-button`, `nav-*`). Footer: account usage ("Claude 42%" + meter, `sidebar-usage`), the connection when not live, and the modal-key label (`sidebar-mode`) only while modal keys are on |
+| Modal keys | `Settings::vim(design)`: v2 reads `vim_navigation_v2` (default **off**), v1 `vim_navigation`. Settings → Keyboard sets the current design's. `?` opens the cheat sheet either way. The rig turns them on for v2 shots that send `keys` |
+| Command palette | `ui/palette.rs`: Ctrl+K under v2 (v1 keeps the session search). Sessions (recents first), actions, settings pages; `>` actions, `@` sessions; `fuzzy` matching with highlights; Up/Down/Enter/Esc (`CommandPalette > Input`). Shots `command-palette`, `command-palette-actions` |
+| Header | Title primary, project crumb shrinks first (`title-crumb`), access chip only when known, no gauge hairline (the composer keeps the meter), background work chip turns red "3 running · 1 failed". The model is shown once, in the composer's chip, which opens the model popover (it hangs from that chip) |
+| Model names | `wks_native::format::model_name(id)`: "Sonnet 4.6", "GPT-5.6 Luna"; raw id in a tooltip |
+| Tool rail | Docked to the reading column's right edge (`reading_max`), under the title; Changes shows a count once read, Terminal a dot while its shell runs |
 
 ## Transcript (area-transcript)
 
