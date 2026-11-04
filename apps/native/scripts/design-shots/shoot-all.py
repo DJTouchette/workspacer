@@ -406,7 +406,8 @@ LANDMARKS = {
     "README_LINK": lambda shot: (651, 629) if shot["v2"] else (591, 497),  # README.md link, last assistant message
     "TALL_README_LINK": lambda shot: (228, 1229) if shot["v2"] else (169, 1097),  # same link, 1000x1600 tall layout
     "TASK_ROW_DEV": lambda shot: (1200, 85),        # the fixture hub task in the tasks panel
-    "TASK_ROW_FAILED": lambda shot: (1043, 345),    # the failed cargo test task's "Open log"
+    # The failed cargo test task: v2 its "Open log" button, v1 its row.
+    "TASK_ROW_FAILED": lambda shot: (1043, 345) if shot["v2"] else (1200, 270),
     "MODEL_SELECT": lambda shot: (955, 207),        # Change model page, model select
     "NEW_TASK_FIELD": lambda shot: (1150, 560),     # New agent form, Task box
     "END_SESSION": lambda shot: (1337, 679),        # Session details "End session..."
