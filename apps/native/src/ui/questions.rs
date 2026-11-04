@@ -64,6 +64,8 @@ impl Workspace {
         if signature != self.extras.question_signature {
             let questions = pending.map(question_list).unwrap_or_default();
             self.extras.question_signature = signature;
+            // r2-systems: a new set starts the stepper at its first question.
+            self.composer_ui.question_step = 0;
             self.tools.question_card = card;
             self.tools.open_after = None;
             self.extras.answer_watches.clear();
@@ -344,7 +346,7 @@ impl Workspace {
 
     /// Toggle (multiple choice) or choose (single choice) one option. A choice
     /// replaces typed text for that question, as typing replaces a choice.
-    fn pick_option(
+    pub(super) fn pick_option(
         &mut self,
         ix: usize,
         option_ix: usize,
@@ -400,6 +402,10 @@ impl Workspace {
             cx.propagate();
             return;
         }
+        if self.design().is_v2() {
+            self.answer_enter_v2(cx);
+            return;
+        }
         if self.answers_ready(cx) {
             self.submit_answers(cx);
             return;
@@ -426,6 +432,9 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        if self.design().is_v2() {
+            return self.render_questions_v2(session, enabled, compact, cx);
+        }
         let p = self.palette();
         let list = session
             .questions
@@ -1167,5 +1176,388 @@ impl Workspace {
                 },
             ))
         })
+    }
+}
+
+// r2-systems: the v2 question set is a stepper inside the one "waiting on
+// you" container: one question at a time, "2/3", number keys, Back / Next,
+// no scroll region of its own.
+impl Workspace {
+    /// The question the stepper shows, clamped to the set.
+    pub(super) fn question_step(&self, total: usize) -> usize {
+        self.composer_ui.question_step.min(total.saturating_sub(1))
+    }
+
+    /// Show question `step` of the pending set.
+    pub(super) fn go_to_question(&mut self, step: usize, cx: &mut Context<Self>) {
+        self.composer_ui.question_step = step;
+        cx.notify();
+    }
+
+    /// Whether question `ix` has an answer (or may be left blank).
+    fn question_answered(&self, ix: usize, list: &[Value], cx: &App) -> bool {
+        self.question_answers(cx)
+            .get(ix)
+            .is_some_and(|a| !a.trim().is_empty())
+            || list.get(ix).is_some_and(|q| self.optional_question(ix, q))
+    }
+
+    /// A number key on the stepper: choose that option of the shown
+    /// question; a single choice then moves on to the next question.
+    pub(super) fn question_number_key(
+        &mut self,
+        n: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let list = self
+            .selected_session()
+            .and_then(|s| s.questions.as_ref())
+            .map(question_list)
+            .unwrap_or_default();
+        if list.is_empty() || self.pending_elicitation().is_some() {
+            return false;
+        }
+        let step = self.question_step(list.len());
+        let question = &list[step];
+        let count = question["options"].as_array().map_or(0, Vec::len);
+        if n == 0 || n > count.min(9) {
+            return false;
+        }
+        let multiple = question["multiSelect"].as_bool().unwrap_or(false);
+        self.pick_option(step, n - 1, multiple, window, cx);
+        if !multiple && step + 1 < list.len() {
+            self.go_to_question(step + 1, cx);
+        }
+        true
+    }
+
+    /// Enter in a typed answer under v2: send when everything is answered,
+    /// else move on once this question is answered.
+    pub(super) fn answer_enter_v2(&mut self, cx: &mut Context<Self>) {
+        if self.answers_ready(cx) {
+            self.submit_answers(cx);
+            return;
+        }
+        let list = self
+            .selected_session()
+            .and_then(|s| s.questions.as_ref())
+            .map(question_list)
+            .unwrap_or_default();
+        let step = self.question_step(list.len());
+        if self.question_answered(step, &list, cx) && step + 1 < list.len() {
+            self.go_to_question(step + 1, cx);
+        }
+    }
+
+    /// The pending question set as the "waiting on you" container.
+    pub(super) fn render_questions_v2(
+        &self,
+        session: &Session,
+        enabled: bool,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        use primitives::{ButtonSize, ButtonVariant, Headline};
+        let p = self.palette();
+        let t = p.tokens;
+        let list = session
+            .questions
+            .as_ref()
+            .map(question_list)
+            .unwrap_or_default();
+        let total = list.len();
+        let step = self.question_step(total);
+        let ready = self.answers_ready(cx);
+        let sent = self.extras.answers_sent;
+        let interactive = enabled && !sent && self.extras.answer_submission.is_none();
+        let elicitation =
+            wks_native::elicitation::detect(&list, session.elicitation_server.as_deref());
+        let decisions = self.decisions(session);
+        let position =
+            super::composer_v2::position_label(&decisions, super::composer_v2::Decision::Questions);
+        let card = primitives::waiting_card(compact, &p)
+            .id("question-choices")
+            .debug_selector(|| "question-card".into())
+            .key_context("QuestionPicker")
+            .on_action(cx.listener(|this, _: &SubmitAnswers, _, cx| this.submit_answers(cx)))
+            .on_action(
+                cx.listener(|this, _: &AnswerEnter, window, cx| this.answer_enter(window, cx)),
+            )
+            .occlude();
+        let text_headline =
+            |text: String| primitives::headline(vec![Headline::Text(text.into())], &p);
+        if list.is_empty() {
+            // A question the hub could not structure: answer from the composer.
+            return card
+                .child(primitives::waiting_head(
+                    text_headline("The agent asked for input".into()),
+                    Some("Type your answer in the composer below".into()),
+                    position.map(Into::into),
+                    Vec::new(),
+                    &p,
+                ))
+                .child(
+                    primitives::waiting_actions(&p).child(
+                        primitives::button(
+                            "answer-text",
+                            "Answer with composer",
+                            None,
+                            ButtonVariant::PRIMARY,
+                            ButtonSize::Small,
+                            enabled,
+                            &p,
+                        )
+                        .when(enabled, |d| {
+                            let card = session.card();
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                this.act(
+                                    Action::Answer(
+                                        this.composer.read(cx).value().to_string(),
+                                        card.clone(),
+                                    ),
+                                    cx,
+                                )
+                            }))
+                        }),
+                    ),
+                );
+        }
+        if let Some(Elicitation {
+            server,
+            kind: Kind::Url(url),
+        }) = &elicitation
+        {
+            return card
+                .child(primitives::waiting_head(
+                    text_headline(format!("Open a link for “{server}”?")),
+                    Some("An MCP server asks you to open a page".into()),
+                    position.map(Into::into),
+                    Vec::new(),
+                    &p,
+                ))
+                .child(self.render_url_elicitation(server, url, &list[0], interactive, cx));
+        }
+        let q = &list[step];
+        let multiple = q["multiSelect"].as_bool().unwrap_or(false);
+        let options = q["options"].as_array().cloned().unwrap_or_default();
+        let header = q["header"]
+            .as_str()
+            .map(str::trim)
+            .filter(|h| !h.is_empty());
+        let text = q["question"]
+            .as_str()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .or(header)
+            .unwrap_or("Your answer is needed")
+            .to_owned();
+        let how = match (options.is_empty(), multiple) {
+            (true, _) if self.optional_question(step, q) => Some("Optional"),
+            (true, _) => None,
+            (false, true) => Some("Choose any"),
+            (false, false) => Some("Choose one, or press its number"),
+        };
+        let context: Vec<String> = [
+            elicitation
+                .as_ref()
+                .map(|e| format!("For the MCP server “{}”", e.server)),
+            header.filter(|h| *h != text).map(str::to_owned),
+            how.map(str::to_owned),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let consent = elicitation
+            .as_ref()
+            .filter(|e| step == e.consent_index(&list))
+            .map(|e| e.server.clone());
+        let typed = self
+            .extras
+            .answers
+            .get(step)
+            .is_some_and(|input| !input.read(cx).value().trim().is_empty());
+        let answered = self.question_answered(step, &list, cx);
+        let options_view = div()
+            .id("question-list")
+            .debug_selector(|| "question-list".into())
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xs))
+            .children(options.iter().enumerate().map(|(option_ix, option)| {
+                let chosen = !typed
+                    && self
+                        .extras
+                        .selected_options
+                        .get(step)
+                        .is_some_and(|selected| selected.contains(&option_ix));
+                let handle = self
+                    .extras
+                    .option_focus
+                    .get(step)
+                    .and_then(|row| row.get(option_ix));
+                self.render_option(
+                    step,
+                    option_ix,
+                    option,
+                    options.len(),
+                    multiple,
+                    chosen,
+                    interactive,
+                    compact,
+                    handle,
+                    cx,
+                )
+            }))
+            .when_some(
+                self.extras.answers.get(step).filter(|_| consent.is_none()),
+                |d, input| {
+                    d.child(
+                        div()
+                            .debug_selector(move || format!("question-{step}-answer"))
+                            .mt(px(t.space.xxs))
+                            .text_size(px(t.text.body))
+                            .child(Input::new(input).disabled(!interactive)),
+                    )
+                },
+            );
+        let failed = self.extras.answer_error.clone().filter(|_| !sent);
+        let status: Option<AnyElement> = if let Some(error) = failed {
+            Some(chrome::notice_line(error, chrome::Tone::Error, p).into_any_element())
+        } else if sent {
+            Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(t.space.sm))
+                    .child(div().flex_1().min_w_0().child(chrome::notice_line(
+                        "Answers sent. Waiting for the agent…",
+                        chrome::Tone::Loading,
+                        p,
+                    )))
+                    .child(
+                        primitives::button(
+                            "edit-answers",
+                            "Edit answers",
+                            None,
+                            ButtonVariant::SECONDARY,
+                            ButtonSize::Small,
+                            enabled,
+                            &p,
+                        )
+                        .debug_selector(|| "edit-answers".into())
+                        .when(enabled, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| {
+                                this.extras.answers_sent = false;
+                                cx.notify();
+                            }))
+                        }),
+                    )
+                    .into_any_element(),
+            )
+        } else if self.view.busy || self.extras.answer_submission.is_some() {
+            Some(chrome::notice_line("Sending…", chrome::Tone::Loading, p).into_any_element())
+        } else {
+            None
+        };
+        let last = step + 1 >= total;
+        let submit_label: SharedString = match &elicitation {
+            Some(e) => match self.question_answers(cx).last().map(String::as_str) {
+                Some(wks_native::elicitation::SUBMIT) => format!("Submit to {}", e.server).into(),
+                Some(wks_native::elicitation::DECLINE) => "Send decline".into(),
+                _ => "Submit or decline".into(),
+            },
+            None if total > 1 => "Send answers".into(),
+            None => "Send answer".into(),
+        };
+        let back = (step > 0).then(|| {
+            primitives::button(
+                "question-back",
+                "Back",
+                Some(IconName::ArrowLeft),
+                ButtonVariant::TERTIARY,
+                ButtonSize::Small,
+                interactive,
+                &p,
+            )
+            .debug_selector(|| "question-back".into())
+            .when(interactive, |d| {
+                d.on_click(cx.listener(move |this, _, _, cx| this.go_to_question(step - 1, cx)))
+            })
+        });
+        let forward = if last {
+            let enabled = interactive && ready && !self.view.busy;
+            primitives::button(
+                "submit-answers",
+                submit_label,
+                None,
+                ButtonVariant::PRIMARY,
+                ButtonSize::Small,
+                enabled,
+                &p,
+            )
+            .debug_selector(|| "submit-answers".into())
+            .tooltip(primitives::tooltip_view(
+                "Send every answer to the agent",
+                Some(if cfg!(target_os = "macos") {
+                    "⌘ Enter"
+                } else {
+                    "Ctrl Enter"
+                }),
+                &p,
+            ))
+            .when(enabled, |d| {
+                d.on_click(cx.listener(|this, _, _, cx| this.submit_answers(cx)))
+            })
+        } else {
+            let enabled = interactive && answered;
+            primitives::button(
+                "question-next",
+                "Next",
+                Some(IconName::ArrowRight),
+                ButtonVariant::PRIMARY,
+                ButtonSize::Small,
+                enabled,
+                &p,
+            )
+            .debug_selector(|| "question-next".into())
+            .when(enabled, |d| {
+                d.on_click(cx.listener(move |this, _, _, cx| this.go_to_question(step + 1, cx)))
+            })
+        };
+        let pager = super::composer_v2::pager(step, total);
+        card.child(
+            primitives::waiting_head(
+                text_headline(text).debug_selector(move || format!("question-{step}-text")),
+                (!context.is_empty()).then(|| context.join(" · ").into()),
+                // The set's own pager; the dock's "n of m" rides after it.
+                match (pager, position) {
+                    (Some(pager), Some(position)) => Some(format!("{pager} · {position}").into()),
+                    (pager, position) => pager.or(position).map(Into::into),
+                },
+                Vec::new(),
+                &p,
+            )
+            .debug_selector(|| "question-progress".into()),
+        )
+        .when_some(consent, |d, server| {
+            d.child(
+                div()
+                    .debug_selector(|| "elicitation-consent".into())
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_secondary))
+                    .child(format!(
+                        "Your answers are sent to “{server}” only if you choose Submit. Decline sends nothing."
+                    )),
+            )
+        })
+        .child(options_view)
+        .children(status)
+        .child(
+            primitives::waiting_actions(&p)
+                .debug_selector(|| "question-footer".into())
+                .child(forward)
+                .children(back),
+        )
     }
 }

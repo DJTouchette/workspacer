@@ -85,6 +85,9 @@ pub(crate) enum ButtonVariant {
     Ghost,
     /// Stops or removes something: error text, an error wash on hover.
     DangerGhost,
+    /// The confirm step of a destructive action only: filled with the fault
+    /// colour (r2-systems).
+    Danger,
 }
 
 /// The two control heights (`layout.control_height_sm` / `control_height`).
@@ -136,7 +139,7 @@ fn button_colors(variant: ButtonVariant, enabled: bool, p: &Palette) -> ButtonCo
     if !enabled {
         let (bg, ring) = match variant {
             ButtonVariant::Ghost | ButtonVariant::DangerGhost => (clear, None),
-            ButtonVariant::Primary => (solid(p.selected), None),
+            ButtonVariant::Primary | ButtonVariant::Danger => (solid(p.selected), None),
             ButtonVariant::Secondary => (tonal(p, w.disabled), Some(p.border)),
         };
         return ButtonColors {
@@ -165,6 +168,22 @@ fn button_colors(variant: ButtonVariant, enabled: bool, p: &Palette) -> ButtonCo
             fg: [p.roles.text_secondary, p.text],
             ring: None,
         },
+        ButtonVariant::Danger => {
+            let away = if wks_native::appearance::luminance(p.error) > 0.4 {
+                p.chat
+            } else {
+                p.text
+            };
+            ButtonColors {
+                bg: [
+                    solid(p.error),
+                    wash(p.error, 1. - w.tone_rest),
+                    wash(p.error, 1. - w.tone_hover),
+                ],
+                fg: [away; 2],
+                ring: None,
+            }
+        }
         ButtonVariant::DangerGhost => ButtonColors {
             bg: [
                 clear,
@@ -544,17 +563,14 @@ pub(crate) fn empty_state(
         })
 }
 
-/// An uppercase overline naming a group of rows or cards.
+/// A label naming a group of rows or cards: the contract's
+/// [`section_header`] (sentence case 12/600; r2-systems retired the
+/// uppercase overline).
 pub(crate) fn section_label(label: impl Into<SharedString>, p: &Palette) -> Div {
     let t = p.tokens;
-    let label: SharedString = label.into();
-    div()
+    section_header(label, None, p)
         .px(px(t.space.xs))
         .pb(px(t.space.xs))
-        .text_size(px(t.text.overline))
-        .font_weight(FontWeight(t.weight.semibold))
-        .text_color(rgb(p.roles.text_tertiary))
-        .child(SharedString::from(label.to_uppercase()))
 }
 
 /// The raised surface for grouped content, padded. `chrome::card` is v1's.
@@ -1272,10 +1288,10 @@ pub(crate) fn avatar_tile(name: &str, p: &Palette) -> Div {
 
 /// [`avatar_tile`] at another size (`layout.avatar_lg` on cards).
 pub(crate) fn avatar_tile_sized(name: &str, size: f32, p: &Palette) -> Div {
-    use wks_native::appearance::AVATAR_TONES;
-    use wks_native::format::{avatar_index, monogram};
+    use wks_native::format::monogram;
     let t = p.tokens;
-    let fill = p.roles.avatar[avatar_index(name, AVATAR_TONES)];
+    // r2-systems: a hashed hue at the palette's fixed OKLCH tone.
+    let fill = p.avatar_fill(name);
     div()
         .size(px(size))
         .flex_shrink_0()
@@ -1584,6 +1600,92 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
             )
             .debug_selector(|| "primitive-empty".into()),
         )
+        // r2-systems: the component contract.
+        .child(section_header("Contract", Some("6".into()), p))
+        .child(
+            row().debug_selector(|| "primitive-roles".into()).children(
+                [
+                    B::PRIMARY,
+                    B::SECONDARY,
+                    B::DESTRUCTIVE,
+                    B::TERTIARY,
+                    B::Danger,
+                ]
+                .into_iter()
+                .enumerate()
+                .map(|(ix, v)| {
+                    keyed_button(
+                        ("primitive-role", ix),
+                        (ix + 1).to_string(),
+                        format!("{v:?}"),
+                        v,
+                        ButtonSize::Small,
+                        true,
+                        p,
+                    )
+                }),
+            ),
+        )
+        .child(
+            table(
+                vec!["Area".into(), "Status".into(), "Lines".into()],
+                vec![vec![
+                    "Tables".into_any_element(),
+                    status(StatusKind::Done, p).into_any_element(),
+                    "1,204".into_any_element(),
+                ]],
+                p,
+            )
+            .debug_selector(|| "primitive-table".into()),
+        )
+        .child(
+            div()
+                .debug_selector(|| "primitive-events".into())
+                .child(event_group_header(
+                    "primitive-events-head",
+                    wks_native::format::worked_summary(134_000, 18),
+                    true,
+                    p,
+                ))
+                .child(
+                    EventRow::new(IconName::SquareTerminal, "Ran")
+                        .argument("cargo test")
+                        .summary("212 passed")
+                        .duration("42s")
+                        .status(StatusKind::Done)
+                        .render(p),
+                )
+                .child(
+                    EventRow::new(IconName::File, "Read")
+                        .argument("src/ui/primitives.rs")
+                        .status(StatusKind::Working)
+                        .render(p),
+                ),
+        )
+        .child(
+            page_grid(3, p)
+                .debug_selector(|| "primitive-grid".into())
+                .children((0..3).map(|ix| card(p).child(format!("Cell {ix}")))),
+        )
+        .child(
+            waiting_card(false, p)
+                .debug_selector(|| "primitive-waiting".into())
+                .child(waiting_head(
+                    headline(
+                        vec![
+                            Headline::Text("Run".into()),
+                            Headline::Code("cargo test".into()),
+                            Headline::Text("in native?".into()),
+                        ],
+                        p,
+                    ),
+                    Some("Run the tests before committing · This machine".into()),
+                    Some("1/2".into()),
+                    Vec::new(),
+                    p,
+                ))
+                .child(inset(p).child("Inset well")),
+        )
         .into_any_element()
 }
 
@@ -1604,10 +1706,12 @@ pub(crate) fn keyed_button(
     let t = p.tokens;
     let fg = if !enabled {
         p.disabled
-    } else if variant == ButtonVariant::Primary {
-        p.on_primary
     } else {
-        p.roles.text_secondary
+        match variant {
+            ButtonVariant::Primary => p.on_primary,
+            ButtonVariant::DangerGhost => p.error,
+            _ => p.roles.text_secondary,
+        }
     };
     let cap = div()
         .flex_shrink_0()
@@ -1681,4 +1785,435 @@ pub(crate) fn toolbar_chip(
                     .text_color(rgb(p.roles.text_tertiary)),
             )
         })
+}
+
+// r2-systems: the component contract (`docs/design-v2-direction.md` R2.2).
+// Every v2 surface draws its buttons, cards, section headers, tables, event
+// rows, avatars, figures, page grids and "waiting on you" containers with
+// these; nothing styles its own.
+
+impl ButtonVariant {
+    /// The four roles by their contract names. `PRIMARY` filled accent (at
+    /// most one per region), `SECONDARY` subtle fill + ring, `TERTIARY`
+    /// text/ghost, `DESTRUCTIVE` red text/ghost ([`ButtonVariant::Danger`],
+    /// filled red, only inside a confirm step).
+    pub(crate) const PRIMARY: Self = Self::Primary;
+    pub(crate) const SECONDARY: Self = Self::Secondary;
+    pub(crate) const TERTIARY: Self = Self::Ghost;
+    pub(crate) const DESTRUCTIVE: Self = Self::DangerGhost;
+}
+
+/// `el` with tabular (fixed-width) numerals: times, counts and stats line up
+/// and never jiggle as they tick.
+pub(crate) fn tabular<E: Styled>(mut el: E) -> E {
+    el.text_style()
+        .get_or_insert_with(Default::default)
+        .font_features = Some(gpui::FontFeatures(Arc::new(vec![("tnum".into(), 1)])));
+    el
+}
+
+/// The one inset: a recessed well inside a [`card`] (plan bodies, approval
+/// details, code-like facts). Never a second card level.
+pub(crate) fn inset(p: &Palette) -> Div {
+    let t = p.tokens;
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(t.space.xs))
+        .px(px(t.space.lg))
+        .py(px(t.space.md))
+        .rounded(px(t.radius.control))
+        .bg(rgb(p.chat))
+        .border(px(t.stroke.hairline))
+        .border_color(rgb(p.roles.card_border))
+}
+
+/// The one section header: sentence case, 12/600, secondary, with an
+/// optional count in tabular numerals. Lists, pages and settings all use it;
+/// nothing is uppercase.
+pub(crate) fn section_header(
+    label: impl Into<SharedString>,
+    count: Option<SharedString>,
+    p: &Palette,
+) -> Div {
+    let t = p.tokens;
+    div()
+        .flex()
+        .items_center()
+        .gap(px(t.space.sm))
+        .min_w_0()
+        .text_size(px(t.text.meta))
+        .font_weight(FontWeight(t.weight.semibold))
+        .text_color(rgb(p.roles.text_secondary))
+        .child(div().min_w_0().truncate().child(label.into()))
+        .when_some(count, |d, count| {
+            d.child(tabular(
+                div()
+                    .flex_shrink_0()
+                    .font_weight(FontWeight(t.weight.medium))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(count),
+            ))
+        })
+}
+
+/// The one table style, shared by [`table`] and Markdown tables
+/// (`ui::configure_theme_v2` maps gpui-component's table colours from it).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TableStyle {
+    /// The header row's fill and text.
+    pub(crate) head_bg: u32,
+    pub(crate) head_fg: u32,
+    /// Body rows: one fill, hairline dividers, no zebra.
+    pub(crate) row_bg: u32,
+    pub(crate) divider: u32,
+    pub(crate) hover: u32,
+    pub(crate) cell_x: f32,
+    pub(crate) cell_y: f32,
+}
+
+pub(crate) fn table_style(p: &Palette) -> TableStyle {
+    let t = p.tokens;
+    TableStyle {
+        head_bg: p.base,
+        head_fg: p.roles.text_secondary,
+        row_bg: p.surface,
+        divider: p.border,
+        hover: p.roles.hover,
+        cell_x: t.space.lg,
+        cell_y: t.space.sm,
+    }
+}
+
+/// A table: header cells, then rows of cells, with hairline row dividers
+/// and no outer border (it sits inside a card or on the page). Text columns
+/// are left-aligned; pass numbers already formatted (they get tabular
+/// numerals).
+pub(crate) fn table(headers: Vec<SharedString>, rows: Vec<Vec<AnyElement>>, p: &Palette) -> Div {
+    let t = p.tokens;
+    let s = table_style(p);
+    let columns = headers.len().max(1) as u16;
+    let cell = move || {
+        div()
+            .min_w_0()
+            .px(px(s.cell_x))
+            .py(px(s.cell_y))
+            .flex()
+            .items_center()
+    };
+    let head = div()
+        .w_full()
+        .grid()
+        .grid_cols(columns)
+        .bg(rgb(s.head_bg))
+        .rounded_t(px(t.radius.control))
+        .text_size(px(t.text.meta))
+        .font_weight(FontWeight(t.weight.semibold))
+        .text_color(rgb(s.head_fg))
+        .children(headers.into_iter().map(move |h| cell().child(h)));
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .text_size(px(t.text.body))
+        .text_color(rgb(p.text))
+        .child(head)
+        .children(rows.into_iter().map(move |row| {
+            tabular(
+                div()
+                    .w_full()
+                    .grid()
+                    .grid_cols(columns)
+                    .border_t(px(t.stroke.hairline))
+                    .border_color(rgb(s.divider))
+                    .children(row.into_iter().map(move |c| cell().child(c))),
+            )
+        }))
+}
+
+/// One agent or tool event as a single row: icon, verb, primary argument,
+/// result summary, and the status/duration right-aligned
+/// (`docs/design-v2-direction.md` R2.2). Consecutive rows sit under one
+/// [`event_group_header`].
+pub(crate) struct EventRow {
+    icon: IconName,
+    verb: SharedString,
+    argument: Option<SharedString>,
+    summary: Option<SharedString>,
+    status: Option<StatusKind>,
+    duration: Option<SharedString>,
+}
+
+impl EventRow {
+    pub(crate) fn new(icon: IconName, verb: impl Into<SharedString>) -> Self {
+        Self {
+            icon,
+            verb: verb.into(),
+            argument: None,
+            summary: None,
+            status: None,
+            duration: None,
+        }
+    }
+
+    /// The thing it acted on: a path, a command, a pattern (monospace).
+    pub(crate) fn argument(mut self, argument: impl Into<SharedString>) -> Self {
+        self.argument = Some(argument.into());
+        self
+    }
+
+    /// What came of it: "3 lines", "1 match", "+12 −4".
+    pub(crate) fn summary(mut self, summary: impl Into<SharedString>) -> Self {
+        self.summary = Some(summary.into());
+        self
+    }
+
+    pub(crate) fn status(mut self, status: StatusKind) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    /// Already formatted (`format::duration`).
+    pub(crate) fn duration(mut self, duration: impl Into<SharedString>) -> Self {
+        self.duration = Some(duration.into());
+        self
+    }
+
+    pub(crate) fn render(self, p: &Palette) -> Div {
+        let t = p.tokens;
+        let failed = self.status.is_some_and(StatusKind::needs_attention);
+        div()
+            .w_full()
+            .min_w_0()
+            .h(px(t.layout.control_height_sm))
+            .flex()
+            .items_center()
+            .gap(px(t.space.md))
+            .text_size(px(t.text.body))
+            .child(
+                Icon::new(self.icon)
+                    .size(px(t.icon.sm))
+                    .flex_shrink_0()
+                    .text_color(rgb(p.roles.text_tertiary)),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .font_weight(FontWeight(t.weight.medium))
+                    .text_color(rgb(if failed { p.roles.status.fault } else { p.text }))
+                    .child(self.verb),
+            )
+            .when_some(self.argument, |d, argument| {
+                d.child(
+                    div()
+                        .min_w_0()
+                        .flex_shrink()
+                        .truncate()
+                        .font_family(mono_font())
+                        .text_color(rgb(p.roles.text_secondary))
+                        .child(argument),
+                )
+            })
+            .when_some(self.summary, |d, summary| {
+                d.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(summary),
+                )
+            })
+            .child(div().flex_1())
+            .when_some(self.duration, |d, duration| {
+                d.child(tabular(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(duration),
+                ))
+            })
+            .when_some(self.status, |d, kind| d.child(status_indicator(kind, p)))
+    }
+}
+
+/// The header of a run of [`EventRow`]s: a chevron and "Worked 2m 14s · 18
+/// tools" (`format::worked_summary`). Add `.on_click` to expand/collapse.
+pub(crate) fn event_group_header(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    expanded: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    let t = p.tokens;
+    let (hover, fg) = (p.roles.hover, p.text);
+    tabular(
+        interactive_control(div().id(id.into()), *p, true)
+            .h(px(t.layout.control_height_sm))
+            .px(px(t.space.xs))
+            .flex()
+            .items_center()
+            .gap(px(t.space.sm))
+            .rounded(px(t.radius.control))
+            .text_size(px(t.text.body))
+            .font_weight(FontWeight(t.weight.medium))
+            .text_color(rgb(p.roles.text_secondary))
+            .hover_text_style(move |s| s.bg(rgb(hover)).text_color(rgb(fg)))
+            .child(
+                Icon::new(if expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .size(px(t.icon.sm)),
+            )
+            .child(label.into()),
+    )
+}
+
+/// A shared page grid: `columns` equal tracks at the page gutter, rows
+/// stretched to their tallest card so actions line up. Put it in
+/// [`page_column`] so every page shares one width and left edge.
+pub(crate) fn page_grid(columns: u16, p: &Palette) -> Div {
+    div()
+        .w_full()
+        .grid()
+        .grid_cols(columns.max(1))
+        .gap(px(p.tokens.space.lg))
+}
+
+/// The one "waiting on you" container, for approvals, questions, plans and
+/// usage limits: a neutral card with an attention stripe on its left edge
+/// and an attention edge at `wash.attention_edge`. Fill it with a
+/// [`waiting_head`], the body, then a [`waiting_actions`] row.
+pub(crate) fn waiting_card(compact: bool, p: &Palette) -> Div {
+    let t = p.tokens;
+    let attention = p.roles.status.attention;
+    let pad = if compact { t.space.md } else { t.space.lg };
+    let inset = t.radius.panel * 0.75;
+    div()
+        .relative()
+        .w_full()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap(px(if compact { t.space.sm } else { t.space.md }))
+        .pl(px(pad + t.stroke.stripe))
+        .pr(px(pad))
+        .py(px(pad))
+        .rounded(px(t.radius.panel))
+        .bg(rgb(p.surface))
+        .border(px(t.stroke.hairline))
+        .border_color(wash(attention, t.wash.attention_edge))
+        .shadow(elevation(p, t.elevation.floating))
+        .child(
+            div()
+                .absolute()
+                .left(px(-t.stroke.hairline))
+                .top(px(inset))
+                .bottom(px(inset))
+                .w(px(t.stroke.stripe))
+                .rounded(px(t.radius.full))
+                .bg(rgb(attention)),
+        )
+}
+
+/// One run of a decision headline: plain words, or a code span (a command,
+/// a path) drawn in mono on the inline-code fill.
+pub(crate) enum Headline {
+    Text(SharedString),
+    Code(SharedString),
+}
+
+/// A question-style headline ("Run `cargo test` in native?") at `text.lead`
+/// 600: words never shrink, a code span truncates (full value on hover).
+pub(crate) fn headline(parts: Vec<Headline>, p: &Palette) -> Div {
+    let t = p.tokens;
+    div()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(px(t.space.xs))
+        .text_size(px(t.text.lead))
+        .font_weight(FontWeight(t.weight.semibold))
+        .text_color(rgb(p.text))
+        .children(parts.into_iter().enumerate().map(|(ix, part)| {
+            match part {
+                Headline::Text(text) => div().flex_shrink_0().child(text).into_any_element(),
+                Headline::Code(code) => truncated(("headline-code", ix), code, p)
+                    .debug_selector(|| "headline-code".into())
+                    .flex_shrink()
+                    .px(px(t.space.xs))
+                    .rounded(px(t.radius.xs))
+                    .bg(rgb(p.code_inline))
+                    .font_family(mono_font())
+                    .font_weight(FontWeight(t.weight.medium))
+                    .text_size(px(t.text.subheading))
+                    .into_any_element(),
+            }
+        }))
+}
+
+/// A "waiting on you" container's head: the question headline, the
+/// always-visible where/why line under it, then a pager ("2/3") and any
+/// trailing controls (Details) on the right.
+pub(crate) fn waiting_head(
+    headline: impl IntoElement,
+    context: Option<SharedString>,
+    position: Option<SharedString>,
+    trailing: Vec<AnyElement>,
+    p: &Palette,
+) -> Div {
+    let t = p.tokens;
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .items_start()
+        .gap(px(t.space.md))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.xxs))
+                .child(headline)
+                .when_some(context, |d, context| {
+                    d.child(
+                        div()
+                            .debug_selector(|| "waiting-context".into())
+                            .min_w_0()
+                            .text_size(px(t.text.meta))
+                            .line_height(relative(t.text.line_height))
+                            .text_color(rgb(p.roles.text_secondary))
+                            .child(context),
+                    )
+                }),
+        )
+        .when_some(position, |d, position| {
+            d.child(tabular(
+                div()
+                    .debug_selector(|| "waiting-position".into())
+                    .flex_shrink_0()
+                    .h(px(t.layout.control_height_sm))
+                    .flex()
+                    .items_center()
+                    .text_size(px(t.text.meta))
+                    .font_weight(FontWeight(t.weight.medium))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(position),
+            ))
+        })
+        .children(trailing)
+}
+
+/// A "waiting on you" container's action row: the decision's buttons, left
+/// to right in role order (primary, secondary, destructive, tertiary).
+pub(crate) fn waiting_actions(p: &Palette) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap(px(p.tokens.space.sm))
 }

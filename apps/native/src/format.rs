@@ -130,9 +130,83 @@ pub fn age(at: i64, now: i64) -> String {
     }
 }
 
+// r2-systems
+/// What a stalled agent says instead of "Working": a fault, never also
+/// running (`docs/design-v2-direction.md` R2.1).
+pub const NOT_RESPONDING: &str = "Not responding";
+
+/// "Not responding · 2m" for an agent last heard from at `last_beat` (ms);
+/// plain "Not responding" when it never beat.
+pub fn not_responding(last_beat: Option<i64>, now: i64) -> String {
+    match last_beat {
+        Some(beat) => format!("{NOT_RESPONDING} · {}", age(beat, now)),
+        None => NOT_RESPONDING.to_owned(),
+    }
+}
+
+/// A run of agent and tool events, for the transcript's group header:
+/// "Worked 2m 14s · 18 tools" ("1 tool"; no count when there were none).
+pub fn worked_summary(elapsed_ms: i64, tools: usize) -> String {
+    let worked = format!("Worked {}", duration(elapsed_ms));
+    match tools {
+        0 => worked,
+        1 => format!("{worked} · 1 tool"),
+        n => format!("{worked} · {n} tools"),
+    }
+}
+
+/// The hue (OKLCH degrees) of a name's avatar tile: the same stable hash as
+/// [`avatar_index`], spread over the wheel with the purple band (280–335°)
+/// left out.
+pub fn avatar_hue(name: &str) -> f32 {
+    const SKIP_FROM: f32 = 280.;
+    const SKIP: f32 = 55.;
+    let steps = 360 - SKIP as usize;
+    let hue = avatar_index(name, steps) as f32;
+    if hue >= SKIP_FROM { hue + SKIP } else { hue }
+}
+
+/// A model id for people: "Sonnet 4.6", "GPT-5.6 Luna", the raw id when it
+/// is not recognised. The one formatter for chips, rows and popovers; show
+/// the raw id on hover.
+pub fn model_name(id: &str) -> String {
+    crate::model::model_display_name(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // r2-systems
+    #[test]
+    fn stalls_workers_and_avatar_hues_read_right() {
+        let now = 1_000_000_000_000;
+        assert_eq!(
+            not_responding(Some(now - 2 * 60_000), now),
+            "Not responding · 2m"
+        );
+        assert_eq!(not_responding(None, now), "Not responding");
+        assert_eq!(worked_summary(134_000, 18), "Worked 2m 14s · 18 tools");
+        assert_eq!(worked_summary(42_000, 1), "Worked 42s · 1 tool");
+        assert_eq!(worked_summary(42_000, 0), "Worked 42s");
+        for name in [
+            "workspacer",
+            "hub-rs",
+            "inbox",
+            "docs",
+            "web",
+            "native",
+            "a",
+            "zz",
+        ] {
+            let hue = avatar_hue(name);
+            assert!((0. ..360.).contains(&hue), "{name} {hue}");
+            assert!(!(280. ..335.).contains(&hue), "{name} is purple ({hue})");
+        }
+        assert_eq!(avatar_hue("Workspacer "), avatar_hue("workspacer"));
+        assert_eq!(model_name("claude-sonnet-4-6"), "Sonnet 4.6");
+        assert_eq!(model_name("gpt-5.6-luna"), "GPT-5.6 Luna");
+    }
 
     // area-shell
     #[test]

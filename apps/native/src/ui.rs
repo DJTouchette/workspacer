@@ -285,14 +285,16 @@ fn configure_theme_v2(c: &mut gpui_component::ThemeColor, p: &Palette, dark: boo
     c.list_hover = solid(r.hover);
     c.list_active = solid(p.selected);
     c.list_active_border = solid(r.focus);
-    c.table = solid(p.surface);
-    c.table_even = solid(p.surface);
-    c.table_head = solid(p.base);
-    c.table_head_foreground = solid(r.text_secondary);
-    c.table_hover = solid(r.hover);
+    // r2-systems: Markdown tables share the one table style.
+    let table = primitives::table_style(&p);
+    c.table = solid(table.row_bg);
+    c.table_even = solid(table.row_bg);
+    c.table_head = solid(table.head_bg);
+    c.table_head_foreground = solid(table.head_fg);
+    c.table_hover = solid(table.hover);
     c.table_active = solid(p.selected);
     c.table_active_border = solid(r.focus);
-    c.table_row_border = solid(p.border);
+    c.table_row_border = solid(table.divider);
     c.tab = gpui::transparent_black();
     c.tab_foreground = solid(r.text_secondary);
     c.tab_active = solid(p.selected);

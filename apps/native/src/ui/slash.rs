@@ -156,7 +156,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The open menu, drawn inside the composer above the input.
+    /// The open menu: inside the composer above the input (v1), or in a
+    /// popover floating above the composer (v2).
     pub(super) fn render_slash_menu(&self, rows: Vec<SlashCommand>, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let highlight = self.slash_highlight(rows.len(), cx);
@@ -229,9 +230,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap(px(t.space.xxs))
-            .pb(px(t.space.sm))
-            .border_b(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.card_border))
+            // r2-systems: drawn in a popover above the composer (no divider).
             .children(rows.into_iter().enumerate().map(|(ix, command)| {
                 let description = command.description.clone();
                 let label = command.insert.clone();

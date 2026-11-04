@@ -169,6 +169,12 @@ pub struct Washes {
     pub tone_rest: f32,
     pub tone_hover: f32,
     pub tone_pressed: f32,
+    /// The edge of a "waiting on you" container: attention at this alpha
+    /// (v2: 0.35; v1 never draws it).
+    pub attention_edge: f32,
+    /// A control that yields to a pending decision (the composer while
+    /// something waits on the user), as an opacity (v2: 0.6; v1: 1).
+    pub yielded: f32,
 }
 
 /// Border widths in logical px.
@@ -177,6 +183,9 @@ pub struct Strokes {
     pub hairline: f32,
     /// The reserved keyboard focus ring (`interactive_control`).
     pub focus: f32,
+    /// The attention stripe on a "waiting on you" container's left edge
+    /// (v2: 3; v1 never draws it).
+    pub stripe: f32,
 }
 
 /// Fixed control and layout measures in logical px.
@@ -389,10 +398,13 @@ impl Tokens {
             tone_rest: 0.08,
             tone_hover: 0.14,
             tone_pressed: 0.2,
+            attention_edge: 0.35,
+            yielded: 1.,
         },
         stroke: Strokes {
             hairline: 1.,
             focus: 2.,
+            stripe: 3.,
         },
         layout: Layout {
             chat_width: 900.,
@@ -538,10 +550,13 @@ impl Tokens {
             tone_rest: 0.12,
             tone_hover: 0.18,
             tone_pressed: 0.24,
+            attention_edge: 0.35,
+            yielded: 0.6,
         },
         stroke: Strokes {
             hairline: 1.,
             focus: 2.,
+            stripe: 3.,
         },
         layout: Layout {
             chat_width: 760.,

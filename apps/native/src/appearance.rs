@@ -91,6 +91,9 @@ pub struct Roles {
     /// Monogram avatar fills, muted, picked by a hash of the name
     /// (`wks_native::format::avatar_index`). Text on them is `text`.
     pub avatar: [u32; AVATAR_TONES],
+    /// The fixed OKLCH (lightness, chroma) of avatar tiles; the hue comes
+    /// from a hash of the name (`format::avatar_hue`, `Palette::avatar_fill`).
+    pub avatar_tone: (f32, f32),
     /// The five status roles. Colour AND shape encode status; nothing else
     /// may borrow these hues (blue/accent means "interactive" only).
     pub status: StatusRoles,
@@ -119,9 +122,9 @@ pub struct StatusRoles {
 /// How many muted avatar fills a palette carries.
 pub const AVATAR_TONES: usize = 6;
 
-/// The avatar hues in degrees: blue, teal, green, sand, clay, rose. No
-/// purple, which v2 retires.
-const AVATAR_HUES: [f32; AVATAR_TONES] = [212., 174., 128., 40., 18., 346.];
+/// The avatar hues in OKLCH degrees: blue, teal, green, sand, clay, rose.
+/// No purple, which v2 retires.
+const AVATAR_HUES: [f32; AVATAR_TONES] = [250., 190., 145., 85., 45., 10.];
 
 impl Roles {
     /// Placeholder in the palette literals; `palette()` derives the real values.
@@ -137,6 +140,7 @@ impl Roles {
         card_border: 0,
         provider: 0,
         avatar: [0; AVATAR_TONES],
+        avatar_tone: (0., 0.),
         status: StatusRoles {
             attention: 0,
             fault: 0,
@@ -160,6 +164,7 @@ impl Roles {
             card_border: p.border,
             provider: p.muted,
             avatar: [p.selected; AVATAR_TONES],
+            avatar_tone: (0., 0.),
             status: StatusRoles {
                 attention: p.warning,
                 fault: p.error,
@@ -223,22 +228,45 @@ fn mix(a: u32, b: u32, t: f32) -> u32 {
     ch(16) | ch(8) | ch(0)
 }
 
-/// An HSL colour (hue in degrees, saturation and lightness 0–1) as 0xRRGGBB.
-fn hsl(hue: f32, saturation: f32, lightness: f32) -> u32 {
-    let c = (1. - (2. * lightness - 1.).abs()) * saturation;
-    let h = hue.rem_euclid(360.) / 60.;
-    let x = c * (1. - (h % 2. - 1.).abs());
-    let (r, g, b) = match h as u32 {
-        0 => (c, x, 0.),
-        1 => (x, c, 0.),
-        2 => (0., c, x),
-        3 => (0., x, c),
-        4 => (x, 0., c),
-        _ => (c, 0., x),
+/// An OKLCH colour (lightness 0–1, chroma, hue in degrees) as 0xRRGGBB,
+/// clipped to sRGB.
+pub fn oklch(lightness: f32, chroma: f32, hue: f32) -> u32 {
+    let (a, b) = {
+        let h = hue.to_radians();
+        (chroma * h.cos(), chroma * h.sin())
     };
-    let m = lightness - c / 2.;
-    let byte = |v: f32| (((v + m) * 255.).round().clamp(0., 255.)) as u32;
-    byte(r) << 16 | byte(g) << 8 | byte(b)
+    let l_ = lightness + 0.396_337_78 * a + 0.215_803_76 * b;
+    let m_ = lightness - 0.105_561_346 * a - 0.063_854_17 * b;
+    let s_ = lightness - 0.089_484_18 * a - 1.291_485_5 * b;
+    let (l, m, s) = (l_.powi(3), m_.powi(3), s_.powi(3));
+    let linear = [
+        4.076_741_7 * l - 3.307_711_6 * m + 0.230_969_94 * s,
+        -1.268_438 * l + 2.609_757_4 * m - 0.341_319_38 * s,
+        -0.004_196_086_3 * l - 0.703_418_6 * m + 1.707_614_7 * s,
+    ];
+    let byte = |v: f32| {
+        let v = v.clamp(0., 1.);
+        let v = if v <= 0.003_130_8 {
+            12.92 * v
+        } else {
+            1.055 * v.powf(1. / 2.4) - 0.055
+        };
+        (v * 255.).round().clamp(0., 255.) as u32
+    };
+    byte(linear[0]) << 16 | byte(linear[1]) << 8 | byte(linear[2])
+}
+
+impl Palette {
+    /// The avatar tile colour for `name`: a hue hashed from the name at the
+    /// palette's fixed OKLCH lightness and chroma (`roles.avatar_tone`).
+    /// V1 (which never draws avatars) answers with its tone table.
+    pub fn avatar_fill(&self, name: &str) -> u32 {
+        let (lightness, chroma) = self.roles.avatar_tone;
+        if chroma <= 0. {
+            return self.roles.avatar[crate::format::avatar_index(name, AVATAR_TONES)];
+        }
+        oklch(lightness, chroma, crate::format::avatar_hue(name))
+    }
 }
 
 impl Appearance {
@@ -332,7 +360,9 @@ impl Appearance {
         p.code_block = c.surface;
         p.code_header = c.raised;
         let dark = self.is_dark();
-        let (saturation, lightness) = if dark { (0.24, 0.27) } else { (0.42, 0.86) };
+        // r2-systems: one OKLCH lightness and chroma per mode; only the hue
+        // varies, so every tile weighs the same.
+        let avatar_tone = if dark { (0.38, 0.055) } else { (0.9, 0.045) };
         p.roles = Roles {
             hover: c.hover,
             pressed: c.pressed,
@@ -344,7 +374,8 @@ impl Appearance {
             info: c.working,
             card_border: c.card_border,
             provider: c.tertiary,
-            avatar: AVATAR_HUES.map(|hue| hsl(hue, saturation, lightness)),
+            avatar: AVATAR_HUES.map(|hue| oklch(avatar_tone.0, avatar_tone.1, hue)),
+            avatar_tone,
             status: StatusRoles {
                 attention: c.attention,
                 fault: c.fault,
