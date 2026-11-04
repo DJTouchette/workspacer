@@ -833,7 +833,7 @@ impl Workspace {
                 ("Status", Col::Fixed(pg.status + t.space.xxxl)),
                 ("Agents", Col::Fixed(pg.when)),
                 ("Waiting", Col::Fixed(pg.age)),
-                ("", Col::Fixed(pg.age)),
+                ("", Col::Keep(pg.age)),
             ],
             &p,
         ));
@@ -981,7 +981,7 @@ impl Workspace {
                 div().text_color(rgb(p.roles.text_secondary)).child(waiting),
             )))
             .child(
-                primitives::page_cell(Col::Fixed(pg.age))
+                primitives::page_cell(Col::Keep(pg.age))
                     .justify_end()
                     .child(details),
             );

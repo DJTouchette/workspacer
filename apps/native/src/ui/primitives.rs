@@ -2237,7 +2237,10 @@ pub(crate) fn table(headers: Vec<SharedString>, rows: Vec<Vec<AnyElement>>, p: &
 /// a share of what is left (the name column).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Col {
+    /// A measure that gives way (truncating) when the window is narrow.
     Fixed(f32),
+    /// A measure that never gives way: the actions column.
+    Keep(f32),
     Flex,
     /// Whatever its content needs (the actions column), right-aligned.
     Auto,
@@ -2264,7 +2267,8 @@ pub(crate) fn page_table(p: &Palette) -> Div {
 pub(crate) fn page_cell(col: Col) -> Div {
     let cell = div().min_w_0().flex().items_center();
     match col {
-        Col::Fixed(w) => cell.w(px(w)).flex_shrink_0(),
+        Col::Fixed(w) => cell.w(px(w)).flex_shrink(),
+        Col::Keep(w) => cell.w(px(w)).flex_shrink_0(),
         Col::Flex => cell.flex_1(),
         Col::Auto => cell.flex_shrink_0().justify_end(),
     }

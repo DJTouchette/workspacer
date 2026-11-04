@@ -1564,7 +1564,7 @@ impl Workspace {
                     Col::Fixed(pg.runs),
                 ),
                 (if proposals { "" } else { "Next" }, Col::Fixed(pg.age)),
-                ("", Col::Fixed(pg.actions)),
+                ("", Col::Keep(pg.actions)),
             ],
             &p,
         )
@@ -1696,7 +1696,7 @@ impl Workspace {
                 div().text_color(rgb(p.roles.text_secondary)).child(next),
             )))
             .child(
-                primitives::page_cell(Col::Fixed(pg.actions))
+                primitives::page_cell(Col::Keep(pg.actions))
                     .justify_end()
                     .child(self.job_actions(ix, job, target, cx)),
             );

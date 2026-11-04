@@ -129,7 +129,7 @@ impl Workspace {
                         ("Machine", Col::Fixed(pg.machine)),
                         ("Folder there", Col::Flex),
                         ("How", Col::Fixed(pg.runs)),
-                        ("", Col::Fixed(pg.actions)),
+                        ("", Col::Keep(pg.actions)),
                     ],
                     &p,
                 ));
@@ -606,7 +606,7 @@ impl Workspace {
         };
         let folder = ui::page_cell(Col::Flex);
         let how = ui::page_cell(Col::Fixed(pg.runs));
-        let mut actions = ui::page_cell(Col::Fixed(pg.actions))
+        let mut actions = ui::page_cell(Col::Keep(pg.actions))
             .justify_end()
             .gap(px(t.space.xs));
         let mut suggestions = Vec::new();
@@ -767,7 +767,7 @@ impl Workspace {
                             .child(quiet(format!("Suggested · {}", suggestion.label()))),
                     )
                     .child(
-                        ui::page_cell(Col::Fixed(pg.actions))
+                        ui::page_cell(Col::Keep(pg.actions))
                             .justify_end()
                             .child(accept(ix, suggestion.path.clone())),
                     ),

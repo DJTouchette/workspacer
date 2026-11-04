@@ -1410,10 +1410,20 @@ impl Workspace {
             .child(
                 manage_row(
                     if archived { "Archived" } else { "Archive" },
-                    match (archived, s.stopped()) {
-                        (true, _) => "Hidden from the list in every client of this hub.",
-                        (false, true) => "Hides it from the list in every client of this hub.",
-                        (false, false) => {
+                    match (archived, s.stopped(), self.design().is_v2()) {
+                        // r3-pages (R3.5): no "hub".
+                        (true, _, true) => "Hidden from the sidebar everywhere you use Workspacer.",
+                        (false, true, true) => {
+                            "Hides it from the sidebar everywhere you use Workspacer."
+                        }
+                        (false, false, true) => {
+                            "Hides it from the sidebar everywhere you use Workspacer. It keeps running."
+                        }
+                        (true, _, false) => "Hidden from the list in every client of this hub.",
+                        (false, true, false) => {
+                            "Hides it from the list in every client of this hub."
+                        }
+                        (false, false, false) => {
                             "Hides it from the list in every client of this hub. It keeps running."
                         }
                     },
