@@ -177,6 +177,17 @@ impl Workspace {
                 .bg(rgb(p.surface))
                 .border_1()
                 .border_color(gpui::Hsla::from(rgb(p.warning)).opacity(0.45))
+                .when(self.design().is_v2(), |d| {
+                    let t = p.tokens;
+                    d.gap(px(t.space.md))
+                        .pl(px(t.space.lg))
+                        .pr(px(t.space.xs))
+                        .py(px(t.space.xs))
+                        .rounded(px(t.radius.panel))
+                        .border(px(t.stroke.hairline))
+                        .border_color(primitives::wash(p.warning, t.wash.tone_hover))
+                        .bg(primitives::wash(p.warning, t.wash.rest))
+                })
                 .child(marker(p, 13., false))
                 .child(
                     div()

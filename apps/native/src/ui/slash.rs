@@ -160,6 +160,9 @@ impl Workspace {
     pub(super) fn render_slash_menu(&self, rows: Vec<SlashCommand>, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let highlight = self.slash_highlight(rows.len(), cx);
+        if self.design().is_v2() {
+            return self.render_slash_menu_v2(rows, highlight, cx);
+        }
         div()
             .debug_selector(|| "slash-menu".into())
             .flex()
@@ -201,6 +204,59 @@ impl Workspace {
                                 .text_color(rgb(p.muted))
                                 .child(description),
                         )
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.slash_insert(&command, window, cx)
+                    }))
+            }))
+    }
+}
+
+// area-composer
+impl Workspace {
+    /// The v2 menu: rows on the list primitive, the command in mono, its
+    /// description secondary, the highlighted row on the neutral selection.
+    fn render_slash_menu_v2(
+        &self,
+        rows: Vec<SlashCommand>,
+        highlight: usize,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        div()
+            .debug_selector(|| "slash-menu".into())
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xxs))
+            .pb(px(t.space.sm))
+            .border_b(px(t.stroke.hairline))
+            .border_color(rgb(p.roles.card_border))
+            .children(rows.into_iter().enumerate().map(|(ix, command)| {
+                let description = command.description.clone();
+                let label = command.insert.clone();
+                super::primitives::list_row(("slash-item", ix), ix == highlight, true, &p)
+                    .debug_selector(move || format!("slash-item-{ix}"))
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .font_family(mono_font())
+                            .text_size(px(t.text.body))
+                            .text_color(rgb(p.text))
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_secondary))
+                            .child(description),
+                    )
+                    .when(ix == highlight, |d| {
+                        d.child(super::primitives::kbd("Tab", &p))
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.slash_insert(&command, window, cx)

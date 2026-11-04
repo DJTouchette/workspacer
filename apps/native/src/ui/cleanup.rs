@@ -170,6 +170,15 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap_1()
+                .when(self.design().is_v2(), |d| {
+                    let t = p.tokens;
+                    d.px(px(t.space.lg))
+                        .py(px(t.space.md))
+                        .gap(px(t.space.xs))
+                        .rounded(px(t.radius.panel))
+                        .border(px(t.stroke.hairline))
+                        .border_color(rgb(p.roles.card_border))
+                })
         };
         if let Some(undo) = self.cleanup_undo() {
             let n = undo.ids.len();

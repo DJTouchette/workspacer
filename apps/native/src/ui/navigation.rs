@@ -467,6 +467,8 @@ impl Workspace {
 
     fn workspace_actions(&self, shell: Div, cx: &mut Context<Self>) -> Div {
         shell
+            // area-composer: number keys on a v2 approval strip.
+            .on_key_down(cx.listener(Self::decision_keys))
             .on_action(cx.listener(Self::send))
             .on_action(cx.listener(Self::send_now))
             .on_action(cx.listener(Self::queue_message))

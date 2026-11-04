@@ -34,6 +34,8 @@ FIXTURES = {
     "rich": ["--rich-transcript", "--catalog", "--turns", "120"],
     "questions": ["--rich-transcript", "--catalog", "--turns", "120", "--pending-questions"],
     "plan": ["--rich-transcript", "--catalog", "--turns", "120", "--plan-and-limit"],
+    # No sessions yet: the first-run welcome (catalog projects to pick from).
+    "empty": ["--catalog", "--sessions", "0"],
     "demo": None,
 }
 
@@ -94,6 +96,8 @@ def shots():
     add("file-viewer", "File viewer with README.md open from a transcript link",
         [("click", "README_LINK"), ("sleep", 2)])
     add("terminal", "Session terminal panel", [("key", "Escape"), ("key", "ctrl+grave"), ("sleep", 2)])
+    add("welcome", "First run: no sessions yet, the welcome with setup checklist", fixture="empty")
+    add("slash-menu", "Composer `/` menu over the draft", [("key", "ctrl+l"), ("sleep", 0.8), ("type", "/")])
     add("new-session", "New agent form with a task typed",
         [("key", "Escape"), ("key", "ctrl+n"), ("sleep", 3), ("click", "NEW_TASK_FIELD"),
          ("type", "Profile sidebar scrolling with 1,000 sessions and fix any dropped frames.", 150)])
@@ -361,8 +365,9 @@ LANDMARKS = {
     "TITLE_PILL": lambda shot: (900, 30),
     "TITLE_MODEL": lambda shot: (880 if shot.get("v2") else 1005, 30),  # "Sonnet" chip
     "TITLE_TASKS_BADGE": lambda shot: (1160 if shot.get("v2") else 1078, 30),  # background work
-    "APPROVAL_DETAILS": lambda shot: (1361, 749),   # approval dock "Details"
-    "APPROVAL_DENY_NOTE": lambda shot: (740, 795),  # approval dock "Deny with note..."
+    # v1: the approval card above the composer; v2: the strip on the composer.
+    "APPROVAL_DETAILS": lambda shot: (1360, 833) if shot["v2"] else (1361, 749),
+    "APPROVAL_DENY_NOTE": lambda shot: (952, 869) if shot["v2"] else (740, 795),
     "RAIL_FIRST_MARK": lambda shot: (35, 205 if shot.get("v2") else 219),  # first session in the rail
     "README_LINK": lambda shot: (591, 497),         # README.md link, last assistant message
     "TALL_README_LINK": lambda shot: (169, 1097),   # same link in the 1000x1600 tall layout

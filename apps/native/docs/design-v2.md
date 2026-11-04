@@ -153,6 +153,8 @@ the 2px border, Enter/Space activation, pointer cursor when enabled).
 | Keycap | `kbd(label, &p) -> Div` |
 | Helpers | `Intent::{Neutral, Accent, Info, Success, Warning, Danger, Busy}` with `.color(&p)`, `wash(color, alpha)`, `tonal(&p, alpha)`, `elevation(&p, Shadow) -> Vec<BoxShadow>` |
 | Review | `gallery(&p) -> AnyElement` renders every primitive once (`ui::tests::design`) |
+| Keyed button | `keyed_button(id, key, label, variant, size, enabled, &p)`: a button led by the key that triggers it ("1 Allow" on the approval strip) |
+| Toolbar chip | `toolbar_chip(id, leading: Option<AnyElement>, label, opens, enabled, &p)`: a quiet chip in the composer toolbar (folder, model); `opens` adds a chevron and hover |
 
 ## Formatting (`wks_native::format`)
 

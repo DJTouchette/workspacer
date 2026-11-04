@@ -6,6 +6,8 @@ mod cache;
 mod children;
 mod chrome;
 mod cleanup;
+// area-composer
+mod composer_v2;
 mod conversation;
 mod default_shell;
 mod explorer;
@@ -888,6 +890,9 @@ pub struct Workspace {
     shell: shell::ShellUi,
     #[cfg(feature = "ui-tests")]
     rendered_rows: std::rc::Rc<std::cell::RefCell<std::collections::BTreeSet<usize>>>,
+    // area-composer
+    /// The v2 composer's split menu and other dock state.
+    composer_ui: composer_v2::ComposerUi,
 }
 
 impl Workspace {
@@ -1184,6 +1189,8 @@ impl Workspace {
             shell: Default::default(),
             #[cfg(feature = "ui-tests")]
             rendered_rows: Default::default(),
+            // area-composer
+            composer_ui: Default::default(),
         }
     }
 
@@ -1656,7 +1663,13 @@ impl Workspace {
                 gpui::EntityInputHandler::marked_text_range(input, window, cx)
             })
             .is_some_and(|range| !range.is_empty());
-        if composing || !self.composer_busy() || self.composer.read(cx).value().trim().is_empty() {
+        // Design v2 leaves Tab to the text field: queueing is in the send
+        // button's menu instead.
+        if composing
+            || self.design().is_v2()
+            || !self.composer_busy()
+            || self.composer.read(cx).value().trim().is_empty()
+        {
             cx.propagate();
             return;
         }
@@ -1675,6 +1688,11 @@ impl Workspace {
     fn submit(&mut self, kind: Submit, window: &mut Window, cx: &mut Context<Self>) {
         // Never submit a draft the open viewer covers.
         if self.viewer_modal(window) {
+            return;
+        }
+        // area-composer: the v2 welcome's task field starts an agent.
+        if kind == Submit::Send && self.welcome_prompt_focused(window, cx) {
+            self.start_from_welcome(window, cx);
             return;
         }
         if self.new_session {

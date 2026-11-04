@@ -308,16 +308,39 @@ impl Workspace {
             .flex_col()
             .gap_2()
             .text_size(px(12.))
+            .when(self.design().is_v2(), |d| {
+                let t = p.tokens;
+                d.p(px(t.space.lg))
+                    .rounded(px(t.radius.panel))
+                    .border(px(t.stroke.hairline))
+                    .border_color(rgb(p.roles.card_border))
+                    .shadow(primitives::elevation(&p, t.elevation.raised))
+                    .gap(px(t.space.md))
+                    .text_size(px(t.text.body))
+            })
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(status_dot(if answered.is_some() {
-                        p.success
+                    .child(if self.design().is_v2() {
+                        // Answered is a decision made, not a success; open
+                        // ones need the user but block nothing.
+                        primitives::status_indicator(
+                            if answered.is_some() {
+                                primitives::StatusKind::Idle
+                            } else {
+                                primitives::StatusKind::NeedsYou
+                            },
+                            &p,
+                        )
                     } else {
-                        p.accent
-                    }))
+                        status_dot(if answered.is_some() {
+                            p.success
+                        } else {
+                            p.accent
+                        })
+                    })
                     .child(
                         div()
                             .font_weight(FontWeight::MEDIUM)
@@ -326,6 +349,9 @@ impl Workspace {
                             } else {
                                 p.text
                             }))
+                            .when(self.design().is_v2() && answered.is_some(), |d| {
+                                d.text_color(rgb(p.roles.text_secondary))
+                            })
                             .child(if answered.is_some() {
                                 "Answered"
                             } else if row.questions.len() > 1 {
