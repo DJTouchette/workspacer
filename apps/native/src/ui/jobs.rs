@@ -74,6 +74,9 @@ impl Workspace {
     }
 
     pub(super) fn render_jobs(&self, cx: &mut Context<Self>) -> Div {
+        if self.design().is_v2() {
+            return self.render_jobs_v2(cx);
+        }
         let p = self.palette();
         let rows = self.job_rows();
         let list = rows.clone().unwrap_or_default();
@@ -137,67 +140,6 @@ impl Workspace {
                 .text_size(px(chrome::scale::CAPTION))
                 .text_color(rgb(p.muted))
                 .child(JOBS_FOOTER),
-        )
-    }
-
-    /// The Jobs page under design v2: the shared [`primitives::page_header`]
-    /// (back link, title, description, one Refresh action) over the page
-    /// body, in the shared page width.
-    pub(super) fn jobs_page_v2(
-        &self,
-        notice: Option<Div>,
-        body: Div,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let connected = self.view.connected;
-        let back = primitives::back_link(
-            "feature-back",
-            if self.extras.return_launch {
-                "Back to new agent"
-            } else {
-                "Back to chat"
-            },
-            &p,
-        )
-        .debug_selector(|| "feature-back".into())
-        .on_click(cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)));
-        let refresh = primitives::button(
-            "jobs-refresh",
-            "Refresh",
-            Some(IconName::Redo),
-            ButtonVariant::Secondary,
-            ButtonSize::Small,
-            connected,
-            &p,
-        )
-        .debug_selector(|| "jobs-refresh".into())
-        .when(connected, |d| {
-            d.on_click(cx.listener(|this, _, _, cx| {
-                this.request(Request::Jobs, cx);
-                this.request(Request::JobRuns, cx);
-            }))
-        });
-        let header = primitives::page_header(
-            Some(back.into_any_element()),
-            "Jobs",
-            Some(JOBS_DESCRIPTION.into()),
-            vec![refresh.into_any_element()],
-            &p,
-        )
-        .debug_selector(|| "page-header".into());
-        self.page_view(
-            "feature-view",
-            t.layout.page_width,
-            false,
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(t.space.xxl))
-                .child(header)
-                .children(notice)
-                .child(body),
         )
     }
 
@@ -670,7 +612,7 @@ impl Workspace {
     }
 
     /// A job's last runs as small bars, oldest to newest.
-    fn run_strip(&self, id: &str, runs: Option<&[Run]>) -> Option<Div> {
+    fn run_strip(&self, id: &str, runs: Option<&[Run]>) -> Option<gpui::AnyElement> {
         let p = self.palette();
         let mut last: Vec<&Run> = runs?
             .iter()
@@ -681,6 +623,37 @@ impl Workspace {
             return None;
         }
         last.reverse();
+        if self.design().is_v2() {
+            // Taller bars for failures; a tooltip says what the strip shows.
+            let t = p.tokens;
+            let summary = strip_summary(&last);
+            return Some(
+                div()
+                    .id(SharedString::from(format!("job-strip-{id}")))
+                    .debug_selector({
+                        let id = id.to_owned();
+                        move || format!("job-strip-{id}")
+                    })
+                    .flex_shrink_0()
+                    .h(px(t.icon.xs))
+                    .flex()
+                    .items_end()
+                    .gap(px(t.space.xxs))
+                    .tooltip(primitives::tooltip_view(summary, None, &p))
+                    .children(last.into_iter().map(|run| {
+                        div()
+                            .w(px(t.space.xs))
+                            .h(px(if run.status == "error" {
+                                t.icon.xs
+                            } else {
+                                t.space.md
+                            }))
+                            .rounded(px(t.stroke.hairline))
+                            .bg(rgb(run_color(run, p)))
+                    }))
+                    .into_any_element(),
+            );
+        }
         Some(
             div()
                 .flex_shrink_0()
@@ -693,7 +666,8 @@ impl Workspace {
                         .h(px(if run.status == "error" { 12. } else { 8. }))
                         .rounded(px(1.))
                         .bg(rgb(run_color(run, p)))
-                })),
+                }))
+                .into_any_element(),
         )
     }
 
@@ -802,6 +776,32 @@ impl Workspace {
                     ),
             )
             .child(self.job_actions(ix, job, target, cx));
+        if self.design().is_v2() {
+            let t = p.tokens;
+            let card = primitives::card(&p)
+                .p(px(0.))
+                .gap(px(0.))
+                .debug_selector(move || format!("job-row-{ix}"))
+                .overflow_hidden()
+                .child(header)
+                .when(expanded, |d| d.child(self.job_detail(job, target)));
+            if !proposal {
+                return card;
+            }
+            // Needs you: a warning rule down the edge on the card surface.
+            return card
+                .border_color(primitives::wash(p.warning, t.wash.tone_hover * 2.))
+                .relative()
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(px(t.stroke.focus + t.stroke.hairline))
+                        .bg(rgb(p.warning)),
+                );
+        }
         let card = chrome::card(p)
             .debug_selector(move || format!("job-row-{ix}"))
             .overflow_hidden()
@@ -911,6 +911,9 @@ impl Workspace {
         target: Option<&Job>,
         cx: &mut Context<Self>,
     ) -> Div {
+        if self.design().is_v2() {
+            return self.job_actions_v2(ix, job, target, cx);
+        }
         let enabled = self.view.connected && !self.demo && !self.job_busy();
         let id = job.id.clone();
         let proposal = job.proposal();
@@ -1411,4 +1414,353 @@ fn schedule(trigger: &serde_json::Value, twelve_hour: bool) -> Option<String> {
         "manual" => "Only when run by hand".into(),
         _ => return None,
     })
+}
+
+// area-pages: the Jobs page under design v2.
+/// What the New job button prefills in a new session's task.
+pub(super) const NEW_JOB_PROMPT: &str = "Create a scheduled job that ";
+
+impl Workspace {
+    /// The page's one primary: a new session, its task prefilled to ask the
+    /// agent for a job (agents write jobs; this page approves them).
+    pub(super) fn new_job_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let p = self.palette();
+        let enabled = self.view.connected && !self.demo;
+        // A proposal waiting for approval owns the page's one primary.
+        let waiting = self
+            .job_rows()
+            .is_some_and(|rows| rows.iter().any(Job::proposal));
+        primitives::button(
+            "jobs-new",
+            "New job",
+            Some(IconName::Plus),
+            if waiting {
+                ButtonVariant::Secondary
+            } else {
+                ButtonVariant::Primary
+            },
+            ButtonSize::Small,
+            enabled,
+            &p,
+        )
+        .debug_selector(|| "jobs-new".into())
+        .tooltip(primitives::tooltip_view(
+            "Ask an agent to write one; it waits here for your approval",
+            None,
+            &p,
+        ))
+        .when(enabled, |d| {
+            d.on_click(cx.listener(|this, _, window, cx| this.start_new_job(window, cx)))
+        })
+    }
+
+    /// Open New session with the task reading "Create a scheduled job that "
+    /// and the caret after it.
+    pub(super) fn start_new_job(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.demo || self.spawn_pending || self.view.creating {
+            return;
+        }
+        self.show_new_session(window, cx);
+        self.prompt.update(cx, |input, cx| {
+            input.set_value(NEW_JOB_PROMPT, window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    fn render_jobs_v2(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let rows = self.job_rows();
+        let list = rows.clone().unwrap_or_default();
+        let runs = self.job_runs();
+        let read_error = self
+            .view
+            .requests
+            .get("jobs")
+            .filter(|s| !s.loading)
+            .and_then(|s| s.error.clone())
+            .filter(|e| !e.is_empty());
+        let page = div()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.lg))
+            .child(self.job_tabs_v2(&list, runs.as_deref(), cx))
+            .when(rows.is_some(), |d| {
+                d.children(
+                    read_error
+                        .clone()
+                        .map(|e| chrome::notice_line(e, chrome::Tone::Error, p)),
+                )
+            })
+            .child(self.feature_message("job-action"));
+        if self.extras.job_runs_tab {
+            return page.child(self.render_run_history(&list, runs, cx));
+        }
+        let Some(rows) = rows else {
+            return page.child(match read_error {
+                Some(error) => self.jobs_unavailable(error, cx),
+                None => chrome::notice_line("Loading jobs…", chrome::Tone::Loading, p),
+            });
+        };
+        if rows.is_empty() {
+            return page.child(
+                primitives::empty_state(
+                    IconName::Calendar,
+                    NO_JOBS_TITLE,
+                    Some(NO_JOBS.into()),
+                    &p,
+                )
+                .debug_selector(|| "jobs-empty".into())
+                .child(self.new_job_button(cx)),
+            );
+        }
+        let waiting = rows.iter().filter(|j| j.proposal()).count();
+        let mut page = page;
+        for (ix, job) in rows.iter().enumerate() {
+            if waiting > 0 && ix == 0 {
+                page = page.child(
+                    primitives::section_label("Needs your approval", &p).text_color(rgb(p.warning)),
+                );
+            } else if waiting > 0 && ix == waiting {
+                page = page.child(primitives::section_label("Scheduled", &p).pt(px(t.space.lg)));
+            }
+            page = page.child(self.render_job(ix, job, &rows, runs.as_deref(), cx));
+        }
+        page.child(
+            div()
+                .pt(px(t.space.xs))
+                .text_size(px(t.text.meta))
+                .text_color(rgb(p.roles.text_tertiary))
+                .child(JOBS_FOOTER),
+        )
+    }
+
+    /// Jobs / Runs as the shared segmented control, each with its count.
+    fn job_tabs_v2(&self, list: &[Job], runs: Option<&[Run]>, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let now = now_ms();
+        let failed_today = runs.map_or(0, |runs| {
+            runs.iter()
+                .filter(|r| r.status == "error" && jobs::day_label(r.started_at, now) == "Today")
+                .count()
+        });
+        let waiting = list.iter().filter(|j| j.proposal()).count();
+        let scheduled = list.len() - waiting;
+        let tab = |id: &'static str, label: &'static str, runs_tab: bool, alert: Option<Div>| {
+            primitives::segment(id, label, self.extras.job_runs_tab == runs_tab, &p)
+                .debug_selector(move || id.into())
+                .gap(px(t.space.sm))
+                .children(alert)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.extras.job_runs_tab != runs_tab {
+                        this.extras.job_runs_tab = runs_tab;
+                        if runs_tab {
+                            this.request(Request::JobRuns, cx);
+                        }
+                        cx.notify();
+                    }
+                }))
+        };
+        let count = |n: usize| {
+            div()
+                .text_color(rgb(p.roles.text_tertiary))
+                .child(n.to_string())
+        };
+        div().flex().child(
+            primitives::segmented(&p)
+                .child(tab(
+                    "jobs-tab-jobs",
+                    "Jobs",
+                    false,
+                    Some(if waiting > 0 {
+                        primitives::pill(
+                            format!("{waiting} to approve"),
+                            primitives::Intent::Warning,
+                            &p,
+                        )
+                    } else {
+                        count(scheduled)
+                    }),
+                ))
+                .child(tab(
+                    "jobs-tab-runs",
+                    "Runs",
+                    true,
+                    (failed_today > 0).then(|| {
+                        primitives::pill(
+                            format!("{failed_today} failed today"),
+                            primitives::Intent::Danger,
+                            &p,
+                        )
+                    }),
+                )),
+        )
+    }
+
+    /// A v2 job row's actions: Approve (the first proposal is the page's
+    /// primary) and Reject for proposals; Pause/Resume and Run now for jobs,
+    /// with Remove in the overflow menu behind a confirm step.
+    fn job_actions_v2(
+        &self,
+        ix: usize,
+        job: &Job,
+        target: Option<&Job>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let enabled = self.view.connected && !self.demo && !self.job_busy();
+        let id = job.id.clone();
+        let proposal = job.proposal();
+        let confirming = self.extras.job_confirm_remove.as_deref() == Some(id.as_str());
+        let button = |id: SharedString, label: &'static str, variant, enabled: bool| {
+            primitives::button(id, label, None, variant, ButtonSize::Small, enabled, &p)
+        };
+        let row = div()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(t.space.xs));
+        if proposal {
+            let remove_id = id.clone();
+            let reject = button(
+                job_control("remove", ix),
+                "Reject",
+                ButtonVariant::Ghost,
+                enabled,
+            )
+            .debug_selector(move || format!("job-remove-{ix}"))
+            .when(enabled, |d| {
+                d.on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.remove_job(&remove_id, true, cx);
+                }))
+            });
+            let can_approve = enabled && (!job.change() || target.is_some());
+            let approval = job.approval();
+            let approve = button(
+                job_control("approve", ix),
+                "Approve",
+                if ix == 0 {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Secondary
+                },
+                can_approve,
+            )
+            .debug_selector(move || format!("job-approve-{ix}"))
+            .when(can_approve, |d| {
+                d.on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.job_action(JobAction::Save(approval.clone()), cx);
+                }))
+            });
+            return row.child(reject).child(approve);
+        }
+        if confirming {
+            // The second step names what goes: the job and its history.
+            let remove_id = id.clone();
+            return row
+                .child(
+                    button(job_control("keep", ix), "Keep", ButtonVariant::Ghost, true)
+                        .debug_selector(move || format!("job-keep-{ix}"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.extras.job_confirm_remove = None;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    button(
+                        job_control("remove", ix),
+                        "Remove job and history",
+                        ButtonVariant::DangerGhost,
+                        enabled,
+                    )
+                    .debug_selector(move || format!("job-remove-{ix}"))
+                    .when(enabled, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.remove_job(&remove_id, false, cx);
+                        }))
+                    }),
+                );
+        }
+        let paused = job.with_enabled(!job.enabled);
+        let pause_label = if job.enabled { "Pause" } else { "Resume" };
+        let pause = button(
+            job_control("pause", ix),
+            pause_label,
+            ButtonVariant::Secondary,
+            enabled,
+        )
+        .debug_selector(move || format!("job-pause-{ix}"))
+        .when(enabled, |d| {
+            d.on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.job_action(JobAction::Save(paused.clone()), cx);
+            }))
+        });
+        let can_run = enabled && !job.running;
+        let run_id = id.clone();
+        let run = button(
+            job_control("run", ix),
+            "Run now",
+            ButtonVariant::Secondary,
+            can_run,
+        )
+        .debug_selector(move || format!("job-run-{ix}"))
+        .when(can_run, |d| {
+            d.on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.job_action(JobAction::Run(run_id.clone()), cx);
+            }))
+        });
+        let remove_id = id.clone();
+        let remove = primitives::menu_item(
+            job_control("remove", ix),
+            "Remove…",
+            Some(IconName::Delete),
+            true,
+            enabled,
+            &p,
+        )
+        .debug_selector(move || format!("job-remove-{ix}"))
+        .when(enabled, |d| {
+            d.on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.close_page_menu(cx);
+                this.remove_job(&remove_id, false, cx);
+            }))
+        });
+        row.child(pause).child(run).child(self.page_overflow(
+            format!("job-{ix}"),
+            vec![remove.into_any_element()],
+            cx,
+        ))
+    }
+}
+
+/// The run strip's tooltip: "Last 10 runs: 8 succeeded, 2 failed".
+pub(super) fn strip_summary(runs: &[&Run]) -> String {
+    let ok = runs.iter().filter(|r| r.status == "ok").count();
+    let failed = runs.iter().filter(|r| r.status == "error").count();
+    let skipped = runs.len() - ok - failed;
+    let mut parts = Vec::new();
+    if ok > 0 {
+        parts.push(format!("{ok} succeeded"));
+    }
+    if failed > 0 {
+        parts.push(format!("{failed} failed"));
+    }
+    if skipped > 0 {
+        parts.push(format!("{skipped} skipped"));
+    }
+    let head = match runs.len() {
+        1 => "Last run".to_owned(),
+        n => format!("Last {n} runs"),
+    };
+    format!("{head}: {}", parts.join(", "))
 }

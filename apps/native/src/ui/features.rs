@@ -1,4 +1,5 @@
 //! Secondary views keep the conversation uncluttered and preserve its draft/scroll.
+use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
 use super::*;
 use gpui::AnyElement;
 use serde_json::Value;
@@ -220,7 +221,9 @@ pub(super) struct Extras {
     pub handoff_sent: bool,
     pub handoff_seen: u64,
     /// Session history's search, groups and keyboard cursor.
-    pub recent: super::recent::RecentUi,
+    pub recent: super::recent::RecentUi, // area-pages
+    /// Design v2 page state: open overflow menus and expanded host cards.
+    pub pages: PagesUi,
 }
 impl Extras {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
@@ -369,6 +372,7 @@ impl Extras {
             handoff_sent: false,
             handoff_seen: 0,
             recent: super::recent::RecentUi::new(window, cx),
+            pages: Default::default(),
         }
     }
 }
@@ -903,10 +907,11 @@ impl Workspace {
             chrome::notice_line(self.extras.notice.clone(), tone, p)
                 .debug_selector(|| "feature-notice".into())
         });
-        if self.screen == Screen::Jobs && self.design().is_v2() {
-            // The v2 worked example (`docs/design-v2.md`, "Migrating a
-            // screen"): shared page header, tokens and content width.
-            return self.jobs_page_v2(notice, body, cx);
+        if self.design().is_v2() {
+            // Every feature page shares one frame under v2: the shared page
+            // header (back link, title, description, actions) in the shared
+            // page width (`docs/design-v2.md`, "Migrating a screen").
+            return self.feature_page_v2(title.to_owned(), description, notice, body, cx);
         }
         let header = self.page_header(
             Some(back),
@@ -2231,4 +2236,326 @@ pub(super) fn card_heading(
                 .text_color(rgb(p.muted))
                 .child(text)
         }))
+}
+
+// area-pages: the shared v2 page frame and the small helpers every migrated
+// page uses (`docs/design-v2.md`, "Migrating a screen").
+impl Workspace {
+    /// The palette when design v2 is on; `None` keeps a call site on v1.
+    pub(super) fn v2_palette(&self) -> Option<Palette> {
+        self.design().is_v2().then(|| self.palette())
+    }
+
+    /// A small v2 button, or `None` under v1 so the caller falls back to its
+    /// shipped control: `self.v2_button(…).unwrap_or_else(|| self.button(…))`.
+    pub(super) fn v2_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        icon: Option<IconName>,
+        variant: ButtonVariant,
+        enabled: bool,
+    ) -> Option<Stateful<Div>> {
+        let p = self.v2_palette()?;
+        Some(primitives::button(
+            id.into(),
+            label,
+            icon,
+            variant,
+            ButtonSize::Small,
+            enabled,
+            &p,
+        ))
+    }
+
+    /// The card surface for the design in use.
+    pub(super) fn page_card(&self) -> Div {
+        match self.v2_palette() {
+            Some(p) => primitives::card(&p),
+            None => chrome::card(self.palette()),
+        }
+    }
+
+    /// A notice line under v2: the same tones, on the v2 palette.
+    pub(super) fn page_notice(&self, text: impl Into<SharedString>, tone: chrome::Tone) -> Div {
+        chrome::notice_line(text, tone, self.palette())
+    }
+
+    /// Every feature page under v2: back link, title, one-line description
+    /// and right-aligned actions over the body, in the shared page width.
+    pub(super) fn feature_page_v2(
+        &mut self,
+        title: String,
+        description: Option<SharedString>,
+        notice: Option<Div>,
+        body: Div,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let back = primitives::back_link(
+            "feature-back",
+            if self.extras.return_launch {
+                "Back to new session"
+            } else {
+                "Back to chat"
+            },
+            &p,
+        )
+        .debug_selector(|| "feature-back".into())
+        .on_click(cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)));
+        let actions = self.feature_actions_v2(cx);
+        let header = primitives::page_header(
+            Some(back.into_any_element()),
+            title,
+            description,
+            actions,
+            &p,
+        )
+        .debug_selector(|| "page-header".into());
+        let header = match self.selected_session() {
+            Some(s) if self.screen == Screen::Session => div()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.md))
+                .child(header)
+                .child(self.session_summary_line(s)),
+            _ => header,
+        };
+        if self.screen == Screen::Recent {
+            // Its rows are the page's own children, so the keyboard cursor
+            // can scroll one into view.
+            let mut items = vec![div().pb(px(t.space.xl)).child(header).into_any_element()];
+            items.extend(notice.map(|n| div().pb(px(t.space.md)).child(n).into_any_element()));
+            items.extend(self.render_recent(cx));
+            return self.page_list(
+                "feature-view",
+                t.layout.page_width,
+                false,
+                &self.extras.recent.scroll,
+                items,
+            );
+        }
+        self.page_view(
+            "feature-view",
+            t.layout.page_width,
+            false,
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.xxl))
+                .child(header)
+                .children(notice)
+                .child(body),
+        )
+    }
+
+    /// The page header's actions under v2: at most one primary, the rest
+    /// secondary or ghost.
+    fn feature_actions_v2(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let p = self.palette();
+        let connected = self.view.connected;
+        let refresh = |id: &'static str| {
+            primitives::button(
+                id,
+                "Refresh",
+                Some(IconName::Redo),
+                ButtonVariant::Ghost,
+                ButtonSize::Small,
+                connected,
+                &p,
+            )
+            .debug_selector(move || id.into())
+        };
+        match self.screen {
+            Screen::Recent => vec![
+                refresh("history-refresh")
+                    .when(connected, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Recent, cx)))
+                    })
+                    .into_any_element(),
+            ],
+            Screen::Jobs => vec![
+                refresh("jobs-refresh")
+                    .when(connected, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| {
+                            this.request(Request::Jobs, cx);
+                            this.request(Request::JobRuns, cx);
+                        }))
+                    })
+                    .into_any_element(),
+                self.new_job_button(cx).into_any_element(),
+            ],
+            Screen::Hosts => vec![
+                refresh("hosts-refresh")
+                    .when(connected, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Hosts, cx)))
+                    })
+                    .into_any_element(),
+            ],
+            Screen::Scratch => vec![
+                refresh("scratch-refresh")
+                    .when(connected, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| this.refresh_scratch(cx)))
+                    })
+                    .into_any_element(),
+            ],
+            Screen::Setup => {
+                let can_check =
+                    connected && !self.view.requests.get("setup").is_some_and(|s| s.loading);
+                vec![
+                    primitives::button(
+                        "setup-refresh",
+                        "Check again",
+                        Some(IconName::Redo),
+                        ButtonVariant::Secondary,
+                        ButtonSize::Small,
+                        can_check,
+                        &p,
+                    )
+                    .debug_selector(|| "setup-refresh".into())
+                    .when(can_check, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| {
+                            let provider = this.provider.into();
+                            this.request(
+                                Request::Setup {
+                                    provider,
+                                    check: false,
+                                },
+                                cx,
+                            )
+                        }))
+                    })
+                    .into_any_element(),
+                ]
+            }
+            Screen::Session => self
+                .selected_session()
+                .map(|s| {
+                    let badge = if self.view.connected {
+                        session_badge_v2(self.status_of(s, p).0)
+                    } else {
+                        StatusBadge::new(StatusKind::Idle).label("Offline")
+                    };
+                    div()
+                        .debug_selector(|| "session-status".into())
+                        .child(badge.render(&p))
+                        .into_any_element()
+                })
+                .into_iter()
+                .collect(),
+            Screen::Handoff => self
+                .handoff_continue(cx)
+                .map(IntoElement::into_any_element)
+                .into_iter()
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// A session's status word (`Workspace::status_of`) in the shared v2
+/// vocabulary: Needs you · Working · Idle · Done · Failed (and Paused).
+pub(super) fn session_badge_v2(word: &str) -> StatusBadge {
+    let kind = session_kind_v2(word);
+    match kind {
+        // "Needs approval" and "Needs your input" are both "Needs you".
+        StatusKind::NeedsYou => StatusBadge::new(kind),
+        // "Ready" and "Ended" are both Idle; the word says which.
+        _ => StatusBadge::new(kind).label(word.to_owned()),
+    }
+}
+
+/// The [`StatusKind`] of a session status word.
+pub(super) fn session_kind_v2(word: &str) -> StatusKind {
+    let lower = word.to_ascii_lowercase();
+    if lower.starts_with("needs") || lower.contains("waiting") {
+        StatusKind::NeedsYou
+    } else if lower.contains("fail") || lower.contains("error") || lower.contains("lost") {
+        StatusKind::Failed
+    } else if lower == "paused" {
+        StatusKind::Paused
+    } else if ["work", "run", "think", "start", "respond"]
+        .iter()
+        .any(|w| lower.contains(w))
+    {
+        StatusKind::Working
+    } else if lower.contains("complet") || lower == "done" {
+        StatusKind::Done
+    } else if lower.contains("queue") {
+        StatusKind::Queued
+    } else {
+        StatusKind::Idle
+    }
+}
+
+/// Design v2 page state (area-pages).
+#[derive(Default)]
+pub(super) struct PagesUi {
+    /// The overflow ("…") menu open on a page, by its key.
+    pub menu: Option<String>,
+    /// Hosts whose Details (metrics and queue) are open, by host.
+    pub hosts_open: std::collections::BTreeSet<String>,
+}
+
+impl Workspace {
+    /// A "More actions" trigger with its menu below it while open. Each item
+    /// is a [`primitives::menu_item`] whose click handler does its work and
+    /// calls [`Self::close_page_menu`]; a click outside closes it too.
+    pub(super) fn page_overflow(
+        &self,
+        key: impl Into<String>,
+        items: Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let key: String = key.into();
+        let open = self.extras.pages.menu.as_deref() == Some(key.as_str());
+        let trigger_id = SharedString::from(format!("{key}-more"));
+        let selector = trigger_id.clone();
+        let toggle = key.clone();
+        let trigger = primitives::overflow_trigger(trigger_id, &p)
+            .debug_selector(move || selector.to_string())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                let menu = &mut this.extras.pages.menu;
+                *menu = if menu.as_deref() == Some(toggle.as_str()) {
+                    None
+                } else {
+                    Some(toggle.clone())
+                };
+                cx.notify();
+            }));
+        let menu_selector = format!("{key}-menu");
+        div()
+            .relative()
+            .flex_shrink_0()
+            .child(trigger)
+            .when(open, |d| {
+                d.child(
+                    gpui::deferred(
+                        div()
+                            .absolute()
+                            .top(px(t.layout.icon_button + t.space.xs))
+                            .right_0()
+                            .child(
+                                primitives::menu(&p)
+                                    .debug_selector(move || menu_selector.clone())
+                                    .on_mouse_down_out(
+                                        cx.listener(|this, _, _, cx| this.close_page_menu(cx)),
+                                    )
+                                    .children(items),
+                            ),
+                    )
+                    .with_priority(1),
+                )
+            })
+    }
+
+    pub(super) fn close_page_menu(&mut self, cx: &mut Context<Self>) {
+        if self.extras.pages.menu.take().is_some() {
+            cx.notify();
+        }
+    }
 }

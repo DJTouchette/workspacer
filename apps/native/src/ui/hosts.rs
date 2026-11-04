@@ -169,6 +169,9 @@ impl Workspace {
     }
 
     pub(super) fn render_hosts(&self, cx: &mut Context<Self>) -> Div {
+        if self.design().is_v2() {
+            return self.render_hosts_v2(cx);
+        }
         let p = self.palette();
         let page = div().flex().flex_col().gap_3();
         let read_error = self
@@ -751,4 +754,751 @@ pub(super) fn pill(text: String, color: u32, p: Palette) -> Div {
         .font_weight(FontWeight::MEDIUM)
         .text_color(rgb(color))
         .child(text)
+}
+
+// area-pages: the Hosts page under design v2. One summary line per machine
+// ("studio · Accepting work · 3 of 4 agent slots free"), a fixed status
+// column, and the metrics and queue behind Details. Plain words replace the
+// ops terms: the gate is "Accepting work" / "Paused: low memory", PSI lives
+// in tooltips, and queue and session ids sit behind "Copy ID".
+use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
+
+impl Workspace {
+    fn render_hosts_v2(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let page = div().flex().flex_col().gap(px(t.space.lg));
+        let read_error = self
+            .view
+            .requests
+            .get("hosts")
+            .filter(|s| !s.loading)
+            .and_then(|s| s.error.clone())
+            .filter(|e| !e.is_empty());
+        let Some(snapshot) = self.host_snapshot() else {
+            return page.child(match read_error {
+                Some(error) => primitives::empty_state(
+                    IconName::TriangleAlert,
+                    UNAVAILABLE_TITLE,
+                    Some(UNAVAILABLE.into()),
+                    &p,
+                )
+                .debug_selector(|| "hosts-unavailable".into())
+                .child(
+                    primitives::truncated("hosts-unavailable-detail", error, &p)
+                        .max_w(px(t.layout.dialog_width))
+                        .font_family(mono_font())
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary)),
+                ),
+                None => chrome::notice_line("Loading hosts…", chrome::Tone::Loading, p),
+            });
+        };
+        if snapshot.support() == Support::Unsupported {
+            return page.child(
+                primitives::empty_state(
+                    IconName::Info,
+                    UNSUPPORTED_TITLE,
+                    Some(UNSUPPORTED.into()),
+                    &p,
+                )
+                .debug_selector(|| "hosts-unsupported".into()),
+            );
+        }
+        let cancel_error = self
+            .view
+            .requests
+            .get("host-action")
+            .filter(|s| matches!(s.request, Request::HostAction(HostAction::Cancel { .. })))
+            .filter(|s| !s.loading)
+            .and_then(|s| s.error.clone());
+        let limits = snapshot.limits.as_ref().ok().cloned();
+        let cards = hosts::cards(&snapshot, &self.view.hosts_live);
+        let mut page = page
+            .when_some(read_error, |d, e| {
+                d.child(chrome::notice_line(e, chrome::Tone::Error, p))
+            })
+            .when_some(cancel_error, |d, e| {
+                d.child(
+                    chrome::notice_line(e, chrome::Tone::Error, p)
+                        .debug_selector(|| "hosts-cancel-error".into()),
+                )
+            })
+            .child(primitives::section_label("Machines", &p));
+        for (ix, card) in cards.iter().enumerate() {
+            page = page.child(self.render_host_v2(ix, card, limits.as_ref(), cx));
+        }
+        if cards.len() == 1 {
+            page = page.child(
+                div()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child("No other machines yet. Machines this hub connects to show here with their own queues."),
+            );
+        }
+        page.child(
+            div()
+                .pt(px(t.space.xl))
+                .child(self.render_project_links(cx)),
+        )
+    }
+
+    /// One machine: the summary row, then Details (metrics, limits, queue)
+    /// when opened.
+    fn render_host_v2(
+        &self,
+        ix: usize,
+        card: &Card,
+        limits: Option<&Limits>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let now = now_ms();
+        let open = self.extras.pages.hosts_open.contains(&card.host);
+        let status = host_status(card);
+        // "This machine · studio" reads as "studio", then "This machine".
+        let name = card
+            .name
+            .strip_prefix("This machine · ")
+            .unwrap_or(&card.name)
+            .to_owned();
+        let this_machine = card.local && name != "This machine";
+        let toggle = card.host.clone();
+        let details = primitives::button(
+            SharedString::from(format!("host-details-{ix}")),
+            "Details",
+            Some(if open {
+                IconName::ChevronDown
+            } else {
+                IconName::ChevronRight
+            }),
+            ButtonVariant::Ghost,
+            ButtonSize::Small,
+            true,
+            &p,
+        )
+        .debug_selector(move || format!("host-details-{ix}"))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            let set = &mut this.extras.pages.hosts_open;
+            if !set.remove(&toggle) {
+                set.insert(toggle.clone());
+            }
+            cx.notify();
+        }));
+        let gate_tooltip = card
+            .resources
+            .as_ref()
+            .map(|r| {
+                if r.gate_reasons().is_empty() {
+                    "Starts queued work when a slot is free".to_owned()
+                } else {
+                    r.gate_reasons()
+                        .iter()
+                        .map(|r| plain_reason_sentence(r))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+            })
+            .unwrap_or_else(|| "No resource sample yet".to_owned());
+        let summary = div()
+            .id(("host-summary", ix))
+            .debug_selector(move || format!("host-summary-{ix}"))
+            .px(px(t.space.xl))
+            .py(px(t.space.lg))
+            .flex()
+            .items_center()
+            .gap(px(t.space.lg))
+            .min_w_0()
+            .child(primitives::avatar_tile_sized(&name, t.layout.avatar_lg, &p))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(t.space.xxs))
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(t.space.md))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(t.text.subheading))
+                                    .font_weight(FontWeight(t.weight.semibold))
+                                    .text_color(rgb(p.text))
+                                    .child(name.clone()),
+                            )
+                            .when(this_machine, |d| {
+                                d.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(t.text.meta))
+                                        .text_color(rgb(p.roles.text_tertiary))
+                                        .child("This machine"),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(move || format!("host-facts-{ix}"))
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_secondary))
+                            .child(host_summary(card)),
+                    ),
+            )
+            .child(
+                div()
+                    .id(("host-gate", ix))
+                    .debug_selector(move || format!("host-gate-{ix}"))
+                    .w(px(t.layout.status_column + t.space.xxxl))
+                    .flex_shrink_0()
+                    .flex()
+                    .tooltip(primitives::tooltip_view(gate_tooltip, None, &p))
+                    .child(status.render(&p)),
+            )
+            .child(details);
+        let mut body = primitives::card(&p)
+            .p(px(0.))
+            .gap(px(0.))
+            .overflow_hidden()
+            .debug_selector(move || format!("host-card-{ix}"))
+            .child(summary);
+        if !open {
+            return body;
+        }
+        let mut detail = div()
+            .debug_selector(move || format!("host-detail-{ix}"))
+            .border_t(px(t.stroke.hairline))
+            .border_color(rgb(p.border))
+            .px(px(t.space.xl))
+            .pt(px(t.space.lg))
+            .pb(px(t.space.xl))
+            .flex()
+            .flex_col()
+            .gap(px(t.space.lg));
+        match &card.resources {
+            Some(r) => {
+                let limit = |key: &str, default: f64| {
+                    if card.local {
+                        limits.and_then(|l| l.get(key)).unwrap_or(default)
+                    } else {
+                        default
+                    }
+                };
+                let cpu_limit = limit("maxCpuPressure", DEFAULT_CPU_LIMIT);
+                let memory_limit = limit("maxMemoryPressure", DEFAULT_MEMORY_LIMIT);
+                detail = detail
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .gap(px(t.space.xxl))
+                            .child(metric_v2(
+                                (ix, 0),
+                                "CPU",
+                                hosts::pct(r.cpu_pct),
+                                r.cpu_pressure,
+                                cpu_limit,
+                                &p,
+                            ))
+                            .child(metric_v2(
+                                (ix, 1),
+                                "Memory",
+                                format!("{} free", hosts::megabytes(r.memory_available_mb)),
+                                r.memory_pressure,
+                                memory_limit,
+                                &p,
+                            ))
+                            .child(metric_v2(
+                                (ix, 2),
+                                "Disk activity",
+                                load_word(r.io_pressure, 100.).to_owned(),
+                                r.io_pressure,
+                                100.,
+                                &p,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_tertiary))
+                            .child(
+                                [
+                                    r.agent_line(),
+                                    r.shell_line(),
+                                    r.queued_line(),
+                                    format!("{} disk", r.disk_free()),
+                                    r.sampled_at
+                                        .map(|at| {
+                                            format!("updated {}", wks_native::jobs::since(at, now))
+                                        })
+                                        .unwrap_or_default(),
+                                ]
+                                .into_iter()
+                                .filter(|s| !s.is_empty())
+                                .collect::<Vec<_>>()
+                                .join(" · "),
+                            ),
+                    )
+                    .children(r.gate_reasons().iter().map(|reason| {
+                        chrome::notice_line(plain_reason_sentence(reason), chrome::Tone::Warning, p)
+                    }));
+            }
+            None => {
+                detail = detail.child(
+                    div()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(if card.connected == Some(false) {
+                            "Offline: no recent resource sample."
+                        } else {
+                            "No resource sample yet."
+                        }),
+                );
+            }
+        }
+        if card.local {
+            let can_edit = self.view.connected && limits.is_some();
+            detail = detail.child(
+                div().flex().child(
+                    primitives::button(
+                        "host-limits",
+                        "Queue limits",
+                        Some(IconName::Settings),
+                        ButtonVariant::Secondary,
+                        ButtonSize::Small,
+                        can_edit,
+                        &p,
+                    )
+                    .debug_selector(|| "host-limits".into())
+                    .when(can_edit, |d| {
+                        d.on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_limits(window, cx)),
+                        )
+                    }),
+                ),
+            );
+            if self.extras.limits_open {
+                detail = detail.child(self.render_limits(limits, cx));
+            }
+        }
+        if !card.error.is_empty() {
+            detail = detail.child(chrome::notice_line(
+                card.error.clone(),
+                chrome::Tone::Error,
+                p,
+            ));
+        }
+        detail = detail.child(primitives::section_label("Queue", &p).pt(px(t.space.xs)));
+        detail = if card.items.is_empty() {
+            detail.child(
+                div()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child("Nothing queued."),
+            )
+        } else {
+            let mut list = div()
+                .flex()
+                .flex_col()
+                .rounded(px(t.radius.control))
+                .border(px(t.stroke.hairline))
+                .border_color(rgb(p.border))
+                .overflow_hidden();
+            for (row, item) in card.items.iter().enumerate() {
+                list = list.child(self.render_queue_row_v2(ix, row, &card.host, item, now, cx));
+            }
+            detail.child(list)
+        };
+        body = body.child(detail);
+        body
+    }
+
+    /// One queued, running or finished item: a fixed status column, then
+    /// the title, where it came from and when, what it runs and why it
+    /// waits; Cancel for queued work and its ids behind the overflow.
+    fn render_queue_row_v2(
+        &self,
+        card: usize,
+        row: usize,
+        host: &str,
+        item: &Item,
+        now: i64,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let busy = self
+            .view
+            .requests
+            .get("host-action")
+            .is_some_and(|s| s.loading);
+        let can_cancel = item.cancellable() && self.view.connected && !busy;
+        let note = self.queue_note_v2(item);
+        let (id, host) = (item.id.clone(), host.to_owned());
+        let copy_id = item.id.clone();
+        let mut menu = vec![
+            primitives::menu_item(
+                SharedString::from(format!("queue-copy-id-{card}-{row}")),
+                "Copy ID",
+                Some(IconName::Copy),
+                false,
+                true,
+                &p,
+            )
+            .debug_selector(move || format!("queue-copy-id-{card}-{row}"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(copy_id.clone()));
+                this.close_page_menu(cx);
+            }))
+            .into_any_element(),
+        ];
+        if !item.session_id.is_empty() {
+            let session = item.session_id.clone();
+            menu.push(
+                primitives::menu_item(
+                    SharedString::from(format!("queue-copy-session-{card}-{row}")),
+                    "Copy session ID",
+                    Some(IconName::Copy),
+                    false,
+                    true,
+                    &p,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(session.clone()));
+                    this.close_page_menu(cx);
+                }))
+                .into_any_element(),
+            );
+        }
+        div()
+            .debug_selector(move || format!("queue-row-{card}-{row}"))
+            .when(row > 0, |d| {
+                d.border_t(px(t.stroke.hairline))
+                    .border_color(rgb(p.border))
+            })
+            .px(px(t.space.lg))
+            .py(px(t.space.md))
+            .flex()
+            .items_center()
+            .gap(px(t.space.lg))
+            .min_w_0()
+            .child(
+                div()
+                    .w(px(t.layout.status_column))
+                    .flex_shrink_0()
+                    .child(queue_status(&item.state).render(&p)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(t.space.xxs))
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(t.space.md))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(t.text.body))
+                                    .font_weight(FontWeight(t.weight.medium))
+                                    .text_color(rgb(p.text))
+                                    .child(item.title()),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_size(px(t.text.meta))
+                                    .text_color(rgb(p.roles.text_tertiary))
+                                    .child(format!("{} · {}", item.tags(), item.when(now))),
+                            ),
+                    )
+                    .child(
+                        primitives::truncated(
+                            SharedString::from(format!("queue-what-{card}-{row}")),
+                            item.what(),
+                            &p,
+                        )
+                        .font_family(mono_font())
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary)),
+                    )
+                    .when(!note.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(t.text.meta))
+                                .text_color(rgb(if item.state == State::Failed {
+                                    p.error
+                                } else {
+                                    p.roles.text_tertiary
+                                }))
+                                .child(note),
+                        )
+                    }),
+            )
+            .when(item.cancellable(), |d| {
+                d.child(
+                    primitives::button(
+                        SharedString::from(format!("queue-cancel-{card}-{row}")),
+                        "Cancel",
+                        None,
+                        ButtonVariant::Ghost,
+                        ButtonSize::Small,
+                        can_cancel,
+                        &p,
+                    )
+                    .debug_selector(move || format!("queue-cancel-{card}-{row}"))
+                    .when(can_cancel, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.request(
+                                Request::HostAction(HostAction::Cancel {
+                                    id: id.clone(),
+                                    host: host.clone(),
+                                }),
+                                cx,
+                            );
+                        }))
+                    }),
+                )
+            })
+            .child(self.page_overflow(format!("queue-{card}-{row}"), menu, cx))
+    }
+
+    /// The line under a queue row, with a running session named by its
+    /// title rather than its id.
+    fn queue_note_v2(&self, item: &Item) -> String {
+        if item.state == State::Running && !item.session_id.is_empty() {
+            return match self.view.sessions.iter().find(|s| s.id == item.session_id) {
+                Some(session) => format!("Session: {}", self.session_title(session)),
+                None => "Running in a session".to_owned(),
+            };
+        }
+        item.note()
+    }
+}
+
+/// A machine's status in the shared vocabulary: "Accepting work",
+/// "Paused: low memory", "Offline".
+fn host_status(card: &Card) -> StatusBadge {
+    if card.connected == Some(false) {
+        return StatusBadge::new(StatusKind::Failed).label("Offline");
+    }
+    match card.resources.as_ref().and_then(|r| r.gate.as_ref()) {
+        Some(gate) if gate.open => StatusBadge::new(StatusKind::Idle).label("Accepting work"),
+        Some(gate) => StatusBadge::new(StatusKind::Paused).label(paused_label(&gate.reasons)),
+        None => StatusBadge::new(StatusKind::Idle).label("No sample yet"),
+    }
+}
+
+/// "Paused: low memory", from the gate's first reason.
+pub(super) fn paused_label(reasons: &[String]) -> String {
+    match reasons.first() {
+        Some(reason) => format!("Paused: {}", plain_reason(reason)),
+        None => "Paused".to_owned(),
+    }
+}
+
+/// A gate reason ("memory pressure 34.0 >= 25.0") in two or three plain
+/// words.
+pub(super) fn plain_reason(reason: &str) -> &'static str {
+    let lower = reason.to_ascii_lowercase();
+    if lower.contains("memory") {
+        "low memory"
+    } else if lower.contains("cpu") {
+        "busy CPU"
+    } else if lower.contains("io") {
+        "busy disk"
+    } else if lower.contains("disk") {
+        "low disk space"
+    } else if lower.contains("slot") {
+        "no free slots"
+    } else {
+        "resources"
+    }
+}
+
+/// A gate reason as a sentence for tooltips and the detail notice:
+/// "Memory pressure is 34.0, over its limit of 25.0".
+pub(super) fn plain_reason_sentence(reason: &str) -> String {
+    let parts: Vec<&str> = reason.split(">=").map(str::trim).collect();
+    if let [what, limit] = parts.as_slice()
+        && let Some((name, value)) = what.rsplit_once(' ')
+    {
+        let mut name = name.to_owned();
+        if let Some(first) = name.get(0..1) {
+            name = first.to_uppercase() + &name[1..];
+        }
+        return format!("{name} is {value}, over its limit of {limit}");
+    }
+    reason.to_owned()
+}
+
+/// "Quiet" / "Busy" / "Saturated" for a pressure against its limit.
+fn load_word(value: Option<f64>, limit: f64) -> &'static str {
+    match value.map(|v| v / limit.max(0.1) * 100.) {
+        None => "Unknown",
+        Some(share) if share >= 90. => "Saturated",
+        Some(share) if share >= 70. => "Busy",
+        Some(_) => "Quiet",
+    }
+}
+
+/// The machine's one-line summary: agent slots free and queued work.
+fn host_summary(card: &Card) -> String {
+    let mut parts = Vec::new();
+    if !card.local {
+        match card.dispatch {
+            Some(true) => parts.push("Takes work from this hub".to_owned()),
+            Some(false) => parts.push("Not taking work from this hub".to_owned()),
+            None => {}
+        }
+    }
+    match &card.resources {
+        Some(r) => {
+            if let (Some(free), Some(slots)) = (r.free_agents(), r.agent_slots) {
+                parts.push(format!(
+                    "{free} of {slots} agent slot{} free",
+                    if slots == 1 { "" } else { "s" }
+                ));
+            }
+            match r.queued {
+                Some(0) | None => {}
+                Some(n) => parts.push(format!("{n} queued")),
+            }
+        }
+        None if card.connected == Some(false) => parts.push("Not connected".to_owned()),
+        None => parts.push("Waiting for its first sample".to_owned()),
+    }
+    if parts.is_empty() {
+        "Nothing queued".to_owned()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+/// One metric column: label left, value right (never overlapping), the
+/// meter of its pressure against the limit beneath, and the raw pressure
+/// (PSI) in a tooltip.
+fn metric_v2(
+    id: (usize, usize),
+    label: &'static str,
+    value: String,
+    pressure: Option<f64>,
+    limit: f64,
+    p: &Palette,
+) -> Stateful<Div> {
+    let t = p.tokens;
+    let share = pressure.map(|v| (v / limit.max(0.1) * 100.).clamp(0., 100.));
+    let intent = match share {
+        Some(s) if s >= 90. => primitives::Intent::Danger,
+        Some(s) if s >= 70. => primitives::Intent::Warning,
+        Some(_) => primitives::Intent::Info,
+        None => primitives::Intent::Neutral,
+    };
+    let tooltip = match pressure {
+        Some(v) => format!(
+            "Pressure (PSI) {} · pauses new work at {}",
+            hosts::psi(Some(v)),
+            hosts::psi(Some(limit))
+        ),
+        None => "Not reported".to_owned(),
+    };
+    div()
+        .id(SharedString::from(format!("host-metric-{}-{}", id.0, id.1)))
+        .debug_selector(move || format!("host-metric-{}-{}", id.0, id.1))
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(px(t.space.sm))
+        .tooltip(primitives::tooltip_view(tooltip, None, p))
+        .child(
+            div()
+                .flex()
+                .items_baseline()
+                .justify_between()
+                .gap(px(t.space.md))
+                .min_w_0()
+                .text_size(px(t.text.meta))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .font_weight(FontWeight(t.weight.medium))
+                        .text_color(rgb(p.roles.text_secondary))
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(rgb(if pressure.is_some() {
+                            p.text
+                        } else {
+                            p.roles.text_tertiary
+                        }))
+                        .child(value),
+                ),
+        )
+        .child(primitives::meter(
+            share.map_or(0., |s| (s / 100.) as f32),
+            intent,
+            p,
+        ))
+}
+
+/// A queue item's state in the shared vocabulary.
+fn queue_status(state: &State) -> StatusBadge {
+    match state {
+        State::Queued => StatusBadge::new(StatusKind::Queued),
+        State::Running => StatusBadge::new(StatusKind::Working).label("Running"),
+        State::Done => StatusBadge::new(StatusKind::Done),
+        State::Failed => StatusBadge::new(StatusKind::Failed),
+        State::Cancelled => StatusBadge::new(StatusKind::Idle).label("Cancelled"),
+        State::Unknown => StatusBadge::new(StatusKind::NeedsYou).label("Unknown"),
+        State::Other(other) => StatusBadge::new(StatusKind::Idle).label(other.clone()),
+    }
+}
+
+#[cfg(test)]
+mod v2_tests {
+    use super::*;
+
+    #[test]
+    fn gate_reasons_read_as_plain_words() {
+        assert_eq!(
+            paused_label(&["memory pressure 34.0 >= 25.0".to_owned()]),
+            "Paused: low memory"
+        );
+        assert_eq!(plain_reason("cpu pressure 70 >= 60"), "busy CPU");
+        assert_eq!(
+            plain_reason_sentence("memory pressure 34.0 >= 25.0"),
+            "Memory pressure is 34.0, over its limit of 25.0"
+        );
+        assert_eq!(plain_reason_sentence("something odd"), "something odd");
+        assert_eq!(paused_label(&[]), "Paused");
+    }
+
+    #[test]
+    fn load_words_follow_the_limit() {
+        assert_eq!(load_word(Some(10.), 100.), "Quiet");
+        assert_eq!(load_word(Some(75.), 100.), "Busy");
+        assert_eq!(load_word(Some(95.), 100.), "Saturated");
+        assert_eq!(load_word(None, 100.), "Unknown");
+    }
 }

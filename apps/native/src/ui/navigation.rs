@@ -268,7 +268,12 @@ impl Workspace {
         cx.notify();
     }
 
-    fn open_project_path(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_project_path(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.requested_session.is_some() {
             self.settings_error =
                 "This window is pinned to a session. Open another window to browse projects."
@@ -604,6 +609,9 @@ impl Workspace {
     }
 
     pub(super) fn render_projects(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        if self.design().is_v2() {
+            return self.render_projects_v2(window, cx);
+        }
         // Short windows give the list, not the explanations, the height.
         let short = window.viewport_size().height < px(620.);
         // Narrow windows keep each folder's actions to icons.
@@ -746,7 +754,7 @@ impl Workspace {
 
     /// The hub registry takes writes now: connected, not a demo, and no save
     /// already in flight.
-    fn can_write_projects(&self) -> bool {
+    pub(super) fn can_write_projects(&self) -> bool {
         let saving = self
             .view
             .requests
@@ -818,7 +826,12 @@ impl Workspace {
     }
 
     /// The path field that pins a folder on the hub.
-    fn render_project_form(&self, short: bool, can_write: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_project_form(
+        &self,
+        short: bool,
+        can_write: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = self.palette();
         div()
             .debug_selector(|| "pin-folder-form".into())
@@ -879,7 +892,7 @@ impl Workspace {
     }
     /// Settings and project notices, with the offer to keep projects on
     /// this device when the hub could not take them.
-    fn render_project_notices(&self, cx: &mut Context<Self>) -> Vec<Div> {
+    pub(super) fn render_project_notices(&self, cx: &mut Context<Self>) -> Vec<Div> {
         let p = self.palette();
         let mut notices = Vec::new();
         if !self.settings_error.is_empty() {

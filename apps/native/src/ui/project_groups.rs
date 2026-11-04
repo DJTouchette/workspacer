@@ -46,7 +46,7 @@ impl Workspace {
 
     /// The project list has been read (or there is nothing to read from), so
     /// an empty one means no projects rather than not yet or not at all.
-    fn groups_loaded(&self) -> bool {
+    pub(super) fn groups_loaded(&self) -> bool {
         self.view
             .requests
             .get("project-groups")
@@ -303,7 +303,7 @@ impl Workspace {
     // ---- rendering ------------------------------------------------------
 
     /// Session counts (all, running) per group id.
-    fn group_sessions(&self, groups: &Groups) -> HashMap<String, (usize, usize)> {
+    pub(super) fn group_sessions(&self, groups: &Groups) -> HashMap<String, (usize, usize)> {
         let root = self.worktree_root();
         let mut counts: HashMap<String, (usize, usize)> = HashMap::new();
         for ix in 0..self.view.sessions.len() {
@@ -648,7 +648,7 @@ impl Workspace {
             )
     }
 
-    fn render_group_editor(&self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_group_editor(&self, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let Some(draft) = self.extras.group_draft.clone() else {
             return div();

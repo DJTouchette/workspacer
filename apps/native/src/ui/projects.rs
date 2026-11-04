@@ -1851,3 +1851,652 @@ impl Workspace {
             }))
     }
 }
+
+// area-pages: the Projects page under design v2. Each project is one card
+// with its folders nested inside it; folders in no project share a single
+// "Ungrouped" card. Monogram tiles, no emoji; pending scratch items read
+// "1 needs you" and open the scratch they wait in.
+use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
+use super::project_groups::group_filter;
+use gpui::AnyElement;
+
+impl Workspace {
+    pub(super) fn render_projects_v2(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let rows = self.project_rows(cx);
+        let can_write = self.can_write_projects();
+        let groups = self.project_groups();
+        let counts = self.group_sessions(&groups);
+        let can_write_groups = self.view.connected
+            && !self.demo
+            && self.view.may_call("projectGroups.save")
+            && !self.extras.group_save_sent;
+        let can_new_group = can_write_groups && self.extras.group_draft.is_none();
+        let editing_new = self
+            .extras
+            .group_draft
+            .as_ref()
+            .is_some_and(|d| d.id.is_none());
+        let editing = |id: &str| {
+            self.extras
+                .group_draft
+                .as_ref()
+                .and_then(|d| d.id.as_deref())
+                == Some(id)
+        };
+        let field = self.project_path.read(cx);
+        let adding = field.focus_handle(cx).is_focused(window) || !field.value().trim().is_empty();
+        let add_folder = primitives::button(
+            "add-folder",
+            "Add folder",
+            Some(IconName::FolderOpen),
+            ButtonVariant::Secondary,
+            ButtonSize::Small,
+            can_write,
+            &p,
+        )
+        .debug_selector(|| "add-folder".into())
+        .when(can_write, |d| {
+            d.on_click(cx.listener(|this, _, window, cx| {
+                this.project_path
+                    .update(cx, |input, cx| input.focus(window, cx));
+                cx.notify();
+            }))
+        });
+        let new_project = primitives::button(
+            "new-project-group",
+            "New project",
+            Some(IconName::Plus),
+            ButtonVariant::Primary,
+            ButtonSize::Small,
+            can_new_group,
+            &p,
+        )
+        .debug_selector(|| "new-project-group".into())
+        .when(can_new_group, |d| {
+            d.on_click(cx.listener(|this, _, window, cx| this.edit_group(None, window, cx)))
+        });
+        let header = primitives::page_header(
+            None,
+            "Projects",
+            Some(
+                "Group the folders that belong together. Every folder the hub knows, pinned or where a session ran, is listed here."
+                    .into(),
+            ),
+            vec![add_folder.into_any_element(), new_project.into_any_element()],
+            &p,
+        )
+        .debug_selector(|| "page-header".into());
+        let in_group = |path: &str| {
+            groups.groups.iter().any(|g| {
+                g.folders
+                    .iter()
+                    .any(|f| wks_native::projects::same_dir(f, path))
+            })
+        };
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.lg))
+            .debug_selector(|| "project-groups".into())
+            .when(adding, |d| {
+                d.child(self.render_project_form(false, can_write, cx))
+            })
+            .when(self.has_feature_message("project-groups"), |d| {
+                d.child(self.feature_message("project-groups"))
+            })
+            .when(editing_new, |d| d.child(self.render_group_editor(cx)));
+        if groups.groups.is_empty() && !editing_new && self.groups_loaded() {
+            body = body.child(
+                div()
+                    .debug_selector(|| "project-groups-empty".into())
+                    .px(px(t.space.xl))
+                    .py(px(t.space.lg))
+                    .rounded(px(t.radius.panel))
+                    .border(px(t.stroke.hairline))
+                    .border_dashed()
+                    .border_color(rgb(p.roles.border_strong))
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_secondary))
+                    .child("No projects yet. Group an app's api, web and infra folders into one project to filter, launch and read scratch across them."),
+            );
+        }
+        for (gx, group) in groups.groups.iter().enumerate() {
+            if editing(&group.id) {
+                body = body.child(self.render_group_editor(cx));
+                continue;
+            }
+            let folders: Vec<(usize, &KnownProject)> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| {
+                    group
+                        .folders
+                        .iter()
+                        .any(|f| wks_native::projects::same_dir(f, &r.path))
+                })
+                .collect();
+            body = body.child(self.render_group_v2(
+                gx,
+                group,
+                counts.get(&group.id).copied(),
+                &folders,
+                can_write_groups,
+                cx,
+            ));
+        }
+        let ungrouped: Vec<(usize, &KnownProject)> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| !in_group(&r.path))
+            .collect();
+        let empty = if self
+            .view
+            .requests
+            .get("projects")
+            .is_some_and(|s| s.loading)
+            && self.projects.registry.is_none()
+        {
+            Some("Loading folders…")
+        } else if rows.is_empty() && self.search.read(cx).value().trim().is_empty() {
+            Some("No folders yet. Add one, or start a session in a folder and it shows here.")
+        } else if rows.is_empty() {
+            Some("No folders match the sidebar search.")
+        } else {
+            None
+        };
+        if !ungrouped.is_empty() || empty.is_some() {
+            body = body.child(
+                div()
+                    .pt(px(t.space.lg))
+                    .flex()
+                    .items_center()
+                    .gap(px(t.space.md))
+                    .child(primitives::section_label("Ungrouped", &p).pb(px(0.)))
+                    .when(!ungrouped.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .text_size(px(t.text.overline))
+                                .text_color(rgb(p.roles.text_tertiary))
+                                .child(ungrouped.len().to_string()),
+                        )
+                    }),
+            );
+            body = body.child(match empty {
+                Some(text) => primitives::card(&p).child(
+                    div()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary))
+                        .child(text),
+                ),
+                None => primitives::card(&p)
+                    .debug_selector(|| "project-ungrouped".into())
+                    .p(px(t.space.xs))
+                    .gap(px(t.space.xxs))
+                    .children(
+                        ungrouped
+                            .iter()
+                            .map(|(ix, project)| self.render_folder_v2(*ix, project, cx)),
+                    ),
+            });
+        }
+        let hint = if self.settings.vim_navigation {
+            "j / k navigate · Enter open · n new session · / filter · i add folder · Ctrl Enter pin"
+        } else {
+            "Click a folder to see its sessions"
+        };
+        let content = div()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xxl))
+            .child(header)
+            .children(self.render_project_notices(cx))
+            .children(self.render_identity_editor(cx))
+            .when_some(self.projects.registry_error.clone(), |d, error| {
+                d.child(chrome::notice_line(
+                    registry_error_notice(&error),
+                    chrome::Tone::Warning,
+                    p,
+                ))
+            })
+            .child(body)
+            .child(
+                div()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(hint),
+            );
+        self.page_view("projects-top", t.layout.page_width, false, content)
+    }
+
+    /// A project: its tile, name, what runs there and "n needs you", its
+    /// actions, then its folders nested beneath.
+    fn render_group_v2(
+        &self,
+        ix: usize,
+        group: &wks_native::project_groups::Group,
+        sessions: Option<(usize, usize)>,
+        folders: &[(usize, &KnownProject)],
+        can_write: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let (all, live) = sessions.unwrap_or_default();
+        let pending = self.pending_in(&group.folders);
+        let count = group.folders.len();
+        let mut meta = vec![format!(
+            "{count} folder{}",
+            if count == 1 { "" } else { "s" }
+        )];
+        if all > 0 {
+            meta.push(format!("{all} session{}", if all == 1 { "" } else { "s" }));
+        }
+        let open = group.id.clone();
+        let spawn = group.folders.first().cloned();
+        let edit = group.clone();
+        let scratch = group.id.clone();
+        let can_spawn = self.view.connected && !self.demo && spawn.is_some();
+        let group_id = group.id.clone();
+        let head = div()
+            .id(("project-group", ix))
+            .px(px(t.space.xl))
+            .py(px(t.space.lg))
+            .flex()
+            .items_center()
+            .gap(px(t.space.lg))
+            .cursor_pointer()
+            .hover(move |s| s.bg(rgb(p.roles.hover)))
+            .on_click(cx.listener(move |this, _, window, cx| this.open_group(&open, window, cx)))
+            .child(primitives::avatar_tile_sized(
+                &group.name,
+                t.layout.avatar_lg,
+                &p,
+            ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(t.space.xxs))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.md))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(t.text.subheading))
+                                    .font_weight(FontWeight(t.weight.semibold))
+                                    .text_color(rgb(p.text))
+                                    .child(group.name.clone()),
+                            )
+                            .when(pending > 0, |d| {
+                                d.child(self.needs_you_link(
+                                    SharedString::from(format!("project-group-pending-{ix}")),
+                                    pending,
+                                    group_filter(&scratch),
+                                    cx,
+                                ))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.md))
+                            .min_w_0()
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_tertiary))
+                            .when(live > 0, |d| {
+                                d.child(
+                                    StatusBadge::new(StatusKind::Working)
+                                        .label(format!("{live} working"))
+                                        .render(&p),
+                                )
+                            })
+                            .child(div().min_w_0().truncate().child(meta.join(" · "))),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(t.space.xs))
+                    .child(
+                        primitives::button(
+                            SharedString::from(format!("project-group-new-agent-{ix}")),
+                            "New session",
+                            Some(IconName::Plus),
+                            ButtonVariant::Ghost,
+                            ButtonSize::Small,
+                            can_spawn,
+                            &p,
+                        )
+                        .debug_selector(move || format!("project-group-new-agent-{ix}"))
+                        .when_some(
+                            spawn.filter(|_| can_spawn),
+                            |d, folder| {
+                                d.on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.new_agent_in_project(folder.clone(), window, cx);
+                                    this.project_filter = Some(group_filter(&group_id));
+                                }))
+                            },
+                        ),
+                    )
+                    .child(
+                        primitives::icon_button(
+                            SharedString::from(format!("project-group-edit-{ix}")),
+                            IconName::Settings,
+                            "Edit project: name, colour and folders",
+                            ButtonVariant::Ghost,
+                            can_write,
+                            &p,
+                        )
+                        .debug_selector(move || format!("project-group-edit-{ix}"))
+                        .when(can_write, |d| {
+                            d.on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.edit_group(Some(&edit), window, cx)
+                            }))
+                        }),
+                    ),
+            );
+        // Folders the sidebar search hides, or the hub has not listed yet,
+        // still show by name, without actions.
+        let listed = |path: &str| {
+            folders
+                .iter()
+                .any(|(_, r)| wks_native::projects::same_dir(&r.path, path))
+        };
+        let unlisted: Vec<&String> = group.folders.iter().filter(|f| !listed(f)).collect();
+        primitives::card(&p)
+            .p(px(0.))
+            .gap(px(0.))
+            .overflow_hidden()
+            .debug_selector(move || format!("project-group-{ix}"))
+            .child(head)
+            .when(!group.folders.is_empty(), |d| {
+                d.child(
+                    div()
+                        .border_t(px(t.stroke.hairline))
+                        .border_color(rgb(p.border))
+                        .p(px(t.space.xs))
+                        .pl(px(t.space.xxxl))
+                        .flex()
+                        .flex_col()
+                        .gap(px(t.space.xxs))
+                        .children(
+                            folders
+                                .iter()
+                                .map(|(ix, project)| self.render_folder_v2(*ix, project, cx)),
+                        )
+                        .children(unlisted.into_iter().map(|folder| {
+                            div()
+                                .px(px(t.space.md))
+                                .min_h(px(t.layout.row_height))
+                                .flex()
+                                .items_center()
+                                .gap(px(t.space.md))
+                                .min_w_0()
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(t.text.body))
+                                        .text_color(rgb(p.roles.text_secondary))
+                                        .child(self.project_name(folder)),
+                                )
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .font_family(mono_font())
+                                        .text_size(px(t.text.meta))
+                                        .text_color(rgb(p.roles.text_tertiary))
+                                        .child(folder.clone()),
+                                )
+                        })),
+                )
+            })
+    }
+
+    /// A folder row: tile, name and path, what runs there, "n needs you",
+    /// then New session, settings and pin; Forget lives in the overflow.
+    fn render_folder_v2(
+        &self,
+        ix: usize,
+        project: &KnownProject,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = self.palette();
+        let t = p.tokens;
+        let can_write = self.can_write_projects();
+        let can_spawn = self.view.connected && !self.demo;
+        let pinned = project.favourite;
+        let on_device = project.source == wks_native::projects::Source::Device;
+        let live = project.live_sessions;
+        let ended = project.sessions.saturating_sub(live);
+        let pending = self.pending_in(std::slice::from_ref(&project.path));
+        let path = project.path.clone();
+        let new_path = path.clone();
+        let edit_path = path.clone();
+        let pin_path = path.clone();
+        let forget = project.clone();
+        // Quiet facts; the project card carries the working dot.
+        let activity = match (live, ended) {
+            (0, 0) => "No sessions yet".to_owned(),
+            (0, n) => format!("{n} ended"),
+            (live, 0) => format!("{live} working"),
+            (live, n) => format!("{live} working · {n} ended"),
+        };
+        let selected = ix == self.project_cursor;
+        let group = SharedString::from(format!("project-row-{ix}"));
+        let mut menu: Vec<AnyElement> = Vec::new();
+        if project.removable() {
+            let enabled = on_device || can_write;
+            menu.push(
+                primitives::menu_item(
+                    SharedString::from(format!("forget-project-{ix}")),
+                    "Forget folder",
+                    Some(IconName::Delete),
+                    true,
+                    enabled,
+                    &p,
+                )
+                .debug_selector(move || format!("forget-project-{ix}"))
+                .when(enabled, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.close_page_menu(cx);
+                        this.forget_project(&forget, cx);
+                    }))
+                })
+                .into_any_element(),
+            );
+        }
+        let star = |id: String| {
+            primitives::icon_button(
+                SharedString::from(id),
+                IconName::Star,
+                if pinned { "Unpin folder" } else { "Pin folder" },
+                ButtonVariant::Ghost,
+                can_write,
+                &p,
+            )
+            .when(pinned, |d| d.text_color(rgb(p.accent)))
+        };
+        let pin = star(format!("pin-project-{ix}")).when(can_write, |d| {
+            d.on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.set_project_pin(pin_path.clone(), !pinned, cx);
+            }))
+        });
+        primitives::list_row(("project", ix), selected, true, &p)
+            .group(group.clone())
+            .debug_selector(move || format!("project-row-{ix}"))
+            .min_h(px(t.layout.sidebar_row))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_project_path(path.clone(), window, cx)
+            }))
+            .child(primitives::avatar_tile(project.title(), &p))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(t.space.md))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .max_w(px(t.layout.status_column * 2.))
+                            .truncate()
+                            .text_size(px(t.text.body))
+                            .font_weight(FontWeight(t.weight.medium))
+                            .text_color(rgb(p.text))
+                            .child(project.title().to_owned()),
+                    )
+                    .child(
+                        primitives::truncated(
+                            SharedString::from(format!("project-path-{ix}")),
+                            project.path.clone(),
+                            &p,
+                        )
+                        .flex_1()
+                        .font_family(mono_font())
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary)),
+                    )
+                    .when(on_device, |d| {
+                        d.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(t.text.meta))
+                                .text_color(rgb(p.roles.text_tertiary))
+                                .child("This device"),
+                        )
+                    }),
+            )
+            .when(pending > 0, |d| {
+                d.child(self.needs_you_link(
+                    SharedString::from(format!("project-pending-{ix}")),
+                    pending,
+                    project.path.clone(),
+                    cx,
+                ))
+            })
+            .when(!activity.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(activity),
+                )
+            })
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    // Row actions show on hover and on the keyboard row; a
+                    // pinned star stays, since it carries state.
+                    .when(!selected, |d| {
+                        d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.))
+                    })
+                    .child(
+                        primitives::icon_button(
+                            SharedString::from(format!("new-agent-in-project-{ix}")),
+                            IconName::Plus,
+                            "New session in this folder",
+                            ButtonVariant::Ghost,
+                            can_spawn,
+                            &p,
+                        )
+                        .debug_selector(move || format!("new-agent-in-project-{ix}"))
+                        .when(can_spawn, |d| {
+                            d.on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.new_agent_in_project(new_path.clone(), window, cx);
+                            }))
+                        }),
+                    )
+                    .child(
+                        primitives::icon_button(
+                            SharedString::from(format!("edit-project-{ix}")),
+                            IconName::Settings,
+                            "Folder settings: name and pull requests",
+                            ButtonVariant::Ghost,
+                            can_write,
+                            &p,
+                        )
+                        .debug_selector(move || format!("edit-project-{ix}"))
+                        .when(can_write, |d| {
+                            d.on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.open_identity_editor(edit_path.clone(), window, cx);
+                            }))
+                        }),
+                    )
+                    .when(!pinned, |d| d.child(pin))
+                    .when(!menu.is_empty(), |d| {
+                        d.child(self.page_overflow(format!("project-{ix}"), menu, cx))
+                    }),
+            )
+            .when(pinned, |d| {
+                d.child(star(format!("pinned-project-{ix}")).when(can_write, |d| {
+                    let path = project.path.clone();
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.set_project_pin(path.clone(), false, cx);
+                    }))
+                }))
+            })
+    }
+
+    /// "1 needs you" as a link: pending scratch items, opening the scratch
+    /// of `scope` (a folder, or a project's `group:` filter).
+    fn needs_you_link(
+        &self,
+        id: SharedString,
+        count: usize,
+        scope: String,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = self.palette();
+        let t = p.tokens;
+        let selector = id.clone();
+        let hover = p.warning;
+        chrome::interactive_control(div().id(id), p, true)
+            .debug_selector(move || selector.to_string())
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(t.space.sm))
+            .px(px(t.space.xs))
+            .rounded(px(t.radius.xs))
+            .text_size(px(t.text.meta))
+            .font_weight(FontWeight(t.weight.medium))
+            .text_color(rgb(p.warning))
+            .hover(move |s| s.underline().text_color(rgb(hover)))
+            .tooltip(primitives::tooltip_view(
+                "Open the scratch items waiting for you",
+                None,
+                &p,
+            ))
+            .child(primitives::status_indicator(StatusKind::NeedsYou, &p))
+            .child(format!("{count} needs you"))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.extras.scratch_preset = Some(scope.clone());
+                this.open_feature(Screen::Scratch, window, cx);
+            }))
+    }
+}

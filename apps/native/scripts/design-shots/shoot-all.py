@@ -115,6 +115,14 @@ def shots():
     add("conversation-nord", "Rich conversation, Nord", theme="nord")
     add("conversation-catppuccin-latte", "Rich conversation, Catppuccin Latte", theme="catppuccin-latte")
     add("settings-tokyo-night", "Settings: Appearance, Tokyo Night", nav("s"), theme="tokyo-night")
+    # area-pages: design v2 page states (run with --setting design_v2=true).
+    add("hosts-details", "Hosts: this machine's details open (design v2)",
+        nav("o") + [("click", "HOSTS_DETAILS")])
+    add("jobs-overflow", "Jobs: a job's overflow menu open (design v2)",
+        nav("j") + [("click", "JOB_OVERFLOW")])
+    add("settings-remote-light", "Settings: Remote, Light theme", nav("s") + [("settings_section", 3)],
+        theme="light")
+    add("projects-nord", "Projects, Nord", nav("p"), theme="nord")
     return s
 
 
@@ -305,6 +313,9 @@ LANDMARKS = {
     "MODEL_SELECT": lambda shot: (955, 207),        # Change model page, model select
     "NEW_TASK_FIELD": lambda shot: (1150, 560),     # New agent form, Task box
     "END_SESSION": lambda shot: (1337, 679),        # Session details "End session..."
+    # area-pages (design v2 layouts)
+    "HOSTS_DETAILS": lambda shot: (1345, 211),      # Hosts: first machine's "Details"
+    "JOB_OVERFLOW": lambda shot: (1366, 420),       # Jobs: first scheduled job's "..."
     # Settings category rail; rows are ~37.7 px apart starting at Appearance.
     "settings_section": lambda shot, index: (570, 114 + round(index * 37.7)),
 }
