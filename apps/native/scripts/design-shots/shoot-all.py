@@ -411,17 +411,21 @@ LANDMARKS = {
     "SIDEBAR_SEARCH": lambda shot: (140, 85),       # r2-shell: v2 sidebar search field
     # Design v2 groups the list (Needs you, then Idle): Bus fan-out sits higher.
     # (r2: Idle rows are single-line 30px; re-measured after integration.)
-    "SIDEBAR_ROW_BUS": lambda shot: (110, 649 if shot.get("v2") else 468),
+    # (r3-shell: one two-line row template in every group; re-measured.)
+    "SIDEBAR_ROW_BUS": lambda shot: (110, 562 if shot.get("v2") else 468),
     # The fixture's question (Release checklist for 0.9): v2 groups it under
     # Needs you; v1 lists it after Bus fan-out.
-    "SIDEBAR_ROW_QUESTION": lambda shot: (110, 431 if shot.get("v2") else 532),
-    "SIDEBAR_ROW_CHILD": lambda shot: (110, 212),   # "Inspect transcript parsing"
+    "SIDEBAR_ROW_QUESTION": lambda shot: (110, 352 if shot.get("v2") else 532),
+    # v1 "Inspect transcript parsing"; v2 the child nested under Needs you.
+    "SIDEBAR_ROW_CHILD": lambda shot: (110, 283 if shot.get("v2") else 212),
     # The title pill grows when hovered (context meter appears), so hover it
     # first; these two are the chips' positions once it has grown.
     "TITLE_PILL": lambda shot: (900, 30),
     # "Sonnet" chip: v1 in the hovered title pill, v2 on the composer (r2).
     "TITLE_MODEL": lambda shot: (562, 961) if shot.get("v2") else (1005, 30),
-    "TITLE_TASKS_BADGE": lambda shot: (1160 if shot.get("v2") else 1078, 30),  # background work
+    # Background work: v1 the hovered pill's badge; v2 (r3-shell) the
+    # header toolbar's "Tasks 3".
+    "TITLE_TASKS_BADGE": lambda shot: (1304, 20) if shot.get("v2") else (1078, 30),
     # v1: the approval card above the composer; v2: the strip on the composer.
     "APPROVAL_DETAILS": lambda shot: (1289, 805) if shot["v2"] else (1361, 749),  # r2-systems: the approval is a card above the composer
     "APPROVAL_DENY_NOTE": lambda shot: (1032, 869) if shot["v2"] else (910, 795),

@@ -57,6 +57,28 @@ pub(super) fn listed_models(provider: &str, catalog: &[ModelChoice]) -> Vec<List
     out
 }
 
+/// The listed row an id selects: the exact id, or for a bare family alias
+/// ("sonnet", as agents report it) the first listed model of that family,
+/// which the list orders newest first. Display only: the session keeps its
+/// alias until the user picks a row.
+pub(super) fn listed_match<'a>(models: &'a [ListedModel], id: &str) -> Option<&'a ListedModel> {
+    let id = id.trim();
+    if id.is_empty() {
+        return None;
+    }
+    models.iter().find(|m| m.id == id).or_else(|| {
+        let alias = id.to_ascii_lowercase();
+        if !alias.chars().all(|c| c.is_ascii_lowercase()) {
+            return None;
+        }
+        let (prefix, infix) = (format!("{alias}-"), format!("-{alias}-"));
+        models.iter().find(|m| {
+            let m = m.id.to_ascii_lowercase();
+            m.starts_with(&prefix) || m.contains(&infix)
+        })
+    })
+}
+
 /// The access the popover shows as selected: the reported mode, or "Ask
 /// first" (the agents' own default) until one is reported.
 pub(super) fn effective_access(
@@ -113,7 +135,7 @@ impl Workspace {
         let models = self.popover_models();
         self.shell.model_cursor = models
             .iter()
-            .position(|m| m.id == s.model)
+            .position(|m| listed_match(&models, &s.model).is_some_and(|hit| hit.id == m.id))
             .unwrap_or(models.len());
         let focus = self
             .shell
@@ -287,10 +309,12 @@ impl Workspace {
         let typed = self.model.read(cx).value().trim().to_owned();
         let models = self.popover_models();
         let cursor = self.shell.model_cursor;
-        let known = self.model_choice == "__custom" && models.iter().any(|m| m.id == typed);
-        let custom = self.model_choice == "__custom" && !known;
-        let chosen = if known {
-            typed
+        let hit = (self.model_choice == "__custom")
+            .then(|| listed_match(&models, &typed).map(|m| m.id.clone()))
+            .flatten();
+        let custom = self.model_choice == "__custom" && hit.is_none();
+        let chosen = if let Some(hit) = hit {
+            hit
         } else {
             self.model_choice.clone()
         };
@@ -632,6 +656,19 @@ mod tests {
             efforts: vec![],
             default_effort: None,
         }
+    }
+
+    #[test]
+    fn a_family_alias_selects_its_listed_model_not_custom() {
+        let models = listed_models("claude", &[]);
+        let hit = |id: &str| listed_match(&models, id).map(|m| m.id.as_str());
+        assert_eq!(hit("claude-haiku-4-5"), Some("claude-haiku-4-5"));
+        assert_eq!(hit("sonnet"), Some("claude-sonnet-4-6"));
+        assert_eq!(hit(" Opus "), Some("claude-opus-5-5"));
+        // Exact ids the list does not know stay custom.
+        assert_eq!(hit("claude-sonnet-4-5"), None);
+        assert_eq!(hit("my-finetune"), None);
+        assert_eq!(hit(""), None);
     }
 
     #[test]

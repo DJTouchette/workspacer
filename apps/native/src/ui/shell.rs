@@ -199,11 +199,12 @@ fn row_action(id: SharedString, icon: IconName, tip: &'static str, p: &Palette) 
         .rounded(px(t.radius.sm))
 }
 
-/// A rail tile's hover card: title, status, then the meta line.
+/// A rail tile's hover card: title, status, then the meta lines (one
+/// element each, so a wrapped reason still sizes the card).
 fn hover_card(
     title: String,
     status: StatusBadge,
-    meta: String,
+    meta: Vec<String>,
     p: Palette,
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     move |window, cx| {
@@ -212,7 +213,9 @@ fn hover_card(
             let t = p.tokens;
             div()
                 .debug_selector(|| "rail-hover-card".into())
-                .max_w(px(t.layout.menu_width))
+                // A definite width, so a wrapped reason is measured at the
+                // width it paints at and the card grows to hold it.
+                .w(px(t.layout.menu_width))
                 .flex()
                 .flex_col()
                 .gap(px(t.space.xs))
@@ -224,14 +227,12 @@ fn hover_card(
                         .child(title.clone()),
                 )
                 .child(status.clone().render(&p))
-                .when(!meta.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .child(meta.clone()),
-                    )
-                })
+                .children(meta.iter().map(|line| {
+                    div()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary))
+                        .child(line.clone())
+                }))
         })
         .build(window, cx)
     }
@@ -2560,10 +2561,12 @@ impl Workspace {
             .last_activity_ms
             .map(|at| format!(" · {}", wks_native::format::age(at, now)))
             .unwrap_or_default();
-        let meta = match &reason {
-            Some(reason) => format!("{}\n{}{age}", reason.text, self.project_name(&s.cwd)),
-            None => format!("{}{age}", self.project_name(&s.cwd)),
-        };
+        let meta: Vec<String> = reason
+            .iter()
+            .map(|reason| reason.text.to_string())
+            .chain([format!("{}{age}", self.project_name(&s.cwd))])
+            .filter(|line| !line.is_empty())
+            .collect();
         let size = t.layout.rail_session;
         // r3-foundation: no second ring colour; the status is the R3.1
         // glyph as a corner badge.

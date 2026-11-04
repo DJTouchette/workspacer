@@ -1430,7 +1430,9 @@ impl Workspace {
     /// with a shadow, anchored `shell().jump_gap` above the composer and
     /// decision stack, over a scrim (`shell().jump_scrim`) that dissolves
     /// the rows beneath into the canvas. With news it reads "↓ 3 new".
-    pub(super) fn render_jump_latest_v2(&self, cx: &mut Context<Self>) -> Div {
+    /// The gap is measured from the first card, not from the dock's own
+    /// top padding.
+    pub(super) fn render_jump_latest_v2(&self, compact: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
         let sh = t.shell();
@@ -1449,7 +1451,10 @@ impl Workspace {
             .absolute()
             .left_0()
             .w_full()
-            .bottom(self.composer_dock_bounds.size.height)
+            .bottom(
+                self.composer_dock_bounds.size.height
+                    - px(super::conversation::dock_first_surface(compact)),
+            )
             .h(px(sh.jump_scrim + t.layout.control_height_sm + sh.jump_gap))
             .flex()
             .items_end()

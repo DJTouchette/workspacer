@@ -468,3 +468,42 @@ fn the_destinations_are_a_short_labelled_block(cx: &mut TestAppContext) {
     workspace.read_with(&visual, |this, _| assert!(this.vim()));
     assert!(visual.debug_bounds("sidebar-mode").is_none());
 }
+
+/// r3-shell: "Jump to latest" sits the token gap above the decision card
+/// (not the dock's own padding plus the gap), over its scrim.
+#[gpui::test]
+fn jump_to_latest_anchors_just_above_the_decision(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1600.), px(900.)));
+    let mut view = attention_state();
+    view.selected = Some("a".into());
+    view.transcript.snapshot(ConversationSnapshot {
+        seq: 60,
+        first_seq: 1,
+        items: (0..60)
+            .map(|i| Item {
+                kind: "assistant_text".into(),
+                text: format!("Message {i}\n\nSome content."),
+                ..Default::default()
+            })
+            .collect(),
+    });
+    open_v2(&workspace, &mut visual, view, Design::V2);
+    visual.update(|_, cx| {
+        workspace.update(cx, |this, cx| {
+            this.follow = false;
+            this.list.scroll_to(gpui::ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.),
+            });
+            cx.notify();
+        })
+    });
+    visual.run_until_parked();
+    let jump = visual.debug_bounds("jump-latest").unwrap();
+    let card = visual.debug_bounds("approval-card").unwrap();
+    assert!(visual.debug_bounds("jump-latest-scrim").is_some());
+    let gap = f32::from(card.top() - jump.bottom());
+    let want = Tokens::V2.shell().jump_gap;
+    assert!((gap - want).abs() <= 1., "gap {gap}, want {want}");
+}
