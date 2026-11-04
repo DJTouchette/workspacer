@@ -838,6 +838,21 @@ impl Fixture {
             if self.options.rich {
                 snapshot = rich_snapshot(i, snapshot);
             }
+            // All clear means nothing waits on the user, so the stalled
+            // subagent is heard from and the test run passed: either would
+            // put the session in design v2's Needs you.
+            if i == 0 && self.options.rich && self.options.all_clear {
+                let now = chrono::Utc::now().timestamp_millis();
+                if let Some(agent) = snapshot["subagents"].get_mut(0) {
+                    agent["lastActivity"] = json!(now - 6_000);
+                }
+                if let Some(tasks) = snapshot["background_task_list"].as_array_mut() {
+                    for task in tasks.iter_mut().filter(|t| t["status"] == "failed") {
+                        task["status"] = json!("completed");
+                        task["summary"] = Value::Null;
+                    }
+                }
+            }
             if i == 0 && self.options.plan_and_limit {
                 let reset = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
