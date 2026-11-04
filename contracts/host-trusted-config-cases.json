@@ -63,7 +63,8 @@
   },
   "sections": [
     "updates",
-    "scripts"
+    "scripts",
+    "queue"
   ],
   "cases": [
     {
@@ -364,6 +365,23 @@
       "expected": {
         "editor": {
           "engine": "codemirror"
+        }
+      }
+    },
+    {
+      "name": "the work queue limits are host-trusted: a bus caller cannot widen admission",
+      "partial": {
+        "queue": {
+          "maxShell": 64,
+          "minFreeDiskMb": 0
+        },
+        "ui": {
+          "theme": "dark"
+        }
+      },
+      "expected": {
+        "ui": {
+          "theme": "dark"
         }
       }
     }

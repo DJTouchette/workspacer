@@ -38,6 +38,36 @@ fn shared_deep_merge_and_host_trusted_contracts() {
 }
 
 #[test]
+fn every_host_trusted_section_in_the_shared_fixture_is_dropped_and_owner_writes_keep_it() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../contracts/host-trusted-config-cases.json"
+    ))
+    .unwrap();
+    let sections = fixture["sections"].as_array().unwrap();
+    assert!(sections.contains(&json!("queue")));
+    for section in sections {
+        let section = section.as_str().unwrap();
+        let partial = json!({section: {"probe": 1}, "ui": {"theme": "dark"}});
+        assert_eq!(
+            drop_host_trusted(partial),
+            json!({"ui": {"theme": "dark"}}),
+            "{section}"
+        );
+    }
+    // A non-owner config.save cannot move the queue limits; the owner can.
+    let current = json!({"queue": {"maxShell": 2}});
+    let patch = json!({"queue": {"maxShell": 64, "minFreeDiskMb": 0}});
+    assert_eq!(
+        merge_patch(&current, patch.clone(), false).unwrap()["queue"],
+        json!({"maxShell": 2})
+    );
+    assert_eq!(
+        merge_patch(&current, patch, true).unwrap()["queue"],
+        json!({"maxShell": 64, "minFreeDiskMb": 0})
+    );
+}
+
+#[test]
 fn shared_wholesale_contract_refuses_malformed_values_without_partial_application() {
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../contracts/wholesale-config-paths.json"

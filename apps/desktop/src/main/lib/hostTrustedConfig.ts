@@ -35,8 +35,12 @@
  *   the button's LABEL as well, and the cwd key is obtainable from the read-only
  *   `agents.list` capability. Section-level rather than sub-key, because every
  *   key under it is a caller-chosen directory: there is no fixed sub-key to name.
+ * - `queue` holds the hub work queue's admission limits (slot counts and the
+ *   resource-gate floors). Raising them over the bus would let a non-owner
+ *   decide when queued host code runs; the hub's queue.setConfig is owner-only
+ *   and config.save must not be a second door onto the same values.
  */
-export const HOST_TRUSTED_SECTIONS = ['updates', 'scripts'] as const;
+export const HOST_TRUSTED_SECTIONS = ['updates', 'scripts', 'queue'] as const;
 
 /**
  * The same rule at SUB-KEY granularity, dotted from the root. A section-level

@@ -37,6 +37,10 @@ pub fn drop_host_trusted(mut partial: Value) -> Value {
     if let Some(root) = partial.as_object_mut() {
         root.remove("updates");
         root.remove("scripts");
+        // The work queue's admission limits: a bus caller that could raise
+        // the slot counts or zero the pressure floors could steer when host
+        // code runs. Owner only, like queue.setConfig.
+        root.remove("queue");
         for (section, key) in [
             ("agents", "binaries"),
             ("claude", "profiles"),
