@@ -163,6 +163,22 @@ impl Workspace {
             .items_start()
             .gap(px(t.space.md))
             .rounded(px(t.radius.control))
+            // r2-pages: R2.5 failures are loud: an error wash and a red
+            // stripe down the row's edge.
+            .when(failed, |d| {
+                d.relative()
+                    .bg(primitives::wash(p.error, t.wash.tone_rest / 2.))
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(t.space.sm))
+                            .bottom(px(t.space.sm))
+                            .w(px(t.stroke.focus))
+                            .rounded(px(t.radius.full))
+                            .bg(rgb(p.error)),
+                    )
+            })
             .when(opens, |d| {
                 d.cursor_pointer()
                     .hover(move |s| s.bg(rgb(p.roles.hover)))
@@ -221,7 +237,11 @@ impl Workspace {
                         d.child(
                             primitives::truncated(("task-detail", ix), detail, &p)
                                 .text_size(px(t.text.caption))
-                                .text_color(rgb(p.roles.text_secondary)),
+                                .text_color(rgb(if failed {
+                                    p.error
+                                } else {
+                                    p.roles.text_secondary
+                                })),
                         )
                     })
                     .children(failed_actions),
@@ -353,6 +373,10 @@ impl Workspace {
         });
         let in_log = self.tasks.log.is_some();
         let running = self.task_session().map_or(0, |s| bg::running(&s.tasks));
+        // r2-pages: a failure turns the header's count red.
+        let failed = self
+            .task_session()
+            .map_or(0, |s| s.tasks.iter().filter(|t| t.failed()).count());
         let title: SharedString = match &log_task {
             Some(task) => task.title().into(),
             None if in_log => "Task log".into(),
@@ -393,12 +417,14 @@ impl Workspace {
                         |d| d.font_family(mono_font()),
                     ),
             )
-            .when(!in_log && running > 0, |d| {
-                d.child(
-                    StatusBadge::new(StatusKind::Working)
-                        .label(format!("{running} running"))
-                        .render(&p),
-                )
+            .when(!in_log && (running > 0 || failed > 0), |d| {
+                let badge = match (running, failed) {
+                    (0, f) => StatusBadge::new(StatusKind::Failed).label(format!("{f} failed")),
+                    (r, 0) => StatusBadge::new(StatusKind::Working).label(format!("{r} running")),
+                    (r, f) => StatusBadge::new(StatusKind::Failed)
+                        .label(format!("{r} running · {f} failed")),
+                };
+                d.child(badge.render(&p).debug_selector(|| "tasks-count".into()))
             })
             .child(
                 primitives::icon_button(
