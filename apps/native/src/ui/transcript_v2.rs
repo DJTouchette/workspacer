@@ -6,9 +6,7 @@
 //! `transcript.rs`, `work.rs`, `tools.rs`, `children.rs` and `fleet_card.rs`
 //! branch into it once and otherwise stay as they were. Every style reads
 //! tokens (`docs/design-v2.md`).
-use super::primitives::{
-    self, ButtonSize, ButtonVariant, CardHead, FadeEdge, StatusBadge, StatusKind,
-};
+use super::primitives::{self, ButtonSize, ButtonVariant, FadeEdge, StatusBadge, StatusKind};
 use super::*;
 use gpui::{AnyElement, Pixels, relative};
 use gpui_component::{Icon, IconName};
@@ -35,6 +33,79 @@ pub(super) fn tool_result_meta(category: &str, name: &str, output: &str) -> Opti
     }
 }
 
+/// r3-transcript: tool output this short shows inline under its row.
+pub(super) const INLINE_LINES: usize = 5;
+
+/// A line that only reports the exit status ("Exit code 101").
+fn exit_line(line: &str) -> Option<i64> {
+    let lower = line.trim().to_ascii_lowercase();
+    let rest = [
+        "exit code ",
+        "exit status ",
+        "exited with code ",
+        "process exited with code ",
+    ]
+    .iter()
+    .find_map(|p| lower.strip_prefix(p))?;
+    rest.trim_end_matches(['.', ')']).trim().parse().ok()
+}
+
+/// A failed command's exit code, from the output's own report.
+pub(super) fn exit_code(output: &str) -> Option<i64> {
+    output.lines().find_map(exit_line)
+}
+
+/// What a finished call shows under its row (r3-transcript): output of at
+/// most [`INLINE_LINES`] lines, the exit-status line left to the row. A
+/// failure shows its last lines with how many came before. Reads and edits
+/// never inline (their output is the file, or "updated"). `None`: nothing.
+pub(super) fn inline_output(
+    category: &str,
+    output: &str,
+    failed: bool,
+) -> Option<(Vec<String>, usize)> {
+    if matches!(
+        category,
+        "Read" | "Edit" | "Skill" | "Subagent" | "Workflow"
+    ) {
+        return None;
+    }
+    let kept: Vec<String> = output
+        .lines()
+        .filter(|l| !l.trim().is_empty() && exit_line(l).is_none())
+        .map(|l| l.trim_end().replace('\t', "    "))
+        .collect();
+    // Shared indentation goes (cargo indents its status lines).
+    let indent = kept
+        .iter()
+        .map(|l| l.len() - l.trim_start_matches(' ').len())
+        .min()
+        .unwrap_or(0);
+    let lines: Vec<String> = kept
+        .into_iter()
+        .map(|l| {
+            let l = l[indent..].to_owned();
+            format::truncate_end(&l, 240).unwrap_or(l)
+        })
+        .collect();
+    match lines.len() {
+        0 => None,
+        n if n <= INLINE_LINES => Some((lines, 0)),
+        n if failed => Some((lines[n - INLINE_LINES..].to_vec(), n - INLINE_LINES)),
+        _ => None,
+    }
+}
+
+/// A work block's one line (r3-transcript): "Worked 5m 40s · 6 tools"
+/// (`format::worked_summary`), "Working · 3 tools" while it runs.
+pub(super) fn work_line(running: bool, duration_ms: Option<i64>, tools: usize) -> String {
+    match duration_ms {
+        _ if running => format!("Working · {}", plural(tools, "tool", "tools")),
+        Some(ms) if ms >= 1000 => format::worked_summary(ms, tools),
+        _ => format!("Worked · {}", plural(tools, "tool", "tools")),
+    }
+}
+
 /// A response card action in plain words (r2-transcript: no "Prefill").
 pub(super) fn card_action_label(action: &wks_native::transcript::CardAction) -> String {
     use wks_native::transcript::CardAction;
@@ -45,35 +116,21 @@ pub(super) fn card_action_label(action: &wks_native::transcript::CardAction) -> 
     }
 }
 
-/// A work group's headline: "Working" while a call runs, then "Worked
-/// 2m 14s" (just "Worked" under a second).
-pub(super) fn work_headline(running: bool, duration_ms: Option<i64>) -> String {
-    match duration_ms {
-        _ if running => "Working".into(),
-        Some(ms) if ms >= 1000 => format!("Worked {}", format::duration(ms)),
-        _ => "Worked".into(),
-    }
-}
-
-/// A subagent's status in the shared vocabulary, with the word to show.
+/// A subagent's status in the shared vocabulary (r3-transcript: only the
+/// lexicon's words), with the word to show.
 pub(super) fn child_status(status: &str, connected: bool) -> (StatusKind, &'static str) {
     if !connected {
-        return (StatusKind::Idle, "Offline");
+        return (StatusKind::Offline, StatusKind::Offline.label());
     }
-    match status {
-        "running" | "working" | "thinking" | "responding" | "streaming" | "background" => {
-            (StatusKind::Working, "Working")
-        }
-        "complete" | "completed" | "done" => (StatusKind::Done, "Done"),
-        "failed" | "error" => (StatusKind::Failed, "Failed"),
-        "lost" => (StatusKind::Failed, "Unavailable"),
-        "approval" | "waiting_approval" | "question" | "waiting_input" => {
-            (StatusKind::NeedsYou, "Needs you")
-        }
-        "starting" | "initializing" => (StatusKind::Working, "Starting"),
-        "stopped" | "ended" => (StatusKind::Idle, "Ended"),
-        _ => (StatusKind::Idle, "Idle"),
-    }
+    let kind = match status {
+        "running" | "working" | "thinking" | "responding" | "streaming" | "background"
+        | "starting" | "initializing" => StatusKind::Working,
+        "complete" | "completed" | "done" => StatusKind::Done,
+        "failed" | "error" | "lost" => StatusKind::Failed,
+        "approval" | "waiting_approval" | "question" | "waiting_input" => StatusKind::NeedsYou,
+        _ => StatusKind::Idle,
+    };
+    (kind, kind.label())
 }
 
 /// A fleet entry's v1 status word (`fleet_card::entry_status`) as a v2 kind.
@@ -198,13 +255,15 @@ pub(super) fn tool_verb(name: &str, category: &str, running: bool) -> Option<&'s
     }
 }
 
-/// What sits on an event row's right edge.
+/// What ends an event row.
 #[derive(Clone, Debug)]
 pub(super) enum EventEnd {
     Nothing,
-    /// A quiet duration or age, tertiary.
+    /// A quiet duration or age, tertiary, inline after the result
+    /// (r3-transcript: "· 2 matches · 6s", never on a far edge).
     Quiet(String),
-    /// A status (Working pulses, a fault is red).
+    /// A status that needs reading (Working, Not responding, Failed) on the
+    /// column's right edge.
     Badge(StatusBadge),
 }
 
@@ -216,17 +275,23 @@ pub(super) struct EventRow {
     /// The primary argument, drawn in the mono face when `mono` is set.
     pub target: Option<SharedString>,
     pub mono: Option<SharedString>,
+    /// r3-transcript: what a count covers ("This turn"), before the diff.
+    pub scope: Option<SharedString>,
     pub diff: (usize, usize),
     /// The result in a few words ("42 lines", "3 matches").
     pub summary: Option<SharedString>,
+    /// r3-transcript: a failure's reason, inline in red ("exit 101").
+    pub fault: Option<SharedString>,
     pub end: EventEnd,
-    /// `Some(open)` draws a disclosure chevron (on hover while closed).
+    /// `Some(open)` draws an inline disclosure chevron (on hover while closed).
     pub disclosure: Option<bool>,
+    /// The chevron always shows (a work block's one line), not on hover.
+    pub reveal: bool,
     /// The call failed: glyph and verb turn the fault red.
     pub failed: bool,
     /// Regular-weight verb (child rows, whose title is not a verb).
     pub quiet: bool,
-    /// Controls after the status (Check / Stop, Review).
+    /// Controls after the status (View output / Nudge / Stop, Review).
     pub trailing: Vec<AnyElement>,
 }
 
@@ -242,10 +307,13 @@ impl EventRow {
             verb: verb.into(),
             target: None,
             mono: None,
+            scope: None,
             diff: (0, 0),
             summary: None,
+            fault: None,
             end: EventEnd::Nothing,
             disclosure: None,
+            reveal: false,
             failed: false,
             quiet: false,
             trailing: Vec::new(),
@@ -276,8 +344,10 @@ pub(super) fn glyph_box(glyph: Glyph, color: u32, p: &Palette) -> Div {
         })
 }
 
-/// Draws one [`EventRow`]: CLI-dense, one line, the hover fill hanging into
-/// the gutter so glyphs line up with the prose's left edge.
+/// Draws one [`EventRow`]: CLI-dense, one line. r3-transcript: its hover
+/// fill hangs into the gutter on both sides, so the glyph lines up with the
+/// prose's left edge and a status or action with the column's right edge;
+/// durations and the disclosure chevron sit inline with the result.
 pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
     let p = *p;
     let t = p.tokens;
@@ -288,11 +358,18 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
         p.roles.text_tertiary
     };
     let mono = row.mono.clone();
+    let meta = |text: SharedString, color: u32| {
+        div()
+            .flex_shrink_0()
+            .text_size(px(t.text.meta))
+            .text_color(rgb(color))
+            .child(text)
+    };
     div()
         .id(row.id)
         .group("event-row")
         .h(px(tt.tool_row))
-        .ml(px(-t.space.sm))
+        .mx(px(-t.space.sm))
         .px(px(t.space.sm))
         .rounded(px(t.radius.control))
         .flex()
@@ -327,55 +404,36 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
                     .child(target),
             )
         })
+        .when_some(row.scope, |d, scope| {
+            d.child(meta(scope, p.roles.text_secondary))
+        })
         .when(row.diff.0 > 0, |d| {
-            d.child(
-                div()
-                    .flex_shrink_0()
-                    .text_size(px(t.text.meta))
-                    .text_color(rgb(p.success))
-                    .child(format!("+{}", row.diff.0)),
-            )
+            d.child(meta(format!("+{}", row.diff.0).into(), p.success))
         })
         .when(row.diff.1 > 0, |d| {
-            d.child(
-                div()
-                    .flex_shrink_0()
-                    .text_size(px(t.text.meta))
-                    .text_color(rgb(p.error))
-                    .child(format!("−{}", row.diff.1)),
-            )
+            d.child(meta(format!("−{}", row.diff.1).into(), p.error))
         })
         .when_some(row.summary, |d, summary| {
+            d.child(meta(format!("· {summary}").into(), p.roles.text_tertiary))
+        })
+        .map(|d| match &row.end {
+            EventEnd::Quiet(label) => d.child(
+                primitives::tabular(meta(format!("· {label}").into(), p.roles.text_tertiary))
+                    .debug_selector(|| "event-duration".into()),
+            ),
+            _ => d,
+        })
+        .when_some(row.fault, |d, fault| {
+            d.child(
+                meta(format!("· {fault}").into(), p.error).debug_selector(|| "event-fault".into()),
+            )
+        })
+        .when_some(row.disclosure, |d, open| {
             d.child(
                 div()
                     .flex_shrink_0()
-                    .text_size(px(t.text.meta))
                     .text_color(rgb(p.roles.text_tertiary))
-                    .child(SharedString::from(format!("· {summary}"))),
-            )
-        })
-        .child(div().flex_1())
-        .map(|d| match row.end {
-            EventEnd::Nothing => d,
-            EventEnd::Quiet(label) => d.child(
-                div()
-                    .flex_shrink_0()
-                    .text_size(px(t.text.meta))
-                    .text_color(rgb(p.roles.text_tertiary))
-                    .child(label),
-            ),
-            EventEnd::Badge(badge) => d.child(badge.render(&p)),
-        })
-        .children(row.trailing)
-        // The chevron's slot is always kept, so every row's right edge
-        // (durations, states) lines up down the log.
-        .child(
-            div()
-                .w(px(t.icon.xs))
-                .flex_shrink_0()
-                .text_color(rgb(p.roles.text_tertiary))
-                .when_some(row.disclosure, |d, open| {
-                    d.when(!open, |d| {
+                    .when(!open && !row.reveal, |d| {
                         d.opacity(0.).group_hover("event-row", |s| s.opacity(1.))
                     })
                     .child(
@@ -385,9 +443,15 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
                             IconName::ChevronRight
                         })
                         .size(px(t.icon.xs)),
-                    )
-                }),
-        )
+                    ),
+            )
+        })
+        .child(div().flex_1())
+        .map(|d| match row.end {
+            EventEnd::Badge(badge) => d.child(badge.render(&p)),
+            _ => d,
+        })
+        .children(row.trailing)
 }
 
 /// The hairline guide that holds a group's rows under its header, from the
@@ -520,11 +584,9 @@ impl Workspace {
         let session = self.chat_owner();
         let identity = tools::identity(row);
         let element_key = format!("{session}-{identity}");
-        let expanded = self
-            .tool_expansion
-            .get(&identity)
-            .copied()
-            .unwrap_or(tool.is_error);
+        // r3-transcript: a failure shows inline under its row (red, exit
+        // code); its full input and output stay one click away.
+        let expanded = self.tool_expansion.get(&identity).copied().unwrap_or(false);
         let preview = self.step_previews.get(&element_key, [row], || {
             tool_preview::parse(
                 &tool.name,
@@ -565,10 +627,20 @@ impl Workspace {
         event.target = (!target.is_empty()).then(|| target.into());
         event.mono = Some(mono);
         event.diff = (preview.added, preview.removed);
-        event.summary = (tool.complete && !tool.is_error)
-            .then(|| tool_result_meta(tool.category(), &tool.name, &tool.output))
+        let inline = (tool.complete || tool.is_error)
+            .then(|| inline_output(tool.category(), &tool.output, tool.is_error))
+            .flatten();
+        // Shown output says how much there was; the count would repeat it.
+        event.summary =
+            (tool.complete && !tool.is_error && (inline.is_none() || tool.category() == "Search"))
+                .then(|| tool_result_meta(tool.category(), &tool.name, &tool.output))
+                .flatten()
+                .map(Into::into);
+        event.fault = tool
+            .is_error
+            .then(|| exit_code(&tool.output))
             .flatten()
-            .map(Into::into);
+            .map(|code| format!("exit code {code}").into());
         event.failed = tool.is_error;
         event.disclosure = Some(expanded);
         event.end = if tool.is_error {
@@ -584,6 +656,10 @@ impl Workspace {
                 cx.listener(move |this, _, _, cx| this.toggle_tool(identity.clone(), expanded, cx)),
             );
         let mut step = div().flex().flex_col().child(header);
+        if let Some((lines, before)) = inline.filter(|_| !expanded) {
+            step =
+                step.child(self.inline_output_v2(&element_key, lines, before, tool.is_error, cx));
+        }
         if expanded {
             let mut details = self
                 .tool_details_v2(&preview, tool, &element_key, window, cx)
@@ -623,6 +699,53 @@ impl Workspace {
             );
         }
         step
+    }
+
+    /// Short output under its row (r3-transcript): dimmed mono, aligned with
+    /// the verb; a failure's lines in red, with how many came before.
+    fn inline_output_v2(
+        &self,
+        element_key: &str,
+        lines: Vec<String>,
+        before: usize,
+        failed: bool,
+        cx: &App,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let mono = gpui_component::Theme::global(cx).mono_font_family.clone();
+        let line_height = t.text.meta * t.text.line_height;
+        let key = element_key.to_owned();
+        div()
+            .debug_selector(move || format!("tool-inline-output-{key}"))
+            .pl(px(t.transcript().event_icon + t.space.md))
+            .pb(px(t.space.xs))
+            .flex()
+            .flex_col()
+            .text_size(px(t.text.meta))
+            .line_height(px(line_height))
+            .when(before > 0, |d| {
+                d.child(div().text_color(rgb(p.roles.text_tertiary)).child(format!(
+                    "… {}",
+                    plural(before, "earlier line", "earlier lines")
+                )))
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .font_family(mono)
+                    .text_color(rgb(if failed {
+                        p.error
+                    } else {
+                        p.roles.text_tertiary
+                    }))
+                    .children(
+                        lines
+                            .into_iter()
+                            .map(|line| div().min_w_0().truncate().whitespace_nowrap().child(line)),
+                    ),
+            )
     }
 
     /// A tool's input and output, opened under its line: on the card
@@ -763,11 +886,23 @@ impl Workspace {
             .range(span.clone())
             .filter(|r| r.tool.is_some())
             .count();
-        let open = summary.failed > 0
+        // r3-transcript: finished work folds to one line ("Worked 5m 40s ·
+        // 6 tools ›") so the reply and its changes lead the turn; the block
+        // still in progress (the transcript's last, while the session is
+        // busy) stays open, as does one with a failure. Ctrl+O opens all.
+        let in_progress = summary.running > 0
+            || (span.end == rows.len() && self.selected_session().is_some_and(Session::busy));
+        let expand_all = self.chat.expand_all;
+        let open = expand_all
             || steps == 1
-            || self.chat.open.get(&card_key).copied().unwrap_or(true);
+            || self
+                .chat
+                .open
+                .get(&card_key)
+                .copied()
+                .unwrap_or(in_progress || summary.failed > 0);
         let earlier_key = format!("{card_key}:earlier");
-        let show_earlier = self.chat.open.get(&earlier_key).copied().unwrap_or(false);
+        let show_earlier = expand_all || self.chat.open.get(&earlier_key).copied().unwrap_or(false);
         let hidden = if show_earlier {
             0
         } else {
@@ -783,43 +918,47 @@ impl Workspace {
             .flex()
             .flex_col();
         if steps > 1 {
-            // r2-transcript: "Worked 2m 14s · 18 tools · 3 files changed".
+            // r3-transcript: "Worked 5m 40s · 6 tools ›", nothing more: the
+            // diff counts belong to the turn's Changed line, the breakdown to
+            // the rows inside.
             let toggle_key = card_key.clone();
+            let default_open = in_progress || summary.failed > 0;
             let mut event = EventRow::new(
                 format!("{card_key}-header"),
-                Glyph::Named(if open {
-                    IconName::ChevronDown
+                Glyph::Status(if summary.failed > 0 {
+                    StatusKind::Failed
+                } else if in_progress {
+                    StatusKind::Working
                 } else {
-                    IconName::ChevronRight
+                    StatusKind::Done
                 }),
-                work_headline(summary.running > 0, summary.duration_ms),
+                work_line(in_progress, summary.duration_ms, steps),
             );
-            event.summary = Some(
-                std::iter::once(plural(steps, "tool", "tools"))
-                    .chain((!summary.text.is_empty()).then(|| summary.text.clone()))
-                    .collect::<Vec<_>>()
-                    .join(" · ")
-                    .into(),
-            );
-            event.diff = (summary.added, summary.removed);
-            event.end = if summary.running > 0 {
-                EventEnd::Badge(
-                    StatusBadge::new(StatusKind::Working)
-                        .label(format!("{} running", summary.running)),
-                )
-            } else if summary.failed > 0 {
-                EventEnd::Badge(
-                    StatusBadge::new(StatusKind::Failed)
-                        .label(format!("{} failed", summary.failed)),
-                )
-            } else {
-                EventEnd::Nothing
-            };
+            event.quiet = true;
+            event.disclosure = Some(open);
+            event.reveal = true;
+            // The glyph carries the state; a failure is also named inline.
+            event.fault = (summary.failed > 0).then(|| format!("{} failed", summary.failed).into());
             card = card.child(
                 event_row(event, &p)
                     .debug_selector(|| "work-card-toggle".into())
+                    .tooltip(primitives::tooltip_view(
+                        if open {
+                            "Hide tools · every block:"
+                        } else {
+                            "Show tools · every block:"
+                        },
+                        Some("Ctrl O"),
+                        &p,
+                    ))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.toggle_open(toggle_key.clone(), true, cx)
+                        if this.chat.expand_all {
+                            // Leaving "show everything" from one block: it
+                            // closes, the rest return to their defaults.
+                            this.chat.expand_all = false;
+                            this.chat.open.insert(toggle_key.clone(), true);
+                        }
+                        this.toggle_open(toggle_key.clone(), default_open, cx)
                     })),
             );
         }
@@ -836,7 +975,7 @@ impl Workspace {
                         .id(SharedString::from(format!("{card_key}-earlier")))
                         .debug_selector(|| "work-earlier-steps".into())
                         .h(px(tt.tool_row))
-                        .ml(px(-t.space.sm))
+                        .mx(px(-t.space.sm))
                         .px(px(t.space.sm))
                         .rounded(px(t.radius.control))
                         .flex()
@@ -1102,16 +1241,6 @@ impl Workspace {
     }
 }
 
-/// A transcript card: the shared card on its surface and edge, at the
-/// transcript's tighter padding.
-pub(super) fn transcript_card(p: &Palette) -> Div {
-    let t = p.tokens;
-    primitives::card(p)
-        .p(px(t.space.lg))
-        .gap(px(t.space.md))
-        .w_full()
-}
-
 // ----- Messages ---------------------------------------------------------------
 
 impl Workspace {
@@ -1308,22 +1437,34 @@ impl Workspace {
             Glyph::Asset("lucide/file-diff.svg"),
             format!("Changed {}", plural(files.len(), "file", "files")),
         );
+        // r3-transcript: counts say their scope ("This turn +5 −2"), so they
+        // never read as the branch's (Changes: "Branch +17 −3").
+        event.scope = Some("This turn".into());
         event.diff = (added, removed);
         if let [file] = files {
             // One file: named on the line itself.
             event.target = Some(file.path.clone().into());
             event.mono = Some(mono.clone());
         }
+        // Changes has no per-turn filter yet: Review opens every uncommitted
+        // change, and says so rather than implying this turn's alone.
         event.trailing.push(
-            primitives::button(
-                "turn-changes",
-                "Review",
-                Some(IconName::ArrowRight),
-                ButtonVariant::Tertiary,
-                ButtonSize::Small,
-                connected,
+            primitives::with_tooltip(
+                primitives::button(
+                    "turn-changes",
+                    "Review",
+                    Some(IconName::ArrowRight),
+                    ButtonVariant::Tertiary,
+                    ButtonSize::Small,
+                    connected,
+                    &p,
+                ),
+                "Review all uncommitted changes (this turn's files are listed here)",
+                None,
                 &p,
             )
+            // Its label, not its padding, meets the column's right edge.
+            .mr(px(-(t.space.md + t.space.xxs)))
             .when(connected, |d| {
                 d.on_click(
                     cx.listener(|this, _, window, cx| {
@@ -1508,10 +1649,12 @@ impl Workspace {
 // ----- Fleet and supervisor wakes ------------------------------------------------
 
 impl Workspace {
-    /// A fleet or supervisor wake. While something in it still needs you it
-    /// is a full card (icon, title, status, meta, actions per worker); once
-    /// nothing does, it collapses to one line saying how it ended
-    /// ("Decision made · Session creation review · Done"), opened on click.
+    /// A fleet or supervisor wake (r3-transcript): another session's news,
+    /// so never a card here. One line per agent in the shared lexicon
+    /// ("Release checklist for 0.9 needs you · Go", "Usage meter rounding ·
+    /// Done", "Queue priority ordering · Failed · Credit balance is too
+    /// low"), no internal ids. Clicking a line opens what the wake carried
+    /// (last reply, results, why it was raised) on a guide beneath.
     pub(super) fn render_fleet_card_v2(
         &mut self,
         key: &str,
@@ -1524,7 +1667,7 @@ impl Workspace {
         let t = p.tokens;
         let owner = self.view.selected.clone().unwrap_or_default();
         let lookup = |id: &str| self.view.sessions.iter().find(|s| s.id == id).cloned();
-        let states: Vec<(StatusKind, &'static str)> = fleet
+        let states: Vec<StatusKind> = fleet
             .entries
             .iter()
             .map(|entry| {
@@ -1534,44 +1677,11 @@ impl Workspace {
                     lookup(&entry.session_id).as_ref(),
                     p,
                 );
-                (fleet_entry_kind(label), label)
+                fleet_entry_kind(label)
             })
             .collect();
-        let pending = states.iter().any(|(k, _)| *k == StatusKind::NeedsYou);
-        let failed = states
-            .iter()
-            .filter(|(k, _)| *k == StatusKind::Failed)
-            .count();
-        let working = states.iter().any(|(k, _)| *k == StatusKind::Working);
+        let pending = states.contains(&StatusKind::NeedsYou);
         let eyebrow = fleet_eyebrow(fleet.kind, pending, fleet.entries.len());
-        let summary = if pending {
-            StatusKind::NeedsYou
-        } else if failed > 0 {
-            StatusKind::Failed
-        } else if working || fleet.kind == FleetKind::Progress {
-            StatusKind::Working
-        } else {
-            StatusKind::Done
-        };
-        let title = self.fleet_title(&fleet);
-        let single = fleet.entries.len() == 1;
-        let open_key = format!("{key}-v2-open");
-        let open = pending || self.chat.open.get(&open_key).copied().unwrap_or(false);
-        let status_badge = |kind: StatusKind, label: &'static str| {
-            StatusBadge::new(kind).label(match (kind, label) {
-                (StatusKind::Done, "Finished") => "Done",
-                (StatusKind::NeedsYou, _) => "Needs you",
-                _ => label,
-            })
-        };
-        let header_status = if single {
-            let (kind, label) = states[0];
-            status_badge(kind, label)
-        } else if failed > 0 {
-            StatusBadge::new(StatusKind::Failed).label(format!("{failed} failed"))
-        } else {
-            StatusBadge::new(summary)
-        };
         let names = fleet
             .entries
             .iter()
@@ -1582,338 +1692,173 @@ impl Workspace {
                     .unwrap_or_else(|| entry.label.clone())
             })
             .collect::<Vec<_>>();
-        if !open {
-            // One line: state, what it was about, how it ended.
+        let open_key = format!("{key}-v2-open");
+        let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
+        let mut lines = div()
+            .debug_selector(|| "fleet-card".into())
+            .pb(px(t.space.sm))
+            .w_full()
+            .flex()
+            .flex_col();
+        for (index, entry) in fleet.entries.iter().enumerate() {
+            let kind = states[index];
+            let live = lookup(&entry.session_id);
+            let id = entry.session_id.clone();
+            // Go to a session that needs you now (its state is live, not the
+            // wake's say-so), or open one of this conversation's workers.
+            let waits = kind == StatusKind::NeedsYou
+                && self.view.connected
+                && live
+                    .as_ref()
+                    .is_some_and(|s| s.approval.is_some() || s.questions.is_some());
+            let reachable = waits || self.fleet_openable(&owner, &id);
+            let mut event = EventRow::new(
+                format!("{key}-entry-{index}"),
+                Glyph::Status(kind),
+                if kind == StatusKind::NeedsYou {
+                    format!("{} needs you", names[index])
+                } else {
+                    names[index].clone()
+                },
+            );
+            event.quiet = kind != StatusKind::NeedsYou;
+            if kind != StatusKind::NeedsYou {
+                event.summary = Some(kind.label().into());
+            }
+            event.fault = entry
+                .failed
+                .clone()
+                .or_else(|| entry.crossed.clone())
+                .map(Into::into);
+            event.disclosure = (index == 0).then_some(open);
+            if reachable {
+                let (owner, id) = (owner.clone(), id.clone());
+                event.trailing.push(
+                    primitives::button(
+                        SharedString::from(format!("{key}-open-{index}")),
+                        if waits { "Go" } else { "Open" },
+                        Some(IconName::ArrowRight),
+                        ButtonVariant::Tertiary,
+                        ButtonSize::Small,
+                        true,
+                        &p,
+                    )
+                    .debug_selector(move || format!("fleet-entry-open-{index}"))
+                    // Its label, not its padding, meets the column's right edge.
+                    .mr(px(-(t.space.md + t.space.xxs)))
+                    .when(!waits, |d| {
+                        d.opacity(0.).group_hover("event-row", |s| s.opacity(1.))
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        let needs_you =
+                            this.view.sessions.iter().any(|s| {
+                                s.id == id && (s.approval.is_some() || s.questions.is_some())
+                            });
+                        if this.view.selected.as_deref() == Some(owner.as_str())
+                            && this.view.connected
+                            && (needs_you || this.fleet_openable(&owner, &id))
+                        {
+                            this.command(Command::Select(id.clone()), cx);
+                        }
+                    }))
+                    .into_any_element(),
+                );
+            }
             let toggle = open_key.clone();
-            return div().debug_selector(|| "fleet-card".into()).w_full().child(
-                div()
-                    .id(SharedString::from(format!("{key}-v2-line")))
-                    .debug_selector(|| "fleet-card-header".into())
-                    .group("tool-line")
-                    .h(px(t.transcript().tool_row))
-                    .ml(px(-t.space.sm))
-                    .px(px(t.space.sm))
-                    .rounded(px(t.radius.control))
-                    .flex()
-                    .items_center()
-                    .gap(px(t.space.md))
-                    .min_w_0()
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
-                    .child(glyph_box(Glyph::Status(summary), p.roles.text_tertiary, &p))
+            lines = lines.child(
+                event_row(event, &p)
+                    .debug_selector(move || {
+                        if index == 0 {
+                            "fleet-card-header".into()
+                        } else {
+                            format!("fleet-entry-{index}")
+                        }
+                    })
                     .child(
                         div()
-                            .flex_shrink_0()
-                            .text_size(px(t.text.body))
-                            .font_weight(FontWeight(t.weight.medium))
-                            .text_color(rgb(p.text))
-                            .child(eyebrow),
+                            .absolute()
+                            .debug_selector(move || format!("fleet-entry-status-{index}")),
                     )
-                    .child(
-                        div()
-                            .debug_selector(|| "fleet-card-title".into())
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(t.text.body))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .child(names.join(", ")),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        header_status
-                            .render(&p)
-                            .debug_selector(|| "fleet-card-status".into()),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(rgb(p.roles.text_tertiary))
-                            .opacity(0.)
-                            .group_hover("tool-line", |s| s.opacity(1.))
-                            .child(Icon::new(IconName::ChevronRight).size(px(t.icon.xs))),
-                    )
+                    .when(index == 0, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .debug_selector(|| "fleet-card-status".into()),
+                        )
+                    })
+                    .tooltip(primitives::tooltip_view(
+                        format!("From another session · {eyebrow}"),
+                        None,
+                        &p,
+                    ))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle_open(toggle.clone(), false, cx)
                     })),
             );
         }
-        let eyebrow_color = summary.text_color(&p);
-        let icon = match fleet.kind {
-            FleetKind::Blocked | FleetKind::Escalated | FleetKind::Threshold => {
-                IconName::TriangleAlert
-            }
-            FleetKind::Failed => IconName::CircleX,
-            FleetKind::CatchUp => IconName::Inbox,
-            FleetKind::Progress => IconName::Bot,
-            FleetKind::Finished => IconName::CircleCheck,
-        };
-        let collapse = (!pending).then(|| {
-            let toggle = open_key.clone();
-            primitives::icon_button(
-                SharedString::from(format!("{key}-v2-collapse")),
-                IconName::ChevronDown,
-                "Collapse",
-                ButtonVariant::Tertiary,
-                true,
-                &p,
-            )
-            .on_click(
-                cx.listener(move |this, _, _, cx| this.toggle_open(toggle.clone(), false, cx)),
-            )
-        });
-        // The status sits on the right, where the one-line form keeps it.
-        let mut head = CardHead::new(title);
-        if !single {
-            head = head.meta(names.join(", "));
+        if !open {
+            return lines;
         }
-        let head = head
-            .action(
-                header_status
-                    .render(&p)
-                    .debug_selector(|| "fleet-card-status".into()),
-            )
-            .action(
-                primitives::icon_button(
-                    SharedString::from(format!("copy-{key}")),
-                    IconName::Copy,
-                    "Copy wake",
-                    ButtonVariant::Tertiary,
-                    true,
-                    &p,
-                )
-                .opacity(0.)
-                .group_hover("message", |s| s.opacity(1.))
-                .on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
-                }),
-            );
-        let head = match collapse {
-            Some(collapse) => head.action(collapse),
-            None => head,
-        }
-        .render(&p);
-        let mut card = transcript_card(&p)
-            .debug_selector(|| "fleet-card".into())
-            .child(
+        // What the wake carried, on the guide: each agent's note and last
+        // reply, structured results, and the raw wake one disclosure away.
+        let mut details = event_guide(&p)
+            .debug_selector(|| "fleet-details".into())
+            .gap(px(t.space.xs))
+            .pb(px(t.space.sm))
+            .text_size(px(t.text.meta))
+            .text_color(rgb(p.roles.text_secondary));
+        for (index, entry) in fleet.entries.iter().enumerate() {
+            let quote = |text: String| {
                 div()
-                    .debug_selector(|| "fleet-card-header".into())
+                    .pl(px(t.space.md))
+                    .border_l(px(t.stroke.focus))
+                    .border_color(rgb(p.border))
+                    .text_size(px(t.text.body))
+                    .text_color(rgb(p.prose))
+                    .child(text)
+            };
+            let reply = format!("Re: {} — ", names[index]);
+            let single = fleet.entries.len() == 1;
+            details = details.child(
+                div()
+                    .debug_selector(move || format!("fleet-entry-details-{index}"))
                     .flex()
                     .flex_col()
                     .gap(px(t.space.xs))
-                    .child(
-                        // r2-transcript: a bare glyph beside the eyebrow, no tile.
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(t.space.sm))
-                            .text_size(px(t.text.meta))
-                            .font_weight(FontWeight(t.weight.medium))
-                            .text_color(rgb(eyebrow_color))
-                            .child(Icon::new(icon).size(px(t.icon.sm)))
-                            .child(eyebrow),
-                    )
-                    .child(head),
-            );
-        for (index, entry) in fleet.entries.iter().enumerate() {
-            let live = lookup(&entry.session_id);
-            let (kind, label) = states[index];
-            let openable = self.fleet_openable(&owner, &entry.session_id);
-            let model = live
-                .as_ref()
-                .map(Session::display_model)
-                .unwrap_or_default();
-            let id = entry.session_id.clone();
-            let cwd = entry.cwd.clone().filter(|c| c != "?");
-            let reply = format!("Re: session:{id} ({}) — ", entry.label);
-            let id_tooltip = if live.is_some() {
-                format!("session:{id}")
-            } else {
-                format!("session:{id} · no longer in this workspace")
-            };
-            let mut meta = Vec::new();
-            if !model.is_empty() {
-                meta.push(model);
-            }
-            if let Some(cwd) = &cwd {
-                meta.push(chrome::project_label(cwd).to_owned());
-            }
-            let open_session = {
-                let owner = owner.clone();
-                let id = id.clone();
-                primitives::icon_button(
-                    SharedString::from(format!("{key}-open-{id}")),
-                    IconName::ArrowRight,
-                    if openable {
-                        "Open session"
-                    } else {
-                        "Not an available worker of this conversation"
-                    },
-                    ButtonVariant::Tertiary,
-                    openable,
-                    &p,
-                )
-                .debug_selector(move || format!("fleet-entry-open-{index}"))
-                .when(openable, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        if this.view.selected.as_deref() == Some(owner.as_str())
-                            && this.fleet_openable(&owner, &id)
-                        {
-                            this.command(Command::Select(id.clone()), cx);
-                        }
-                    }))
-                })
-            };
-            let reply_button = primitives::icon_button(
-                SharedString::from(format!("{key}-reply-{}", entry.session_id)),
-                IconName::Undo2,
-                "Reply to this session",
-                ButtonVariant::Tertiary,
-                self.view.connected,
-                &p,
-            )
-            .debug_selector(move || format!("fleet-entry-reply-{index}"))
-            .on_click(cx.listener(move |this, _, window, cx| this.prefill(&reply, window, cx)));
-            let mut row = div()
-                .debug_selector(move || format!("fleet-entry-{index}"))
-                .pt(px(t.space.md))
-                .border_t(px(t.stroke.hairline))
-                .border_color(rgb(p.border))
-                .flex()
-                .flex_col()
-                .gap(px(t.space.xs))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(t.space.md))
-                        .min_w_0()
-                        .when(!single, |d| {
-                            d.child(glyph_box(
-                                Glyph::Named(IconName::Bot),
-                                p.roles.text_tertiary,
-                                &p,
-                            ))
-                        })
-                        .child(
+                    .when(!single, |d| {
+                        d.child(
                             div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .when(!single, |d| {
-                                    d.child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(px(t.text.body))
-                                            .font_weight(FontWeight(t.weight.medium))
-                                            .text_color(rgb(p.text))
-                                            .child(names[index].clone()),
-                                    )
-                                })
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(t.space.sm))
-                                        .min_w_0()
-                                        .text_size(px(t.text.meta))
-                                        .text_color(rgb(p.roles.text_tertiary))
-                                        .when(!meta.is_empty(), |d| {
-                                            d.child(
-                                                div()
-                                                    .min_w_0()
-                                                    .truncate()
-                                                    .child(format!("{} ·", meta.join(" · "))),
-                                            )
-                                        })
-                                        .child(
-                                            div()
-                                                .id(SharedString::from(format!("{key}-id-{index}")))
-                                                .debug_selector(move || {
-                                                    format!("fleet-entry-id-{index}")
-                                                })
-                                                .flex_shrink_0()
-                                                .font_family(super::mono_font())
-                                                .child(super::fleet_card::short_id(&id))
-                                                .tooltip(primitives::tooltip_view(
-                                                    id_tooltip, None, &p,
-                                                )),
-                                        ),
-                                ),
+                                .font_weight(FontWeight(t.weight.medium))
+                                .text_color(rgb(p.text))
+                                .child(names[index].clone()),
                         )
-                        .when(!single, |d| {
-                            d.child(
-                                status_badge(kind, label)
-                                    .render(&p)
-                                    .debug_selector(move || format!("fleet-entry-status-{index}")),
+                    })
+                    .when_some(entry.note.clone(), |d, note| d.child(quote(note)))
+                    .when_some(entry.last_reply.clone(), |d, last| d.child(quote(last)))
+                    .child(
+                        div().flex().child(
+                            primitives::button(
+                                SharedString::from(format!("{key}-reply-{index}")),
+                                "Reply",
+                                Some(IconName::Undo2),
+                                ButtonVariant::Tertiary,
+                                ButtonSize::Small,
+                                self.view.connected,
+                                &p,
                             )
-                        })
-                        .child(open_session)
-                        .child(reply_button),
-                );
-            let indent = if single {
-                0.
-            } else {
-                t.transcript().event_icon + t.space.md
-            };
-            if let Some(failed) = &entry.failed {
-                row = row.child(
-                    div()
-                        .pl(px(indent))
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.error))
-                        .child(failed.clone()),
-                );
-            }
-            if let Some(crossed) = &entry.crossed {
-                row = row.child(
-                    div()
-                        .pl(px(indent))
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.warning))
-                        .child(crossed.clone()),
-                );
-            }
-            if let Some(note) = &entry.note {
-                row = row.child(
-                    div()
-                        .ml(px(indent))
-                        .pl(px(t.space.md))
-                        .border_l(px(t.stroke.focus))
-                        .border_color(rgb(p.border))
-                        .text_size(px(t.text.body))
-                        .text_color(rgb(p.prose))
-                        .child(note.clone()),
-                );
-            }
-            if let Some(last) = &entry.last_reply {
-                let reply_key = format!("{key}-reply-{index}");
-                let shown = self.chat.open.get(&reply_key).copied().unwrap_or(false);
-                row = row.child(div().pl(px(indent)).child(self.disclosure_v2(
-                    reply_key,
-                    "Last reply",
-                    shown,
-                    cx,
-                )));
-                if shown {
-                    row = row.child(
-                        div()
-                            .ml(px(indent))
-                            .pl(px(t.space.md))
-                            .border_l(px(t.stroke.focus))
-                            .border_color(rgb(p.border))
-                            .text_size(px(t.text.body))
-                            .text_color(rgb(p.prose))
-                            .child(last.clone()),
-                    );
-                }
-            }
-            card = card.child(row);
+                            .ml(px(-t.space.md))
+                            .debug_selector(move || format!("fleet-entry-reply-{index}"))
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| this.prefill(&reply, window, cx),
+                            )),
+                        ),
+                    ),
+            );
         }
         for (i, (title, report)) in fleet.reports.iter().enumerate() {
             let report_key = format!("{key}-report-{i}");
-            card = card.child(if title.starts_with("Structured result") {
+            details = details.child(if title.starts_with("Structured result") {
                 self.render_result(
                     &report_key,
                     &super::fleet_card::report_title(title),
@@ -1929,7 +1874,6 @@ impl Workspace {
                     .gap(px(t.space.xs))
                     .child(
                         div()
-                            .text_size(px(t.text.meta))
                             .text_color(rgb(p.roles.text_tertiary))
                             .child(super::fleet_card::report_title(title)),
                     )
@@ -1937,15 +1881,33 @@ impl Workspace {
                     .into_any_element()
             });
         }
-        // What the agent read stays one quiet disclosure away.
         let original = format!("{key}-original");
         let expanded = self.chat.open.get(&original).copied().unwrap_or(false);
-        card =
-            card.child(self.disclosure_v2(original.clone(), "Why this was raised", expanded, cx));
+        details = details.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(t.space.md))
+                .child(self.disclosure_v2(original.clone(), "Why this was raised", expanded, cx))
+                .child(
+                    primitives::button(
+                        SharedString::from(format!("copy-{key}")),
+                        "Copy",
+                        Some(IconName::Copy),
+                        ButtonVariant::Tertiary,
+                        ButtonSize::Small,
+                        true,
+                        &p,
+                    )
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                    }),
+                ),
+        );
         if expanded {
-            card = card.child(self.render_raw(&original, &fleet.text, window, cx));
+            details = details.child(self.render_raw(&original, &fleet.text, window, cx));
         }
-        card
+        lines.child(details)
     }
 
     /// A small chevron toggle that keeps the reader's place.
@@ -2075,6 +2037,25 @@ pub(super) fn children_badge(views: &[ChildView]) -> Option<StatusBadge> {
         return Some(StatusBadge::new(StatusKind::Failed).label(label(failed, "failed")));
     }
     (done > 0 && done == views.len()).then(|| StatusBadge::new(StatusKind::Done))
+}
+
+/// What a stalled subagent's Nudge does.
+enum Nudge {
+    /// A session of its own: send it [`NUDGE_TEXT`] to read at once.
+    Session(String),
+    /// A subagent inside the agent's tools: draft this note to the agent.
+    Parent(String),
+}
+
+/// What Nudge sends a stalled agent session.
+pub(super) const NUDGE_TEXT: &str = "Still there? Reply with where you are.";
+
+/// The note Nudge drafts for the agent that runs a stalled subagent.
+pub(super) fn nudge_parent_prompt(name: &str, state: &str) -> String {
+    format!(
+        "Your subagent “{name}” has gone quiet ({}). Check on it and tell me where it stands; stop it if it is stuck.",
+        state.to_lowercase()
+    )
 }
 
 /// A child row's name and its quieter context, never repeating the title
@@ -2242,9 +2223,22 @@ impl Workspace {
                 }
             };
             let open = std::rc::Rc::new(open);
+            // r3-transcript: a stalled agent says what can be done: look at
+            // what it did, nudge it, or stop it (never a bare "Check").
             let actions = view.stalled.then(|| {
-                let check = open.clone();
+                let view_output = open.clone();
                 let stop_target = child.session_id.clone();
+                let nudge = match &child.session_id {
+                    // Its own session: a message it reads at once.
+                    Some(id) => Nudge::Session(id.clone()),
+                    // A subagent inside the agent's own tools has no inbox of
+                    // its own: ask the agent that runs it, drafted for you.
+                    None => Nudge::Parent(nudge_parent_prompt(&title, &view.word)),
+                };
+                let nudge_tip = match &nudge {
+                    Nudge::Session(_) => "Send it “Still there? Reply with where you are.” now",
+                    Nudge::Parent(_) => "Draft a note asking the agent that runs it to check on it",
+                };
                 div()
                     .flex()
                     .items_center()
@@ -2252,10 +2246,10 @@ impl Workspace {
                     .flex_shrink_0()
                     .child(
                         primitives::button(
-                            SharedString::from(format!("{child_key}-check")),
-                            "Check",
+                            SharedString::from(format!("{child_key}-view")),
+                            "View output",
                             None,
-                            ButtonVariant::Secondary,
+                            ButtonVariant::Tertiary,
                             ButtonSize::Small,
                             enabled,
                             &p,
@@ -2263,8 +2257,40 @@ impl Workspace {
                         .debug_selector(|| "stalled-child-check".into())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
-                            check(this, cx)
+                            view_output(this, cx)
                         })),
+                    )
+                    .child(
+                        primitives::with_tooltip(
+                            primitives::button(
+                                SharedString::from(format!("{child_key}-nudge")),
+                                "Nudge",
+                                None,
+                                ButtonVariant::Secondary,
+                                ButtonSize::Small,
+                                connected,
+                                &p,
+                            ),
+                            nudge_tip,
+                            None,
+                            &p,
+                        )
+                        .debug_selector(|| "stalled-child-nudge".into())
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                match &nudge {
+                                    Nudge::Session(id) => this.command(
+                                        Command::Act {
+                                            session: id.clone(),
+                                            action: Action::SendNow(NUDGE_TEXT.into()),
+                                        },
+                                        cx,
+                                    ),
+                                    Nudge::Parent(text) => this.prefill(text, window, cx),
+                                }
+                            },
+                        )),
                     )
                     .when_some(stop_target, |d, id| {
                         d.child(
@@ -2449,7 +2475,7 @@ impl Workspace {
                     .debug_selector(|| "thinking-toggle".into())
                     .group("tool-line")
                     .h(px(t.transcript().tool_row))
-                    .ml(px(-t.space.sm))
+                    .mx(px(-t.space.sm))
                     .px(px(t.space.sm))
                     .rounded(px(t.radius.control))
                     .flex()
@@ -2529,6 +2555,27 @@ impl Workspace {
     }
 }
 
+// ----- r3-transcript: expand all (Ctrl+O) ---------------------------------------
+
+gpui::actions!(native, [ExpandAllTools]);
+
+impl Workspace {
+    /// Ctrl+O (v2): every work block open with all its tools, or back to the
+    /// defaults (finished work folded to one line). Keeps the reader's place.
+    pub(super) fn toggle_expand_all(&mut self, cx: &mut Context<Self>) {
+        if !self.design().is_v2() {
+            return;
+        }
+        self.chat.expand_all = !self.chat.expand_all;
+        self.pause_follow();
+        let anchor = self.scroll_anchor();
+        let count = self.view.transcript.rows.len();
+        self.list.splice(0..count, count);
+        self.list.scroll_to(anchor);
+        cx.notify();
+    }
+}
+
 // ----- Settings → Chat → Reading width ---------------------------------------
 
 impl Workspace {
@@ -2594,6 +2641,39 @@ mod tests {
     }
 
     #[test]
+    fn short_output_and_failures_read_inline() {
+        let fail = "Exit code 101\nerror[E0599]: no function\n --> tests/a.rs:5:32\nerror: could not compile";
+        assert_eq!(exit_code(fail), Some(101));
+        assert_eq!(exit_code("all good"), None);
+        let (lines, before) = inline_output("Command", fail, true).unwrap();
+        assert_eq!(before, 0);
+        assert_eq!(lines.len(), 3, "the exit line stays on the row: {lines:?}");
+        // Shared indentation goes.
+        let (lines, _) = inline_output("Command", "    Checking a\n    Finished b", false).unwrap();
+        assert_eq!(lines, ["Checking a", "Finished b"]);
+        // Long output stays folded unless it failed (then its tail shows).
+        let long = (0..9)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(inline_output("Command", &long, false), None);
+        let (tail, before) = inline_output("Command", &long, true).unwrap();
+        assert_eq!((tail.len(), before), (INLINE_LINES, 9 - INLINE_LINES));
+        assert_eq!(tail.last().map(String::as_str), Some("line 8"));
+        // Reads and edits never inline their file.
+        assert_eq!(inline_output("Read", "1 fn main() {}", false), None);
+        assert_eq!(inline_output("Edit", "updated", false), None);
+        assert_eq!(inline_output("Command", "", false), None);
+    }
+
+    #[test]
+    fn a_nudge_to_the_parent_names_the_subagent_and_its_silence() {
+        let note = nudge_parent_prompt("Trace session restore paths", "Not responding · 7m");
+        assert!(note.contains("“Trace session restore paths”"), "{note}");
+        assert!(note.contains("not responding · 7m"), "{note}");
+    }
+
+    #[test]
     fn subagent_states_use_the_shared_vocabulary() {
         assert_eq!(child_status("running", true).0, StatusKind::Working);
         assert_eq!(child_status("completed", true), (StatusKind::Done, "Done"));
@@ -2604,8 +2684,14 @@ mod tests {
         assert_eq!(child_status("error", true).0, StatusKind::Failed);
         assert_eq!(
             child_status("running", false),
-            (StatusKind::Idle, "Offline")
+            (StatusKind::Offline, "Offline")
         );
+        assert_eq!(child_status("lost", true), (StatusKind::Failed, "Failed"));
+        assert_eq!(
+            child_status("starting", true),
+            (StatusKind::Working, "Working")
+        );
+        assert_eq!(child_status("stopped", true), (StatusKind::Idle, "Idle"));
         assert_eq!(child_status("idle", true), (StatusKind::Idle, "Idle"));
     }
 
@@ -2673,9 +2759,12 @@ mod tests {
             Some("Wrote")
         );
         assert_eq!(tool_verb("custom_tool", "Tool", false), None);
-        assert_eq!(work_headline(false, Some(134_000)), "Worked 2m 14s");
-        assert_eq!(work_headline(true, None), "Working");
-        assert_eq!(work_headline(false, Some(300)), "Worked");
+        assert_eq!(
+            work_line(false, Some(340_000), 6),
+            "Worked 5m 40s · 6 tools"
+        );
+        assert_eq!(work_line(true, None, 3), "Working · 3 tools");
+        assert_eq!(work_line(false, Some(300), 1), "Worked · 1 tool");
     }
 
     #[test]

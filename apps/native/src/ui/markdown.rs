@@ -349,11 +349,12 @@ impl Workspace {
                 border: rgb(p.roles.card_border).into(),
                 code_header: rgb(p.code_header).into(),
             }),
-            paragraph_gap: gpui::rems(if document {
-                tt.paragraph_gap * 1.25
-            } else {
-                tt.paragraph_gap
-            }),
+            // r3-transcript: 16px between paragraphs, whatever the reader's
+            // text size (a rem is that size, `configure_theme`).
+            paragraph_gap: gpui::rems(
+                tt.paragraph_space / self.settings.text_size.clamp(12, 20) as f32
+                    * if document { 1.25 } else { 1. },
+            ),
             heading_base_font_size: px(self.settings.text_size as f32),
             heading_font_size: Some(if document {
                 Arc::new(move |level, base| {
@@ -384,12 +385,20 @@ impl Workspace {
                 .border_color(rgb(p.roles.card_border))
                 .style()
                 .clone(),
-            // r2-transcript: prose stops at ~80ch while code and tables span
-            // the column; headings get room above and lose the underline.
+            // r3-transcript: one content width (prose spans the column, as
+            // code, tables and tool rows do); headings sit on the 8px rhythm,
+            // 32 above (the block before keeps its paragraph gap, the rest
+            // is added) and 12 below, with no underline.
             layout: Some(gpui_component::text::ProseLayout {
-                measure: (!document)
-                    .then(|| px(self.settings.text_size as f32 * tt.prose_measure_em)),
-                heading_space: px(tt.heading_space),
+                measure: None,
+                heading_space: px((tt.heading_space - tt.paragraph_space).max(0.)),
+                // A heading that opens a message follows another transcript
+                // row, which leaves `row_gap` between them.
+                heading_lead: px(if document {
+                    0.
+                } else {
+                    (tt.heading_space - tt.row_gap).max(0.)
+                }),
                 heading_gap: px(tt.heading_gap),
                 heading_rule: false,
             }),

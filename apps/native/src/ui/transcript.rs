@@ -26,6 +26,8 @@ pub(super) struct ChatUi {
     capture_number: u64,
     /// The session and row count last seen while following (v2 "n new").
     pub seen: Option<(String, usize)>,
+    /// r3-transcript: Ctrl+O shows every work block's tools and output.
+    pub expand_all: bool,
 }
 struct Preview {
     image: Option<Arc<gpui::Image>>,

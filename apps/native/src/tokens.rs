@@ -638,8 +638,11 @@ pub struct TranscriptTokens {
     pub brief_max: f32,
     /// Prose line height, as a multiple.
     pub prose_line_height: f32,
-    /// Between Markdown paragraphs, in rems of the reading size.
+    /// Between Markdown paragraphs, in rems of the reading size (v1 only).
     pub paragraph_gap: f32,
+    /// r3-transcript: between Markdown paragraphs, in px (the 8px rhythm:
+    /// 16). v2 converts it to rems of the reader's text size.
+    pub paragraph_space: f32,
     /// Added to the reading size for Markdown headings h1, h2, h3, h4+.
     pub heading_steps: [f32; 4],
     /// Inline image previews.
@@ -652,10 +655,11 @@ pub struct TranscriptTokens {
     pub reading_min: f32,
     pub reading_max: f32,
     pub reading_wide: f32,
-    /// Running prose (paragraphs, headings, lists, quotes) stops at this
-    /// many ems of the reading size (~80ch); code, tables and cards span.
-    pub prose_measure_em: f32,
-    /// Room above a Markdown heading that follows other blocks, and below it.
+    /// r3-transcript: one content width. Prose, tool rows, cards, tables and
+    /// code all share the column, so there is no separate prose measure.
+    /// Room above a Markdown heading that follows other blocks (32: the
+    /// block before it keeps its `paragraph_space`, the rest is added), and
+    /// below it (12).
     pub heading_space: f32,
     pub heading_gap: f32,
     /// An event row's leading icon column (bare glyph, no tile).
@@ -678,6 +682,7 @@ impl Tokens {
                 brief_max: 132.,
                 prose_line_height: 1.6,
                 paragraph_gap: 0.5,
+                paragraph_space: 16.,
                 heading_steps: [9., 5., 2., 0.],
                 image_width: 320.,
                 image_height: 180.,
@@ -685,7 +690,6 @@ impl Tokens {
                 reading_min: 680.,
                 reading_max: 1100.,
                 reading_wide: 1280.,
-                prose_measure_em: 44.,
                 heading_space: 24.,
                 heading_gap: 8.,
                 event_icon: 16.,
@@ -701,16 +705,22 @@ impl Tokens {
                 brief_max: 120.,
                 prose_line_height: 1.6,
                 paragraph_gap: 0.7,
-                heading_steps: [9., 5., 2., 0.],
+                // r3-transcript: the 8px rhythm (16 between paragraphs,
+                // 32 above a heading, 12 below it).
+                paragraph_space: 16.,
+                // r3-transcript: headings from the type scale over the 15px
+                // reading size (`lead`): h1 20 (`title_short`), h2 17
+                // (`heading`), h3+ 15 semibold.
+                heading_steps: [5., 2., 0., 0.],
                 image_width: 360.,
                 image_height: 220.,
-                // r2-transcript
+                // r2-transcript; r3-transcript: one capped column for
+                // prose, tool rows, cards, tables and code.
                 reading_min: 680.,
-                reading_max: 1100.,
-                reading_wide: 1280.,
-                prose_measure_em: 44.,
-                heading_space: 24.,
-                heading_gap: 8.,
+                reading_max: 800.,
+                reading_wide: 1100.,
+                heading_space: 32.,
+                heading_gap: 12.,
                 event_icon: 16.,
                 inset_row: 36.,
             },
@@ -876,5 +886,16 @@ mod tests {
         assert_eq!(v2.tool_row, Tokens::V2.layout.control_height_sm);
         assert!(v2.visible_steps < v1.visible_steps);
         assert!(v2.heading_steps.windows(2).all(|w| w[0] >= w[1]));
+        // r3-transcript: headings come from the type scale, the rhythm is on
+        // the 8px grid, and one capped column holds everything.
+        let t = Tokens::V2;
+        assert_eq!(t.text.lead + v2.heading_steps[0], t.text.title_short);
+        assert_eq!(t.text.lead + v2.heading_steps[1], t.text.heading);
+        assert_eq!(
+            (v2.heading_space, v2.heading_gap, v2.paragraph_space),
+            (32., 12., 16.)
+        );
+        assert!((1.5..=1.7).contains(&v2.prose_line_height));
+        assert!(v2.reading_min < v2.reading_max && v2.reading_max < v2.reading_wide);
     }
 }
