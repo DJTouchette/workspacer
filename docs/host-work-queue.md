@@ -241,6 +241,12 @@ before checking eligibility or forwarding.
   `https://github.com/DJ/app` are equal. The owner/repo case is kept.
 - Older peers send no `name` or `remote`; the client derives `name` from the
   path and treats `remote` as unknown.
+- Only a repository root (`git: true`) reports a `remote`. A folder inside a
+  repository is not that repository, and giving it the root's identity would
+  make the root ambiguous. The probe is `git config --get remote.origin.url`,
+  bounded at 3 s, run for all roots concurrently; any failure is `null`.
+  Credentials in the URL never leave the host (`user@`/`user:pass@` is
+  dropped). Local remotes (`file://`, plain paths) are `null`.
 
 `queue.targets[].cwds` becomes an array of these objects. Clients must still
 accept a plain string array from older hubs.
@@ -269,8 +275,17 @@ Hosts → Projects)`. Local items never translate. A named-peer submit with no
 resolution is refused with that same message. The peer still re-checks that
 the folder exists.
 
+When a named peer's directory choices cannot be read at all (an older peer,
+no execution host, a failed probe), the saved link is forwarded if there is
+one, otherwise the cwd as given, and the peer's own existence check decides,
+as before project links. An eligible peer resolved by `link` or `remote` also
+gets the reason `cwd <C> runs in <path> (<via>)`; a stale link adds `saved
+link <path> is no longer among this host's directory choices`.
+
 `queue.targets` with a `cwd` returns, per target, `resolvedCwd`,
 `resolvedVia` and `suggestions` alongside `eligible`, `score` and `reasons`.
+The local row reports its own cwd with `resolvedVia: "exact"` when that
+directory exists, else `null`; without a `cwd` all three are `null`/`[]`.
 
 **Storage.** Links are stored on the origin hub, in `project-links.json`
 next to `queue.json`, written atomically with mode 0600:
@@ -279,7 +294,10 @@ next to `queue.json`, written atomically with mode 0600:
 { "links": [ { "localPath": "/home/dj/code/app", "peer": "mac", "peerPath": "/Users/dj/code/app", "createdAt": 0 } ] }
 ```
 
-The key is (`localPath`, `peer`). Paths are stored canonicalized and as given.
+The key is (`localPath`, `peer`). `localPath` is stored canonicalized when it
+exists on this host (else as given, trailing separators dropped); `peerPath`
+is stored as given, since only the peer can canonicalize it. `peerPath` is
+absolute in any OS's form (`/x`, `C:\x`, `\\server\x`). At most 1000 links.
 
 **RPCs**
 
@@ -290,7 +308,17 @@ The key is (`localPath`, `peer`). Paths are stored canonicalized and as given.
 | `projects.setLink` | owner | `{ "localPath", "peer", "peerPath" }` → `{ "links": [...] }`. `peerPath` must be absolute; it is not required to be among the peer's current choices (the peer may be offline). |
 | `projects.removeLink` | owner | `{ "localPath", "peer" }` → `{ "links": [...] }` |
 
-Event `projects.linksChanged`: `{ "links": [...] }`.
+Event `projects.linksChanged`: `{ "links": [...] }`, published only when a
+call changed something (saving the same `peerPath` again, or removing a link
+that is not there, succeeds without an event). It is not forwarded over
+federation.
+
+`projects.linkMatrix` details: the local projects also include every
+`localPath` a saved link names (with `"source": "link"`), so a link to a
+folder that is no longer configured or live stays visible and removable.
+Each peer row also carries `link` (the saved `peerPath` or `null`) and, when
+a connected peer's choices could not be read, `error`. A federated caller
+gets no peer rows.
 
 ## Federation
 

@@ -8,6 +8,8 @@ related_paths:
   - "services/hub-rs/src/services/work_queue/placement.rs"
   - "services/hub-rs/src/services/work_queue/routing.rs"
   - "services/hub-rs/src/services/work_queue/spawn_watch.rs"
+  - "services/hub-rs/src/services/work_queue/project_links.rs"
+  - "services/hub-rs/src/services/remote_dispatch/readiness.rs"
   - "services/hub-rs/src/services/work_queue/tests.rs"
   - "services/hub-rs/src/services/host_resources.rs"
   - "services/hub-rs/src/services/jobs.rs"
@@ -84,6 +86,31 @@ comes from `options.remote_dispatch_execution` in-process. Peers use the
 configured name everywhere (`peers[].peer`, `targets[].host`, submit result
 `host`, event `hub`).
 
+## Project links
+
+The same project lives at different paths on different machines.
+`project_links::resolve` (pure) maps a local cwd onto one peer's advertised
+choices: saved link (if still advertised) → exact path → the unique choice
+with the same normalized origin → nothing, with `remote`/`name` suggestions.
+A name match is never used without a saved link; an ambiguous remote is never
+used. `Directory` (remote_dispatch/model.rs) carries `name` and `remote`
+(serde-defaulted for older peers); `readiness::with_remotes` probes only
+repository roots, concurrently, 3 s each, and `normalize_remote` strips
+credentials. Links live in `project-links.json` beside `queue.json` (0600,
+atomic; `Links` in project_links.rs, keyed by canonical `localPath` + peer).
+
+Where it applies: `place` fills `Request::cwd_key`/`cwd_remote` (`identify`)
+and each peer `Candidate::link`; `placement::target` resolves and reports
+`resolvedCwd`/`resolvedVia`/`suggestions`. `submit_peer` rewrites
+`spawn.cwd`/`shell.cwd` to the translated path and records
+`source.originCwd` (`PeerCwd::Placed` from `any`, `PeerCwd::Resolve` for a
+named peer or a job). If a named peer's choices cannot be read, the link or
+the cwd as given is forwarded (the peer re-checks). Local items never
+translate; `submit_local` clears `originCwd` for a non-federated caller.
+RPCs `projects.links|linkMatrix` (reads, view/triage tiers) and
+`projects.setLink|removeLink` (owner) are dispatched by the queue;
+`projects.linksChanged` is published only on change and not forwarded.
+
 ## Jobs
 
 A job with `host` (spawn/shell only) runs context steps locally, renders the
@@ -100,7 +127,10 @@ running (skipped). `agents.jobFullAccess` maps to `spawn.fullAccess`.
 - `cargo test --test work_queue`: local queue behaviour plus two-hub tests
   (shell on a host-token peer runs there; operator-token peer refused; not
   dispatch-enabled / unknown peer refused; `includePeers`; `any` placement;
-  remote cancel) and a `host: "local"` job end to end.
+  remote cancel), project links (same origin at another path for named and
+  `any` submits, name-only refusal with a suggestion, a saved link used, the
+  link matrix; a peer without choices gets the cwd as given) and a
+  `host: "local"` job end to end.
 - `cargo test --test config` (host-trusted `queue`), and the registration
   suites: `auth_composition`, `headless_completeness`, `compatibility`,
   `corpus_vocabulary`, `auth`, `quiescence`, `services`.
