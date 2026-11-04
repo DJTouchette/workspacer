@@ -51,7 +51,7 @@ impl Workspace {
                     } else {
                         "Show files"
                     },
-                    ButtonVariant::Ghost,
+                    ButtonVariant::Tertiary,
                     true,
                     &p,
                 )
@@ -69,7 +69,7 @@ impl Workspace {
                     "changes-refresh",
                     IconName::Redo,
                     "Refresh",
-                    ButtonVariant::Ghost,
+                    ButtonVariant::Tertiary,
                     connected,
                     &p,
                 )
@@ -429,7 +429,7 @@ impl Workspace {
                         IconName::Minus
                     },
                     if stage { "Stage" } else { "Unstage" },
-                    ButtonVariant::Ghost,
+                    ButtonVariant::Tertiary,
                     !busy,
                     &p,
                 )

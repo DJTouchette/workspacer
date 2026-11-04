@@ -2196,7 +2196,7 @@ impl Workspace {
                 "Release notes"
             },
             Some(IconName::ExternalLink),
-            ButtonVariant::Ghost,
+            ButtonVariant::Tertiary,
             ButtonSize::Small,
             true,
             &p,

@@ -946,11 +946,11 @@ impl Workspace {
     fn job_chip(&self, job: &Job, p: Palette) -> Option<Div> {
         if self.design().is_v2() {
             let badge = if job.change() {
-                StatusBadge::new(StatusKind::NeedsYou).label("Proposed change")
+                StatusBadge::new(StatusKind::Idle).label("Proposed change")
             } else if job.proposal() {
                 return None;
             } else if job.running {
-                StatusBadge::new(StatusKind::Working).label("Running")
+                StatusBadge::new(StatusKind::Working)
             } else if !job.enabled {
                 StatusBadge::new(StatusKind::Paused)
             } else {
@@ -1047,9 +1047,9 @@ impl Workspace {
                 (false, false) => "Remove",
             },
             if confirming {
-                ButtonVariant::DangerGhost
+                ButtonVariant::Destructive
             } else {
-                ButtonVariant::Ghost
+                ButtonVariant::Tertiary
             },
             enabled,
         ) {
@@ -1688,7 +1688,7 @@ impl Workspace {
                     Some(if waiting > 0 {
                         primitives::pill(
                             format!("{waiting} to approve"),
-                            primitives::Intent::Warning,
+                            primitives::Intent::Neutral,
                             &p,
                         )
                     } else {
@@ -1739,7 +1739,7 @@ impl Workspace {
             let reject = button(
                 job_control("remove", ix),
                 "Reject",
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 enabled,
             )
             .debug_selector(move || format!("job-remove-{ix}"))
@@ -1775,19 +1775,24 @@ impl Workspace {
             let remove_id = id.clone();
             return row
                 .child(
-                    button(job_control("keep", ix), "Keep", ButtonVariant::Ghost, true)
-                        .debug_selector(move || format!("job-keep-{ix}"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.extras.job_confirm_remove = None;
-                            cx.notify();
-                        })),
+                    button(
+                        job_control("keep", ix),
+                        "Keep",
+                        ButtonVariant::Tertiary,
+                        true,
+                    )
+                    .debug_selector(move || format!("job-keep-{ix}"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.extras.job_confirm_remove = None;
+                        cx.notify();
+                    })),
                 )
                 .child(
                     button(
                         job_control("remove", ix),
                         "Remove job and history",
-                        ButtonVariant::DangerGhost,
+                        ButtonVariant::Destructive,
                         enabled,
                     )
                     .debug_selector(move || format!("job-remove-{ix}"))

@@ -327,7 +327,7 @@ impl Workspace {
                     if queue.paused {
                         primitives::StatusKind::Paused
                     } else {
-                        primitives::StatusKind::Queued
+                        primitives::StatusKind::Idle
                     },
                     &p,
                 )
@@ -919,7 +919,7 @@ impl Workspace {
             id,
             label,
             None,
-            primitives::ButtonVariant::Ghost,
+            primitives::ButtonVariant::Tertiary,
             primitives::ButtonSize::Small,
             enabled,
             &self.palette(),
@@ -942,7 +942,7 @@ impl Workspace {
             id,
             icon,
             label,
-            primitives::ButtonVariant::Ghost,
+            primitives::ButtonVariant::Tertiary,
             enabled,
             &self.palette(),
         )

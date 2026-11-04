@@ -429,7 +429,7 @@ impl Workspace {
             } else {
                 "Attach a file (or paste an image)"
             },
-            ButtonVariant::Ghost,
+            ButtonVariant::Tertiary,
             can_send,
             &p,
         )
@@ -724,9 +724,9 @@ impl Workspace {
         let p = self.palette();
         let t = p.tokens;
         let variant = if deciding {
-            ButtonVariant::SECONDARY
+            ButtonVariant::Secondary
         } else {
-            ButtonVariant::PRIMARY
+            ButtonVariant::Primary
         };
         let (label, tip) = send_copy(steering);
         let label = if self.view.busy { "Sending…" } else { label };
@@ -753,7 +753,7 @@ impl Workspace {
                 "queue",
                 "Queue",
                 None,
-                ButtonVariant::SECONDARY,
+                ButtonVariant::Secondary,
                 ButtonSize::Small,
                 can_send,
                 &p,
@@ -971,7 +971,7 @@ impl Workspace {
             },
             if open { "Hide details" } else { "Details" },
             None,
-            ButtonVariant::TERTIARY,
+            ButtonVariant::Tertiary,
             ButtonSize::Small,
             true,
             &p,
@@ -1048,9 +1048,9 @@ impl Workspace {
                     "Allow",
                     // While a note is being written, sending it is the primary.
                     if self.extras.deny_open {
-                        ButtonVariant::SECONDARY
+                        ButtonVariant::Secondary
                     } else {
-                        ButtonVariant::PRIMARY
+                        ButtonVariant::Primary
                     },
                     ButtonSize::Small,
                     enabled,
@@ -1073,7 +1073,7 @@ impl Workspace {
                     SharedString::from(format!("always-option-{ix}")),
                     number(&StripKey::Always(ix)),
                     option.label.clone(),
-                    ButtonVariant::SECONDARY,
+                    ButtonVariant::Secondary,
                     ButtonSize::Small,
                     enabled,
                     &p,
@@ -1102,7 +1102,7 @@ impl Workspace {
                     "deny",
                     number(&StripKey::Deny),
                     "Deny",
-                    ButtonVariant::DESTRUCTIVE,
+                    ButtonVariant::Destructive,
                     ButtonSize::Small,
                     enabled,
                     &p,
@@ -1121,7 +1121,7 @@ impl Workspace {
                         "deny-with-note",
                         number(&StripKey::DenyWithNote),
                         "Deny with note…",
-                        ButtonVariant::TERTIARY,
+                        ButtonVariant::Tertiary,
                         ButtonSize::Small,
                         enabled,
                         &p,
@@ -1199,7 +1199,7 @@ impl Workspace {
                     "deny-note-cancel",
                     "Cancel",
                     None,
-                    ButtonVariant::Ghost,
+                    ButtonVariant::Tertiary,
                     ButtonSize::Small,
                     true,
                     &p,
@@ -1366,8 +1366,8 @@ impl Workspace {
                        card: Option<String>,
                        then_handoff: bool| {
             // A feedback note being written owns the primary.
-            let variant = if deny_open && variant == ButtonVariant::PRIMARY {
-                ButtonVariant::SECONDARY
+            let variant = if deny_open && variant == ButtonVariant::Primary {
+                ButtonVariant::Secondary
             } else {
                 variant
             };
@@ -1389,7 +1389,7 @@ impl Workspace {
                 approve(
                     "approve",
                     "Approve plan".into(),
-                    ButtonVariant::PRIMARY,
+                    ButtonVariant::Primary,
                     card.clone(),
                     false,
                 )
@@ -1399,7 +1399,7 @@ impl Workspace {
                 approve(
                     "approve-handoff",
                     format!("Approve · run with {other}").into(),
-                    ButtonVariant::SECONDARY,
+                    ButtonVariant::Secondary,
                     card.clone(),
                     true,
                 )
@@ -1417,7 +1417,7 @@ impl Workspace {
                         "plan-revise",
                         "Keep planning",
                         None,
-                        ButtonVariant::TERTIARY,
+                        ButtonVariant::Tertiary,
                         ButtonSize::Small,
                         enabled,
                         &p,
@@ -1543,7 +1543,7 @@ impl Workspace {
                                 "limit-handoff",
                                 format!("Continue with {other}"),
                                 None,
-                                ButtonVariant::PRIMARY,
+                                ButtonVariant::Primary,
                                 ButtonSize::Small,
                                 can_hand_off,
                                 &p,
@@ -1560,7 +1560,7 @@ impl Workspace {
                                 "limit-dismiss",
                                 "Wait for the reset",
                                 None,
-                                ButtonVariant::TERTIARY,
+                                ButtonVariant::Tertiary,
                                 ButtonSize::Small,
                                 true,
                                 &p,

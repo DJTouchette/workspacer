@@ -173,6 +173,29 @@ impl Workspace {
         cx.notify();
     }
 
+    /// r3-foundation: open the panel on one of the selected session's tasks
+    /// (the title's red "… failed" chip): its log, or an agent's conversation.
+    pub(super) fn open_task_by_id(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.tasks.open {
+            self.toggle_tasks(window, cx);
+        }
+        if !self.tasks.open {
+            return;
+        }
+        let task = self
+            .task_session()
+            .and_then(|s| s.tasks.iter().find(|t| t.id == id))
+            .cloned();
+        if let Some(task) = task {
+            self.open_task(&task, cx);
+        }
+    }
+
     /// Start reading one of a task's logs from its tail.
     fn open_task_log(&mut self, task: &str, source: Source, cx: &mut Context<Self>) {
         self.tasks.log = Some(Log::new(&self.tasks.session, task, source));

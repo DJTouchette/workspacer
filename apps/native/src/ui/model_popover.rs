@@ -346,7 +346,7 @@ impl Workspace {
                             "model-popover-close",
                             IconName::Close,
                             "Close",
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             true,
                             &p,
                         )
@@ -384,7 +384,7 @@ impl Workspace {
                             "model-popover-page",
                             "All model settings",
                             None,
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             ButtonSize::Small,
                             true,
                             &p,

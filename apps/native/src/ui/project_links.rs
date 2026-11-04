@@ -242,7 +242,7 @@ impl Workspace {
                     id,
                     label,
                     Some(icon),
-                    super::primitives::ButtonVariant::Ghost,
+                    super::primitives::ButtonVariant::Tertiary,
                     super::primitives::ButtonSize::Small,
                     enabled,
                     &p,

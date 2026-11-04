@@ -81,7 +81,7 @@ everywhere:
 | Text tiers | `text`, `prose` (chat copy), `roles.text_secondary` (= `muted`), `roles.text_tertiary` (= `disabled`, so v1 code under v2 inherits the hierarchy) |
 | One accent | `accent` (links, focus = `roles.focus`), `primary` / `primary_hover` / `primary_pressed` (hover and press move away from the label colour), `on_primary` |
 | Status (R2.1) | `roles.status: StatusRoles { attention, fault, working, done, idle }`, aliased by `warning` / `error` / `busy` / `success` / `text_tertiary`: attention amber (Light #B45309), fault red, working **cyan/teal, never the accent hue** (Gruvbox and Everforest take their aqua), done muted green, idle grey. Status colours are only for status; **accent blue means interactive**. No purple |
-| Identity | `roles.provider` (= tertiary: provider glyphs and model names); avatars: `Palette::avatar_fill(name)` = OKLCH at the fixed `roles.avatar_tone` (lightness, chroma) with a hue hashed from the name (`format::avatar_hue`, purple band skipped); `roles.avatar[6]` keeps six sample tones |
+| Identity | `roles.provider` (= tertiary: provider glyphs and model names); avatars: `Palette::avatar_fill(name)` picks one of `roles.avatar[8]` (a curated ramp at one OKLCH lightness per theme) by `format::avatar_index`; monograms in `roles.avatar_text` |
 | Code | `code_block` = `surface` (with a `border` edge), `code_header` = raised, `code_inline` |
 
 Per-theme notes: Light has off-white canvas, white cards with a 1px
@@ -128,23 +128,23 @@ the 2px border, Enter/Space activation, pointer cursor when enabled).
 | Primitive | Signature |
 |---|---|
 | Button | `button(id, label, icon: Option<IconName>, ButtonVariant, ButtonSize, enabled, &p) -> Stateful<Div>` |
-| Variants | `ButtonVariant::{Primary, Secondary, Ghost, DangerGhost}`: explicit, never inferred from the id. One primary per region; destructive = `DangerGhost` with confirm/undo, or the overflow menu |
+| Variants | `ButtonVariant::{Primary, Secondary, Tertiary, Destructive}` (R3.2, exactly these): explicit, never inferred from the id. One primary per region; see "Round 3 foundation" below |
 | Sizes | `ButtonSize::{Small (28), Large (36)}`, `.height(&p)` |
 | Icon button | `icon_button(id, IconName, tooltip, variant, enabled, &p)`; `icon_button_with_shortcut(id, icon, tooltip, Some("Ctrl K"), variant, enabled, &p)` |
-| Split button | `let (main, menu) = split_button_parts(id, label, icon, variant, size, enabled, &p);` wire both, then `split_button(main, menu, &p) -> Div` |
+| Split button | `let (main, menu) = split_button_parts(id, label, icon, variant, size, enabled, &p);` wire both, then `split_button(main, menu, &p) -> Div`, or `split_button_with_menu(main, menu, open.then(|| menu(&p)…), &p)` to hang its menu |
 | Overflow | `overflow_trigger(id, &p) -> Stateful<Div>` ("…", ghost, tooltip "More actions"); open a `menu(&p)` from it |
-| Status | `status(StatusKind, &p) -> Div` (dot + vocabulary label); `StatusBadge::new(kind).label("Succeeded 3h ago").render(&p)`; `status_indicator(kind, &p)` (the fixed 12px box alone, for rails and dense rows) |
-| Status kinds | `StatusKind::{NeedsYou, Working, Idle, Done, Failed, Stalled, Paused, Queued}` with `.label()`, `.color(&p)`, `.text_color(&p)`, `.needs_attention()`. Colour AND shape: NeedsYou amber filled dot; Failed red filled dot; **Stalled** red ring with a bar, label "Not responding" (`format::not_responding` → "Not responding · 2m"; never also Working); Working teal pulsing ring (reduced motion holds still); Queued teal still ring; Done muted-green check; Idle grey hollow dot; Paused grey pause bars |
+| Status | `status(StatusKind, &p) -> Div` (glyph + canonical word); `StatusBadge::new(kind).label("Succeeded 3h ago").render(&p)`; `status_indicator(kind, &p)` (the glyph in the fixed 12px box, for rails and dense rows); `status_glyph(kind, &p) -> Option<Div>` (the bare 8px glyph) |
+| Status kinds | `StatusKind::{Working, NeedsYou, NotResponding, Failed, Idle, Done, Paused, Offline}`: see "Round 3 foundation" below for words, glyphs and colours |
 | Page header | `page_header(back: Option<AnyElement>, title, description: Option<SharedString>, actions: Vec<AnyElement>, &p) -> Div` (22/600 title; back row height kept even without a back link, so titles share one y), `back_link(id, label, &p)`, `page_column(&p)` (shared `page_width`, `page_top`) |
 | Card anatomy | `CardHead::new(title).icon(IconName)` or `.avatar(name)`, `.status(StatusBadge)`, `.meta(text)`, `.action(el)`…, `.render(&p) -> Div`; put it in `card(&p)` |
-| Avatar | `avatar_tile(name, &p)`, `avatar_tile_sized(name, size, &p)`: the one avatar (projects, rail, cards): rounded-square monogram on `p.avatar_fill(name)` (hash hue, fixed OKLCH lightness/chroma), no emoji |
+| Avatar | `avatar_tile(name, &p)`, `avatar_tile_sized(name, size, &p)`: the one avatar (projects, rail, cards): rounded-square monogram in `p.avatar_text()` on `p.avatar_fill(name)` (one of the theme's 8 curated fills), no emoji, no ring. `avatar_with_status(name, size, Option<StatusKind>, under, &p)` adds the status glyph as a corner badge |
 | Fade mask | `fade_mask(FadeEdge::{Top, Bottom}, color, &p) -> Div`: absolute, full width, `layout.fade` tall, colour → clear. Put it behind floating chrome |
 | Tooltip | `tooltip_view(label, shortcut: Option<&'static str>, &p)` for `.tooltip(…)`; `with_tooltip(control, label, shortcut, &p)` for a control without one (GPUI allows one tooltip per element). Spaces in the shortcut separate keycaps ("g n") |
 | Truncation | `truncated(id, text, &p) -> Stateful<Div>`: one line, ellipsis, full value in a tooltip |
 | Pill (static label) | `pill(label, Intent, &p) -> Div` (prefer `status` for states) |
 | Chip (toggle) | `chip(id, label, selected, enabled, &p) -> Stateful<Div>` |
-| Badge (count) | `badge(label, Intent, &p) -> Div` |
-| Meter | `meter(fraction 0–1, Intent, &p) -> Div` (give it a width) |
+| Badge (count) | `count_badge(label, CountTone, &p) -> Div` (R3.1; `count_text(n)` gives "99+"). `badge(label, Intent, &p)` is the old solid flag: do not use it for counts |
+| Meter | `meter(fraction 0–1, Intent, &p) -> Div` (give it a width); for limits use `level_intent(format::level(pct))` |
 | Empty state | `empty_state(IconName, title, body: Option<SharedString>, &p) -> Div` |
 | Section header | `section_header(label, count: Option<SharedString>, &p)`: THE section header, sentence case 12/600 secondary, count tertiary in tabular numerals. `section_label(label, &p)` is the same, padded (no uppercase anywhere) |
 | Card | `card(&p) -> Div` (surface, `card_border`), `card_header(title, description, &p) -> Div` |
@@ -155,14 +155,13 @@ the 2px border, Enter/Space activation, pointer cursor when enabled).
 | Keycap | `kbd(label, &p) -> Div` |
 | Helpers | `Intent::{Neutral, Accent, Info, Success, Warning, Danger, Busy}` with `.color(&p)`, `wash(color, alpha)`, `tonal(&p, alpha)`, `elevation(&p, Shadow) -> Vec<BoxShadow>` |
 | Review | `gallery(&p) -> AnyElement` renders every primitive once (`ui::tests::design`) |
-| Keyed button | `keyed_button(id, key, label, variant, size, enabled, &p)`: a button led by the key that triggers it ("1 Allow" on the approval strip) |
-| Button roles (R2.2) | `ButtonVariant::{PRIMARY, SECONDARY, TERTIARY, DESTRUCTIVE}` (= `Primary`, `Secondary`, `Ghost`, `DangerGhost`), plus `Danger` (filled red) only inside a confirm step. Approval chips: 1 Allow primary, 2 Always allow secondary, 3 Deny destructive, 4 Deny with note tertiary |
+| Keyed button | `keyed_button(id, key, label, variant, size, enabled, &p)`: a button with its key as a trailing `keycap_hint` ("Allow 1" on the approval strip) |
 | Inset | `inset(&p) -> Div`: the one recessed well inside a card (plan body, approval details). One card level plus this, never more |
 | Table | `table(headers, rows, &p)`; `table_style(&p) -> TableStyle` is the one table style: `configure_theme_v2` maps Markdown tables from it, so both match (header on `base`, 12/600 secondary; hairline row dividers; no zebra, no outer border) |
 | Event row | `EventRow::new(icon, verb).argument(…).summary(…).status(kind).duration(…).render(&p)`: icon · verb · mono argument · result summary · right-aligned duration (tabular) and status. Group them under `event_group_header(id, format::worked_summary(ms, tools), expanded, &p)` ("Worked 2m 14s · 18 tools") |
 | Figures | `tabular(el)`: tabular numerals for times, counts and stats |
 | Page grid | `page_grid(columns, &p)`: equal tracks at `space.lg`, rows stretched so card actions line up; inside `page_column` |
-| Waiting on you | `waiting_card(compact, &p)` (neutral surface, 3px attention stripe, attention edge at 35%), `waiting_head(headline, where_why, pager, trailing, &p)`, `headline(vec![Headline::Text(…), Headline::Code(…)], &p)` (15/600, code spans truncate), `waiting_actions(&p)`. Used by approval, plan (+ limit), limit and questions; see below |
+| Waiting on you | `waiting_card(compact, &p)` (the `attention_frame` on the card surface: 3px clipped bar, neutral edge), `waiting_head(headline, where_why, pager, trailing, &p)`, `headline(vec![Headline::Text(…), Headline::Code(…)], &p)` (15/600, code spans truncate), `waiting_actions(&p)`. Used by approval, plan (+ limit), limit and questions; see below |
 | Toolbar chip | `toolbar_chip(id, leading: Option<AnyElement>, label, opens, enabled, &p)`: a quiet chip in the composer toolbar (folder, model); `opens` adds a chevron and hover |
 
 ## Formatting (`wks_native::format`)
@@ -172,13 +171,117 @@ Pure and unit-tested; use these instead of ad-hoc `format!`s.
 | Function | Result |
 |---|---|
 | `duration(ms)` | `"850ms"`, `"42s"`, `"12m 05s"`, `"5h 12m"`, and from 48h `"34d 3h"` |
-| `is_stale(last_beat: Option<i64>, now)` / `stale_after(…, threshold)` | true past `HEARTBEAT_STALE_MS` (5 min): show `LOST_HEARTBEAT` ("Lost heartbeat") in `warning` instead of a growing timer |
+| `is_stale(last_beat: Option<i64>, now)` / `stale_after(…, threshold)` | true past `HEARTBEAT_STALE_MS` (5 min): the agent is `NotResponding` (`not_responding(…)`), never a growing timer. "Lost heartbeat" is retired |
 | `timestamp(at: Option<i64>, now, twelve_hour)` | `"14:07"` today, `"Oct 14 · 14:07"` otherwise; never seconds |
 | `truncate_end(text, max)` / `truncate_middle(text, max)` | `Some(cut…)` when it did not fit (then add a tooltip with the full value), `None` when it did |
-| `monogram(name)`, `avatar_index(name, tones)`, `avatar_hue(name)` | what `avatar_tile` draws |
+| `monogram(name)`, `avatar_index(name, tones)` | what `avatar_tile` draws |
 | `model_name(id)` | the one human model name ("Sonnet 4.6", "GPT-5.6 Luna"); the raw id goes in a tooltip |
-| `not_responding(last_beat, now)` | "Not responding · 2m" for a Stalled agent |
+| `not_responding(last_beat, now)` | "Not responding · 2m" for a `NotResponding` agent |
 | `worked_summary(ms, tools)` | "Worked 2m 14s · 18 tools" |
+| `level(pct) -> Level::{Normal, Warn, Fault}` | a share of a limit: Warn from 80%, Fault at 100% (`signals().warn_at` / `fault_at`) |
+| `countdown(ms)` | time left: `"45s"`, `"13m"`, `"2h 13m"`, `"3d 4h"`, `"now"` |
+| `usage_line(account, limit, pct, resets_in_ms)` | "Claude 42% of 5-hour limit used · resets in 2h 13m" |
+| `context_label(Option<pct>)` | "Context 42%" (never "ctx"); colour it only from `level(pct)` Warn |
+| `failed_label(name, max)` | "cargo test failed" (a command keeps the words before its first flag) |
+
+## Round 3 foundation (r3-foundation)
+
+The shared API the round-3 areas build on. All of it lives in
+`src/ui/primitives.rs`, `src/format.rs`, `src/tokens.rs` (`Tokens::signals()`)
+and `src/appearance.rs`.
+
+### R3.1 Status language
+
+One set, one word, one 8px glyph per state, everywhere (sidebar, rail,
+capsule, palette, history, machines, children, fleet):
+
+| `StatusKind` | `.label()` | Colour (`.color`) | Glyph (`status_glyph`) |
+|---|---|---|---|
+| `Working` | Working | `status.working` | faint ring + arc turning once per `signals().spin_ms`; static arc under reduce motion |
+| `NeedsYou` | Needs you | `status.attention` (amber) | filled dot |
+| `NotResponding` | Not responding | `status.fault` | hollow clock |
+| `Failed` | Failed | `status.fault` (red) | ✕ |
+| `Idle` | Idle | — | **none** (`status_glyph` returns `None`; show the age) |
+| `Done` | Done | `status.done` (muted) | check |
+| `Paused` | Paused | `status.idle` | pause bars (machines, jobs) |
+| `Offline` | Offline | `status.idle` | dash (machines, the hub) |
+
+- `StatusKind::label()` is the canonical label function; `StatusBadge::label(…)`
+  overrides it only for a more specific fact ("Succeeded 3h ago", "Cancelled").
+- Retired state words: "running" (agents), "stalled", "Lost heartbeat",
+  "Queued" (pending work is `Idle`, starting work is `Working`), and amber
+  "Unknown" (now `Idle` "Unknown").
+- `.text_color(&p)`: only NeedsYou (amber) and Failed / NotResponding (red)
+  tint their word; the rest are neutral text. `.has_glyph()`, `.needs_attention()`.
+- Glyphs are vector paths (`canvas` + `PathBuilder`), sized by
+  `signals().glyph` (8) and `glyph_stroke` (1.5); `status_glyph_sized(kind,
+  size, &p)` for another size. Selector: `status-glyph-<Kind>`.
+
+### R3.1 Amber and red roles
+
+- **Amber = blocked on you.** `count_badge(label, CountTone::NeedsYou, &p)` only
+  for what waits on this user now. Everything else (scratch, proposals,
+  decisions on other sessions, changes) is `CountTone::Neutral`.
+- **Red = named, actionable failure.** `CountTone::Failed`, the title's red
+  chip, `ButtonVariant::Destructive`. Never paint healthy state red.
+- **One attention treatment:** `attention_frame(radius, &p) -> Div` (a
+  `.relative()` container with a neutral `border_strong` hairline and the bar),
+  or `attention_bar(radius, &p)` alone: a `signals().attention_bar` (3px) bar
+  on the leading edge, clipped by the container's radius. Leave
+  `attention_bar` extra left padding. Selector: `attention-bar`.
+
+### R3.2 Buttons
+
+| Tier | Look |
+|---|---|
+| `Primary` | filled `primary`, `on_primary` label (≥ 4.5:1 rest/hover/pressed in every theme) |
+| `Secondary` | 1px `border_strong` edge, no fill, `text` label; neutral wash on hover |
+| `Tertiary` | text only (`text_secondary` → `text` on hover) |
+| `Destructive` | the Secondary shape with `error` text |
+
+- No other variants (the filled `Danger` and the `Ghost`/`DangerGhost` names
+  are gone). `button_label_color(variant, enabled, &p)` gives a tier's label colour.
+- Split button: `split_button_parts` + `split_button_with_menu(main, chevron,
+  Option<menu>, &p)`; the caller owns the open flag (Deny + "Deny with note…").
+- Keycap hint: `keycap_hint(key, on_fill, &p) -> Div`, faint, trailing, never
+  tinted (on a Primary fill it is `on_primary` at `signals().hint_alpha`,
+  elsewhere `text_tertiary`). `keyed_button` uses it.
+
+### Title capsule and usage
+
+- `capsule::render_tasks_words`: neutral words for running work ("3
+  subagents", "2 background tasks", no glyph, never red) and, apart, the red
+  chip `title-failed` naming the newest unacknowledged failure ("cargo test
+  failed · +1"). Clicking it opens that task (`Workspace::open_task_by_id`);
+  its ✕ (`title-failed-ack`) acknowledges it: `ShellUi::acknowledged_failures`
+  (in memory, keyed by task id). `capsule::unacknowledged_failures(tasks,
+  acked)` is the pure selection.
+- Footer usage (`usage::render_usage_compact`): tooltip lines are
+  `format::usage_line`; one account shows "42% of 5-hour limit used" inline;
+  share text and meter are neutral below 80%, amber from 80%, red at 100%
+  (`level_color`, `level_intent`).
+- Composer context: use `format::context_label(pct)` and colour with
+  `level_color(format::level(pct), &p)` (call site: `ui/gauge.rs`, composer area).
+
+### Theme quality
+
+- Three text greys per theme (`text`, `roles.text_secondary`,
+  `roles.text_tertiary`), all ≥ 4.5:1 on chat, surface, base, raised and a
+  selected row.
+- Avatars: `roles.avatar` is a curated 8-hue ramp (blue, sky, teal, green,
+  olive, sand, clay, rose; no purple) at one OKLCH lightness per theme, tuned
+  so `roles.avatar_text` reads ≥ 4.6:1 on every fill (`appearance::avatar_ramp`).
+- Light is tuned on its own: neutral grey edges (no peach), darker tertiary.
+- `appearance::tests::every_theme_meets_the_round_three_contrast_pairs`
+  iterates all 8 themes over text tiers, all four button tiers (Primary
+  fill and label at rest/hover/pressed), keycap hints, status words and
+  glyphs, count badges, avatars and border neutrality.
+
+### Tokens: `p.tokens.signals()`
+
+`glyph` 8, `glyph_stroke` 1.5, `arc_degrees` 100, `spin_ms` 1000,
+`track_alpha` .25, `attention_bar` 3, `badge_ring` 2, `warn_at` .8,
+`fault_at` 1, `hint_alpha` .65.
 
 ## Migrating a screen (recipe)
 
@@ -199,8 +302,8 @@ The Jobs page is the worked example: `ui/jobs.rs` (`jobs_page_v2`,
    function (Jobs: `run_kind`) and draw `StatusBadge`s: never a bespoke pill
    or dot. "Ready"/"Ended" are `Idle`; green is only `Done`.
 5. **Buttons.** Pick a variant per action: one `Primary` per region (or
-   none), `Secondary` for the rest, `Ghost` in rows and toolbars,
-   `DangerGhost` (after a confirm step) or the overflow menu for destructive
+   none), `Secondary` for the rest, `Tertiary` in rows and toolbars,
+   `Destructive` (after a confirm step) or the overflow menu for destructive
    actions. `ButtonSize::Small` in rows/cards, `Large` for page-level and
    composer actions.
 6. **Cards and rows.** `card(&p)` + `CardHead` (icon, title, status, meta,
@@ -223,7 +326,7 @@ The Jobs page is the worked example: `ui/jobs.rs` (`jobs_page_v2`,
 | Title capsule, tool rail | `ui/capsule.rs` (`render_title_bar_v2`, `chat_actions_v2`, `render_tool_rail_v2`) |
 | Model popover | `ui/model_popover.rs`; the Model page stays on `g m` and "All model settings" |
 | Keys | `g n` / Alt+N next session that needs you (v1 keeps `g n` for Scratch), `g x` Scratch, `?` / Ctrl+/ cheat sheet |
-| Inbox (round 2) | `attention::reason` (why a session waits, and its one action: Allow / Answer / Open), `child_stalled` / `session_stalled` (no heartbeat past `HEARTBEAT_STALE_MS` = fault, lands in Needs you), `children_summary` ("4 subagents · 1 stalled"), `disambiguate` (repeated titles get their age or "#2"), `match_ranges` (search highlights). Idle/Ended sort most recent first; Idle shows `shell().idle_visible` (8) then "Show n more" |
+| Inbox (round 2) | `attention::reason` (why a session waits, and its one action: Allow / Answer / Open), `child_stalled` / `session_stalled` (no heartbeat past `HEARTBEAT_STALE_MS` = fault, lands in Needs you), `children_summary` ("4 subagents · 1 not responding"), `disambiguate` (repeated titles get their age or "#2"), `match_ranges` (search highlights). Idle/Ended sort most recent first; Idle shows `shell().idle_visible` (8) then "Show n more" |
 | Rows | `Tokens::shell()`: `row_single` 30 (Idle, Ended, children), `row_double` 46 (Needs you, Working). The list is a plain scrolled div (`ShellUi::scroll`, rows have two heights); `reveal_sidebar_row` scrolls whichever list the design draws |
 | Destinations, footer | One labelled list at the top (New session, Projects, Jobs, Machines, Scratch, Settings; selectors `new-session-button`, `nav-*`). Footer: account usage ("Claude 42%" + meter, `sidebar-usage`), the connection when not live, and the modal-key label (`sidebar-mode`) only while modal keys are on |
 | Modal keys | `Settings::vim(design)`: v2 reads `vim_navigation_v2` (default **off**), v1 `vim_navigation`. Settings → Keyboard sets the current design's. `?` opens the cheat sheet either way. The rig turns them on for v2 shots that send `keys` |

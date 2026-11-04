@@ -3,11 +3,9 @@
 //! the same value the same way (`docs/design-v2.md`, "Formatting").
 use chrono::{DateTime, Local, Utc};
 
-/// A running timer without a heartbeat for this long has lost its agent.
+/// A running timer without a heartbeat for this long has lost its agent:
+/// it reads [`NOT_RESPONDING`] (R3.1 retired "Lost heartbeat" and "stalled").
 pub const HEARTBEAT_STALE_MS: i64 = 5 * 60_000;
-
-/// What a stale timer says instead of its duration (in the warning colour).
-pub const LOST_HEARTBEAT: &str = "Lost heartbeat";
 
 /// A duration for people: `"850ms"`, `"42s"`, `"12m 05s"`, `"5h 12m"`, and
 /// from 48 hours on `"34d 3h"` (never `"819h 09m"`). Negative reads as zero.
@@ -27,7 +25,7 @@ pub fn duration(milliseconds: i64) -> String {
 
 /// Whether a timer last heard from at `last_beat` (ms) is stale at `now`:
 /// over [`HEARTBEAT_STALE_MS`] without a beat, or never beaten at all.
-/// Stale timers show [`LOST_HEARTBEAT`] rather than a growing duration.
+/// Stale timers show [`not_responding`] rather than a growing duration.
 pub fn is_stale(last_beat: Option<i64>, now: i64) -> bool {
     stale_after(last_beat, now, HEARTBEAT_STALE_MS)
 }
@@ -177,9 +175,136 @@ pub fn model_name(id: &str) -> String {
     crate::model::model_display_name(id)
 }
 
+// r3-foundation
+/// How loud a share of a limit is (usage, context): quiet below
+/// `signals().warn_at` (80%), attention from there, fault at the limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Level {
+    Normal,
+    Warn,
+    Fault,
+}
+
+/// The [`Level`] of `pct` percent (0–100+).
+pub fn level(pct: f64) -> Level {
+    let s = crate::tokens::Tokens::V2.signals();
+    // Whole percents, so 80% is 80% whatever f32 makes of 0.8.
+    let percent = |share: f32| (f64::from(share) * 100.).round();
+    if pct >= percent(s.fault_at) {
+        Level::Fault
+    } else if pct >= percent(s.warn_at) {
+        Level::Warn
+    } else {
+        Level::Normal
+    }
+}
+
+/// Time left until something happens, for people: `"45s"`, `"13m"`,
+/// `"2h 13m"`, from 48 hours `"3d 4h"`. Past or now reads `"now"`.
+pub fn countdown(milliseconds: i64) -> String {
+    let seconds = milliseconds.max(0) / 1000;
+    match seconds {
+        0 => "now".into(),
+        1..60 => format!("{seconds}s"),
+        60..3600 => format!("{}m", seconds / 60),
+        3600..172_800 => format!("{}h {}m", seconds / 3600, seconds % 3600 / 60),
+        _ => format!("{}d {}h", seconds / 86_400, seconds % 86_400 / 3600),
+    }
+}
+
+/// The usage meter's sentence (R3.5): "Claude 42% of 5-hour limit used ·
+/// resets 2h 13m". `limit` is the window's long name ("5-hour", "Weekly"),
+/// `resets_in` the milliseconds until it resets, when known.
+pub fn usage_line(account: &str, limit: &str, pct: f64, resets_in: Option<i64>) -> String {
+    let pct = pct.max(0.).round() as u64;
+    let limit = limit.to_lowercase();
+    let mut line = format!("{account} {pct}% of {limit} limit used");
+    if let Some(ms) = resets_in {
+        line.push_str(" · resets ");
+        if ms <= 0 {
+            line.push_str("now");
+        } else {
+            line.push_str("in ");
+            line.push_str(&countdown(ms));
+        }
+    }
+    line
+}
+
+/// The composer's context gauge label (R3.2/R3.5): "Context 42%", never
+/// "ctx". Colour it only from [`Level::Warn`] (`level(pct)`).
+pub fn context_label(pct: Option<f64>) -> String {
+    match pct {
+        Some(pct) => format!("Context {}%", pct.max(0.).round() as u64),
+        None => "Context —".into(),
+    }
+}
+
+/// The red chip that names what broke (R3.1): "cargo test failed". A
+/// command keeps the words before its first flag ("cargo test --locked" →
+/// "cargo test"); the name is then cut to `max` characters. Show the whole
+/// name in a tooltip.
+pub fn failed_label(name: &str, max: usize) -> String {
+    let name = name.trim();
+    if name.is_empty() {
+        return "A task failed".into();
+    }
+    let words: Vec<&str> = name
+        .split_whitespace()
+        .take_while(|w| !w.starts_with('-') && !matches!(*w, "&&" | "|" | ";" | ">"))
+        .collect();
+    let short = if words.is_empty() {
+        name.to_owned()
+    } else {
+        words.join(" ")
+    };
+    let short = truncate_end(&short, max).unwrap_or(short);
+    format!("{short} failed")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // r3-foundation
+    #[test]
+    fn limits_read_as_sentences_and_thresholds() {
+        assert_eq!(level(42.), Level::Normal);
+        assert_eq!(level(79.6), Level::Normal);
+        assert_eq!(level(80.), Level::Warn);
+        assert_eq!(level(99.9), Level::Warn);
+        assert_eq!(level(100.), Level::Fault);
+        assert_eq!(countdown(-1), "now");
+        assert_eq!(countdown(45_000), "45s");
+        assert_eq!(countdown(13 * 60_000 + 5_000), "13m");
+        assert_eq!(countdown((2 * 3600 + 13 * 60) * 1000), "2h 13m");
+        assert_eq!(countdown((76 * 3600) * 1000), "3d 4h");
+        assert_eq!(
+            usage_line("Claude", "5-hour", 42.2, Some((2 * 3600 + 13 * 60) * 1000)),
+            "Claude 42% of 5-hour limit used · resets in 2h 13m"
+        );
+        assert_eq!(
+            usage_line("Codex", "Weekly", 93., None),
+            "Codex 93% of weekly limit used"
+        );
+        assert_eq!(context_label(Some(41.6)), "Context 42%");
+        assert_eq!(context_label(None), "Context —");
+        assert_eq!(failed_label("cargo test", 32), "cargo test failed");
+        assert_eq!(
+            failed_label("cargo test --locked -- --test-threads=1", 32),
+            "cargo test failed"
+        );
+        assert_eq!(
+            failed_label("npm run build && npm test", 32),
+            "npm run build failed"
+        );
+        assert_eq!(failed_label("--help", 32), "--help failed");
+        assert_eq!(
+            failed_label("a very long command line indeed", 10),
+            "a very lo… failed"
+        );
+        assert_eq!(failed_label(" ", 10), "A task failed");
+    }
 
     // r2-systems
     #[test]

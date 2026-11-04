@@ -70,7 +70,7 @@ pub(super) fn child_status(status: &str, connected: bool) -> (StatusKind, &'stat
         "approval" | "waiting_approval" | "question" | "waiting_input" => {
             (StatusKind::NeedsYou, "Needs you")
         }
-        "starting" | "initializing" => (StatusKind::Queued, "Starting"),
+        "starting" | "initializing" => (StatusKind::Working, "Starting"),
         "stopped" | "ended" => (StatusKind::Idle, "Ended"),
         _ => (StatusKind::Idle, "Idle"),
     }
@@ -493,7 +493,7 @@ impl Workspace {
             SharedString::from(id),
             IconName::Copy,
             "Copy message",
-            ButtonVariant::Ghost,
+            ButtonVariant::Tertiary,
             true,
             &p,
         )
@@ -574,7 +574,7 @@ impl Workspace {
         event.end = if tool.is_error {
             EventEnd::Badge(StatusBadge::new(StatusKind::Failed))
         } else if running {
-            EventEnd::Badge(StatusBadge::new(StatusKind::Working).label("Running"))
+            EventEnd::Badge(StatusBadge::new(StatusKind::Working))
         } else {
             duration.map_or(EventEnd::Nothing, EventEnd::Quiet)
         };
@@ -971,7 +971,7 @@ impl Workspace {
         event.end = if tool.is_error {
             EventEnd::Badge(StatusBadge::new(StatusKind::Failed))
         } else if running {
-            EventEnd::Badge(StatusBadge::new(StatusKind::Working).label("Running"))
+            EventEnd::Badge(StatusBadge::new(StatusKind::Working))
         } else if let Some(badge) = (views.len() > 1).then(|| children_badge(&views)).flatten() {
             EventEnd::Badge(badge)
         } else {
@@ -1319,7 +1319,7 @@ impl Workspace {
                 "turn-changes",
                 "Review",
                 Some(IconName::ArrowRight),
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 ButtonSize::Small,
                 connected,
                 &p,
@@ -1421,7 +1421,7 @@ impl Workspace {
                         "Earlier messages"
                     },
                     (!loading).then_some(IconName::ArrowUp),
-                    ButtonVariant::Ghost,
+                    ButtonVariant::Tertiary,
                     ButtonSize::Small,
                     !loading,
                     &p,
@@ -1653,7 +1653,7 @@ impl Workspace {
                 SharedString::from(format!("{key}-v2-collapse")),
                 IconName::ChevronDown,
                 "Collapse",
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 true,
                 &p,
             )
@@ -1677,7 +1677,7 @@ impl Workspace {
                     SharedString::from(format!("copy-{key}")),
                     IconName::Copy,
                     "Copy wake",
-                    ButtonVariant::Ghost,
+                    ButtonVariant::Tertiary,
                     true,
                     &p,
                 )
@@ -1748,7 +1748,7 @@ impl Workspace {
                     } else {
                         "Not an available worker of this conversation"
                     },
-                    ButtonVariant::Ghost,
+                    ButtonVariant::Tertiary,
                     openable,
                     &p,
                 )
@@ -1767,7 +1767,7 @@ impl Workspace {
                 SharedString::from(format!("{key}-reply-{}", entry.session_id)),
                 IconName::Undo2,
                 "Reply to this session",
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 self.view.connected,
                 &p,
             )
@@ -2009,7 +2009,7 @@ pub(super) fn child_view(child: &ChildAgent, connected: bool, now: i64) -> Child
         .or(child.telemetry.started_at_ms);
     if connected && child.running() && format::is_stale(last, now) {
         return ChildView {
-            kind: StatusKind::Stalled,
+            kind: StatusKind::NotResponding,
             word: format::not_responding(last, now),
             stalled: true,
             clock: None,
@@ -2061,7 +2061,7 @@ pub(super) fn children_badge(views: &[ChildView]) -> Option<StatusBadge> {
             None
         };
         return Some(
-            StatusBadge::new(StatusKind::Stalled)
+            StatusBadge::new(StatusKind::NotResponding)
                 .label(word.unwrap_or_else(|| format!("{stalled} not responding"))),
         );
     }
@@ -2272,7 +2272,7 @@ impl Workspace {
                                 SharedString::from(format!("{child_key}-stop")),
                                 "Stop",
                                 None,
-                                ButtonVariant::DangerGhost,
+                                ButtonVariant::Destructive,
                                 ButtonSize::Small,
                                 connected,
                                 &p,
@@ -2620,13 +2620,13 @@ mod tests {
         child.telemetry.last_activity_ms = Some(now - 7 * 60_000);
         let view = child_view(&child, true, now);
         assert!(view.stalled);
-        assert_eq!(view.kind, StatusKind::Stalled);
+        assert_eq!(view.kind, StatusKind::NotResponding);
         assert_ne!(view.kind, StatusKind::Working);
         assert_eq!(view.word, "Not responding · 7m");
         assert_eq!(view.clock, None);
         // The batch says so too, before anything else.
         let badge = children_badge(std::slice::from_ref(&view)).unwrap();
-        assert_eq!(badge.kind, StatusKind::Stalled);
+        assert_eq!(badge.kind, StatusKind::NotResponding);
         assert_eq!(
             badge.label.as_ref().map(|l| l.as_ref()),
             Some("Not responding · 7m")

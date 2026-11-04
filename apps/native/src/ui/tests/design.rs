@@ -123,13 +123,19 @@ fn primitives_render_in_every_theme_and_design(cx: &mut TestAppContext) {
             visual.run_until_parked();
             for selector in [
                 "primitive-button-Primary-Small",
-                "primitive-button-DangerGhost-Large",
+                "primitive-button-Destructive-Large",
                 "primitive-page-header",
                 "primitive-split",
                 "primitive-overflow",
                 "primitive-status-NeedsYou",
                 "primitive-status-Working",
-                "primitive-status-Queued",
+                "primitive-status-NotResponding",
+                "primitive-status-Offline",
+                "primitive-glyphs",
+                "primitive-counts",
+                "primitive-attention",
+                "attention-bar",
+                "avatar-status",
                 "primitive-avatars",
                 "primitive-truncated",
                 "primitive-card-head",
@@ -150,7 +156,7 @@ fn primitives_render_in_every_theme_and_design(cx: &mut TestAppContext) {
             let t = palette.tokens.layout;
             for (selector, expected) in [
                 ("primitive-button-Primary-Small", t.control_height_sm),
-                ("primitive-button-DangerGhost-Large", t.control_height),
+                ("primitive-button-Destructive-Large", t.control_height),
             ] {
                 let bounds = visual.debug_bounds(selector).unwrap();
                 assert_eq!(f32::from(bounds.size.height), expected, "{selector}");
@@ -158,6 +164,23 @@ fn primitives_render_in_every_theme_and_design(cx: &mut TestAppContext) {
             let working = visual.debug_bounds("primitive-status-Working").unwrap();
             let idle = visual.debug_bounds("primitive-status-Idle").unwrap();
             assert_eq!(working.size.height, idle.size.height);
+            // r3-foundation: one 8px glyph per state, and none for Idle.
+            let glyph = palette.tokens.signals().glyph;
+            for selector in [
+                "status-glyph-Working",
+                "status-glyph-NeedsYou",
+                "status-glyph-NotResponding",
+                "status-glyph-Failed",
+                "status-glyph-Done",
+                "status-glyph-Paused",
+                "status-glyph-Offline",
+            ] {
+                let bounds = visual
+                    .debug_bounds(selector)
+                    .unwrap_or_else(|| panic!("{design:?} {appearance:?} {selector}"));
+                assert_eq!(f32::from(bounds.size.width), glyph, "{selector}");
+            }
+            assert!(visual.debug_bounds("status-glyph-Idle").is_none());
         }
     }
 }

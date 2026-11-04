@@ -390,9 +390,10 @@ impl Workspace {
     }
 
     /// Design v2's footer usage: each installed, measured account's most
-    /// pressing window as a mark and a share, neutral until it reaches 95%.
-    /// The tooltip says what the number is ("5-hour limit · 42% · resets
-    /// 15:40"); a click opens the detail modal.
+    /// pressing window as a mark and a share, neutral below 80%, amber from
+    /// 80% and red at 100% (`format::level`). The tooltip reads each as a
+    /// sentence ("Claude 42% of 5-hour limit used · resets in 2h 13m",
+    /// `format::usage_line`); a click opens the detail modal.
     pub(super) fn render_usage_compact(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let p = self.palette();
         let t = p.tokens;
@@ -410,24 +411,14 @@ impl Workspace {
         if shown.is_empty() && error.is_none() {
             return None;
         }
-        let twelve = self.settings.twelve_hour_clock;
         let mut lines: Vec<String> = shown
             .iter()
             .map(|(a, w)| {
-                let reset = w
-                    .resets_at
-                    .map(|at| {
-                        format!(
-                            " · resets {}",
-                            wks_native::format::timestamp(Some(at * 1000), now * 1000, twelve)
-                        )
-                    })
-                    .unwrap_or_default();
-                format!(
-                    "{} · {} limit · {}% used{reset}",
-                    a.title,
+                wks_native::format::usage_line(
+                    &a.title,
                     long_label(w),
-                    w.pct.round() as u64
+                    w.pct,
+                    w.resets_at.map(|at| (at - now) * 1000),
                 )
             })
             .collect();
@@ -436,6 +427,7 @@ impl Workspace {
         }
         lines.push("How much of each account's usage limit is used. Click for details.".into());
         let tip = lines.join("\n");
+        let solo = shown.len() == 1;
         Some(
             chrome::interactive_control(div().id("sidebar-usage"), p, true)
                 .debug_selector(|| "sidebar-usage".into())
@@ -456,50 +448,58 @@ impl Workspace {
                             .text_color(rgb(p.roles.text_tertiary)),
                     )
                 })
-                // r2-shell: "Claude 42%" and a thin meter per account.
+                // r3-foundation: "Claude 42%" and a thin meter per account;
+                // one account has the room to say what the number is.
                 .children(shown.iter().map(|(a, w)| {
                     let selector = format!("sidebar-usage-row-{}", a.provider);
-                    let hot = w.pct >= 95.;
+                    let level = wks_native::format::level(w.pct);
+                    let tone = super::primitives::level_color(level, &p);
+                    let pct = w.pct.max(0.).round() as u64;
+                    let share = if solo {
+                        format!("{pct}% of {} limit used", long_label(w).to_lowercase())
+                    } else {
+                        format!("{pct}%")
+                    };
                     div()
                         .debug_selector(move || selector.clone())
+                        .min_w_0()
                         .flex()
                         .items_center()
                         .gap(px(t.space.sm))
                         .child(super::shell::neutral_glyph(&a.provider, t.icon.sm, p))
                         .child(
                             div()
+                                .min_w_0()
                                 .flex()
                                 .flex_col()
                                 .gap(px(t.space.xxs))
                                 .child(
                                     div()
+                                        .min_w_0()
                                         .flex()
                                         .gap(px(t.space.xs))
                                         .map(super::shell::tabular)
                                         .child(
                                             div()
+                                                .flex_shrink_0()
                                                 .text_color(rgb(p.roles.text_secondary))
                                                 .font_weight(FontWeight(t.weight.medium))
                                                 .child(a.title.clone()),
                                         )
                                         .child(
                                             div()
-                                                .text_color(rgb(if hot {
-                                                    p.error
-                                                } else {
-                                                    p.roles.text_tertiary
-                                                }))
-                                                .child(format!("{}%", w.pct.round() as u64)),
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_color(rgb(
+                                                    tone.unwrap_or(p.roles.text_tertiary)
+                                                ))
+                                                .child(share),
                                         ),
                                 )
                                 .child(
                                     super::primitives::meter(
                                         (w.pct / 100.) as f32,
-                                        if hot {
-                                            super::primitives::Intent::Danger
-                                        } else {
-                                            super::primitives::Intent::Neutral
-                                        },
+                                        super::primitives::level_intent(level),
                                         &p,
                                     )
                                     .w(px(t.shell().meter_width)),

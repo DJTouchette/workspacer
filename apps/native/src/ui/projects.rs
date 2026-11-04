@@ -2221,7 +2221,7 @@ impl Workspace {
                             SharedString::from(format!("project-group-new-agent-{ix}")),
                             "New session",
                             Some(IconName::Plus),
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             ButtonSize::Small,
                             can_spawn,
                             &p,
@@ -2243,7 +2243,7 @@ impl Workspace {
                             SharedString::from(format!("project-group-edit-{ix}")),
                             IconName::Settings,
                             "Edit project: name, colour and folders",
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             can_write,
                             &p,
                         )
@@ -2382,7 +2382,7 @@ impl Workspace {
                 SharedString::from(id),
                 IconName::Star,
                 if pinned { "Unpin folder" } else { "Pin folder" },
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 can_write,
                 &p,
             )
@@ -2472,7 +2472,7 @@ impl Workspace {
                             SharedString::from(format!("new-agent-in-project-{ix}")),
                             IconName::Plus,
                             "New session in this folder",
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             can_spawn,
                             &p,
                         )
@@ -2489,7 +2489,7 @@ impl Workspace {
                             SharedString::from(format!("edit-project-{ix}")),
                             IconName::Settings,
                             "Folder settings: name and pull requests",
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             can_write,
                             &p,
                         )

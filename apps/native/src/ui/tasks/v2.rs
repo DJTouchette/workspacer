@@ -9,7 +9,7 @@ use crate::ui::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, Status
 pub(super) fn task_kind(task: &bg::Task) -> StatusKind {
     match task.status.as_str() {
         "" | "running" => StatusKind::Working,
-        "pending" => StatusKind::Queued,
+        "pending" => StatusKind::Idle,
         "completed" => StatusKind::Done,
         "failed" => StatusKind::Failed,
         _ => StatusKind::Idle,
@@ -80,7 +80,7 @@ impl Workspace {
                 ("task-copy", ix),
                 IconName::Copy,
                 "Copy command",
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 true,
                 &p,
             )
@@ -127,7 +127,7 @@ impl Workspace {
                             ("task-retry", ix),
                             "Retry",
                             Some(IconName::Redo),
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             ButtonSize::Small,
                             true,
                             &p,
@@ -305,7 +305,7 @@ impl Workspace {
                         (prefix, ix * 3 + 2),
                         "Keep",
                         None,
-                        ButtonVariant::Ghost,
+                        ButtonVariant::Tertiary,
                         ButtonSize::Small,
                         true,
                         &p,
@@ -321,7 +321,7 @@ impl Workspace {
                         (prefix, ix * 3 + 1),
                         "Stop task",
                         None,
-                        ButtonVariant::DangerGhost,
+                        ButtonVariant::Destructive,
                         ButtonSize::Small,
                         true,
                         &p,
@@ -342,7 +342,7 @@ impl Workspace {
                 (prefix, ix * 3),
                 "Stop",
                 None,
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 ButtonSize::Small,
                 true,
                 &p,
@@ -398,7 +398,7 @@ impl Workspace {
                         "tasks-back",
                         IconName::ArrowLeft,
                         "All background tasks",
-                        ButtonVariant::Ghost,
+                        ButtonVariant::Tertiary,
                         true,
                         &p,
                     )
@@ -431,7 +431,7 @@ impl Workspace {
                     "tasks-close",
                     IconName::Close,
                     "Close",
-                    ButtonVariant::Ghost,
+                    ButtonVariant::Tertiary,
                     true,
                     &p,
                 )
@@ -458,7 +458,7 @@ impl Workspace {
                 "task-log-copy",
                 IconName::Copy,
                 "Copy command",
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 true,
                 &p,
             )
@@ -537,7 +537,7 @@ mod tests {
         };
         assert_eq!(task_kind(&task("running")), StatusKind::Working);
         assert_eq!(task_kind(&task("")), StatusKind::Working);
-        assert_eq!(task_kind(&task("pending")), StatusKind::Queued);
+        assert_eq!(task_kind(&task("pending")), StatusKind::Idle);
         assert_eq!(task_kind(&task("completed")), StatusKind::Done);
         assert_eq!(task_kind(&task("failed")), StatusKind::Failed);
         assert_eq!(task_kind(&task("killed")), StatusKind::Idle);

@@ -30,6 +30,20 @@ pub(super) fn running_words(tasks: &[bg::Task], fallback: u32) -> Option<String>
     Some(format!("{n} {}", if n == 1 { one } else { many }))
 }
 
+/// The failed tasks the title's red chip still names: not acknowledged,
+/// newest first (by end, then start).
+pub(super) fn unacknowledged_failures<'a>(
+    tasks: &'a [bg::Task],
+    acknowledged: &std::collections::BTreeSet<String>,
+) -> Vec<&'a bg::Task> {
+    let mut failed: Vec<&bg::Task> = tasks
+        .iter()
+        .filter(|t| t.failed() && !acknowledged.contains(&t.id))
+        .collect();
+    failed.sort_by_key(|t| std::cmp::Reverse((t.ended_at, t.started_at)));
+    failed
+}
+
 /// The session's access mode in a word or two; "Unknown" when the provider
 /// has not reported one this app offers.
 pub(super) fn access_word(session: &Session) -> (&'static str, Option<Permission>) {
@@ -95,26 +109,21 @@ impl Workspace {
             .shadow(primitives::elevation(&p, t.elevation.floating))
             .when_some(session, |d, session| {
                 let kind = if !self.view.connected {
-                    StatusKind::Idle
+                    StatusKind::Offline
                 } else if self.paused(session) {
                     StatusKind::Paused
                 } else if super::attention::needs_you(session) {
                     StatusKind::NeedsYou
                 } else if self.stalled_for(session, now).is_some() {
-                    StatusKind::Stalled
+                    StatusKind::NotResponding
                 } else {
                     match super::attention::bucket(session, false) {
                         super::attention::Bucket::Working => StatusKind::Working,
                         _ => StatusKind::Idle,
                     }
                 };
-                let label = if !self.view.connected {
-                    "Offline".to_owned()
-                } else if kind == StatusKind::Stalled {
-                    "Not responding".to_owned()
-                } else {
-                    self.status_of(session, p).0.to_owned()
-                };
+                // r3-foundation: the one lexicon, never a provider's word.
+                let label = kind.label();
                 d.child(
                     div()
                         .id("title-status")
@@ -228,9 +237,11 @@ impl Workspace {
             .children(session.and_then(|s| self.render_tasks_words(s, cx)))
     }
 
-    /// The background-work chip, in words: neutral while all is well
-    /// ("3 subagents"), the fault colour once something failed ("3 running ·
-    /// 1 failed").
+    /// Background work in the title (R3.1): neutral words for what runs
+    /// ("3 subagents", "3 running"), and apart from it a red chip that names
+    /// what broke ("cargo test failed"). The red chip opens that task; its ✕
+    /// acknowledges it and the chip goes for this run. Healthy work is never
+    /// red.
     pub(super) fn render_tasks_words(
         &self,
         session: &Session,
@@ -241,60 +252,104 @@ impl Workspace {
         }
         let p = self.palette();
         let t = p.tokens;
-        let failed = session.tasks.iter().filter(|t| t.failed()).count();
-        let running = bg::running(&session.tasks);
-        let (label, kind) = if failed > 0 {
-            (
-                if running > 0 {
-                    format!("{running} running · {failed} failed")
-                } else {
-                    format!("{failed} failed")
-                },
-                Some(StatusKind::Failed),
-            )
-        } else {
-            match running_words(&session.tasks, session.background_tasks) {
-                Some(words) => (words, Some(StatusKind::Working)),
-                None => ("Background tasks".into(), None),
-            }
-        };
+        let failed = unacknowledged_failures(&session.tasks, &self.shell.acknowledged_failures);
+        let label = running_words(&session.tasks, session.background_tasks)
+            .unwrap_or_else(|| "Background tasks".into());
+        let words = chrome::interactive_control(div().id("title-tasks"), p, true)
+            .debug_selector(|| "title-tasks".into())
+            .flex_shrink_0()
+            .h(px(t.layout.control_height_sm))
+            .px(px(t.space.md))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .text_size(px(t.text.meta))
+            .font_weight(FontWeight(t.weight.medium))
+            .map(super::shell::tabular)
+            .text_color(rgb(p.roles.text_secondary))
+            .when(self.tasks.open, |d| d.bg(rgb(p.selected)))
+            .hover(move |s| s.bg(rgb(p.roles.hover)))
+            .child(label)
+            .tooltip(tooltip_view("Show background tasks", None, &p))
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_tasks(window, cx)));
         Some(
-            chrome::interactive_control(div().id("title-tasks"), p, true)
-                .debug_selector(|| "title-tasks".into())
-                .flex_shrink_0()
-                .h(px(t.layout.control_height_sm))
-                .px(px(t.space.md))
-                .rounded_full()
+            div()
                 .flex()
                 .items_center()
+                .flex_shrink_0()
                 .gap(px(t.space.xs))
-                .text_size(px(t.text.meta))
-                .font_weight(FontWeight(t.weight.medium))
-                .map(super::shell::tabular)
-                .text_color(rgb(if failed > 0 {
-                    p.error
-                } else {
-                    p.roles.text_secondary
-                }))
-                .when(failed > 0, |d| {
-                    d.bg(primitives::wash(p.error, t.wash.tone_rest))
-                })
-                .when(self.tasks.open, |d| d.bg(rgb(p.selected)))
-                .hover(move |s| s.bg(rgb(p.roles.hover)))
-                .children(kind.map(|kind| status_indicator(kind, &p)))
-                .child(label)
-                .tooltip(tooltip_view(
-                    if failed > 0 {
-                        "Background tasks · one or more failed, open to see why"
-                    } else {
-                        "Show background tasks"
-                    },
-                    None,
-                    &p,
-                ))
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_tasks(window, cx)))
+                .child(words)
+                .children(
+                    failed
+                        .first()
+                        .map(|task| self.render_failed_chip(task, failed.len(), cx)),
+                )
                 .into_any_element(),
         )
+    }
+
+    /// The red chip naming the newest unacknowledged failed task: the name
+    /// opens it (its log, or an agent's conversation), the ✕ acknowledges it.
+    fn render_failed_chip(
+        &self,
+        task: &bg::Task,
+        count: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let t = p.tokens;
+        let name = task.title();
+        let mut label = wks_native::format::failed_label(&name, 28);
+        if count > 1 {
+            label.push_str(&format!(" · +{}", count - 1));
+        }
+        let error = task.error.trim();
+        let tip = if error.is_empty() {
+            format!("{name} failed · open to see why")
+        } else {
+            format!("{name} failed · {error}")
+        };
+        let open_id = task.id.clone();
+        let ack_id = task.id.clone();
+        chrome::interactive_control(div().id("title-failed"), p, true)
+            .debug_selector(|| "title-failed".into())
+            .flex_shrink_0()
+            .h(px(t.layout.control_height_sm))
+            .pl(px(t.space.md))
+            .pr(px(t.space.xxs))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .gap(px(t.space.xs))
+            .text_size(px(t.text.meta))
+            .font_weight(FontWeight(t.weight.medium))
+            .text_color(rgb(p.roles.status.fault))
+            .bg(primitives::wash(p.roles.status.fault, t.wash.tone_rest))
+            .hover(move |s| s.bg(primitives::wash(p.roles.status.fault, t.wash.tone_hover)))
+            .children(primitives::status_glyph(StatusKind::Failed, &p))
+            .child(label)
+            .tooltip(tooltip_view(tip, None, &p))
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.open_task_by_id(&open_id, window, cx)),
+            )
+            .child(
+                chrome::interactive_control(div().id("title-failed-ack"), p, true)
+                    .debug_selector(|| "title-failed-ack".into())
+                    .size(px(t.layout.control_height_sm - t.space.sm))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .hover(move |s| s.bg(primitives::wash(p.roles.status.fault, t.wash.tone_hover)))
+                    .tooltip(tooltip_view("Dismiss · you have seen it", None, &p))
+                    .child(Icon::new(IconName::Close).size(px(t.icon.xs)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.shell.acknowledged_failures.insert(ack_id.clone());
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
     }
 
     /// The session's tools in labelled groups (review · session · agent),
@@ -321,8 +376,16 @@ impl Workspace {
                     tip: &'static str,
                     keys: Option<&'static str>,
                     on: bool| {
-            primitives::icon_button_with_shortcut(id, icon, tip, keys, ButtonVariant::Ghost, on, &p)
-                .debug_selector(move || id.into())
+            primitives::icon_button_with_shortcut(
+                id,
+                icon,
+                tip,
+                keys,
+                ButtonVariant::Tertiary,
+                on,
+                &p,
+            )
+            .debug_selector(move || id.into())
         };
         let page = |screen: Screen| {
             cx.listener(move |this: &mut Self, event: &ClickEvent, window, cx| {
@@ -513,7 +576,11 @@ fn tool_badge(control: Stateful<Div>, badge: Option<String>, p: &Palette) -> Sta
                             .rounded(px(t.radius.full))
                             .bg(rgb(p.roles.text_secondary))
                     } else {
-                        d.child(primitives::badge(badge, primitives::Intent::Neutral, p))
+                        d.child(primitives::count_badge(
+                            badge,
+                            primitives::CountTone::Neutral,
+                            p,
+                        ))
                     }
                 }),
         )
@@ -556,5 +623,34 @@ mod tests {
         );
         let done = [task("local_bash", "completed")];
         assert_eq!(running_words(&done, 0), None);
+    }
+
+    // r3-foundation
+    #[test]
+    fn the_red_chip_names_the_newest_unacknowledged_failure() {
+        let failed = |id: &str, ended: i64| bg::Task {
+            id: id.into(),
+            ended_at: Some(ended),
+            ..task("local_bash", "failed")
+        };
+        let tasks = [
+            failed("old", 10),
+            task("local_bash", "running"),
+            failed("new", 20),
+        ];
+        let mut acked = std::collections::BTreeSet::new();
+        let ids = |acked: &std::collections::BTreeSet<String>| {
+            unacknowledged_failures(&tasks, acked)
+                .iter()
+                .map(|t| t.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&acked), ["new", "old"]);
+        acked.insert("new".to_owned());
+        assert_eq!(ids(&acked), ["old"]);
+        acked.insert("old".to_owned());
+        assert!(ids(&acked).is_empty());
+        // The neutral words never count a failure as running.
+        assert_eq!(running_words(&tasks, 0).as_deref(), Some("1 shell task"));
     }
 }

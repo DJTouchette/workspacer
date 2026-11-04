@@ -872,7 +872,7 @@ impl Workspace {
             } else {
                 IconName::ChevronRight
             }),
-            ButtonVariant::Ghost,
+            ButtonVariant::Tertiary,
             ButtonSize::Small,
             true,
             &p,
@@ -1257,7 +1257,7 @@ impl Workspace {
                         SharedString::from(format!("queue-cancel-{card}-{row}")),
                         "Cancel",
                         None,
-                        ButtonVariant::Ghost,
+                        ButtonVariant::Tertiary,
                         ButtonSize::Small,
                         can_cancel,
                         &p,
@@ -1296,7 +1296,7 @@ impl Workspace {
 /// "Paused: low memory", "Offline".
 fn host_status(card: &Card) -> StatusBadge {
     if card.connected == Some(false) {
-        return StatusBadge::new(StatusKind::Failed).label("Offline");
+        return StatusBadge::new(StatusKind::Offline);
     }
     match card.resources.as_ref().and_then(|r| r.gate.as_ref()) {
         Some(gate) if gate.open => StatusBadge::new(StatusKind::Idle).label("Accepting work"),
@@ -1462,12 +1462,12 @@ fn metric_v2(
 /// A queue item's state in the shared vocabulary.
 fn queue_status(state: &State) -> StatusBadge {
     match state {
-        State::Queued => StatusBadge::new(StatusKind::Queued),
-        State::Running => StatusBadge::new(StatusKind::Working).label("Running"),
+        State::Queued => StatusBadge::new(StatusKind::Idle).label("Waiting to start"),
+        State::Running => StatusBadge::new(StatusKind::Working),
         State::Done => StatusBadge::new(StatusKind::Done),
         State::Failed => StatusBadge::new(StatusKind::Failed),
         State::Cancelled => StatusBadge::new(StatusKind::Idle).label("Cancelled"),
-        State::Unknown => StatusBadge::new(StatusKind::NeedsYou).label("Unknown"),
+        State::Unknown => StatusBadge::new(StatusKind::Idle).label("Unknown"),
         State::Other(other) => StatusBadge::new(StatusKind::Idle).label(other.clone()),
     }
 }

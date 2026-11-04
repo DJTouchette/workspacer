@@ -88,12 +88,12 @@ pub struct Roles {
     pub card_border: u32,
     /// Provider glyphs and model names: neutral, never brand colour (v2).
     pub provider: u32,
-    /// Monogram avatar fills, muted, picked by a hash of the name
-    /// (`wks_native::format::avatar_index`). Text on them is `text`.
+    /// Monogram avatar fills: a curated ramp of eight hues at one OKLCH
+    /// lightness per theme (R3.6), picked by a stable hash of the name
+    /// (`Palette::avatar_fill`). Text on them is `avatar_text`, ≥ 4.5:1.
     pub avatar: [u32; AVATAR_TONES],
-    /// The fixed OKLCH (lightness, chroma) of avatar tiles; the hue comes
-    /// from a hash of the name (`format::avatar_hue`, `Palette::avatar_fill`).
-    pub avatar_tone: (f32, f32),
+    /// The monogram's colour on every avatar fill.
+    pub avatar_text: u32,
     /// The five status roles. Colour AND shape encode status; nothing else
     /// may borrow these hues (blue/accent means "interactive" only).
     pub status: StatusRoles,
@@ -119,12 +119,37 @@ pub struct StatusRoles {
     pub idle: u32,
 }
 
-/// How many muted avatar fills a palette carries.
-pub const AVATAR_TONES: usize = 6;
+/// How many avatar fills a palette carries (R3.6: a curated 8-hue ramp).
+pub const AVATAR_TONES: usize = 8;
 
-/// The avatar hues in OKLCH degrees: blue, teal, green, sand, clay, rose.
-/// No purple, which v2 retires.
-const AVATAR_HUES: [f32; AVATAR_TONES] = [250., 190., 145., 85., 45., 10.];
+/// The avatar hues in OKLCH degrees: blue, sky, teal, green, olive, sand,
+/// clay, rose. No purple (280–335°), which v2 retires.
+const AVATAR_HUES: [f32; AVATAR_TONES] = [255., 225., 190., 150., 115., 80., 45., 15.];
+
+/// The avatar ramp's chroma per mode: muted, so tiles never shout.
+const AVATAR_CHROMA_DARK: f32 = 0.06;
+const AVATAR_CHROMA_LIGHT: f32 = 0.05;
+
+/// The eight avatar fills for a theme whose monogram colour is `text`: one
+/// OKLCH lightness for every hue, as close to `start` as AA allows (every
+/// fill ≥ 4.6:1 against `text`, a hair over the 4.5 floor).
+fn avatar_ramp(text: u32, dark: bool, start: f32) -> [u32; AVATAR_TONES] {
+    let chroma = if dark {
+        AVATAR_CHROMA_DARK
+    } else {
+        AVATAR_CHROMA_LIGHT
+    };
+    let step = if dark { -0.01 } else { 0.01 };
+    let mut lightness = start;
+    loop {
+        let ramp = AVATAR_HUES.map(|hue| oklch(lightness, chroma, hue));
+        let fits = ramp.iter().all(|&fill| contrast(text, fill) >= 4.6);
+        if fits || !(0.05..=0.98).contains(&lightness) {
+            return ramp;
+        }
+        lightness += step;
+    }
+}
 
 impl Roles {
     /// Placeholder in the palette literals; `palette()` derives the real values.
@@ -140,7 +165,7 @@ impl Roles {
         card_border: 0,
         provider: 0,
         avatar: [0; AVATAR_TONES],
-        avatar_tone: (0., 0.),
+        avatar_text: 0,
         status: StatusRoles {
             attention: 0,
             fault: 0,
@@ -164,7 +189,7 @@ impl Roles {
             card_border: p.border,
             provider: p.muted,
             avatar: [p.selected; AVATAR_TONES],
-            avatar_tone: (0., 0.),
+            avatar_text: p.text,
             status: StatusRoles {
                 attention: p.warning,
                 fault: p.error,
@@ -257,15 +282,16 @@ pub fn oklch(lightness: f32, chroma: f32, hue: f32) -> u32 {
 }
 
 impl Palette {
-    /// The avatar tile colour for `name`: a hue hashed from the name at the
-    /// palette's fixed OKLCH lightness and chroma (`roles.avatar_tone`).
-    /// V1 (which never draws avatars) answers with its tone table.
+    /// The avatar tile colour for `name`: one of the theme's eight curated
+    /// fills (`roles.avatar`), picked by a stable hash of the name, so a
+    /// project keeps its colour across runs and machines.
     pub fn avatar_fill(&self, name: &str) -> u32 {
-        let (lightness, chroma) = self.roles.avatar_tone;
-        if chroma <= 0. {
-            return self.roles.avatar[crate::format::avatar_index(name, AVATAR_TONES)];
-        }
-        oklch(lightness, chroma, crate::format::avatar_hue(name))
+        self.roles.avatar[crate::format::avatar_index(name, AVATAR_TONES)]
+    }
+
+    /// The monogram colour on any avatar fill (≥ 4.5:1 on all eight).
+    pub fn avatar_text(&self) -> u32 {
+        self.roles.avatar_text
     }
 }
 
@@ -360,9 +386,9 @@ impl Appearance {
         p.code_block = c.surface;
         p.code_header = c.raised;
         let dark = self.is_dark();
-        // r2-systems: one OKLCH lightness and chroma per mode; only the hue
-        // varies, so every tile weighs the same.
-        let avatar_tone = if dark { (0.38, 0.055) } else { (0.9, 0.045) };
+        // r3-foundation: a curated 8-hue ramp at one lightness per theme,
+        // as near the mode's tone as the theme's text allows at AA.
+        let avatar = avatar_ramp(c.text, dark, if dark { 0.42 } else { 0.88 });
         p.roles = Roles {
             hover: c.hover,
             pressed: c.pressed,
@@ -374,8 +400,8 @@ impl Appearance {
             info: c.working,
             card_border: c.card_border,
             provider: c.tertiary,
-            avatar: AVATAR_HUES.map(|hue| oklch(avatar_tone.0, avatar_tone.1, hue)),
-            avatar_tone,
+            avatar,
+            avatar_text: c.text,
             status: StatusRoles {
                 attention: c.attention,
                 fault: c.fault,
@@ -406,9 +432,9 @@ impl Appearance {
                 text: 0xededef,
                 prose: 0xd2d3d7,
                 secondary: 0xa5a6ac,
-                tertiary: 0x85878f,
+                tertiary: 0x8b8d95,
                 accent: 0x6aa1f8,
-                primary: 0x2f6ee5,
+                primary: 0x2563d8,
                 on_primary: 0xffffff,
                 attention: 0xe9b464,
                 fault: 0xf27a7a,
@@ -433,7 +459,7 @@ impl Appearance {
                 text: 0x18181b,
                 prose: 0x2c2c31,
                 secondary: 0x54555c,
-                tertiary: 0x6e6f77,
+                tertiary: 0x66676f,
                 accent: 0x1f5fd6,
                 primary: 0x2563eb,
                 on_primary: 0xffffff,
@@ -459,13 +485,13 @@ impl Appearance {
                 card_border: 0x414857,
                 text: 0xeceff4,
                 prose: 0xd8dee9,
-                secondary: 0xc2c9d5,
-                tertiary: 0xa8b0bf,
+                secondary: 0xcbd1db,
+                tertiary: 0xaeb6c3,
                 accent: 0x81a1c1,
                 primary: 0x81a1c1,
-                on_primary: 0x242933,
+                on_primary: 0x1b1f27,
                 attention: 0xebcb8b,
-                fault: 0xe0828a,
+                fault: 0xe8a4aa,
                 done: 0xa3be8c,
                 working: 0x8fbcbb,
                 user: 0x3b4252,
@@ -485,7 +511,7 @@ impl Appearance {
                 text: 0xc8d0f5,
                 prose: 0xb0b8dc,
                 secondary: 0xa8b0d6,
-                tertiary: 0x878fb6,
+                tertiary: 0x8e96ba,
                 accent: 0x7aa2f7,
                 primary: 0x7aa2f7,
                 on_primary: 0x16161e,
@@ -510,7 +536,7 @@ impl Appearance {
                 text: 0xcdd6f4,
                 prose: 0xbac2de,
                 secondary: 0xadb5d0,
-                tertiary: 0x8e94ad,
+                tertiary: 0x979db4,
                 accent: 0x89b4fa,
                 primary: 0x89b4fa,
                 on_primary: 0x1e1e2e,
@@ -535,12 +561,12 @@ impl Appearance {
                 text: 0xddc7a1,
                 prose: 0xd4be98,
                 secondary: 0xcbb999,
-                tertiary: 0xa89781,
+                tertiary: 0xb0a08c,
                 accent: 0x7daea3,
                 primary: 0x7daea3,
                 on_primary: 0x1d2021,
                 attention: 0xd8a657,
-                fault: 0xea6962,
+                fault: 0xec7670,
                 done: 0xa9b665,
                 working: 0x89b482,
                 user: 0x32302f,
@@ -560,13 +586,13 @@ impl Appearance {
                 card_border: 0x414b50,
                 text: 0xe0d5bc,
                 prose: 0xd3c6aa,
-                secondary: 0xc4c6b4,
-                tertiary: 0xabaea0,
+                secondary: 0xc7c9b8,
+                tertiary: 0xb4b7aa,
                 accent: 0x7fbbb3,
                 primary: 0x7fbbb3,
                 on_primary: 0x232a2e,
                 attention: 0xdbbc7f,
-                fault: 0xe67e80,
+                fault: 0xf2949a,
                 done: 0xa7c080,
                 working: 0x83c092,
                 user: 0x374145,
@@ -583,12 +609,12 @@ impl Appearance {
                 border: 0xd8dce4,
                 border_strong: 0xc6cad5,
                 card_border: 0xd3d7e0,
-                text: 0x41445e,
+                text: 0x35384f,
                 prose: 0x4c4f69,
-                secondary: 0x52556d,
-                tertiary: 0x63667d,
+                secondary: 0x4c4f66,
+                tertiary: 0x5a5d72,
                 accent: 0x1e66f5,
-                primary: 0x1e66f5,
+                primary: 0x1a5fe8,
                 on_primary: 0xffffff,
                 attention: 0x9a5400,
                 fault: 0xc8102f,
@@ -1334,5 +1360,163 @@ mod tests {
         assert!(saturation >= 0.3, "Nord primary saturation {saturation:.2}");
         assert!(contrast(nord.primary, nord.surface) >= 4.);
         assert!(contrast(nord.on_primary, nord.primary) >= 4.5);
+    }
+
+    /// `fg` at `alpha` over `bg`, as an opaque colour.
+    fn blend(fg: u32, alpha: f32, bg: u32) -> u32 {
+        super::mix(bg, fg, alpha)
+    }
+
+    // r3-foundation
+    /// R3.2 / R3.6: every theme's text, button, badge, status and avatar
+    /// pairs, button fills included (Nord and Tokyo Night's Allow among them).
+    #[test]
+    fn every_theme_meets_the_round_three_contrast_pairs() {
+        let w = Tokens::V2.wash;
+        let sig = Tokens::V2.signals();
+        for appearance in Appearance::ALL {
+            let p = appearance.palette_v2();
+            let r = p.roles;
+            let floor = |name: &str, fg: u32, bg: u32, min: f64| {
+                let ratio = contrast(fg, bg);
+                assert!(
+                    ratio >= min,
+                    "{appearance:?} {name}: {ratio:.2} < {min} (#{fg:06x} on #{bg:06x})"
+                );
+            };
+            let surfaces = [
+                ("chat", p.chat),
+                ("surface", p.surface),
+                ("base", p.base),
+                ("raised", r.raised),
+            ];
+            // Three text greys, each AA on every surface and on a selected row.
+            for (surface, bg) in surfaces.into_iter().chain([("selected", p.selected)]) {
+                floor(&format!("text on {surface}"), p.text, bg, 4.5);
+                floor(
+                    &format!("secondary on {surface}"),
+                    r.text_secondary,
+                    bg,
+                    4.5,
+                );
+                floor(&format!("tertiary on {surface}"), r.text_tertiary, bg, 4.5);
+            }
+            let greys = [p.text, r.text_secondary, r.text_tertiary];
+            assert!(
+                greys.windows(2).all(|g| g[0] != g[1]),
+                "{appearance:?} text greys collapse"
+            );
+            for (surface, bg) in surfaces {
+                // Button tiers: Primary's label on its fill (rest, hover,
+                // pressed), Secondary and Tertiary text, Destructive's danger
+                // text; the primary fill itself stands off the surface.
+                for (state, fill) in [
+                    ("rest", p.primary),
+                    ("hover", p.primary_hover),
+                    ("pressed", p.primary_pressed),
+                ] {
+                    floor(&format!("primary label ({state})"), p.on_primary, fill, 4.5);
+                }
+                floor(&format!("primary fill on {surface}"), p.primary, bg, 3.);
+                floor(&format!("secondary button on {surface}"), p.text, bg, 4.5);
+                floor(
+                    &format!("tertiary button on {surface}"),
+                    r.text_secondary,
+                    bg,
+                    4.5,
+                );
+                floor(&format!("destructive text on {surface}"), p.error, bg, 4.5);
+                floor(
+                    &format!("secondary edge on {surface}"),
+                    r.border_strong,
+                    bg,
+                    1.2,
+                );
+                // Status words that carry their hue (Needs you, Failed, the red
+                // chip) read as text; every glyph reads as a graphic.
+                floor(
+                    &format!("needs-you text on {surface}"),
+                    r.status.attention,
+                    bg,
+                    4.5,
+                );
+                floor(
+                    &format!("failed text on {surface}"),
+                    r.status.fault,
+                    bg,
+                    4.5,
+                );
+                for (name, glyph) in [
+                    ("working", r.status.working),
+                    ("done", r.status.done),
+                    ("idle/paused/offline", r.status.idle),
+                ] {
+                    floor(&format!("{name} glyph on {surface}"), glyph, bg, 3.);
+                }
+                // The neutral count badge: secondary text on its wash.
+                floor(
+                    &format!("neutral count on {surface}"),
+                    r.text_secondary,
+                    blend(p.text, w.pressed, bg),
+                    4.5,
+                );
+            }
+            // Keycap hint on a Primary fill: faint, but legible.
+            floor(
+                "keycap hint on primary",
+                blend(p.on_primary, sig.hint_alpha, p.primary),
+                p.primary,
+                3.,
+            );
+            // Coloured count badges: the base colour on the status fill.
+            floor("needs-you count", p.base, r.status.attention, 4.5);
+            floor("failed count", p.base, r.status.fault, 4.5);
+            // Avatars: eight distinct fills, AA monograms, one lightness.
+            let mut fills = r.avatar.to_vec();
+            fills.sort();
+            fills.dedup();
+            assert_eq!(
+                fills.len(),
+                AVATAR_TONES,
+                "{appearance:?} avatar fills repeat"
+            );
+            for &tile in &r.avatar {
+                floor("avatar monogram", p.avatar_text(), tile, 4.5);
+            }
+            let lum: Vec<f64> = r.avatar.iter().map(|&c| luminance(c)).collect();
+            let (lo, hi) = lum
+                .iter()
+                .fold((f64::MAX, f64::MIN), |(lo, hi), &l| (lo.min(l), hi.max(l)));
+            assert!(
+                contrast_of_luminance(hi, lo) < 1.6,
+                "{appearance:?} avatar fills differ in weight"
+            );
+            // No tinted edges: borders are neutral greys (Light had peach).
+            for (name, edge) in [
+                ("border", p.border),
+                ("border_strong", r.border_strong),
+                ("card_border", r.card_border),
+            ] {
+                let (hue, saturation) = hue_saturation(edge);
+                let warm = (10. ..=60.).contains(&hue);
+                assert!(
+                    saturation < 0.25 || !warm,
+                    "{appearance:?} {name} reads peach (#{edge:06x})"
+                );
+            }
+        }
+        // Light is tuned on its own: neutral greys at AA, not v1's.
+        let light = Appearance::Light.palette_v2();
+        for edge in [
+            light.border,
+            light.roles.border_strong,
+            light.roles.card_border,
+        ] {
+            assert!(hue_saturation(edge).1 < 0.1, "Light edge #{edge:06x}");
+        }
+    }
+
+    fn contrast_of_luminance(a: f64, b: f64) -> f64 {
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
     }
 }

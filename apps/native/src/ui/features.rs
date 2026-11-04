@@ -1933,7 +1933,7 @@ impl Workspace {
                         copy_id.clone(),
                         "Copy",
                         Some(IconName::Copy),
-                        ButtonVariant::Ghost,
+                        ButtonVariant::Tertiary,
                         ButtonSize::Small,
                         true,
                         &p,
@@ -2569,7 +2569,7 @@ impl Workspace {
                 id,
                 "Refresh",
                 Some(IconName::Redo),
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 ButtonSize::Small,
                 connected,
                 &p,
@@ -2622,7 +2622,7 @@ impl Workspace {
                         "setup-refresh",
                         "Check again",
                         Some(IconName::Redo),
-                        ButtonVariant::Ghost,
+                        ButtonVariant::Tertiary,
                         ButtonSize::Small,
                         can_check,
                         &p,
@@ -2713,10 +2713,11 @@ impl SetupState {
 pub(super) fn session_badge_v2(word: &str) -> StatusBadge {
     let kind = session_kind_v2(word);
     match kind {
-        // "Needs approval" and "Needs your input" are both "Needs you".
-        StatusKind::NeedsYou => StatusBadge::new(kind),
         // "Ready" and "Ended" are both Idle; the word says which.
-        _ => StatusBadge::new(kind).label(word.to_owned()),
+        StatusKind::Idle => StatusBadge::new(kind).label(word.to_owned()),
+        // r3-foundation: everything else speaks the one lexicon ("Running",
+        // "Thinking" → Working; "Needs approval" → Needs you).
+        _ => StatusBadge::new(kind),
     }
 }
 
@@ -2725,7 +2726,9 @@ pub(super) fn session_kind_v2(word: &str) -> StatusKind {
     let lower = word.to_ascii_lowercase();
     if lower.starts_with("needs") || lower.contains("waiting") {
         StatusKind::NeedsYou
-    } else if lower.contains("fail") || lower.contains("error") || lower.contains("lost") {
+    } else if lower.contains("lost") || lower.contains("stall") || lower.contains("not respond") {
+        StatusKind::NotResponding
+    } else if lower.contains("fail") || lower.contains("error") {
         StatusKind::Failed
     } else if lower == "paused" {
         StatusKind::Paused
@@ -2736,8 +2739,6 @@ pub(super) fn session_kind_v2(word: &str) -> StatusKind {
         StatusKind::Working
     } else if lower.contains("complet") || lower == "done" {
         StatusKind::Done
-    } else if lower.contains("queue") {
-        StatusKind::Queued
     } else {
         StatusKind::Idle
     }
@@ -2875,7 +2876,7 @@ impl Workspace {
                 id,
                 label,
                 None,
-                ButtonVariant::DangerGhost,
+                ButtonVariant::Destructive,
                 ButtonSize::Small,
                 enabled,
                 &p,
@@ -2898,7 +2899,7 @@ impl Workspace {
                 id,
                 label,
                 Some(icon),
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 ButtonSize::Small,
                 enabled,
                 &p,
@@ -2917,7 +2918,9 @@ impl Workspace {
     ) -> Stateful<Div> {
         let id: SharedString = id.into();
         match self.v2_palette() {
-            Some(p) => primitives::icon_button(id, icon, label, ButtonVariant::Ghost, enabled, &p),
+            Some(p) => {
+                primitives::icon_button(id, icon, label, ButtonVariant::Tertiary, enabled, &p)
+            }
             None => self.icon_button(id, label, icon, enabled),
         }
     }

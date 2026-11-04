@@ -762,6 +762,55 @@ impl Tokens {
     }
 }
 
+// r3-foundation
+/// The status language and signal measures (R3.1, R3.2): the 8px status
+/// glyph, the attention bar, keycap hints and the warning/fault thresholds
+/// of meters. Read with `p.tokens.signals()`; v1 draws none of them, so both
+/// designs carry the v2 values.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SignalTokens {
+    /// The status glyph's drawn size: every state, everywhere (R3.1: 8).
+    pub glyph: f32,
+    /// The glyph's line width (rings, arcs, the check, the ✕, the dash).
+    pub glyph_stroke: f32,
+    /// The Working arc's sweep, in degrees of its ring.
+    pub arc_degrees: f32,
+    /// One turn of the Working arc, in milliseconds.
+    pub spin_ms: f32,
+    /// The Working ring's track behind the arc, as an alpha of its colour.
+    pub track_alpha: f32,
+    /// The one attention treatment: a bar this wide on the container's
+    /// leading edge, clipped by its radius (R3.1: 3).
+    pub attention_bar: f32,
+    /// A status badge on an avatar's corner: the glyph sits on a disc of the
+    /// surface colour this much wider than the glyph on each side.
+    pub badge_ring: f32,
+    /// Meters (usage, context) turn the attention colour at this share and
+    /// the fault colour at `fault_at` (R3.5: 80%, 100%).
+    pub warn_at: f32,
+    pub fault_at: f32,
+    /// A keycap hint's text, as an alpha of the label colour it trails.
+    pub hint_alpha: f32,
+}
+
+impl Tokens {
+    /// The status language's measures.
+    pub const fn signals(&self) -> SignalTokens {
+        SignalTokens {
+            glyph: 8.,
+            glyph_stroke: 1.5,
+            arc_degrees: 100.,
+            spin_ms: 1000.,
+            track_alpha: 0.25,
+            attention_bar: 3.,
+            badge_ring: 2.,
+            warn_at: 0.8,
+            fault_at: 1.,
+            hint_alpha: 0.65,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -811,6 +860,12 @@ mod tests {
         assert!(t.layout.chat_width < t.layout.reading_wide);
         assert!(t.layout.reading_wide < t.layout.reading_full);
         assert!(t.layout.status_dot < t.layout.status_box);
+        // r3-foundation: one 8px glyph inside the status box.
+        let sig = t.signals();
+        assert_eq!(sig.glyph, 8.);
+        assert!(sig.glyph < t.layout.status_box);
+        assert_eq!(sig.attention_bar, t.stroke.stripe);
+        assert!(sig.warn_at < sig.fault_at);
     }
 
     // area-transcript

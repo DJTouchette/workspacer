@@ -52,7 +52,7 @@ impl PreviewPane {
     pub(super) fn render_header_v2(&self, h: HeaderV2, p: Palette, cx: &mut Context<Self>) -> Div {
         let t = p.tokens;
         let ghost = |id: &'static str, icon: IconName, tip: &'static str| {
-            primitives::icon_button(id, icon, tip, ButtonVariant::Ghost, true, &p)
+            primitives::icon_button(id, icon, tip, ButtonVariant::Tertiary, true, &p)
                 .debug_selector(move || id.into())
         };
         let back = (!self.history.is_empty()).then(|| {
@@ -148,7 +148,7 @@ impl PreviewPane {
                     if h.dirty {
                         ButtonVariant::Primary
                     } else {
-                        ButtonVariant::Ghost
+                        ButtonVariant::Tertiary
                     },
                     ButtonSize::Small,
                     h.can_save,
@@ -195,7 +195,7 @@ impl PreviewPane {
             IconName::Close,
             "Close",
             Some("Esc"),
-            ButtonVariant::Ghost,
+            ButtonVariant::Tertiary,
             true,
             &p,
         )

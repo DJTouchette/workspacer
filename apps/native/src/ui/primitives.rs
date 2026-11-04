@@ -72,22 +72,21 @@ pub(crate) fn elevation(p: &Palette, level: Shadow) -> Vec<BoxShadow> {
     }]
 }
 
-/// What a button does, which decides how loud it is. One primary per
-/// region; destructive actions are [`Self::DangerGhost`] (with a confirm
-/// step or undo) or live in an overflow menu.
+/// The three button tiers, plus the destructive variant (R3.2). Exactly
+/// these; nothing styles its own button. One primary per region.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ButtonVariant {
     /// The one action a region exists for: filled with the primary colour.
     Primary,
-    /// Other actions: a tonal wash of the text colour inside a hairline ring.
+    /// Every other peer action: a 1px `border_strong` edge, no fill (a
+    /// neutral wash on hover), same height and radius as Primary.
     Secondary,
-    /// Quiet actions in toolbars and rows: no fill until hovered.
-    Ghost,
-    /// Stops or removes something: error text, an error wash on hover.
-    DangerGhost,
-    /// The confirm step of a destructive action only: filled with the fault
-    /// colour (r2-systems).
-    Danger,
+    /// Quiet actions in toolbars, rows and "Keep planning": text only, a
+    /// neutral wash on hover.
+    Tertiary,
+    /// Stops or removes something: the Secondary shape with danger text.
+    /// Put irreversible ones behind a confirm step or undo.
+    Destructive,
 }
 
 /// The two control heights (`layout.control_height_sm` / `control_height`).
@@ -138,9 +137,9 @@ fn button_colors(variant: ButtonVariant, enabled: bool, p: &Palette) -> ButtonCo
     let clear = gpui::transparent_black();
     if !enabled {
         let (bg, ring) = match variant {
-            ButtonVariant::Ghost | ButtonVariant::DangerGhost => (clear, None),
-            ButtonVariant::Primary | ButtonVariant::Danger => (solid(p.selected), None),
-            ButtonVariant::Secondary => (tonal(p, w.disabled), Some(p.border)),
+            ButtonVariant::Tertiary => (clear, None),
+            ButtonVariant::Primary => (solid(p.selected), None),
+            ButtonVariant::Secondary | ButtonVariant::Destructive => (clear, Some(p.border)),
         };
         return ButtonColors {
             bg: [bg; 3],
@@ -159,51 +158,62 @@ fn button_colors(variant: ButtonVariant, enabled: bool, p: &Palette) -> ButtonCo
             ring: None,
         },
         ButtonVariant::Secondary => ButtonColors {
-            bg: [tonal(p, w.rest), tonal(p, w.hover), tonal(p, w.pressed)],
+            bg: [clear, tonal(p, w.hover), tonal(p, w.pressed)],
             fg: [p.text; 2],
             ring: Some(p.roles.border_strong),
         },
-        ButtonVariant::Ghost => ButtonColors {
+        ButtonVariant::Tertiary => ButtonColors {
             bg: [clear, solid(p.roles.hover), solid(p.roles.pressed)],
             fg: [p.roles.text_secondary, p.text],
             ring: None,
         },
-        ButtonVariant::Danger => {
-            let away = if wks_native::appearance::luminance(p.error) > 0.4 {
-                p.chat
-            } else {
-                p.text
-            };
-            ButtonColors {
-                bg: [
-                    solid(p.error),
-                    wash(p.error, 1. - w.tone_rest),
-                    wash(p.error, 1. - w.tone_hover),
-                ],
-                fg: [away; 2],
-                ring: None,
-            }
-        }
-        ButtonVariant::DangerGhost => ButtonColors {
+        ButtonVariant::Destructive => ButtonColors {
             bg: [
                 clear,
                 wash(p.error, w.tone_rest),
                 wash(p.error, w.tone_hover),
             ],
             fg: [p.error; 2],
-            ring: None,
+            ring: Some(p.roles.border_strong),
         },
     }
 }
 
-/// A 1px ring as a shadow, so it sits outside the reserved focus border.
-fn ring(p: &Palette, color: u32) -> Vec<BoxShadow> {
-    vec![BoxShadow {
-        color: Hsla::from(rgb(color)),
-        offset: gpui::point(px(0.), px(0.)),
-        blur_radius: px(0.),
-        spread_radius: px(p.tokens.stroke.hairline),
-    }]
+/// The label colour of a button variant at rest: what its icons and keycap
+/// hints follow.
+pub(crate) fn button_label_color(variant: ButtonVariant, enabled: bool, p: &Palette) -> u32 {
+    button_colors(variant, enabled, p).fg[0]
+}
+
+/// Which corners of a button are rounded: a whole button, or one half of a
+/// split button.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Whole,
+    Left,
+    Right,
+}
+
+/// A 1px edge laid over the control's outer bounds (the reserved focus
+/// border draws over it when focused). A child, not a shadow: GPUI does not
+/// draw unblurred spread shadows.
+fn ring(p: &Palette, color: u32, shape: Shape) -> Div {
+    let t = p.tokens;
+    let out = px(-t.stroke.focus);
+    let r = px(t.radius.control);
+    let edge = div()
+        .absolute()
+        .top(out)
+        .bottom(out)
+        .left(out)
+        .right(out)
+        .border(px(t.stroke.hairline))
+        .border_color(rgb(color));
+    match shape {
+        Shape::Whole => edge.rounded(r),
+        Shape::Left => edge.rounded_l(r),
+        Shape::Right => edge.rounded_r(r),
+    }
 }
 
 /// Apply a variant's fill, text and hover/press states to a control.
@@ -213,15 +223,26 @@ fn button_states(
     enabled: bool,
     p: &Palette,
 ) -> Stateful<Div> {
+    button_states_shaped(control, variant, enabled, Shape::Whole, p)
+}
+
+fn button_states_shaped(
+    control: Stateful<Div>,
+    variant: ButtonVariant,
+    enabled: bool,
+    shape: Shape,
+    p: &Palette,
+) -> Stateful<Div> {
     let ButtonColors {
         bg: [rest, hover, pressed],
         fg: [fg, fg_hover],
         ring: edge,
     } = button_colors(variant, enabled, p);
     control
+        .relative()
         .bg(rest)
         .text_color(rgb(fg))
-        .when_some(edge, |d, edge| d.shadow(ring(p, edge)))
+        .when_some(edge, |d, edge| d.child(ring(p, edge, shape)))
         .when(enabled, |d| {
             d.hover_text_style(move |s| s.bg(hover).text_color(rgb(fg_hover)))
                 .active_text_style(move |s| s.bg(pressed).text_color(rgb(fg_hover)))
@@ -244,7 +265,22 @@ pub(crate) fn button(
     enabled: bool,
     p: &Palette,
 ) -> Stateful<Div> {
+    button_shaped(id, label, icon, variant, size, enabled, Shape::Whole, p)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn button_shaped(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: Option<IconName>,
+    variant: ButtonVariant,
+    size: ButtonSize,
+    enabled: bool,
+    shape: Shape,
+    p: &Palette,
+) -> Stateful<Div> {
     let t = p.tokens;
+    let r = px(t.radius.control);
     let control = interactive_control(div().id(id.into()), *p, enabled)
         .h(px(size.height(p)))
         .px(px(size.padding(p)))
@@ -253,12 +289,16 @@ pub(crate) fn button(
         .justify_center()
         .gap(px(t.space.sm))
         .flex_shrink_0()
-        .rounded(px(t.radius.control))
+        .map(|d| match shape {
+            Shape::Whole => d.rounded(r),
+            Shape::Left => d.rounded_l(r),
+            Shape::Right => d.rounded_r(r),
+        })
         .text_size(px(size.text(p)))
         .font_weight(FontWeight(t.weight.medium))
         .when_some(icon, |d, icon| d.child(Icon::new(icon).size(px(t.icon.sm))))
         .child(label.into());
-    button_states(control, variant, enabled, p)
+    button_states_shaped(control, variant, enabled, shape, p)
 }
 
 /// A square icon-only button (small height) with a tooltip naming it.
@@ -311,9 +351,7 @@ pub(crate) fn split_button_parts(
 ) -> (Stateful<Div>, Stateful<Div>) {
     let t = p.tokens;
     let r = px(t.radius.control);
-    let main = button(id, label, icon, variant, size, enabled, p)
-        .rounded(px(0.))
-        .rounded_l(r);
+    let main = button_shaped(id, label, icon, variant, size, enabled, Shape::Left, p);
     let menu = interactive_control(div().id((id, 1usize)), *p, enabled)
         .h(px(size.height(p)))
         .w(px(size.height(p) - t.space.md))
@@ -324,7 +362,10 @@ pub(crate) fn split_button_parts(
         .rounded_r(r)
         .tooltip(tooltip_view("More options", None, p))
         .child(Icon::new(IconName::ChevronDown).size(px(t.icon.sm)));
-    (main, button_states(menu, variant, enabled, p))
+    (
+        main,
+        button_states_shaped(menu, variant, enabled, Shape::Right, p),
+    )
 }
 
 /// Join [`split_button_parts`] into one control, a hairline apart.
@@ -338,6 +379,47 @@ pub(crate) fn split_button(main: Stateful<Div>, menu: Stateful<Div>, p: &Palette
         .child(menu)
 }
 
+/// A split button with its menu (R3.2): Deny with "Deny with note…", Send
+/// with its other send modes. `menu` is `Some` while open: a [`menu`] of
+/// [`menu_item`]s that hangs under the control's right edge, above
+/// everything else. The caller owns the open flag, toggles it from the
+/// chevron's `.on_click`, and closes it on choice or Esc.
+///
+/// ```ignore
+/// let (deny, more) = split_button_parts("approval-deny", "Deny", None,
+///     ButtonVariant::Destructive, ButtonSize::Small, true, &p);
+/// split_button_with_menu(deny.on_click(…), more.on_click(…),
+///     open.then(|| menu(&p).child(menu_item("deny-note", "Deny with note…", None, false, true, &p))),
+///     &p)
+/// ```
+pub(crate) fn split_button_with_menu(
+    main: Stateful<Div>,
+    chevron: Stateful<Div>,
+    menu: Option<Div>,
+    p: &Palette,
+) -> Div {
+    let gap = p.tokens.space.xs;
+    div()
+        .relative()
+        .flex_shrink_0()
+        .child(split_button(main, chevron, p))
+        .when_some(menu, |d, menu| {
+            d.child(
+                div()
+                    .absolute()
+                    .top(relative(1.))
+                    .right_0()
+                    .child(gpui::deferred(
+                        gpui::anchored()
+                            .anchor(gpui::Corner::TopRight)
+                            .offset(gpui::point(px(0.), px(gap)))
+                            .snap_to_window_with_margin(px(gap))
+                            .child(menu),
+                    )),
+            )
+        })
+}
+
 /// The "…" trigger for a row's or card's overflow menu: where Remove,
 /// Discard and other rare or destructive actions live. Add `.on_click`.
 pub(crate) fn overflow_trigger(id: impl Into<ElementId>, p: &Palette) -> Stateful<Div> {
@@ -345,7 +427,7 @@ pub(crate) fn overflow_trigger(id: impl Into<ElementId>, p: &Palette) -> Statefu
         id,
         IconName::Ellipsis,
         "More actions",
-        ButtonVariant::Ghost,
+        ButtonVariant::Tertiary,
         true,
         p,
     )
@@ -488,6 +570,70 @@ pub(crate) fn badge(label: impl Into<SharedString>, intent: Intent, p: &Palette)
         .font_weight(FontWeight(t.weight.semibold))
         .text_color(rgb(p.base))
         .child(label.into())
+}
+
+/// What a count stands for, which decides whether it may be coloured
+/// (R3.1): amber only for what is blocked on this user now, red only for a
+/// named failure; every other count (scratch files, proposals, decisions on
+/// other sessions, changes) is neutral.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CountTone {
+    Neutral,
+    NeedsYou,
+    Failed,
+}
+
+/// The one count badge ("3", "12", "99+"): tabular figures on a fully
+/// rounded chip. Neutral is a quiet wash with secondary text; `NeedsYou`
+/// and `Failed` fill with their status colour.
+pub(crate) fn count_badge(label: impl Into<SharedString>, tone: CountTone, p: &Palette) -> Div {
+    let t = p.tokens;
+    let (bg, fg) = match tone {
+        CountTone::Neutral => (tonal(p, t.wash.pressed), p.roles.text_secondary),
+        CountTone::NeedsYou => (Hsla::from(rgb(p.roles.status.attention)), p.base),
+        CountTone::Failed => (Hsla::from(rgb(p.roles.status.fault)), p.base),
+    };
+    tabular(
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .flex_shrink_0()
+            .min_w(px(t.text.caption + t.space.sm))
+            .px(px(t.space.xs))
+            .rounded(px(t.radius.full))
+            .bg(bg)
+            .text_size(px(t.text.overline))
+            .font_weight(FontWeight(t.weight.semibold))
+            .text_color(rgb(fg))
+            .child(label.into()),
+    )
+}
+
+/// A count for a badge: "99+" past 99.
+pub(crate) fn count_text(n: usize) -> String {
+    if n > 99 { "99+".into() } else { n.to_string() }
+}
+
+/// The colour a share of a limit takes (usage, context; `format::level`):
+/// none below 80% (draw it neutral), attention from 80%, fault at 100%.
+pub(crate) fn level_color(level: wks_native::format::Level, p: &Palette) -> Option<u32> {
+    use wks_native::format::Level;
+    match level {
+        Level::Normal => None,
+        Level::Warn => Some(p.roles.status.attention),
+        Level::Fault => Some(p.roles.status.fault),
+    }
+}
+
+/// [`level_color`] as a meter [`Intent`] (Neutral below 80%).
+pub(crate) fn level_intent(level: wks_native::format::Level) -> Intent {
+    use wks_native::format::Level;
+    match level {
+        Level::Normal => Intent::Neutral,
+        Level::Warn => Intent::Warning,
+        Level::Fault => Intent::Danger,
+    }
 }
 
 /// A horizontal meter: `fraction` (clamped to 0–1) of the track filled in
@@ -843,178 +989,268 @@ pub(crate) fn status_dot(intent: Intent, p: &Palette) -> Div {
         .bg(rgb(intent.color(p)))
 }
 
-/// Every state a session, job, host, task or card can show, with one colour
-/// AND one shape everywhere (`docs/design-v2-direction.md` R2.1):
+/// The status language (R3.1): every state a session, subagent, job,
+/// machine, task or card can show, with one word, one colour AND one 8px
+/// shape everywhere (sidebar, rail, capsule, palette, history, machines,
+/// children, fleet):
 ///
-/// | Kind | Role | Shape |
-/// |---|---|---|
-/// | NeedsYou | attention (amber) | filled dot |
-/// | Failed | fault (red) | filled dot |
-/// | Stalled | fault (red) | ring with a bar ("Not responding") |
-/// | Working | working (cyan/teal) | pulsing ring |
-/// | Queued | working | still ring |
-/// | Done | done (muted green) | check |
-/// | Idle | idle (grey) | hollow dot |
-/// | Paused | idle | pause bars |
+/// | Kind | Word | Role | Glyph |
+/// |---|---|---|---|
+/// | Working | Working | working (teal) | ring with a rotating arc (static under reduced motion) |
+/// | NeedsYou | Needs you | attention (amber) | filled dot |
+/// | NotResponding | Not responding | fault (red) | hollow clock |
+/// | Failed | Failed | fault (red) | ✕ |
+/// | Idle | Idle | — | **no glyph** (show the age instead) |
+/// | Done | Done | done (muted green) | check |
+/// | Paused | Paused | idle (grey) | pause bars (machines, jobs) |
+/// | Offline | Offline | idle (grey) | dash (machines, the hub) |
 ///
-/// Blue is never a status: it means "interactive".
+/// Retired as state words: "running" (for agents), "stalled", "Lost
+/// heartbeat", "Queued", "Unknown" as amber. Blue is never a status.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum StatusKind {
-    /// Waiting on the user: an approval, a question, a proposal.
-    NeedsYou,
-    /// An agent or run in progress (pulses; never the brand mark).
+    /// An agent or run in progress.
     Working,
-    /// Ready and waiting for work, or ended.
+    /// Blocked on this user now: an approval, a question, a plan.
+    NeedsYou,
+    /// Should be working but has gone quiet (no heartbeat): a fault, never
+    /// also "Working".
+    NotResponding,
+    /// Broke; name what, and offer the way out.
+    Failed,
+    /// Ready and waiting for work, not started yet, or ended.
     Idle,
     /// Finished successfully.
     Done,
-    Failed,
-    /// Should be working but has gone quiet (no heartbeat): a fault, never
-    /// also "Working". Label "Not responding".
-    Stalled,
-    /// Switched off by the user.
+    /// Switched off or held (a machine's gate, a job).
     Paused,
-    /// Accepted, waiting to start.
-    Queued,
+    /// Not reachable (a machine, the hub).
+    Offline,
 }
 
 impl StatusKind {
     pub(crate) const ALL: [Self; 8] = [
-        Self::NeedsYou,
         Self::Working,
+        Self::NeedsYou,
+        Self::NotResponding,
+        Self::Failed,
         Self::Idle,
         Self::Done,
-        Self::Failed,
-        Self::Stalled,
         Self::Paused,
-        Self::Queued,
+        Self::Offline,
     ];
 
-    /// The vocabulary: "Needs you · Working · Idle · Done · Failed · Not
-    /// responding".
+    /// The canonical word for this state: the only one any surface uses.
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::NeedsYou => "Needs you",
             Self::Working => "Working",
+            Self::NeedsYou => "Needs you",
+            Self::NotResponding => wks_native::format::NOT_RESPONDING,
+            Self::Failed => "Failed",
             Self::Idle => "Idle",
             Self::Done => "Done",
-            Self::Failed => "Failed",
-            Self::Stalled => "Not responding",
             Self::Paused => "Paused",
-            Self::Queued => "Queued",
+            Self::Offline => "Offline",
         }
     }
 
-    /// The indicator's colour: one of the palette's five status roles.
+    /// The glyph's colour: one of the palette's five status roles.
     pub(crate) fn color(self, p: &Palette) -> u32 {
         let r = p.roles.status;
         match self {
             Self::NeedsYou => r.attention,
-            Self::Working | Self::Queued => r.working,
+            Self::Working => r.working,
             Self::Done => r.done,
-            Self::Failed | Self::Stalled => r.fault,
-            Self::Idle | Self::Paused => r.idle,
+            Self::Failed | Self::NotResponding => r.fault,
+            Self::Idle | Self::Paused | Self::Offline => r.idle,
         }
     }
 
-    /// The label's colour: states that ask for something carry their hue;
-    /// the rest leave it to the indicator.
+    /// The label's colour: only states that ask for something carry their
+    /// hue (amber blocked on you, red broke); the rest are neutral text.
     pub(crate) fn text_color(self, p: &Palette) -> u32 {
         let r = p.roles.status;
         match self {
             Self::NeedsYou => r.attention,
-            Self::Failed | Self::Stalled => r.fault,
+            Self::Failed | Self::NotResponding => r.fault,
             Self::Working | Self::Done => p.roles.text_secondary,
-            Self::Idle | Self::Paused | Self::Queued => p.roles.text_tertiary,
+            Self::Idle | Self::Paused | Self::Offline => p.roles.text_tertiary,
         }
     }
 
     /// Whether the user has to act (attention or fault): these belong in
     /// Needs you.
     pub(crate) fn needs_attention(self) -> bool {
-        matches!(self, Self::NeedsYou | Self::Failed | Self::Stalled)
+        matches!(self, Self::NeedsYou | Self::Failed | Self::NotResponding)
+    }
+
+    /// Whether this state draws a glyph at all (Idle does not).
+    pub(crate) fn has_glyph(self) -> bool {
+        self != Self::Idle
     }
 }
 
-/// The status indicator alone, in its fixed `layout.status_box` square so
-/// labels after it share one left edge. Each kind has its own shape as well
-/// as its colour (see [`StatusKind`]); Working pulses (held still under
-/// reduced motion).
-pub(crate) fn status_indicator(kind: StatusKind, p: &Palette) -> Div {
-    let t = p.tokens;
-    let (boxed, dot) = (t.layout.status_box, t.layout.status_dot);
-    let color = kind.color(p);
-    let line = t.stroke.hairline + t.stroke.hairline / 2.;
-    let ring = |size: f32, width: f32| {
+/// The 8px status glyph for `kind` (`signals().glyph`), or `None` for Idle,
+/// which has no glyph. Drawn as vector strokes so every shape stays crisp at
+/// any interface size. Working's arc turns once per `signals().spin_ms` and
+/// holds still under reduced motion.
+pub(crate) fn status_glyph(kind: StatusKind, p: &Palette) -> Option<Div> {
+    status_glyph_sized(kind, p.tokens.signals().glyph, p)
+}
+
+/// [`status_glyph`] at another size (the avatar corner badge keeps 8).
+pub(crate) fn status_glyph_sized(kind: StatusKind, size: f32, p: &Palette) -> Option<Div> {
+    if !kind.has_glyph() {
+        return None;
+    }
+    let sig = p.tokens.signals();
+    let color = Hsla::from(rgb(kind.color(p)));
+    let track = color.opacity(sig.track_alpha);
+    // Where the Working arc starts, as a share of a turn (rests at the top).
+    let phase = if kind == StatusKind::Working {
+        super::motion::looping(std::time::Duration::from_millis(sig.spin_ms as u64), 0.)
+    } else {
+        0.
+    };
+    let glyph = canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            for (path, fill) in glyph_paths(kind, bounds, sig, phase) {
+                window.paint_path(path, if fill == Paint::Track { track } else { color });
+            }
+        },
+    )
+    .size_full();
+    Some(
         div()
             .size(px(size))
-            .rounded(px(t.radius.full))
-            .border(px(width))
-            .border_color(rgb(color))
+            .flex_shrink_0()
+            .debug_selector(move || format!("status-glyph-{kind:?}"))
+            .child(glyph),
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Paint {
+    Ink,
+    Track,
+}
+
+/// The vector paths of one glyph inside `bounds` (a square).
+fn glyph_paths(
+    kind: StatusKind,
+    bounds: gpui::Bounds<gpui::Pixels>,
+    sig: wks_native::tokens::SignalTokens,
+    phase: f32,
+) -> Vec<(gpui::Path<gpui::Pixels>, Paint)> {
+    use gpui::{PathBuilder, point};
+    let s = f32::from(bounds.size.width.min(bounds.size.height));
+    let k = s / sig.glyph;
+    let stroke = sig.glyph_stroke * k;
+    let (ox, oy) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+    let at = |x: f32, y: f32| point(px_raw(ox + x * s), px_raw(oy + y * s));
+    let (c, r) = (0.5, (s - stroke) / 2. / s);
+    // A point on the ring at `deg` clockwise from 12 o'clock.
+    let on = |deg: f32, radius: f32| {
+        let a = deg.to_radians();
+        at(c + radius * a.sin(), c - radius * a.cos())
     };
-    let bar = |w: f32, h: f32| {
-        div()
-            .w(px(w))
-            .h(px(h))
-            .rounded(px(t.radius.full))
-            .bg(rgb(color))
+    let radii = point(px_raw(r * s), px_raw(r * s));
+    let ring = |b: &mut PathBuilder| {
+        b.move_to(on(0., r));
+        b.arc_to(radii, px_raw(0.), false, true, on(180., r));
+        b.arc_to(radii, px_raw(0.), false, true, on(360., r));
     };
-    let core = match kind {
-        StatusKind::NeedsYou | StatusKind::Failed => div()
-            .size(px(dot))
-            .rounded(px(t.radius.full))
-            .bg(rgb(color)),
-        StatusKind::Working | StatusKind::Queued => ring(dot + t.space.xxs, line),
-        StatusKind::Stalled => ring(boxed - t.space.xxs, line)
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(bar(dot - t.space.xxs, line)),
-        StatusKind::Done => div()
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_color(rgb(color))
-            .child(Icon::new(IconName::Check).size(px(boxed))),
-        StatusKind::Idle => ring(dot, t.stroke.hairline),
-        StatusKind::Paused => div()
-            .flex()
-            .gap(px(line))
-            .child(bar(line, dot + t.space.xxs))
-            .child(bar(line, dot + t.space.xxs)),
+    let line = |points: &[(f32, f32)]| {
+        let mut b = PathBuilder::stroke(px_raw(stroke));
+        for (ix, (x, y)) in points.iter().enumerate() {
+            if ix == 0 {
+                b.move_to(at(*x, *y));
+            } else {
+                b.line_to(at(*x, *y));
+            }
+        }
+        b
     };
-    let frame = div()
-        .relative()
-        .size(px(boxed))
+    let mut out: Vec<(PathBuilder, Paint)> = Vec::new();
+    match kind {
+        StatusKind::Idle => {}
+        StatusKind::NeedsYou => {
+            let mut b = PathBuilder::fill();
+            let full = point(px_raw(s / 2.), px_raw(s / 2.));
+            b.move_to(at(c, 0.));
+            b.arc_to(full, px_raw(0.), false, true, at(c, 1.));
+            b.arc_to(full, px_raw(0.), false, true, at(c, 0.));
+            b.close();
+            out.push((b, Paint::Ink));
+        }
+        StatusKind::Working => {
+            let mut track = PathBuilder::stroke(px_raw(stroke));
+            ring(&mut track);
+            out.push((track, Paint::Track));
+            let start = phase * 360.;
+            let mut arc = PathBuilder::stroke(px_raw(stroke));
+            arc.move_to(on(start, r));
+            arc.arc_to(
+                radii,
+                px_raw(0.),
+                sig.arc_degrees > 180.,
+                true,
+                on(start + sig.arc_degrees, r),
+            );
+            out.push((arc, Paint::Ink));
+        }
+        StatusKind::NotResponding => {
+            let mut b = PathBuilder::stroke(px_raw(stroke));
+            ring(&mut b);
+            out.push((b, Paint::Ink));
+            // Clock hands: twelve and three o'clock.
+            out.push((
+                line(&[(c, c - r * 0.55), (c, c), (c + r * 0.45, c)]),
+                Paint::Ink,
+            ));
+        }
+        StatusKind::Failed => {
+            let (a, z) = (stroke / s / 2. + 0.08, 0.92 - stroke / s / 2.);
+            out.push((line(&[(a, a), (z, z)]), Paint::Ink));
+            out.push((line(&[(z, a), (a, z)]), Paint::Ink));
+        }
+        StatusKind::Done => {
+            out.push((line(&[(0.1, 0.55), (0.4, 0.82), (0.92, 0.22)]), Paint::Ink));
+        }
+        StatusKind::Paused => {
+            out.push((line(&[(0.3, 0.12), (0.3, 0.88)]), Paint::Ink));
+            out.push((line(&[(0.7, 0.12), (0.7, 0.88)]), Paint::Ink));
+        }
+        StatusKind::Offline => {
+            out.push((line(&[(0.12, 0.5), (0.88, 0.5)]), Paint::Ink));
+        }
+    }
+    out.into_iter()
+        .filter_map(|(b, paint)| b.build().ok().map(|path| (path, paint)))
+        .collect()
+}
+
+/// Window pixels as they are (inside a canvas, bounds are already zoomed).
+fn px_raw(v: f32) -> gpui::Pixels {
+    gpui::px(v)
+}
+
+/// The status glyph in its fixed `layout.status_box` square, so labels
+/// after it share one left edge. Idle keeps the square, empty.
+pub(crate) fn status_indicator(kind: StatusKind, p: &Palette) -> Div {
+    div()
+        .size(px(p.tokens.layout.status_box))
         .flex_shrink_0()
         .flex()
         .items_center()
-        .justify_center();
-    if kind != StatusKind::Working {
-        return frame.child(core);
-    }
-    // At rest (reduced motion) the halo has fully faded.
-    let beat = super::motion::looping(
-        std::time::Duration::from_millis(t.motion.pulse_ms as u64),
-        1.,
-    );
-    let halo = dot + (boxed - dot) * beat;
-    frame
-        .child(
-            div()
-                .absolute()
-                .left(px((boxed - halo) / 2.))
-                .top(px((boxed - halo) / 2.))
-                .size(px(halo))
-                .rounded(px(t.radius.full))
-                .bg(wash(color, t.elevation.glow_alpha * (1. - beat))),
-        )
-        .child(core)
+        .justify_center()
+        .children(status_glyph(kind, p))
 }
 
-/// A status as dot + label. `label` overrides the vocabulary word for a
-/// more specific one ("Succeeded 3h ago", "Proposed change") while keeping
-/// the kind's colour.
+/// A status as glyph + word. `label` overrides the word for a more specific
+/// one ("Succeeded 3h ago", "Cancelled") while keeping the kind's glyph and
+/// colour; prefer the canonical [`StatusKind::label`].
 #[derive(Clone, Debug)]
 pub(crate) struct StatusBadge {
     pub(crate) kind: StatusKind,
@@ -1134,7 +1370,7 @@ pub(crate) fn back_link(
         id,
         label,
         Some(IconName::ArrowLeft),
-        ButtonVariant::Ghost,
+        ButtonVariant::Tertiary,
         ButtonSize::Small,
         true,
         p,
@@ -1278,17 +1514,53 @@ impl CardHead {
     }
 }
 
-/// A monogram avatar tile at `layout.avatar`: two letters on a muted fill
-/// picked deterministically from the name. No emoji.
+/// A monogram avatar tile at `layout.avatar`: two letters on one of the
+/// theme's eight curated fills (`Palette::avatar_fill`, picked by a stable
+/// hash of the name; equal lightness, AA text). No emoji, no ring.
 pub(crate) fn avatar_tile(name: &str, p: &Palette) -> Div {
     avatar_tile_sized(name, p.tokens.layout.avatar, p)
+}
+
+/// An avatar with its status as a corner badge (R3.6): the 8px status glyph
+/// on a disc of `under` (the surface the avatar sits on) at the bottom
+/// right. Idle (no glyph) and `None` draw the bare tile. The one way to show
+/// a session's or machine's state on an avatar: never a coloured ring.
+pub(crate) fn avatar_with_status(
+    name: &str,
+    size: f32,
+    status: Option<StatusKind>,
+    under: u32,
+    p: &Palette,
+) -> Div {
+    let sig = p.tokens.signals();
+    let disc = sig.glyph + 2. * sig.badge_ring;
+    let out = -sig.badge_ring - p.tokens.stroke.hairline;
+    div()
+        .relative()
+        .size(px(size))
+        .flex_shrink_0()
+        .child(avatar_tile_sized(name, size, p))
+        .children(status.and_then(|kind| status_glyph(kind, p)).map(|glyph| {
+            div()
+                .debug_selector(|| "avatar-status".into())
+                .absolute()
+                .right(px(out))
+                .bottom(px(out))
+                .size(px(disc))
+                .rounded(px(p.tokens.radius.full))
+                .bg(rgb(under))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(glyph)
+        }))
 }
 
 /// [`avatar_tile`] at another size (`layout.avatar_lg` on cards).
 pub(crate) fn avatar_tile_sized(name: &str, size: f32, p: &Palette) -> Div {
     use wks_native::format::monogram;
     let t = p.tokens;
-    // r2-systems: a hashed hue at the palette's fixed OKLCH tone.
+    // r3-foundation: one of the theme's eight curated, equal-lightness fills.
     let fill = p.avatar_fill(name);
     div()
         .size(px(size))
@@ -1304,7 +1576,7 @@ pub(crate) fn avatar_tile_sized(name: &str, size: f32, p: &Palette) -> Div {
             t.text.overline
         }))
         .font_weight(FontWeight(t.weight.semibold))
-        .text_color(rgb(p.text))
+        .text_color(rgb(p.avatar_text()))
         .child(monogram(name))
 }
 
@@ -1341,7 +1613,7 @@ pub(crate) fn fade_mask(edge: FadeEdge, color: u32, p: &Palette) -> Div {
 /// Every primitive once, for tests and design review.
 pub(crate) fn gallery(p: &Palette) -> AnyElement {
     use ButtonVariant as B;
-    let variants = [B::Primary, B::Secondary, B::Ghost, B::DangerGhost];
+    let variants = [B::Primary, B::Secondary, B::Tertiary, B::Destructive];
     let intents = [
         Intent::Neutral,
         Intent::Accent,
@@ -1431,7 +1703,7 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
                     IconName::Search,
                     "Search sessions",
                     Some("Ctrl K"),
-                    B::Ghost,
+                    B::Tertiary,
                     true,
                     p,
                 ))
@@ -1440,7 +1712,7 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
                         "primitive-jump",
                         "Next needs you",
                         None,
-                        B::Ghost,
+                        B::Tertiary,
                         ButtonSize::Small,
                         true,
                         p,
@@ -1457,6 +1729,33 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
         .child(row().children(intents.into_iter().map(|i| pill(format!("{i:?}"), i, p))))
         .child(row().children(intents.into_iter().map(|i| badge("3", i, p))))
         .child(row().children(intents.into_iter().map(|i| status_dot(i, p))))
+        // r3-foundation: the 8px glyphs alone, the count badges, the
+        // attention frame, keycap hints and avatars with a status badge.
+        .child(
+            row().debug_selector(|| "primitive-glyphs".into()).children(
+                StatusKind::ALL
+                    .into_iter()
+                    .filter_map(|kind| status_glyph(kind, p)),
+            ),
+        )
+        .child(
+            row()
+                .debug_selector(|| "primitive-counts".into())
+                .child(count_badge("4", CountTone::Neutral, p))
+                .child(count_badge("2", CountTone::NeedsYou, p))
+                .child(count_badge("1", CountTone::Failed, p))
+                .child(count_badge(count_text(120), CountTone::Neutral, p))
+                .child(keycap_hint("1", false, p)),
+        )
+        .child(
+            attention_frame(t.radius.control, p)
+                .debug_selector(|| "primitive-attention".into())
+                .bg(rgb(p.surface))
+                .pl(px(t.space.lg + t.signals().attention_bar))
+                .pr(px(t.space.lg))
+                .py(px(t.space.md))
+                .child("Release checklist for 0.9 needs a branch name"),
+        )
         .child(
             row()
                 .debug_selector(|| "primitive-avatars".into())
@@ -1464,6 +1763,18 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
                     ["workspacer", "hub-rs", "inbox", "docs", "web", "native"]
                         .into_iter()
                         .map(|name| avatar_tile(name, p)),
+                )
+                .children(
+                    [
+                        ("Fleet", StatusKind::Working),
+                        ("Release", StatusKind::NeedsYou),
+                        ("Trace", StatusKind::NotResponding),
+                        ("Notes", StatusKind::Idle),
+                    ]
+                    .into_iter()
+                    .map(|(name, kind)| {
+                        avatar_with_status(name, t.layout.avatar_lg, Some(kind), p.chat, p)
+                    }),
                 ),
         )
         .child(
@@ -1501,7 +1812,7 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
                 .child(
                     CardHead::new("Nightly tests")
                         .icon(IconName::Calendar)
-                        .status(StatusBadge::new(StatusKind::Working).label("Running"))
+                        .status(StatusBadge::new(StatusKind::Working))
                         .meta("Weekdays at 07:00 · next in 3h")
                         .action(button(
                             "primitive-card-run",
@@ -1602,26 +1913,20 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
         .child(section_header("Contract", Some("6".into()), p))
         .child(
             row().debug_selector(|| "primitive-roles".into()).children(
-                [
-                    B::PRIMARY,
-                    B::SECONDARY,
-                    B::DESTRUCTIVE,
-                    B::TERTIARY,
-                    B::Danger,
-                ]
-                .into_iter()
-                .enumerate()
-                .map(|(ix, v)| {
-                    keyed_button(
-                        ("primitive-role", ix),
-                        (ix + 1).to_string(),
-                        format!("{v:?}"),
-                        v,
-                        ButtonSize::Small,
-                        true,
-                        p,
-                    )
-                }),
+                [B::Primary, B::Secondary, B::Destructive, B::Tertiary]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, v)| {
+                        keyed_button(
+                            ("primitive-role", ix),
+                            (ix + 1).to_string(),
+                            format!("{v:?}"),
+                            v,
+                            ButtonSize::Small,
+                            true,
+                            p,
+                        )
+                    }),
             ),
         )
         .child(
@@ -1689,9 +1994,40 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
 
 // area-composer
 
-/// A [`button`] led by the key that also triggers it ("1 Allow"), for
-/// decision strips where number keys pick an action. The keycap is a wash of
-/// the label colour, so it reads on a primary fill as well as a ghost.
+/// The one keycap hint (R3.2): the key that also triggers a control, faint
+/// and trailing ("Allow  1"), never tinted with a status or danger colour.
+/// `on_fill` is true on a Primary fill, where the hint is the label colour
+/// at `signals().hint_alpha`; elsewhere it is tertiary text. A hairline
+/// keycap edge in the same colour, no fill.
+pub(crate) fn keycap_hint(key: impl Into<SharedString>, on_fill: bool, p: &Palette) -> Div {
+    let t = p.tokens;
+    let sig = t.signals();
+    let fg = if on_fill {
+        wash(p.on_primary, sig.hint_alpha)
+    } else {
+        Hsla::from(rgb(p.roles.text_tertiary))
+    };
+    div()
+        .flex_shrink_0()
+        .min_w(px(t.text.overline + t.space.xs))
+        .px(px(t.space.xs))
+        .rounded(px(t.radius.xs))
+        .flex()
+        .items_center()
+        .justify_center()
+        .border(px(t.stroke.hairline))
+        .border_color(fg.opacity(fg.a * t.wash.attention_edge))
+        .text_size(px(t.text.overline))
+        .line_height(relative(1.25))
+        .font_family(mono_font())
+        .font_weight(FontWeight(t.weight.regular))
+        .text_color(fg)
+        .child(key.into())
+}
+
+/// A [`button`] with the key that also triggers it as a trailing
+/// [`keycap_hint`] ("Allow 1"), for decision strips where number keys pick
+/// an action.
 pub(crate) fn keyed_button(
     id: impl Into<ElementId>,
     key: impl Into<SharedString>,
@@ -1702,43 +2038,21 @@ pub(crate) fn keyed_button(
     p: &Palette,
 ) -> Stateful<Div> {
     let t = p.tokens;
-    let fg = if !enabled {
-        p.disabled
-    } else {
-        match variant {
-            ButtonVariant::Primary => p.on_primary,
-            ButtonVariant::DangerGhost => p.error,
-            _ => p.roles.text_secondary,
-        }
-    };
-    let cap = div()
-        .flex_shrink_0()
-        .min_w(px(t.text.overline + t.space.sm))
-        .px(px(t.space.xs))
-        .rounded(px(t.radius.xs))
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(wash(fg, t.wash.tone_rest))
-        .text_size(px(t.text.overline))
-        .font_family(mono_font())
-        .font_weight(FontWeight(t.weight.medium))
-        .text_color(rgb(fg))
-        .child(key.into());
+    let on_fill = enabled && variant == ButtonVariant::Primary;
     let control = interactive_control(div().id(id.into()), *p, enabled)
         .h(px(size.height(p)))
-        .pl(px(size.padding(p) - t.space.xs))
-        .pr(px(size.padding(p)))
+        .pl(px(size.padding(p)))
+        .pr(px(size.padding(p) - t.space.xs))
         .flex()
         .items_center()
         .justify_center()
-        .gap(px(t.space.sm))
+        .gap(px(t.space.md))
         .flex_shrink_0()
         .rounded(px(t.radius.control))
         .text_size(px(size.text(p)))
         .font_weight(FontWeight(t.weight.medium))
-        .child(cap)
-        .child(label.into());
+        .child(label.into())
+        .child(keycap_hint(key, on_fill, p));
     button_states(control, variant, enabled, p)
 }
 
@@ -1789,17 +2103,6 @@ pub(crate) fn toolbar_chip(
 // Every v2 surface draws its buttons, cards, section headers, tables, event
 // rows, avatars, figures, page grids and "waiting on you" containers with
 // these; nothing styles its own.
-
-impl ButtonVariant {
-    /// The four roles by their contract names. `PRIMARY` filled accent (at
-    /// most one per region), `SECONDARY` subtle fill + ring, `TERTIARY`
-    /// text/ghost, `DESTRUCTIVE` red text/ghost ([`ButtonVariant::Danger`],
-    /// filled red, only inside a confirm step).
-    pub(crate) const PRIMARY: Self = Self::Primary;
-    pub(crate) const SECONDARY: Self = Self::Secondary;
-    pub(crate) const TERTIARY: Self = Self::Ghost;
-    pub(crate) const DESTRUCTIVE: Self = Self::DangerGhost;
-}
 
 /// `el` with tabular (fixed-width) numerals: times, counts and stats line up
 /// and never jiggle as they tick.
@@ -2081,39 +2384,108 @@ pub(crate) fn page_grid(columns: u16, p: &Palette) -> Div {
 }
 
 /// The one "waiting on you" container, for approvals, questions, plans and
-/// usage limits: a neutral card with an attention stripe on its left edge
-/// and an attention edge at `wash.attention_edge`. Fill it with a
-/// [`waiting_head`], the body, then a [`waiting_actions`] row.
+/// usage limits: the [`attention_frame`] at the panel radius on the card
+/// surface. Fill it with a [`waiting_head`], the body, then a
+/// [`waiting_actions`] row.
 pub(crate) fn waiting_card(compact: bool, p: &Palette) -> Div {
     let t = p.tokens;
-    let attention = p.roles.status.attention;
     let pad = if compact { t.space.md } else { t.space.lg };
-    let inset = t.radius.panel * 0.75;
-    div()
-        .relative()
+    attention_frame(t.radius.panel, p)
         .w_full()
         .flex_shrink_0()
         .flex()
         .flex_col()
         .gap(px(if compact { t.space.sm } else { t.space.md }))
-        .pl(px(pad + t.stroke.stripe))
+        .pl(px(pad + t.signals().attention_bar))
         .pr(px(pad))
         .py(px(pad))
-        .rounded(px(t.radius.panel))
         .bg(rgb(p.surface))
-        .border(px(t.stroke.hairline))
-        .border_color(wash(attention, t.wash.attention_edge))
         .shadow(elevation(p, t.elevation.floating))
+}
+
+/// The one attention treatment (R3.1): a container with a neutral 1px
+/// `border_strong` edge, rounded to `radius`, carrying an [`attention_bar`]
+/// on its leading edge. Use it for whatever is blocked on this user: the
+/// waiting card, a Needs-you sidebar row, a fleet tile with a pending ask.
+/// Add the background, padding (leave `signals().attention_bar` extra on the
+/// left) and children.
+pub(crate) fn attention_frame(radius: f32, p: &Palette) -> Div {
+    let t = p.tokens;
+    div()
+        .relative()
+        .rounded(px(radius))
+        .border(px(t.stroke.hairline))
+        .border_color(rgb(p.roles.border_strong))
+        .child(attention_bar(radius, p))
+}
+
+/// The attention bar alone: `signals().attention_bar` wide in the attention
+/// colour, on the leading edge of a container rounded to `radius`, clipped
+/// by that radius (it follows the corner's curve rather than floating inset).
+/// Absolute: put it in a `.relative()` container with a hairline border, or
+/// use [`attention_frame`]. Borderless containers: wrap it in
+/// `div().absolute().inset_0()` instead.
+pub(crate) fn attention_bar(radius: f32, p: &Palette) -> Div {
+    let t = p.tokens;
+    let bar = t.signals().attention_bar;
+    let color = Hsla::from(rgb(p.roles.status.attention));
+    let edge = t.stroke.hairline;
+    div()
+        .absolute()
+        .left(px(-edge))
+        .top(px(-edge))
+        .bottom(px(-edge))
+        .w(px(bar))
+        .debug_selector(|| "attention-bar".into())
         .child(
-            div()
-                .absolute()
-                .left(px(-t.stroke.hairline))
-                .top(px(inset))
-                .bottom(px(inset))
-                .w(px(t.stroke.stripe))
-                .rounded(px(t.radius.full))
-                .bg(rgb(attention)),
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    if let Some(path) = clipped_bar(bounds, bar, radius) {
+                        window.paint_path(path, color);
+                    }
+                },
+            )
+            .size_full(),
         )
+}
+
+/// The leading `bar`-wide strip of a rounded rectangle whose left edge is
+/// `bounds`' left edge and whose height is `bounds`' height: straight on
+/// the right, following the corner radius on the left.
+fn clipped_bar(
+    bounds: gpui::Bounds<gpui::Pixels>,
+    bar: f32,
+    radius: f32,
+) -> Option<gpui::Path<gpui::Pixels>> {
+    use gpui::{PathBuilder, point};
+    let w = f32::from(bounds.size.width);
+    let h = f32::from(bounds.size.height);
+    if w <= 0. || h <= 0. {
+        return None;
+    }
+    // Logical sizes to window pixels: the strip is `bar` logical px wide.
+    let scale = w / bar;
+    let r = (radius * scale).min(h / 2.);
+    let (x0, y0) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+    let at = |x: f32, y: f32| point(px_raw(x0 + x), px_raw(y0 + y));
+    let mut b = PathBuilder::fill();
+    if r <= w {
+        b.move_to(at(0., 0.));
+        b.line_to(at(w, 0.));
+        b.line_to(at(w, h));
+        b.line_to(at(0., h));
+    } else {
+        // Where the corner's circle crosses the strip's right edge.
+        let dip = r - (r * r - (r - w) * (r - w)).sqrt();
+        let radii = point(px_raw(r), px_raw(r));
+        b.move_to(at(0., r));
+        b.arc_to(radii, px_raw(0.), false, true, at(w, dip));
+        b.line_to(at(w, h - dip));
+        b.arc_to(radii, px_raw(0.), false, true, at(0., h - r));
+    }
+    b.close();
+    b.build().ok()
 }
 
 /// One run of a decision headline: plain words, or a code span (a command,

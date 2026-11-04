@@ -309,7 +309,7 @@ pub(crate) fn quiet_for(ms: i64) -> String {
     }
 }
 
-/// The collapsed line for a session's subagents: "4 subagents · 1 stalled",
+/// The collapsed line for a session's subagents: "4 subagents · 1 not responding",
 /// "2 subagents · 1 working". `None` without any.
 pub(crate) fn children_summary(
     total: usize,
@@ -325,7 +325,7 @@ pub(crate) fn children_summary(
         if total == 1 { "subagent" } else { "subagents" }
     )];
     if stalled > 0 {
-        parts.push(format!("{stalled} stalled"));
+        parts.push(format!("{stalled} not responding"));
     }
     if failed > 0 {
         parts.push(format!("{failed} failed"));
@@ -423,7 +423,7 @@ mod tests {
         assert_eq!(children_summary(0, 0, 0, 0), None);
         assert_eq!(
             children_summary(4, 1, 0, 2).as_deref(),
-            Some("4 subagents · 1 stalled")
+            Some("4 subagents · 1 not responding")
         );
         assert_eq!(
             children_summary(1, 0, 0, 1).as_deref(),

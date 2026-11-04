@@ -99,7 +99,7 @@ fn step_row_v2(step: &Step, p: &Palette, live: bool) -> Div {
         Status::Completed => StatusKind::Done,
         Status::InProgress if live => StatusKind::Working,
         Status::InProgress => StatusKind::Idle,
-        Status::Pending => StatusKind::Queued,
+        Status::Pending => StatusKind::Idle,
     };
     let line = t.text.meta * t.text.line_height;
     div()
@@ -389,7 +389,7 @@ impl Workspace {
         let kind = match (task_plan::active(steps), done == total) {
             (Some(_), _) => StatusKind::Working,
             (None, true) => StatusKind::Done,
-            (None, false) => StatusKind::Queued,
+            (None, false) => StatusKind::Idle,
         };
         let header = chrome::interactive_control(div().id("pinned-plan-toggle"), p, true)
             .debug_selector(|| "pinned-plan-toggle".into())

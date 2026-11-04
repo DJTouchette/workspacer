@@ -237,7 +237,7 @@ impl Workspace {
                 IconName::Close,
                 "Back to the conversation",
                 Some("Esc"),
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 !busy,
                 &p,
             )
@@ -1969,7 +1969,7 @@ impl Workspace {
                                 "launch-hosts-refresh",
                                 IconName::Redo,
                                 "Refresh machines",
-                                ButtonVariant::Ghost,
+                                ButtonVariant::Tertiary,
                                 can_refresh,
                                 &p,
                             )
@@ -2056,7 +2056,7 @@ impl Workspace {
                 IconName::Close,
                 "Back to the conversation",
                 Some("Esc"),
-                ButtonVariant::Ghost,
+                ButtonVariant::Tertiary,
                 !busy,
                 &p,
             )
@@ -2404,7 +2404,7 @@ impl Workspace {
             } else {
                 "Refresh the model list"
             },
-            ButtonVariant::Ghost,
+            ButtonVariant::Tertiary,
             can_reload,
             p,
         )

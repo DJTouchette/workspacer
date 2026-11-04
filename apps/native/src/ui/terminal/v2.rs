@@ -63,8 +63,8 @@ pub(super) fn ansi_v2(index: u8, p: Palette) -> u32 {
 fn status_of(status: Option<Status>) -> StatusBadge {
     match status {
         None => StatusBadge::new(StatusKind::Idle).label("No terminal"),
-        Some(Status::Starting) => StatusBadge::new(StatusKind::Queued).label("Starting…"),
-        Some(Status::Attaching) => StatusBadge::new(StatusKind::Queued).label("Connecting…"),
+        Some(Status::Starting) => StatusBadge::new(StatusKind::Working).label("Starting…"),
+        Some(Status::Attaching) => StatusBadge::new(StatusKind::Working).label("Connecting…"),
         Some(Status::Live) => StatusBadge::new(StatusKind::Working).label("Running"),
         Some(Status::Detached) => StatusBadge::new(StatusKind::Idle).label("In the background"),
         Some(Status::Exited) => StatusBadge::new(StatusKind::Idle).label("Exited"),
@@ -147,7 +147,7 @@ impl Workspace {
                             "terminal-copy",
                             IconName::Copy,
                             "Copy screen text",
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             view.is_some(),
                             &p,
                         )
@@ -163,7 +163,7 @@ impl Workspace {
                             "terminal-restart",
                             IconName::Redo,
                             "End this shell and start a new one",
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             can_restart,
                             &p,
                         )
@@ -181,7 +181,7 @@ impl Workspace {
                             "terminal-popout",
                             IconName::ExternalLink,
                             "Open in a separate window",
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             has_shell,
                             &p,
                         )
@@ -203,7 +203,7 @@ impl Workspace {
                                 IconName::Maximize
                             },
                             if tall { "Shrink" } else { "Enlarge" },
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             true,
                             &p,
                         )
@@ -218,7 +218,7 @@ impl Workspace {
                             IconName::Close,
                             "Hide terminal (the shell keeps running)",
                             Some("Ctrl `"),
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             true,
                             &p,
                         )

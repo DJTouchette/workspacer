@@ -32,13 +32,17 @@ pub(super) struct ShellUi {
     /// Idle shows every session, not only the most recent few.
     pub(super) idle_all: bool,
     /// Sessions whose subagents are listed one by one instead of folded
-    /// into "4 subagents · 1 stalled".
+    /// into "4 subagents · 1 not responding".
     pub(super) open_children: BTreeSet<String>,
     /// The session list's scroll (rows have two heights, so it is not a
     /// uniform list).
     pub(super) scroll: gpui::ScrollHandle,
     /// The command palette (Ctrl+K).
     pub(super) palette: super::palette::PaletteUi,
+    // r3-foundation
+    /// Failed background tasks the user acknowledged in the title's red
+    /// chip, by task id: their chip is gone for this run (memory only).
+    pub(super) acknowledged_failures: BTreeSet<String>,
 }
 
 impl Default for ShellUi {
@@ -53,6 +57,7 @@ impl Default for ShellUi {
             open_children: BTreeSet::new(),
             scroll: gpui::ScrollHandle::new(),
             palette: Default::default(),
+            acknowledged_failures: BTreeSet::new(),
         }
     }
 }
@@ -94,7 +99,7 @@ fn child_kind(child: &ChildAgent, connected: bool, now: i64) -> StatusKind {
     } else if child.failed() {
         StatusKind::Failed
     } else if attention::child_stalled(child, now) {
-        StatusKind::Stalled
+        StatusKind::NotResponding
     } else if child.running() {
         StatusKind::Working
     } else if child.settled() {
@@ -178,7 +183,7 @@ pub(super) fn tabular<E: Styled>(mut element: E) -> E {
 /// A small icon action inside a row, shown on hover.
 fn row_action(id: SharedString, icon: IconName, tip: &'static str, p: &Palette) -> Stateful<Div> {
     let t = p.tokens;
-    primitives::icon_button(id, icon, tip, ButtonVariant::Ghost, true, p)
+    primitives::icon_button(id, icon, tip, ButtonVariant::Tertiary, true, p)
         .size(px(t.icon.md + t.space.sm))
         .rounded(px(t.radius.sm))
 }
@@ -316,7 +321,7 @@ impl Workspace {
             return StatusKind::NeedsYou;
         }
         if self.stalled_for(session, now).is_some() {
-            return StatusKind::Stalled;
+            return StatusKind::NotResponding;
         }
         match attention::bucket(session, false) {
             Bucket::Working => StatusKind::Working,
@@ -455,7 +460,7 @@ impl Workspace {
                     kind,
                     loud: matches!(
                         kind,
-                        StatusKind::NeedsYou | StatusKind::Failed | StatusKind::Stalled
+                        StatusKind::NeedsYou | StatusKind::Failed | StatusKind::NotResponding
                     ),
                     matches: !query.is_empty()
                         && self.session_title(s).to_lowercase().contains(query),
@@ -483,7 +488,7 @@ impl Workspace {
                         depth: depth + 1,
                     },
                     kind,
-                    loud: kind == StatusKind::NeedsYou || kind == StatusKind::Stalled,
+                    loud: kind == StatusKind::NeedsYou || kind == StatusKind::NotResponding,
                     matches: !query.is_empty() && title.to_lowercase().contains(query),
                     active: self.view.child.as_ref().is_some_and(|t| {
                         t.parent == s.id
@@ -510,7 +515,7 @@ impl Workspace {
             }
             total += 1;
             match (&d.row, d.kind) {
-                (_, StatusKind::Stalled) => stalled += 1,
+                (_, StatusKind::NotResponding) => stalled += 1,
                 (_, StatusKind::Failed) => failed += 1,
                 (_, StatusKind::Working) => working += 1,
                 _ => {}
@@ -888,13 +893,9 @@ impl Workspace {
                     (pending > 0).then(|| {
                         div()
                             .debug_selector(|| "scratch-pending-badge".into())
-                            .child(primitives::badge(
-                                if pending > 99 {
-                                    "99+".to_owned()
-                                } else {
-                                    pending.to_string()
-                                },
-                                Intent::Neutral,
+                            .child(primitives::count_badge(
+                                primitives::count_text(pending),
+                                primitives::CountTone::Neutral,
                                 &p,
                             ))
                             .into_any_element()
@@ -1035,7 +1036,7 @@ impl Workspace {
             icon,
             tip,
             shortcut,
-            ButtonVariant::Ghost,
+            ButtonVariant::Tertiary,
             true,
             &p,
         )
@@ -1057,12 +1058,19 @@ impl Workspace {
         } else {
             (IconName::PanelLeftClose, "Collapse sidebar")
         };
-        primitives::icon_button("toggle-sidebar", icon, tip, ButtonVariant::Ghost, true, &p)
-            .debug_selector(|| "sidebar-toggle".into())
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.sidebar_collapsed = !this.sidebar_collapsed;
-                cx.notify();
-            }))
+        primitives::icon_button(
+            "toggle-sidebar",
+            icon,
+            tip,
+            ButtonVariant::Tertiary,
+            true,
+            &p,
+        )
+        .debug_selector(|| "sidebar-toggle".into())
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.sidebar_collapsed = !this.sidebar_collapsed;
+            cx.notify();
+        }))
     }
 
     /// The filtered project, above the list: its mark and name, waiting
@@ -1124,7 +1132,7 @@ impl Workspace {
                             ))
                             .child(primitives::pill(
                                 format!("{pending} waiting"),
-                                Intent::Warning,
+                                Intent::Neutral,
                                 &p,
                             ))
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1138,7 +1146,7 @@ impl Workspace {
                         "new-agent-in-filter",
                         IconName::Plus,
                         "New session in this project",
-                        ButtonVariant::Ghost,
+                        ButtonVariant::Tertiary,
                         can_spawn,
                         &p,
                     )
@@ -1156,7 +1164,7 @@ impl Workspace {
                         "all-projects",
                         IconName::Close,
                         "Show every project",
-                        ButtonVariant::Ghost,
+                        ButtonVariant::Tertiary,
                         true,
                         &p,
                     )
@@ -1356,7 +1364,11 @@ impl Workspace {
                             Some(if self.vim() { "g n" } else { "Alt N" }),
                             &p,
                         ))
-                        .child(primitives::badge(count.to_string(), Intent::Warning, &p))
+                        .child(primitives::count_badge(
+                            primitives::count_text(count),
+                            primitives::CountTone::NeedsYou,
+                            &p,
+                        ))
                         .on_click(
                             cx.listener(|this, _, window, cx| this.next_needs_you(window, cx)),
                         ),
@@ -1638,7 +1650,7 @@ impl Workspace {
             lines.push(format!(
                 "{provider} · {} · {}",
                 wks_native::format::model_name(&session.display_model()),
-                if kind == StatusKind::Stalled {
+                if kind == StatusKind::NotResponding {
                     "Not responding"
                 } else {
                     status_label
@@ -1844,7 +1856,7 @@ impl Workspace {
         };
         let stripe = matches!(
             kind,
-            StatusKind::NeedsYou | StatusKind::Failed | StatusKind::Stalled
+            StatusKind::NeedsYou | StatusKind::Failed | StatusKind::NotResponding
         ) && reason.is_some();
         let control = chrome::interactive_control(
             div().id(SharedString::from(format!("session-{}", session.id))),
@@ -2002,7 +2014,7 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// "4 subagents · 1 stalled": a tree's subagents in one line; a click
+    /// "4 subagents · 1 not responding": a tree's subagents in one line; a click
     /// lists them one by one (and folds them back).
     #[allow(clippy::too_many_arguments)]
     fn render_children_line(
@@ -2130,9 +2142,9 @@ impl Workspace {
                                 .text_color(rgb(p.roles.text_tertiary)),
                         )
                         .child(div().flex_1().child("Finish setup"))
-                        .child(primitives::badge(
-                            notes.len().to_string(),
-                            Intent::Neutral,
+                        .child(primitives::count_badge(
+                            primitives::count_text(notes.len()),
+                            primitives::CountTone::Neutral,
                             &p,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -2144,7 +2156,7 @@ impl Workspace {
                         "sidebar-finish-setup-dismiss",
                         IconName::Close,
                         "Hide until next launch",
-                        ButtonVariant::Ghost,
+                        ButtonVariant::Tertiary,
                         true,
                         &p,
                     )
@@ -2333,7 +2345,7 @@ impl Workspace {
                     IconName::Plus,
                     "New session",
                     Some(if mac { "⌘ N" } else { "Ctrl N" }),
-                    ButtonVariant::Ghost,
+                    ButtonVariant::Tertiary,
                     !self.demo,
                     &p,
                 )
@@ -2348,7 +2360,7 @@ impl Workspace {
                     IconName::Search,
                     "Search everything",
                     Some(if mac { "⌘ K" } else { "Ctrl K" }),
-                    ButtonVariant::Ghost,
+                    ButtonVariant::Tertiary,
                     true,
                     &p,
                 )
@@ -2367,7 +2379,7 @@ impl Workspace {
                         "notice-rail",
                         IconName::Info,
                         "Show the workspace notice",
-                        ButtonVariant::Ghost,
+                        ButtonVariant::Tertiary,
                         true,
                         &p,
                     )
@@ -2457,7 +2469,7 @@ impl Workspace {
                         "resume-rail",
                         IconName::Redo,
                         "Reconnect",
-                        ButtonVariant::Ghost,
+                        ButtonVariant::Tertiary,
                         self.view.can_resume_power_pause,
                         &p,
                     )
@@ -2525,14 +2537,14 @@ impl Workspace {
                     div()
                         .id("rail-offline")
                         .tooltip(tooltip_view(self.connection_copy().label, None, &p))
-                        .child(status_indicator(StatusKind::Failed, &p)),
+                        .child(status_indicator(StatusKind::Offline, &p)),
                 )
             })
             .into_any_element()
     }
 
-    /// One rail tile: the session's avatar inside a ring that carries its
-    /// state (amber needs you, red stalled, a breathing ring at work).
+    /// One rail tile: the session's avatar with its status glyph as a
+    /// corner badge (amber dot needs you, clock not responding, arc at work).
     fn render_rail_tile(&self, index: usize, n: usize, cx: &mut Context<Self>) -> AnyElement {
         let p = self.palette();
         let t = p.tokens;
@@ -2557,44 +2569,23 @@ impl Workspace {
             None => format!("{}{age}", self.project_name(&s.cwd)),
         };
         let size = t.layout.rail_session;
-        let ring = kind.color(&p);
-        let gap = t.stroke.focus;
-        let outer = size + 2. * (gap + t.stroke.focus);
-        let halo = (kind == StatusKind::Working).then(|| {
-            super::motion::looping(
-                std::time::Duration::from_millis(t.motion.pulse_ms as u64),
-                1.,
-            )
-        });
+        // r3-foundation: no second ring colour; the status is the R3.1
+        // glyph as a corner badge.
+        let outer = size + 4. * t.stroke.focus;
         let card = hover_card(title.clone(), StatusBadge::new(kind), meta, p);
         let mark = div()
-            .relative()
             .size(px(outer))
             .flex_shrink_0()
             .flex()
             .items_center()
             .justify_center()
-            .when_some(halo, |d, beat| {
-                let grow = t.space.xs * beat;
-                d.child(
-                    div()
-                        .absolute()
-                        .top(px(-grow))
-                        .left(px(-grow))
-                        .size(px(outer + 2. * grow))
-                        .rounded(px(t.radius.panel))
-                        .bg(primitives::wash(ring, t.elevation.glow_alpha * (1. - beat))),
-                )
-            })
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .rounded(px(t.radius.panel))
-                    .border(px(t.stroke.focus))
-                    .border_color(rgb(ring)),
-            )
-            .child(primitives::avatar_tile_sized(&title, size, &p));
+            .child(primitives::avatar_with_status(
+                &title,
+                size,
+                Some(kind),
+                p.base,
+                &p,
+            ));
         div()
             .relative()
             .h(px(t.layout.rail_row))
@@ -2790,7 +2781,7 @@ impl Workspace {
                             "shortcuts-close",
                             IconName::Close,
                             "Close",
-                            ButtonVariant::Ghost,
+                            ButtonVariant::Tertiary,
                             true,
                             &p,
                         )

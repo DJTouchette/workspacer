@@ -1044,7 +1044,7 @@ impl Workspace {
                             "welcome-setup",
                             "Set up agents",
                             None,
-                            ButtonVariant::TERTIARY,
+                            ButtonVariant::Tertiary,
                             ButtonSize::Small,
                             true,
                             &p,
