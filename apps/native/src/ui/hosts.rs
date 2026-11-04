@@ -823,8 +823,7 @@ impl Workspace {
                     chrome::notice_line(e, chrome::Tone::Error, p)
                         .debug_selector(|| "hosts-cancel-error".into()),
                 )
-            })
-            .child(primitives::section_label("Machines", &p));
+            });
         for (ix, card) in cards.iter().enumerate() {
             page = page.child(self.render_host_v2(ix, card, limits.as_ref(), cx));
         }
@@ -833,7 +832,7 @@ impl Workspace {
                 div()
                     .text_size(px(t.text.meta))
                     .text_color(rgb(p.roles.text_tertiary))
-                    .child("No other machines yet. Machines this hub connects to show here with their own queues."),
+                    .child("No other machines yet. Machines you connect show here, with the work waiting for each."),
             );
         }
         page.child(
@@ -1359,27 +1358,25 @@ fn load_word(value: Option<f64>, limit: f64) -> &'static str {
     }
 }
 
-/// The machine's one-line summary: agent slots free and queued work.
+// r2-pages: plain words ("3 of 4 agents free · 2 waiting"); only an
+// exception ("Not taking new work") is said about dispatch.
+/// The machine's one-line summary: agents free and work waiting.
 fn host_summary(card: &Card) -> String {
     let mut parts = Vec::new();
-    if !card.local {
-        match card.dispatch {
-            Some(true) => parts.push("Takes work from this hub".to_owned()),
-            Some(false) => parts.push("Not taking work from this hub".to_owned()),
-            None => {}
-        }
+    if !card.local && card.dispatch == Some(false) {
+        parts.push("Not taking new work".to_owned());
     }
     match &card.resources {
         Some(r) => {
             if let (Some(free), Some(slots)) = (r.free_agents(), r.agent_slots) {
                 parts.push(format!(
-                    "{free} of {slots} agent slot{} free",
+                    "{free} of {slots} agent{} free",
                     if slots == 1 { "" } else { "s" }
                 ));
             }
             match r.queued {
                 Some(0) | None => {}
-                Some(n) => parts.push(format!("{n} queued")),
+                Some(n) => parts.push(format!("{n} waiting")),
             }
         }
         None if card.connected == Some(false) => parts.push("Not connected".to_owned()),

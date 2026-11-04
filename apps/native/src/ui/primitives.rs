@@ -563,14 +563,12 @@ pub(crate) fn empty_state(
         })
 }
 
-/// A label naming a group of rows or cards: the contract's
-/// [`section_header`] (sentence case 12/600; r2-systems retired the
-/// uppercase overline).
+/// The one section header naming a group of rows or cards: the contract's
+/// [`section_header`] (sentence case 12/600; no uppercase overline), flush
+/// with the content edge so every page shares one left edge (r2-pages).
 pub(crate) fn section_label(label: impl Into<SharedString>, p: &Palette) -> Div {
     let t = p.tokens;
-    section_header(label, None, p)
-        .px(px(t.space.xs))
-        .pb(px(t.space.xs))
+    section_header(label, None, p).pb(px(t.space.xs))
 }
 
 /// The raised surface for grouped content, padded. `chrome::card` is v1's.

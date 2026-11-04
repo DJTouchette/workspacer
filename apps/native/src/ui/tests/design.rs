@@ -62,6 +62,8 @@ fn design_v2_switch_rethemes_and_switching_off_restores_v1(cx: &mut TestAppConte
                 );
             }
             this.set_appearance(Appearance::Nord, window, cx);
+            // r2-pages: under v2 the switch lives in Settings → Labs.
+            this.settings_section = settings::SettingsSection::Labs;
         })
     });
     visual.run_until_parked();

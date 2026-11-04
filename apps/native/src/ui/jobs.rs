@@ -15,6 +15,8 @@ use wks_native::timing::now_ms;
 
 pub(super) const JOBS_DESCRIPTION: &str =
     "Work the hub runs on a schedule, even while this window is closed.";
+// r2-pages: agrees with the New job button, which asks an agent to write one.
+const JOBS_FOOTER_V2: &str = "New job asks an agent to write one for you. Anything an agent proposes waits here, switched off, until you approve it.";
 const JOBS_FOOTER: &str = "To add or change a job, ask any agent. What it proposes waits here, switched off, until you approve it.";
 const NO_JOBS_TITLE: &str = "No jobs yet";
 const NO_JOBS: &str = "Ask any agent for one, for example “every weekday at 7, run the tests and wake an agent if anything fails.” What it proposes waits here until you approve it.";
@@ -702,80 +704,87 @@ impl Workspace {
             when = format!("{when} · proposed by {}", job.proposed_by);
         }
         let toggle = job.id.clone();
-        let header = div()
-            .id(("job-row", ix))
-            .min_w_0()
-            .px_4()
-            .py_3()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap_3()
-            .cursor_pointer()
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx)))
-            .child(
-                Icon::new(if expanded {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                })
-                .size(px(12.))
-                .flex_shrink_0()
-                .text_color(rgb(p.muted)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(220.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(chrome::scale::BODY))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(if paused { p.muted } else { p.text }))
-                                    .child(job.name.clone()),
-                            )
-                            .children(self.job_chip(job, p))
-                            .child(div().flex_1())
-                            .child(self.job_status(job, now))
-                            .children((!proposal).then(|| self.run_strip(&job.id, runs)).flatten()),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(chrome::scale::META))
-                            .text_color(rgb(if paused { p.muted } else { p.prose }))
-                            .child(when),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .font_family(mono_font())
-                            .text_size(px(chrome::scale::CAPTION))
-                            .text_color(rgb(p.muted))
-                            .debug_selector(move || format!("job-action-{ix}"))
-                            .child(if job.host().is_empty() {
-                                job.action_summary()
-                            } else {
-                                // Queued work says where; inline is the default
-                                // and stays unsaid (Details shows it).
-                                format!("{} · {}", job.action_summary(), job.host_label())
-                            }),
-                    ),
-            )
-            .child(self.job_actions(ix, job, target, cx));
+        // r2-pages: v2 reads as a sentence, the command in an inset.
+        let header = if self.design().is_v2() {
+            self.job_header_v2(ix, job, target, when, runs, expanded, paused, cx)
+        } else {
+            div()
+                .id(("job-row", ix))
+                .min_w_0()
+                .px_4()
+                .py_3()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_3()
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx)))
+                .child(
+                    Icon::new(if expanded {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    })
+                    .size(px(12.))
+                    .flex_shrink_0()
+                    .text_color(rgb(p.muted)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(220.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(3.))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .min_w_0()
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_size(px(chrome::scale::BODY))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(if paused { p.muted } else { p.text }))
+                                        .child(job.name.clone()),
+                                )
+                                .children(self.job_chip(job, p))
+                                .child(div().flex_1())
+                                .child(self.job_status(job, now))
+                                .children(
+                                    (!proposal).then(|| self.run_strip(&job.id, runs)).flatten(),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(chrome::scale::META))
+                                .text_color(rgb(if paused { p.muted } else { p.prose }))
+                                .child(when),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .font_family(mono_font())
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.muted))
+                                .debug_selector(move || format!("job-action-{ix}"))
+                                .child(if job.host().is_empty() {
+                                    job.action_summary()
+                                } else {
+                                    // Queued work says where; inline is the default
+                                    // and stays unsaid (Details shows it).
+                                    format!("{} · {}", job.action_summary(), job.host_label())
+                                }),
+                        ),
+                )
+                .child(self.job_actions(ix, job, target, cx))
+        };
         if self.design().is_v2() {
             let t = p.tokens;
             let card = primitives::card(&p)
@@ -826,6 +835,110 @@ impl Workspace {
                     .w(px(3.))
                     .bg(rgb(p.warning)),
             )
+    }
+
+    // r2-pages
+    /// A v2 job row: name with its state, the schedule, a plain sentence of
+    /// what it does, the command in a mono inset, and actions on the right.
+    #[allow(clippy::too_many_arguments)]
+    fn job_header_v2(
+        &self,
+        ix: usize,
+        job: &Job,
+        target: Option<&Job>,
+        when: String,
+        runs: Option<&[Run]>,
+        expanded: bool,
+        paused: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = self.palette();
+        let t = p.tokens;
+        let now = now_ms();
+        let toggle = job.id.clone();
+        let (sentence, command) = job.describe();
+        let dim = |c: u32| if paused { p.roles.text_tertiary } else { c };
+        div()
+            .id(("job-row", ix))
+            .min_w_0()
+            .px(px(t.space.xl))
+            .py(px(t.space.lg))
+            .flex()
+            .items_start()
+            .gap(px(t.space.lg))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx)))
+            .child(
+                div()
+                    .h(px(t.text.subheading * t.text.line_height))
+                    .flex()
+                    .items_center()
+                    .child(
+                        Icon::new(if expanded {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .size(px(t.icon.sm))
+                        .text_color(rgb(p.roles.text_tertiary)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(t.space.xs))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.md))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(t.text.subheading))
+                                    .font_weight(FontWeight(t.weight.semibold))
+                                    .text_color(rgb(dim(p.text)))
+                                    .child(job.name.clone()),
+                            )
+                            .children(self.job_chip(job, p))
+                            .child(div().flex_1())
+                            .child(self.job_status(job, now))
+                            .children(
+                                (!job.proposal())
+                                    .then(|| self.run_strip(&job.id, runs))
+                                    .flatten(),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(t.text.body))
+                            .text_color(rgb(dim(p.roles.text_secondary)))
+                            .child(format!("{when} · {sentence}")),
+                    )
+                    .children(command.map(|command| {
+                        div()
+                            .debug_selector(move || format!("job-action-{ix}"))
+                            .mt(px(t.space.xs))
+                            .min_w_0()
+                            .px(px(t.space.md))
+                            .py(px(t.space.xs))
+                            .rounded(px(t.radius.sm))
+                            .bg(primitives::tonal(&p, t.wash.rest))
+                            .font_family(mono_font())
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(dim(p.roles.text_secondary)))
+                            .truncate()
+                            .child(format!("$ {command}"))
+                    })),
+            )
+            .child(self.job_actions(ix, job, target, cx))
     }
 
     /// The state beside a job's name: waiting for approval, running, or
@@ -1519,9 +1632,7 @@ impl Workspace {
         let mut page = page;
         for (ix, job) in rows.iter().enumerate() {
             if waiting > 0 && ix == 0 {
-                page = page.child(
-                    primitives::section_label("Needs your approval", &p).text_color(rgb(p.warning)),
-                );
+                page = page.child(primitives::section_label("Needs your approval", &p));
             } else if waiting > 0 && ix == waiting {
                 page = page.child(primitives::section_label("Scheduled", &p).pt(px(t.space.lg)));
             }
@@ -1532,7 +1643,7 @@ impl Workspace {
                 .pt(px(t.space.xs))
                 .text_size(px(t.text.meta))
                 .text_color(rgb(p.roles.text_tertiary))
-                .child(JOBS_FOOTER),
+                .child(JOBS_FOOTER_V2),
         )
     }
 

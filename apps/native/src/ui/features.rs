@@ -72,6 +72,10 @@ pub(super) struct Extras {
     pub launch_host: wks_native::hosts::HostChoice,
     /// "Queue if busy" for This machine: submit through the queue instead.
     pub launch_queue: bool,
+    // r2-pages
+    /// Design v2's New session: which chip's choices are open under the
+    /// task box (one at a time; `None` keeps the form short).
+    pub launch_panel: Option<super::launch::LaunchPanel>,
     /// The project folder chosen on a peer (from its target's `cwds`).
     pub launch_host_cwd: String,
     /// The user picked `launch_host_cwd` themselves: a later targets read
@@ -284,6 +288,7 @@ impl Extras {
             limits_after: 0,
             launch_host: Default::default(),
             launch_queue: false,
+            launch_panel: None,
             launch_host_cwd: String::new(),
             launch_host_cwd_picked: false,
             targets_seen: 0,
@@ -784,7 +789,16 @@ impl Workspace {
                 "Session history",
                 Some("Every session this connection knows about, including ended ones.".into()),
             ),
+            // r2-pages: no "hub" in v2's default copy.
+            Screen::Jobs if self.design().is_v2() => (
+                "Jobs",
+                Some("Work that runs on a schedule, even while this window is closed.".into()),
+            ),
             Screen::Jobs => ("Jobs", Some(super::jobs::JOBS_DESCRIPTION.into())),
+            // r2-pages: v2 says "Machines".
+            Screen::Hosts if self.design().is_v2() => {
+                ("Machines", Some(super::hosts::HOSTS_DESCRIPTION.into()))
+            }
             Screen::Hosts => ("Hosts", Some(super::hosts::HOSTS_DESCRIPTION.into())),
             Screen::Scratch => ("Scratch", Some(super::scratch::SCRATCH_DESCRIPTION.into())),
             Screen::History => ("Conversation history", Some(HISTORY_DESCRIPTION.into())),
@@ -1615,6 +1629,9 @@ impl Workspace {
 
     /// One provider: whether it is installed, and its connection check.
     fn render_setup_card(&self, provider: &'static str, cx: &mut Context<Self>) -> Div {
+        if self.design().is_v2() {
+            return self.render_setup_card_v2(provider, cx);
+        }
         let p = self.palette();
         let state = self.view.requests.get("setup");
         let busy = state.is_some_and(|s| s.loading);
@@ -1818,6 +1835,193 @@ impl Workspace {
                     .child(instructions),
             )
             .child(check)
+            .when(current && !busy, |d| {
+                d.when_some(state.and_then(|s| s.error.as_ref()), |d, error| {
+                    d.child(chrome::notice_line(error.clone(), chrome::Tone::Error, p))
+                })
+                .when_some(value["readinessError"].as_str(), |d, error| {
+                    d.child(chrome::notice_line(
+                        error.to_owned(),
+                        chrome::Tone::Warning,
+                        p,
+                    ))
+                })
+            })
+    }
+
+    // r2-pages: R2.3 one state set (Ready / Needs sign-in / Not installed),
+    // copy matched to the state, and the command to run, copyable.
+    fn render_setup_card_v2(&self, provider: &'static str, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let state = self.view.requests.get("setup");
+        let busy = state.is_some_and(|s| s.loading);
+        let can_check = !busy && self.view.connected;
+        let value = state.map(|s| s.value.as_ref()).unwrap_or(&Value::Null);
+        let claude = provider == "claude";
+        let found = value["installed"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|r| r["provider"] == provider))
+            .and_then(|r| r["found"].as_bool());
+        let current = state.is_some_and(|s| {
+            matches!(&s.request, Request::Setup { provider: checked, .. } if checked == provider)
+        });
+        let checking = busy && current;
+        let readiness = if current && !busy {
+            value["readiness"]["state"].as_str().unwrap_or("unchecked")
+        } else {
+            "unchecked"
+        };
+        let setup = SetupState::of(found, readiness);
+        let (install, sign_in) = if claude {
+            ("npm install -g @anthropic-ai/claude-code", "claude")
+        } else {
+            ("npm install -g @openai/codex", "codex login")
+        };
+        let name = if claude { "Claude" } else { "Codex" };
+        let (sentence, command): (String, Option<&'static str>) = match setup {
+            SetupState::NotInstalled => (
+                format!(
+                    "{name} isn't installed on this machine. Run this in a terminal, then check again:"
+                ),
+                Some(install),
+            ),
+            SetupState::NeedsSignIn => (
+                format!("{name} is installed. Sign in by running this in a terminal:"),
+                Some(sign_in),
+            ),
+            SetupState::Ready if readiness == "responding" => (
+                format!("{name} is installed, signed in and answering."),
+                None,
+            ),
+            SetupState::Ready => (
+                format!("{name} is installed. Check the connection to confirm you're signed in."),
+                None,
+            ),
+            SetupState::Problem(why) => (why.to_owned(), None),
+            SetupState::Unknown => ("Looking for it on this machine…".to_owned(), None),
+        };
+        let badge = if checking {
+            StatusBadge::new(StatusKind::Working).label("Checking…")
+        } else {
+            setup.badge()
+        };
+        let copy_id = SharedString::from(format!("setup-copy-{provider}"));
+        let inset = command.map(|command| {
+            div()
+                .debug_selector(move || format!("setup-command-{provider}"))
+                .flex()
+                .items_center()
+                .gap(px(t.space.md))
+                .pl(px(t.space.lg))
+                .pr(px(t.space.xs))
+                .py(px(t.space.xs))
+                .rounded(px(t.radius.control))
+                .bg(primitives::tonal(&p, t.wash.rest))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .font_family(mono_font())
+                        .text_size(px(t.text.mono))
+                        .text_color(rgb(p.text))
+                        .child(format!("$ {command}")),
+                )
+                .child(
+                    primitives::button(
+                        copy_id.clone(),
+                        "Copy",
+                        Some(IconName::Copy),
+                        ButtonVariant::Ghost,
+                        ButtonSize::Small,
+                        true,
+                        &p,
+                    )
+                    .debug_selector(move || format!("setup-copy-{provider}"))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(command.to_owned()))
+                    })),
+                )
+        });
+        let check = primitives::button(
+            if claude {
+                "setup-claude"
+            } else {
+                "setup-codex"
+            },
+            if checking {
+                "Checking…"
+            } else {
+                "Check connection"
+            },
+            None,
+            ButtonVariant::Secondary,
+            ButtonSize::Small,
+            can_check && setup != SetupState::NotInstalled,
+            &p,
+        )
+        .debug_selector(move || format!("setup-{provider}"))
+        .when(can_check && setup != SetupState::NotInstalled, |d| {
+            d.on_click(cx.listener(move |this, _, _, cx| {
+                let provider = provider.into();
+                this.request(
+                    Request::Setup {
+                        provider,
+                        check: true,
+                    },
+                    cx,
+                )
+            }))
+        });
+        primitives::card(&p)
+            .debug_selector(move || format!("setup-card-{provider}"))
+            .gap(px(t.space.lg))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(t.space.lg))
+                    .child(chrome::provider_mark(provider, t.layout.avatar_lg, p))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(t.space.xxs))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(t.space.md))
+                                    .child(
+                                        div()
+                                            .text_size(px(t.text.subheading))
+                                            .font_weight(FontWeight(t.weight.semibold))
+                                            .text_color(rgb(p.text))
+                                            .child(name),
+                                    )
+                                    .child(
+                                        div()
+                                            .debug_selector(move || {
+                                                format!("setup-installed-{provider}")
+                                            })
+                                            .child(badge.render(&p)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(t.text.body))
+                                    .line_height(gpui::relative(t.text.line_height))
+                                    .text_color(rgb(p.roles.text_secondary))
+                                    .child(sentence),
+                            ),
+                    )
+                    // Nothing to check until it is installed.
+                    .when(setup != SetupState::NotInstalled, |d| d.child(check)),
+            )
+            .children(inset.map(|inset| div().pl(px(t.layout.avatar_lg + t.space.lg)).child(inset)))
             .when(current && !busy, |d| {
                 d.when_some(state.and_then(|s| s.error.as_ref()), |d, error| {
                     d.child(chrome::notice_line(error.clone(), chrome::Tone::Error, p))
@@ -2391,10 +2595,14 @@ impl Workspace {
                     .into_any_element(),
                 self.new_job_button(cx).into_any_element(),
             ],
+            // r2-pages: the page's one Refresh re-reads the project links too.
             Screen::Hosts => vec![
                 refresh("hosts-refresh")
                     .when(connected, |d| {
-                        d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Hosts, cx)))
+                        d.on_click(cx.listener(|this, _, _, cx| {
+                            this.request(Request::Hosts, cx);
+                            this.request(Request::ProjectLinks, cx);
+                        }))
                     })
                     .into_any_element(),
             ],
@@ -2409,11 +2617,12 @@ impl Workspace {
                 let can_check =
                     connected && !self.view.requests.get("setup").is_some_and(|s| s.loading);
                 vec![
+                    // r2-pages: one style for every page's refresh.
                     primitives::button(
                         "setup-refresh",
                         "Check again",
                         Some(IconName::Redo),
-                        ButtonVariant::Secondary,
+                        ButtonVariant::Ghost,
                         ButtonSize::Small,
                         can_check,
                         &p,
@@ -2451,6 +2660,50 @@ impl Workspace {
                 .into_iter()
                 .collect(),
             _ => Vec::new(),
+        }
+    }
+}
+
+// r2-pages
+/// One agent's setup, in the one state set Setup, the welcome and the
+/// sidebar share: Ready / Needs sign-in / Not installed (plus a failed
+/// check, and "not read yet").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SetupState {
+    Ready,
+    NeedsSignIn,
+    NotInstalled,
+    /// Installed, but the connection check failed for another reason.
+    Problem(&'static str),
+    Unknown,
+}
+
+impl SetupState {
+    /// From `setup.installed[].found` and the last readiness check.
+    pub(super) fn of(found: Option<bool>, readiness: &str) -> Self {
+        match (found, readiness) {
+            (Some(false), _) => Self::NotInstalled,
+            (_, "unauthenticated") => Self::NeedsSignIn,
+            (_, "limited") => {
+                Self::Problem("Signed in, but the account has reached its usage limit.")
+            }
+            (_, "timeout") => Self::Problem("The connection check timed out. Try it again."),
+            (_, "network-error") => {
+                Self::Problem("The network is unavailable, so the check couldn't run.")
+            }
+            (Some(true), "responding" | "unchecked" | "unsupported") => Self::Ready,
+            (Some(true), _) => Self::Problem("The connection check failed. Try it again."),
+            (None, _) => Self::Unknown,
+        }
+    }
+
+    pub(super) fn badge(self) -> StatusBadge {
+        match self {
+            Self::Ready => StatusBadge::new(StatusKind::Done).label("Ready"),
+            Self::NeedsSignIn => StatusBadge::new(StatusKind::NeedsYou).label("Needs sign-in"),
+            Self::NotInstalled => StatusBadge::new(StatusKind::Idle).label("Not installed"),
+            Self::Problem(_) => StatusBadge::new(StatusKind::Failed).label("Check failed"),
+            Self::Unknown => StatusBadge::new(StatusKind::Idle).label("Not checked"),
         }
     }
 }

@@ -198,6 +198,10 @@ impl Workspace {
         let resume = self.extras.resume.is_some();
         // Two columns only where both stay readable beside the sidebar.
         let wide = window.viewport_size().width >= px(1100.);
+        // r2-pages: v2 is task-first (R2.6).
+        if let Some(p) = self.v2_palette() {
+            return self.render_new_session_v2(window, busy, can_create, wide, p, cx);
+        }
         // Short windows give the form, not the heading, the height.
         let short = window.viewport_size().height < px(620.);
         let v2 = self.v2_palette();
@@ -690,6 +694,9 @@ impl Workspace {
                 p.warning,
                 "Waiting for the hub connection…".into(),
             )
+        } else if self.design().is_v2() && project.is_some() {
+            // r2-pages: the chips in the task box already say it.
+            (None, p.muted, String::new())
         } else if let Some(project) = &project {
             (None, p.muted, format!("{provider} · {model} · {project}"))
         } else {
@@ -766,6 +773,19 @@ impl Workspace {
                         }),
                     ),
             );
+        // r2-pages: v2 ends the form with a plain row under the task.
+        if let Some(v2) = self.v2_palette() {
+            return div()
+                .debug_selector(|| "launch-footer".into())
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(v2.tokens.space.md))
+                .when(detailed, |d| {
+                    d.child(self.render_launch_error(uncertain, short))
+                })
+                .child(row);
+        }
         // The shared card surface, raised like the chat composer: the one
         // action dock on this page, not a separate band at the window edge.
         chrome::card(p)
@@ -1756,7 +1776,8 @@ struct HostCard {
 fn host_cards(targets: &hosts::Targets) -> Vec<HostCard> {
     let status = |t: &hosts::Target| -> (StatusBadge, bool) {
         if !t.local && !t.connected {
-            return (StatusBadge::new(StatusKind::Idle).label("Offline"), true);
+            // r2-pages: R2.1 offline is a fault, as on Machines.
+            return (StatusBadge::new(StatusKind::Failed).label("Offline"), true);
         }
         if !t.local && !t.eligible {
             let why = t.reasons.first().cloned().unwrap_or_else(|| {
@@ -1836,7 +1857,7 @@ impl Workspace {
             (_, false) => "No machine can take it now".to_owned(),
             (Some(best), true) if best == hosts::LOCAL => "Now: this machine".to_owned(),
             (Some(best), true) => format!("Now: {best}"),
-            (None, true) => "The hub picks when it starts".to_owned(),
+            (None, true) => "Chosen when it starts".to_owned(),
         };
         let cards = host_cards(&targets);
         let card_views = cards.into_iter().enumerate().map(|(ix, card)| {
@@ -1917,7 +1938,7 @@ impl Workspace {
                                 .items_center()
                                 .gap(px(t.space.md))
                                 .tooltip(primitives::tooltip_view(
-                                    format!("Let the hub place it on the best machine. {best_now}"),
+                                    format!("Starts it on whichever machine has room. {best_now}"),
                                     None,
                                     &p,
                                 ))
@@ -1925,7 +1946,7 @@ impl Workspace {
                                     div()
                                         .text_size(px(t.text.body))
                                         .text_color(rgb(p.roles.text_secondary))
-                                        .child("Auto-place"),
+                                        .child("Pick a machine for me"),
                                 )
                                 .child(
                                     Switch::new("launch-auto-place-switch")
@@ -1967,9 +1988,7 @@ impl Workspace {
                             .debug_selector(|| "launch-auto-place-note".into())
                             .text_size(px(t.text.meta))
                             .text_color(rgb(p.roles.text_secondary))
-                            .child(format!(
-                                "The hub places it on the best machine. {best_now}."
-                            )),
+                            .child(format!("Starts on whichever machine has room. {best_now}.")),
                     )
                 })
                 .when(local, |d| {
@@ -1998,11 +2017,340 @@ impl Workspace {
                                 div()
                                     .text_size(px(t.text.meta))
                                     .text_color(rgb(p.roles.text_tertiary))
-                                    .child("Waits for a free slot instead of starting now"),
+                                    .child("Waits for a free agent instead of starting now"),
                             ),
                     )
                 }),
         )
+    }
+}
+
+// r2-pages: R2.6 task-first New session. The task box leads; machine,
+// project, agent and model follow as chips inside it (the Codex pattern),
+// and a chip opens its choices in one card below.
+
+/// Which chip's choices are open under the task box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchPanel {
+    Machine,
+    Project,
+    Agent,
+}
+
+impl Workspace {
+    fn render_new_session_v2(
+        &self,
+        window: &Window,
+        busy: bool,
+        can_create: bool,
+        wide: bool,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let t = p.tokens;
+        let short = window.viewport_size().height < px(620.);
+        let resume = self.extras.resume.is_some();
+        let close =
+            primitives::icon_button_with_shortcut(
+                "cancel-create",
+                IconName::Close,
+                "Back to the conversation",
+                Some("Esc"),
+                ButtonVariant::Ghost,
+                !busy,
+                &p,
+            )
+            .when(!busy, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| {
+                    this.show_screen(Screen::Conversation, window, cx)
+                }))
+            });
+        let header = primitives::page_header(
+            None,
+            if resume {
+                "Continue a session"
+            } else {
+                "New session"
+            },
+            Some(if resume {
+                "Pick up where you left off, on the same agent and folder.".into()
+            } else {
+                "Say what you want done. Where it runs and which agent works on it are below the task."
+                    .into()
+            }),
+            vec![close.into_any_element()],
+            &p,
+        )
+        .debug_selector(|| "launch-title".into());
+        // No project yet: its picker is the one thing to do first.
+        let panel = if self.projects.cwd.is_empty() && self.launch_peer().is_none() {
+            Some(LaunchPanel::Project)
+        } else {
+            self.extras.launch_panel
+        };
+        let task = div()
+            .debug_selector(|| "launch-task".into())
+            .w_full()
+            .flex()
+            .flex_col()
+            .rounded(px(t.radius.composer))
+            .bg(rgb(p.surface))
+            .border(px(t.stroke.hairline))
+            .border_color(rgb(p.roles.border_strong))
+            .shadow(primitives::elevation(&p, t.elevation.raised))
+            .child(
+                div()
+                    .debug_selector(|| "launch-prompt".into())
+                    .px(px(t.space.xl))
+                    .pt(px(t.space.lg))
+                    .min_h(px(t.layout.control_height * 3.))
+                    .flex()
+                    .flex_col()
+                    .text_size(px(t.text.ui))
+                    .child(
+                        Input::new(&self.prompt)
+                            .appearance(false)
+                            .flex_1()
+                            .min_h(px(t.layout.control_height * 3.))
+                            .disabled(busy),
+                    ),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "launch-chips".into())
+                    .px(px(t.space.md))
+                    .py(px(t.space.md))
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(t.space.xs))
+                    .children(self.launch_chips_v2(panel, busy, &p, cx))
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .px(px(t.space.sm))
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_tertiary))
+                            .child(if resume {
+                                "Optional · sent after it resumes"
+                            } else {
+                                "Optional · you can start empty"
+                            }),
+                    ),
+            );
+        let panel_card = panel.and_then(|panel| {
+            let body = match panel {
+                LaunchPanel::Machine => self.render_host_picker_v2(busy, cx)?,
+                LaunchPanel::Project => match self.launch_peer() {
+                    Some(peer) => self.render_peer_folders(&peer, busy, cx),
+                    None => self.render_project_section(busy, cx),
+                },
+                LaunchPanel::Agent => div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(t.space.lg))
+                    .child(card_title("Agent", &p))
+                    .child(self.render_provider_choice(busy, cx))
+                    .child(self.render_model_select(busy, true, cx)),
+            };
+            Some(
+                primitives::card(&p)
+                    .debug_selector(|| "launch-panel".into())
+                    .gap(px(t.space.lg))
+                    .child(body),
+            )
+        });
+        let gutter = if short {
+            t.space.lg
+        } else {
+            t.layout.page_gutter
+        };
+        let content = div()
+            .debug_selector(|| "launch-content".into())
+            .w_full()
+            .max_w(px(self.launch_width(wide)))
+            .mx_auto()
+            .pt(px(if short { 0. } else { t.layout.page_top }))
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xl))
+            .child(header)
+            .child(task)
+            .children(panel_card)
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(t.space.lg))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(self.render_launch_disclosure(busy, cx)),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .max_w(px(t.layout.page_width / 2.))
+                            .child(self.render_launch_footer(busy, can_create, wide, short, cx)),
+                    ),
+            )
+            .when(resume, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.sm))
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary))
+                        .child(Icon::new(IconName::Info).size(px(t.icon.sm)))
+                        .child(
+                            "Your previous conversation will be resumed with the choices above.",
+                        ),
+                )
+            });
+        div()
+            .id("new-session-form")
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .id("launch-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(px(gutter))
+                    .pb(px(gutter))
+                    .when(chrome::custom_caption(), |d| {
+                        d.pt(px(chrome::PAGE_CAPTION_INSET))
+                    })
+                    .child(content),
+            )
+            .children(chrome::page_drag_strip())
+    }
+
+    /// The chips inside the task box: machine (when the hub has a queue),
+    /// project, agent and model. Each opens its choices below; the open one
+    /// reads as selected.
+    fn launch_chips_v2(
+        &self,
+        open: Option<LaunchPanel>,
+        busy: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let t = p.tokens;
+        let chip = |id: &'static str,
+                    panel: LaunchPanel,
+                    leading: Option<gpui::AnyElement>,
+                    label: String,
+                    tooltip: &'static str| {
+            let selected = open == Some(panel);
+            primitives::toolbar_chip(id, leading, label, true, !busy, p)
+                .debug_selector(move || id.into())
+                .when(selected, |d| d.bg(rgb(p.selected)).text_color(rgb(p.text)))
+                .tooltip(primitives::tooltip_view(tooltip, None, p))
+                .when(!busy, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        this.extras.launch_panel =
+                            (this.extras.launch_panel != Some(panel)).then_some(panel);
+                        cx.notify();
+                    }))
+                })
+                .into_any_element()
+        };
+        let icon = |name: IconName| {
+            Some(
+                Icon::new(name)
+                    .size(px(t.icon.sm))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .into_any_element(),
+            )
+        };
+        let mut chips = Vec::new();
+        if self.extras.resume.is_none() && self.launch_targets().is_some() {
+            let machine = match &self.extras.launch_host {
+                HostChoice::Best => "Pick a machine for me".to_owned(),
+                HostChoice::Local => "This machine".to_owned(),
+                HostChoice::Peer(peer) => peer.clone(),
+            };
+            chips.push(chip(
+                "launch-chip-machine",
+                LaunchPanel::Machine,
+                icon(IconName::LayoutDashboard),
+                machine,
+                "Where it runs",
+            ));
+        }
+        let cwd = match self.launch_peer() {
+            Some(_) => self.extras.launch_host_cwd.clone(),
+            None => self.projects.cwd.clone(),
+        };
+        let project = if cwd.is_empty() {
+            "Choose a project".to_owned()
+        } else {
+            self.known_project(&cwd)
+                .map(|p| p.title().to_owned())
+                .unwrap_or_else(|| wks_native::projects::basename(&cwd).to_owned())
+        };
+        chips.push(chip(
+            "launch-chip-project",
+            LaunchPanel::Project,
+            icon(IconName::Folder),
+            project,
+            "The project's folder",
+        ));
+        let provider = if self.provider == "codex" {
+            "Codex"
+        } else {
+            "Claude"
+        };
+        chips.push(chip(
+            "launch-chip-agent",
+            LaunchPanel::Agent,
+            Some(chrome::provider_glyph(self.provider, t.icon.sm, *p)),
+            provider.to_owned(),
+            "The agent that works on it",
+        ));
+        let model = match self.model_choice.as_str() {
+            "__custom" => {
+                let typed = self.model.read(cx).value().trim().to_owned();
+                if typed.is_empty() {
+                    "Custom model".to_owned()
+                } else {
+                    wks_native::model::model_display_name(&typed)
+                }
+            }
+            "" => self
+                .catalog_models
+                .iter()
+                .find(|m| m.is_default)
+                .map(|m| wks_native::model::model_display_name(&m.id))
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "Default model".to_owned()),
+            id => wks_native::model::model_display_name(id),
+        };
+        let model = if self.effort.is_empty() {
+            model
+        } else {
+            let mut effort = self.effort.clone();
+            if let Some(first) = effort.get(0..1) {
+                effort = first.to_uppercase() + &effort[1..];
+            }
+            format!("{model} · {effort}")
+        };
+        chips.push(chip(
+            "launch-chip-model",
+            LaunchPanel::Agent,
+            None,
+            model,
+            "Model and effort",
+        ));
+        chips
     }
 }
 
