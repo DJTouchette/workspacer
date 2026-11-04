@@ -1143,6 +1143,7 @@ impl Worker {
                 | "file-save"
                 | "job-action"
                 | "host-action"
+                | "link-action"
                 | "queue-submit"
                 | "scratch-mark"
                 | "project-group-save"
@@ -1202,6 +1203,15 @@ impl Worker {
                     ..
                 }),
             ) if url == before => value.clone(),
+            // Hosts' launch targets and project links stay on screen while a
+            // re-read (another folder, a refresh, a link change) is running.
+            (
+                crate::features::Request::QueueTargets { .. }
+                | crate::features::Request::ProjectLinks,
+                Some(crate::features::RequestState {
+                    value, error: None, ..
+                }),
+            ) => value.clone(),
             _ => Arc::new(Value::Null),
         };
         self.view.requests.insert(
@@ -1731,9 +1741,13 @@ impl Worker {
                 self.request(crate::features::Request::OpenSessions);
                 // Where a launch could run: the New Agent host picker shows
                 // only when this hub answers (older hubs have no queue).
-                self.request(crate::features::Request::QueueTargets { provider: None });
+                self.request(crate::features::Request::QueueTargets {
+                    provider: None,
+                    cwd: None,
+                });
                 if self.hosts_watch {
                     self.request(crate::features::Request::Hosts);
+                    self.request(crate::features::Request::ProjectLinks);
                 }
                 let child = self.view.child.clone();
                 self.select(self.view.selected.clone()).await;
@@ -1751,6 +1765,14 @@ impl Worker {
                     if self.hosts_watch && self.view.hosts_live.apply(&topic, hub.as_deref(), &data)
                     {
                         self.dirty = true;
+                    }
+                    return;
+                }
+                // Saved project links changed on this hub (a forwarded peer's
+                // links are about its own projects): re-read the matrix.
+                if topic == "projects.linksChanged" {
+                    if self.hosts_watch && hub.as_deref().is_none_or(str::is_empty) {
+                        self.request(crate::features::Request::ProjectLinks);
                     }
                     return;
                 }
@@ -2273,6 +2295,10 @@ impl Worker {
                 if matches!(key, "hosts" | "host-action") && error.is_none() {
                     let snapshot = crate::hosts::Snapshot::parse(&value);
                     self.view.hosts_live.settle(&snapshot);
+                }
+                // A saved or removed link changes what the matrix resolves.
+                if key == "link-action" && error.is_none() && self.hosts_watch {
+                    self.request(crate::features::Request::ProjectLinks);
                 }
                 // An older page joins the list it was asked for; one asked
                 // for a list since replaced (a refresh) is dropped.
@@ -2918,6 +2944,7 @@ impl Worker {
         if self.hosts_watch {
             topics.insert("host.*".into());
             topics.insert("queue.*".into());
+            topics.insert("projects.*".into());
         }
         if let Some(id) = &self.view.selected {
             topics.insert(format!("agent.conversation.{id}"));

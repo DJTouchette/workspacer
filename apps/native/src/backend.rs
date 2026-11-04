@@ -121,13 +121,57 @@ impl Backend {
         self.call("queue.list", json!({"includePeers": include_peers}))
             .await
     }
-    /// Where a spawn could run, scored (`queue.targets`).
-    pub async fn queue_targets(&self, provider: Option<&str>) -> Result<Value> {
+    /// Where a spawn could run, scored (`queue.targets`); with `cwd`, each
+    /// target also resolves that local folder to its own path.
+    pub async fn queue_targets(&self, provider: Option<&str>, cwd: Option<&str>) -> Result<Value> {
         let mut params = json!({"kind": "spawn"});
         if let Some(provider) = provider.filter(|p| !p.is_empty()) {
             params["provider"] = json!(provider);
         }
+        if let Some(cwd) = cwd.filter(|c| !c.is_empty()) {
+            params["cwd"] = json!(cwd);
+        }
         self.call("queue.targets", params).await
+    }
+    // ---- project links (docs/host-work-queue.md, "Project links") -------
+
+    /// The saved links (`projects.links`).
+    pub async fn project_links(&self) -> Result<Value> {
+        self.call("projects.links", json!({})).await
+    }
+    /// Every local project against every peer (`projects.linkMatrix`).
+    pub async fn project_link_matrix(&self) -> Result<Value> {
+        self.call("projects.linkMatrix", json!({})).await
+    }
+    /// Use `peer_path` on `peer` for `local_path` (owner only).
+    pub async fn project_set_link(
+        &self,
+        local_path: &str,
+        peer: &str,
+        peer_path: &str,
+    ) -> Result<Value> {
+        self.call(
+            "projects.setLink",
+            json!({"localPath": local_path, "peer": peer, "peerPath": peer_path}),
+        )
+        .await
+    }
+    /// Forget the link for (`local_path`, `peer`) (owner only).
+    pub async fn project_remove_link(&self, local_path: &str, peer: &str) -> Result<Value> {
+        self.call(
+            "projects.removeLink",
+            json!({"localPath": local_path, "peer": peer}),
+        )
+        .await
+    }
+    /// The Hosts → Projects section's read: `{matrix, links}`, each the
+    /// method's result or `{"error": "..."}` (an older hub has neither).
+    pub async fn project_links_snapshot(&self) -> Value {
+        let (matrix, links) = tokio::join!(self.project_link_matrix(), self.project_links());
+        let part = |result: Result<Value>| {
+            result.unwrap_or_else(|error| json!({"error": error.to_string()}))
+        };
+        json!({"matrix": part(matrix), "links": part(links)})
     }
     /// Enqueue an item here, on a peer, or wherever fits (`queue.submit`).
     pub async fn queue_submit(&self, params: Value) -> Result<Value> {
@@ -156,7 +200,7 @@ impl Backend {
         let (resources, list, targets, config) = tokio::join!(
             self.host_resources(),
             self.queue_list(true),
-            self.queue_targets(None),
+            self.queue_targets(None, None),
             self.queue_config(),
         );
         let part = |result: Result<Value>| {

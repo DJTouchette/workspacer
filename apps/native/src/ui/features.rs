@@ -73,6 +73,17 @@ pub(super) struct Extras {
     pub launch_queue: bool,
     /// The project folder chosen on a peer (from its target's `cwds`).
     pub launch_host_cwd: String,
+    /// The user picked `launch_host_cwd` themselves: a later targets read
+    /// does not replace it with the resolved folder.
+    pub launch_host_cwd_picked: bool,
+    /// The newest `queue-targets` read already applied to the form.
+    pub targets_seen: u64,
+    /// "Link & use" on the form: the `link-action` number before it was
+    /// sent, the peer and its folder, selected once the link is saved.
+    pub link_use: Option<(u64, String, String)>,
+    /// The Hosts → Projects cell whose "Choose…" list is open, by (local
+    /// folder, peer).
+    pub link_choose: Option<(String, String)>,
     /// A `queue.submit` from the form is on its way.
     pub queue_sent: bool,
     pub queue_receipt: u64,
@@ -271,6 +282,10 @@ impl Extras {
             launch_host: Default::default(),
             launch_queue: false,
             launch_host_cwd: String::new(),
+            launch_host_cwd_picked: false,
+            targets_seen: 0,
+            link_use: None,
+            link_choose: None,
             queue_sent: false,
             queue_receipt: 0,
             job_confirm_remove: None,

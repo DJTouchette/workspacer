@@ -8,7 +8,9 @@
 //! fallback for events a peer did not forward.
 use super::*;
 use wks_native::features::{HostAction, Request};
-use wks_native::hosts::{self, Card, Item, Limits, Resources, Snapshot, State, Support};
+use wks_native::hosts::{
+    self, Card, HostChoice, Item, Limits, Resources, Snapshot, State, Support,
+};
 use wks_native::timing::now_ms;
 
 pub(super) const HOSTS_DESCRIPTION: &str =
@@ -30,6 +32,9 @@ impl Workspace {
     pub(super) fn open_hosts(&mut self, cx: &mut Context<Self>) {
         self.command(Command::WatchHosts(true), cx);
         self.request(Request::Hosts, cx);
+        // Project links are not polled: the matrix asks every peer, and
+        // `projects.linksChanged` re-reads it.
+        self.command(Command::Request(Request::ProjectLinks), cx);
         if self.extras.hosts_poll.is_some() {
             return;
         }
@@ -84,6 +89,45 @@ impl Workspace {
 
     /// Settle the limits editor and a launch sent through the queue.
     pub(super) fn sync_hosts(&mut self, next: &View, window: &mut Window, cx: &mut Context<Self>) {
+        // A targets read for the form's local project preselects that
+        // project's folder on the chosen peer, unless the user picked one.
+        if let Some(state) = next.requests.get("queue-targets")
+            && !state.loading
+            && state.number > self.extras.targets_seen
+        {
+            self.extras.targets_seen = state.number;
+            if state.error.is_none()
+                && !self.extras.launch_host_cwd_picked
+                && let HostChoice::Peer(peer) = &self.extras.launch_host
+                && let Request::QueueTargets { cwd: Some(cwd), .. } = &state.request
+                && !cwd.is_empty()
+                && *cwd == self.projects.cwd
+                && let Some(resolved) = hosts::parse_targets(&state.value)
+                    .and_then(|t| t.find(peer).and_then(|t| t.resolved_cwd.clone()))
+            {
+                self.extras.launch_host_cwd = resolved;
+            }
+        }
+        // "Link & use" landed: use the folder, and re-read the targets so
+        // the peer reports it as linked.
+        if let Some((after, peer, path)) = self.extras.link_use.clone()
+            && let Some(state) = next.requests.get("link-action")
+            && !state.loading
+            && state.number > after
+        {
+            self.extras.link_use = None;
+            match &state.error {
+                Some(error) => self.spawn_error = error.clone(),
+                None => {
+                    if self.extras.launch_host == HostChoice::Peer(peer) {
+                        self.extras.launch_host_cwd = path;
+                        self.extras.launch_host_cwd_picked = true;
+                    }
+                    self.spawn_error.clear();
+                    self.refresh_launch_targets(cx);
+                }
+            }
+        }
         if self.extras.limits_sent
             && let Some(state) = next.requests.get("host-action")
             && !state.loading
@@ -109,8 +153,10 @@ impl Workspace {
             match &state.error {
                 Some(error) => self.spawn_error = error.clone(),
                 None => {
+                    let best = matches!(&state.request,
+                        Request::QueueSubmit(params) if params["host"] == "any");
                     let line = hosts::parse_submitted(&state.value)
-                        .map(|(host, item)| hosts::submitted_line(&host, &item))
+                        .map(|(host, item)| hosts::submitted_line(&host, &item, best))
                         .unwrap_or_else(|| "Submitted to the queue.".into());
                     self.prompt
                         .update(cx, |input, cx| input.set_value("", window, cx));
@@ -197,7 +243,7 @@ impl Workspace {
                     .child("No federation peers. Peers this hub connects to show here with their own queues."),
             );
         }
-        page
+        page.child(self.render_project_links(cx))
     }
 
     fn render_host_card(
@@ -690,7 +736,7 @@ fn state_color(state: &State, p: Palette) -> u32 {
 }
 
 /// A small state pill: its tone's text on a faint wash of the same tone.
-fn pill(text: String, color: u32, p: Palette) -> Div {
+pub(super) fn pill(text: String, color: u32, p: Palette) -> Div {
     div()
         .flex_shrink_0()
         .px_2()

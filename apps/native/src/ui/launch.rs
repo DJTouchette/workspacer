@@ -1221,18 +1221,92 @@ impl Workspace {
         }
     }
 
+    /// The local folder the latest `queue.targets` read asked about, while
+    /// it runs too (so a choice does not ask twice).
+    fn targets_asked_cwd(&self) -> Option<String> {
+        match &self.view.requests.get("queue-targets")?.request {
+            wks_native::features::Request::QueueTargets { cwd, .. } => cwd.clone(),
+            _ => None,
+        }
+    }
+
+    /// The shown targets were resolved for this form's local project: their
+    /// `resolvedCwd` and `suggestions` are about it.
+    pub(super) fn targets_for_local(&self) -> bool {
+        !self.projects.cwd.is_empty()
+            && self
+                .view
+                .requests
+                .get("queue-targets")
+                .is_some_and(|s| !s.loading && s.error.is_none())
+            && self.targets_asked_cwd().as_deref() == Some(self.projects.cwd.as_str())
+    }
+
+    /// Re-read `queue.targets` for this provider and the local project, so
+    /// each peer says where that project is there.
+    pub(super) fn refresh_launch_targets(&mut self, cx: &mut Context<Self>) {
+        let cwd = (!self.projects.cwd.is_empty()).then(|| self.projects.cwd.clone());
+        self.command(
+            Command::Request(wks_native::features::Request::QueueTargets {
+                provider: Some(self.provider.to_owned()),
+                cwd,
+            }),
+            cx,
+        );
+    }
+
+    /// Select a peer's folder for the launch: the local project's resolved
+    /// path there when known, else keep a still-offered choice.
     fn choose_launch_host(&mut self, choice: HostChoice, cx: &mut Context<Self>) {
         if let HostChoice::Peer(peer) = &choice {
-            let cwds = self
-                .launch_targets()
-                .and_then(|t| t.find(peer).map(|t| t.cwds.clone()))
-                .unwrap_or_default();
-            if !cwds.contains(&self.extras.launch_host_cwd) {
-                self.extras.launch_host_cwd = cwds.first().cloned().unwrap_or_default();
+            let target = self.launch_targets().and_then(|t| t.find(peer).cloned());
+            let resolved = target
+                .as_ref()
+                .filter(|_| self.targets_for_local())
+                .and_then(|t| t.resolved_cwd.clone());
+            let paths = target.map(|t| t.paths()).unwrap_or_default();
+            if let Some(resolved) = resolved {
+                self.extras.launch_host_cwd = resolved;
+            } else if !paths.contains(&self.extras.launch_host_cwd) {
+                self.extras.launch_host_cwd = paths.first().cloned().unwrap_or_default();
             }
+            self.extras.launch_host_cwd_picked = false;
         }
+        let ask = !matches!(choice, HostChoice::Local)
+            && !self.projects.cwd.is_empty()
+            && self.targets_asked_cwd().as_deref() != Some(self.projects.cwd.as_str());
         self.extras.launch_host = choice;
         self.spawn_error.clear();
+        if ask {
+            self.refresh_launch_targets(cx);
+        }
+        cx.notify();
+    }
+
+    /// "Link & use": save the suggested folder as the local project's link
+    /// on `peer`; `sync_hosts` selects it once the hub saved it.
+    fn link_and_use(&mut self, peer: String, path: String, cx: &mut Context<Self>) {
+        let local_path = self.projects.cwd.clone();
+        if local_path.is_empty() || self.extras.link_use.is_some() {
+            return;
+        }
+        let after = self
+            .view
+            .requests
+            .get("link-action")
+            .map_or(0, |s| s.number);
+        self.extras.link_use = Some((after, peer.clone(), path.clone()));
+        self.spawn_error.clear();
+        self.command(
+            Command::Request(wks_native::features::Request::LinkAction(
+                wks_native::features::LinkAction::Set {
+                    local_path,
+                    peer,
+                    peer_path: path,
+                },
+            )),
+            cx,
+        );
         cx.notify();
     }
 
@@ -1320,17 +1394,9 @@ impl Workspace {
                                 !busy && self.view.connected,
                             )
                             .when(!busy && self.view.connected, |d| {
-                                d.on_click(cx.listener(|this, _, _, cx| {
-                                    let provider = Some(this.provider.to_owned());
-                                    this.command(
-                                        Command::Request(
-                                            wks_native::features::Request::QueueTargets {
-                                                provider,
-                                            },
-                                        ),
-                                        cx,
-                                    );
-                                }))
+                                d.on_click(
+                                    cx.listener(|this, _, _, cx| this.refresh_launch_targets(cx)),
+                                )
                             }),
                         ),
                 )
@@ -1387,17 +1453,34 @@ impl Workspace {
     }
 
     /// A peer's project folders (its target's `cwds`): the local folder
-    /// picker does not apply to another machine.
+    /// picker does not apply to another machine. The local project's own
+    /// folder there is preselected and says how it was matched; a folder
+    /// that may be it is offered as "Link & use".
     fn render_peer_folders(&self, peer: &str, busy: bool, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
-        let cwds = self
-            .launch_targets()
-            .and_then(|t| t.find(peer).map(|t| t.cwds.clone()))
+        let target = self.launch_targets().and_then(|t| t.find(peer).cloned());
+        let for_local = self.targets_for_local();
+        let dirs = target.as_ref().map(|t| t.cwds.clone()).unwrap_or_default();
+        let resolved = target
+            .as_ref()
+            .filter(|_| for_local)
+            .and_then(|t| t.resolved_cwd.clone());
+        let how = target
+            .as_ref()
+            .filter(|_| for_local)
+            .and_then(|t| t.match_label().map(str::to_owned));
+        let suggestions = target
+            .as_ref()
+            .filter(|_| for_local && resolved.is_none())
+            .map(|t| t.suggestions.clone())
             .unwrap_or_default();
+        let local_name = wks_native::projects::basename(&self.projects.cwd).to_owned();
+        let linking = self.extras.link_use.is_some();
         let mut list = div().flex().flex_col().gap_1();
-        for (ix, cwd) in cwds.iter().enumerate() {
-            let selected = self.extras.launch_host_cwd == *cwd;
-            let chosen = cwd.clone();
+        for (ix, dir) in dirs.iter().enumerate() {
+            let selected = self.extras.launch_host_cwd == dir.path;
+            let matched = resolved.as_deref() == Some(dir.path.as_str());
+            let chosen = dir.path.clone();
             list = list.child(
                 chrome::interactive_control(div().id(("launch-host-cwd", ix)), p, !busy)
                     .debug_selector(move || format!("launch-host-cwd-{ix}"))
@@ -1414,6 +1497,7 @@ impl Workspace {
                             .hover(|s| s.bg(rgb(p.selected)))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.extras.launch_host_cwd = chosen.clone();
+                                this.extras.launch_host_cwd_picked = true;
                                 this.spawn_error.clear();
                                 cx.notify();
                             }))
@@ -1426,8 +1510,25 @@ impl Workspace {
                             .truncate()
                             .font_family(mono_font())
                             .text_size(px(chrome::scale::META))
-                            .child(cwd.clone()),
+                            .child(dir.path.clone()),
                     )
+                    .when_some(dir.remote.clone(), |d, remote| {
+                        d.child(
+                            div()
+                                .flex_shrink_0()
+                                .max_w(px(220.))
+                                .truncate()
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.muted))
+                                .child(remote),
+                        )
+                    })
+                    .when_some(how.clone().filter(|_| matched), |d, how| {
+                        d.child(
+                            super::hosts::pill(how, p.success, p)
+                                .debug_selector(move || format!("launch-host-cwd-match-{ix}")),
+                        )
+                    })
                     .when(selected, |d| {
                         d.child(
                             Icon::new(IconName::Check)
@@ -1437,13 +1538,82 @@ impl Workspace {
                     }),
             );
         }
+        let caption = |text: String| {
+            div()
+                .text_size(px(chrome::scale::CAPTION))
+                .text_color(rgb(p.muted))
+                .child(text)
+        };
+        let mut hints = div().flex().flex_col().gap_1();
+        if for_local {
+            hints = match (&resolved, &how) {
+                (Some(path), Some(how)) => hints.child(
+                    caption(format!("{local_name} is {path} here ({how})."))
+                        .debug_selector(|| "launch-host-match".into()),
+                ),
+                (Some(path), None) => hints.child(
+                    caption(format!("{local_name} is {path} here."))
+                        .debug_selector(|| "launch-host-match".into()),
+                ),
+                (None, _) if suggestions.is_empty() => hints.child(
+                    caption(format!(
+                        "No folder on {peer} matches {local_name}. Pick one, or link it in Hosts → Projects."
+                    ))
+                    .debug_selector(|| "launch-host-nomatch".into()),
+                ),
+                (None, _) => hints,
+            };
+        }
+        for (ix, suggestion) in suggestions.iter().enumerate() {
+            let enabled = !busy && !linking && self.view.connected;
+            let (peer, path) = (peer.to_owned(), suggestion.path.clone());
+            hints = hints.child(
+                div()
+                    .debug_selector(move || format!("launch-link-suggestion-{ix}"))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .text_size(px(chrome::scale::META))
+                    .child(div().flex_shrink_0().child("Suggested:"))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(mono_font())
+                            .child(suggestion.path.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .child(suggestion.label().to_owned()),
+                    )
+                    .child(
+                        self.quiet_button(
+                            SharedString::from(format!("launch-link-use-{ix}")),
+                            "Link & use",
+                            IconName::Check,
+                            enabled,
+                        )
+                        .debug_selector(move || format!("launch-link-use-{ix}"))
+                        .when(enabled, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                this.link_and_use(peer.clone(), path.clone(), cx)
+                            }))
+                        }),
+                    ),
+            );
+        }
         div()
             .debug_selector(|| "launch-peer-folders".into())
             .flex()
             .flex_col()
             .gap_3()
             .child(projects::section_label("Project on this peer", p))
-            .child(if cwds.is_empty() {
+            .child(hints)
+            .child(if dirs.is_empty() {
                 div()
                     .text_size(px(chrome::scale::META))
                     .text_color(rgb(p.muted))

@@ -12,6 +12,7 @@
 //! are folded into [`Live`], an overlay over the last snapshot: a resource
 //! sample replaces an older one, and an item replaces the listed one unless
 //! the list already shows it in a later state (queued → running → finished).
+use crate::project_links::{Directory, Suggestion, Via};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -304,6 +305,9 @@ pub struct Item {
     pub wait_reason: String,
     pub provider: String,
     pub cwd: String,
+    /// The submitter's own folder when the hub translated it to this
+    /// host's path (`source.originCwd`).
+    pub origin_cwd: String,
     pub prompt: String,
     pub command: String,
 }
@@ -343,6 +347,7 @@ impl Item {
             detail: text(value, "detail"),
             wait_reason: text(value, "waitReason"),
             provider: text(spawn, "provider"),
+            origin_cwd: text(source, "originCwd"),
             cwd,
             prompt: text(spawn, "prompt"),
             command: text(shell, "command"),
@@ -385,10 +390,10 @@ impl Item {
         } else {
             self.provider_name().to_owned()
         };
-        if self.cwd.is_empty() {
-            base
-        } else {
-            format!("{base} in {}", self.cwd)
+        match (self.cwd.as_str(), self.origin_cwd.as_str()) {
+            ("", _) => base,
+            (cwd, origin) if origin.is_empty() || origin == cwd => format!("{base} in {cwd}"),
+            (cwd, origin) => format!("{base} in {cwd} (from {origin})"),
         }
     }
 
@@ -546,10 +551,18 @@ pub struct Target {
     pub dispatch: bool,
     pub resources: Option<Resources>,
     pub providers: Vec<ProviderState>,
-    pub cwds: Vec<String>,
+    /// The folders it offers: directory objects, or plain paths from older
+    /// hubs (name derived, remote unknown).
+    pub cwds: Vec<Directory>,
     pub eligible: bool,
     pub score: Option<f64>,
     pub reasons: Vec<String>,
+    /// With a `cwd` asked: that folder translated to this host's own path,
+    /// and how (`None` when nothing matched, or an older hub).
+    pub resolved_cwd: Option<String>,
+    pub resolved_via: Option<Via>,
+    /// Folders that may be the asked one, used only once linked.
+    pub suggestions: Vec<Suggestion>,
 }
 
 impl Target {
@@ -576,12 +589,31 @@ impl Target {
                     })
                 })
                 .collect(),
-            cwds: strings(&value["cwds"]),
+            cwds: Directory::parse_list(&value["cwds"]),
             eligible: value["eligible"] == true,
             score: num(&value["score"]),
             reasons: strings(&value["reasons"]),
+            resolved_cwd: value["resolvedCwd"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+            resolved_via: Via::parse(&value["resolvedVia"]),
+            suggestions: Suggestion::parse_list(&value["suggestions"]),
             host,
         })
+    }
+
+    /// The folders' paths, in the hub's order.
+    pub fn paths(&self) -> Vec<String> {
+        self.cwds.iter().map(|d| d.path.clone()).collect()
+    }
+
+    /// How the asked folder matched here, for the launch picker:
+    /// `"linked"`, `"git remote"`, `"same path"`.
+    pub fn match_label(&self) -> Option<&str> {
+        self.resolved_cwd.as_ref()?;
+        self.resolved_via.as_ref().map(Via::short)
     }
 
     /// `"This machine"` or the peer's name.
@@ -1124,9 +1156,12 @@ pub fn parse_submitted(value: &Value) -> Option<(String, Item)> {
     Some((if host.is_empty() { LOCAL } else { host }.to_owned(), item))
 }
 
-/// `"Queued on gpu-box as q_01J…"`, `"Started on this machine …"`.
-pub fn submitted_line(host: &str, item: &Item) -> String {
-    let place = if host == LOCAL || host.is_empty() {
+/// `"Queued on gpu-box as q_01J… in /srv/api."`, `"Started on this
+/// machine as …"`; for Best fit, `"Best fit chose gpu-box: queued as …"`.
+/// A peer's folder is named because the hub translated the local one.
+pub fn submitted_line(host: &str, item: &Item, best: bool) -> String {
+    let local = host == LOCAL || host.is_empty();
+    let place = if local {
         "this machine".to_owned()
     } else {
         host.to_owned()
@@ -1136,7 +1171,20 @@ pub fn submitted_line(host: &str, item: &Item) -> String {
         State::Queued => "Queued",
         _ => "Submitted",
     };
-    format!("{verb} on {place} as {}.", item.id)
+    let mut line = if best {
+        format!(
+            "Best fit chose {place}: {} as {}",
+            verb.to_lowercase(),
+            item.id
+        )
+    } else {
+        format!("{verb} on {place} as {}", item.id)
+    };
+    if !local && !item.cwd.is_empty() {
+        line.push_str(&format!(" in {}", item.cwd));
+    }
+    line.push('.');
+    line
 }
 
 #[cfg(test)]
@@ -1281,9 +1329,11 @@ mod tests {
         .unwrap();
         assert_eq!(targets.targets.len(), 4);
         assert_eq!(
-            targets.find("gpu-box").unwrap().cwds,
+            targets.find("gpu-box").unwrap().paths(),
             ["/srv/api", "/srv/web"]
         );
+        assert_eq!(targets.find("gpu-box").unwrap().cwds[0].name, "api");
+        assert_eq!(targets.find("gpu-box").unwrap().match_label(), None);
         assert!(targets.find("gpu-box").unwrap().resources.is_none());
         let options = host_options(&targets);
         let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
@@ -1303,6 +1353,40 @@ mod tests {
         let none = host_options(&Targets::default());
         assert_eq!(none.len(), 2);
         assert!(!none[1].enabled);
+    }
+
+    #[test]
+    fn targets_carry_directory_objects_and_resolution() {
+        let targets = parse_targets(&json!({"targets": [
+            {"host": "local", "local": true, "eligible": true,
+             "cwds": [{"path": "/home/dj/app", "name": "app", "remote": "github.com/dj/app"}],
+             "resolvedCwd": "/home/dj/app", "resolvedVia": "exact", "suggestions": []},
+            {"host": "gpu", "eligible": true,
+             "cwds": [{"path": "/srv/app", "name": "app", "remote": "github.com/dj/app",
+                       "git": true, "source": "project"}, "/srv/other"],
+             "resolvedCwd": "/srv/app", "resolvedVia": "remote", "suggestions": []},
+            {"host": "mac", "eligible": false,
+             "cwds": [{"path": "/Users/dj/app", "remote": null}],
+             "resolvedCwd": null, "resolvedVia": null,
+             "suggestions": [{"path": "/Users/dj/app", "why": "name"}],
+             "reasons": ["cwd /home/dj/app has no match on mac (suggested: /Users/dj/app — link it in Hosts → Projects)"]}
+        ], "best": "gpu"}))
+        .unwrap();
+        let gpu = targets.find("gpu").unwrap();
+        assert_eq!(gpu.resolved_cwd.as_deref(), Some("/srv/app"));
+        assert_eq!(gpu.match_label(), Some("git remote"));
+        assert_eq!(gpu.cwds[0].remote.as_deref(), Some("github.com/dj/app"));
+        assert_eq!(gpu.paths(), ["/srv/app", "/srv/other"]);
+        assert_eq!(gpu.cwds[1].remote, None);
+        assert_eq!(
+            targets.find("local").unwrap().match_label(),
+            Some("same path")
+        );
+        let mac = targets.find("mac").unwrap();
+        assert_eq!(mac.resolved_cwd, None);
+        assert_eq!(mac.match_label(), None);
+        assert_eq!(mac.suggestions[0].label(), "same name");
+        assert_eq!(mac.cwds[0].name, "app");
     }
 
     #[test]
@@ -1507,12 +1591,32 @@ mod tests {
         let (host, item) = parse_submitted(&json!({"host": "gpu-box",
             "item": {"id": "q_1", "state": "queued", "kind": "spawn"}}))
         .unwrap();
-        assert_eq!(submitted_line(&host, &item), "Queued on gpu-box as q_1.");
+        assert_eq!(
+            submitted_line(&host, &item, false),
+            "Queued on gpu-box as q_1."
+        );
         let (host, item) =
             parse_submitted(&json!({"item": {"id": "q_2", "state": "running"}})).unwrap();
         assert_eq!(
-            submitted_line(&host, &item),
+            submitted_line(&host, &item, false),
             "Started on this machine as q_2."
+        );
+        // Best fit names where it went and the peer's translated folder.
+        let (host, item) = parse_submitted(&json!({"host": "mac",
+            "item": {"id": "q_3", "state": "queued", "kind": "spawn",
+                     "spawn": {"cwd": "/Users/dj/app"}, "source": {"originCwd": "/home/dj/app"}}}))
+        .unwrap();
+        assert_eq!(
+            submitted_line(&host, &item, true),
+            "Best fit chose mac: queued as q_3 in /Users/dj/app."
+        );
+        assert_eq!(item.what(), "Agent in /Users/dj/app (from /home/dj/app)");
+        let (host, item) = parse_submitted(&json!({"host": "local",
+            "item": {"id": "q_4", "state": "running", "spawn": {"cwd": "/home/dj/app"}}}))
+        .unwrap();
+        assert_eq!(
+            submitted_line(&host, &item, true),
+            "Best fit chose this machine: started as q_4."
         );
         assert!(parse_submitted(&json!({"host": "x"})).is_none());
     }

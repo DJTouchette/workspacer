@@ -27,6 +27,7 @@ mod navigation;
 mod plan;
 mod portrait;
 mod project_groups;
+mod project_links;
 mod projects;
 mod pull_request;
 mod questions;

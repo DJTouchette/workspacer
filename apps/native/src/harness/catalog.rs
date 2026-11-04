@@ -615,6 +615,8 @@ pub struct Catalog {
     peer_queues: BTreeMap<String, Vec<Value>>,
     limits: Value,
     queue_seq: u64,
+    /// Saved project links (`projects.setLink`), as `project-links.json`.
+    links: Vec<Value>,
 }
 
 impl Catalog {
@@ -710,6 +712,8 @@ impl Catalog {
             limits: json!({"maxAgents": 4, "maxShell": 2, "maxCpuPressure": 60,
                 "maxMemoryPressure": 25, "minAvailableMemoryMb": 1024, "minFreeDiskMb": 2048}),
             queue_seq: 0,
+            links: vec![json!({"localPath": NATIVE, "peer": PEER_MAC,
+                "peerPath": MAC_NATIVE, "createdAt": now - 3 * DAY})],
         };
         for job in catalog.jobs.clone() {
             catalog.schedule(&job, now);
@@ -740,6 +744,10 @@ impl Catalog {
             "queue.setConfig" => self.queue_set_config(params),
             "queue.submit" => self.queue_submit(params),
             "queue.cancel" => self.queue_cancel(params),
+            "projects.links" => Ok(json!({"links": self.links})),
+            "projects.linkMatrix" => Ok(self.link_matrix()),
+            "projects.setLink" => self.set_link(params),
+            "projects.removeLink" => self.remove_link(params),
             "sessions.history" => self.history(params, live),
             "sessions.forget" => self.forget(params, live),
             _ => return None,
@@ -825,28 +833,148 @@ impl Catalog {
 
     fn queue_targets(&self, params: &Value) -> Value {
         let provider = text(params, "provider");
+        let cwd = text(params, "cwd");
         let providers = |codex: bool| {
             json!([{"provider": "claude", "found": true, "authenticated": true},
                    {"provider": "codex", "found": codex, "authenticated": codex}])
         };
         let gpu_ok = provider != "codex";
-        json!({
-            "targets": [
-                {"host": "local", "local": true, "connected": true, "dispatch": true,
-                 "resources": self.resources(LOCAL_HUB), "providers": providers(true),
-                 "cwds": [WORKSPACER, NATIVE, HUB, INFRA], "eligible": true, "score": 3.0,
-                 "reasons": []},
-                {"host": PEER_GPU, "local": false, "connected": true, "dispatch": true,
-                 "resources": self.resources(PEER_GPU), "providers": providers(false),
-                 "cwds": ["/srv/dev/workspacer", "/srv/dev/models"], "eligible": gpu_ok,
-                 "score": 1.0,
-                 "reasons": if gpu_ok { json!([]) } else { json!(["codex is not installed"]) }},
-                {"host": PEER_LAPTOP, "local": false, "connected": false, "dispatch": true,
-                 "resources": null, "providers": [], "cwds": [], "eligible": false, "score": 0,
-                 "reasons": ["not connected"]},
-            ],
-            "best": "local",
-        })
+        let mut targets = vec![
+            json!({"host": "local", "local": true, "connected": true, "dispatch": true,
+             "resources": self.resources(LOCAL_HUB), "providers": providers(true),
+             "cwds": local_dirs(), "eligible": true, "score": 3.0, "reasons": []}),
+            json!({"host": PEER_GPU, "local": false, "connected": true, "dispatch": true,
+             "resources": self.resources(PEER_GPU), "providers": providers(false),
+             "cwds": peer_dirs(PEER_GPU), "eligible": gpu_ok, "score": 1.0,
+             "reasons": if gpu_ok { json!([]) } else { json!(["codex is not installed"]) }}),
+            json!({"host": PEER_MAC, "local": false, "connected": true, "dispatch": true,
+             "resources": self.resources(PEER_MAC), "providers": providers(true),
+             "cwds": peer_dirs(PEER_MAC), "eligible": true, "score": 2.0, "reasons": []}),
+            json!({"host": PEER_LAPTOP, "local": false, "connected": false, "dispatch": true,
+             "resources": null, "providers": [], "cwds": [], "eligible": false, "score": 0,
+             "reasons": ["not connected"]}),
+        ];
+        if !cwd.is_empty() {
+            for target in &mut targets {
+                if target["local"] == true {
+                    target["resolvedCwd"] = json!(cwd);
+                    target["resolvedVia"] = json!("exact");
+                    target["suggestions"] = json!([]);
+                    continue;
+                }
+                let peer = target["host"].as_str().unwrap_or_default().to_owned();
+                let (resolved, suggestions) = self.resolve(cwd, &peer);
+                target["resolvedCwd"] = json!(resolved.as_ref().map(|r| &r.0));
+                target["resolvedVia"] = json!(resolved.as_ref().map(|r| r.1));
+                target["suggestions"] = json!(suggestions);
+                if resolved.is_none() && target["eligible"] == true {
+                    target["eligible"] = json!(false);
+                    target["score"] = json!(0);
+                    target["reasons"] = json!([no_match(cwd, &peer, &suggestions)]);
+                }
+            }
+        }
+        json!({"targets": targets, "best": "local"})
+    }
+
+    /// The contract's resolution of local `cwd` for `peer`: a saved link
+    /// still offered there, the same path, the one folder with the same
+    /// remote; else suggestions by name and ambiguous remote.
+    fn resolve(&self, cwd: &str, peer: &str) -> (Option<(String, &'static str)>, Vec<Value>) {
+        let choices = peer_dirs(peer);
+        let choices = choices.as_array().map(Vec::as_slice).unwrap_or_default();
+        let offered = |path: &str| choices.iter().any(|c| c["path"] == path);
+        if let Some(link) = self
+            .links
+            .iter()
+            .find(|l| l["localPath"] == cwd && l["peer"] == peer)
+            && let Some(path) = link["peerPath"].as_str()
+            && offered(path)
+        {
+            return (Some((path.to_owned(), "link")), Vec::new());
+        }
+        if offered(cwd) {
+            return (Some((cwd.to_owned(), "exact")), Vec::new());
+        }
+        let local = local_dirs();
+        let local = local
+            .as_array()
+            .and_then(|dirs| dirs.iter().find(|d| d["path"] == cwd).cloned())
+            .unwrap_or(Value::Null);
+        let remote = local["remote"].as_str().filter(|r| !r.is_empty());
+        let same_remote: Vec<&Value> = choices
+            .iter()
+            .filter(|c| remote.is_some() && c["remote"].as_str() == remote)
+            .collect();
+        if let [only] = same_remote.as_slice() {
+            return (Some((text(only, "path").to_owned(), "remote")), Vec::new());
+        }
+        let name = crate::project_links::basename(cwd);
+        let mut suggestions: Vec<Value> = choices
+            .iter()
+            .filter(|c| c["name"] == name.as_str())
+            .map(|c| json!({"path": c["path"], "why": "name"}))
+            .collect();
+        suggestions.extend(
+            same_remote
+                .iter()
+                .map(|c| json!({"path": c["path"], "why": "remote"})),
+        );
+        (None, suggestions)
+    }
+
+    /// Every local project against every peer.
+    fn link_matrix(&self) -> Value {
+        let projects: Vec<Value> = local_dirs()
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|dir| {
+                let path = text(dir, "path");
+                let peers: Vec<Value> = [PEER_GPU, PEER_MAC, PEER_LAPTOP]
+                    .into_iter()
+                    .map(|peer| {
+                        let (resolved, suggestions) = self.resolve(path, peer);
+                        json!({"peer": peer, "connected": peer != PEER_LAPTOP,
+                            "resolved": resolved.map(|(path, via)| json!({"path": path, "via": via})),
+                            "suggestions": suggestions, "choices": peer_dirs(peer)})
+                    })
+                    .collect();
+                json!({"path": path, "name": dir["name"], "remote": dir["remote"], "peers": peers})
+            })
+            .collect();
+        json!({"projects": projects})
+    }
+
+    fn set_link(&mut self, params: &Value) -> Result<Value, String> {
+        let (local, peer, peer_path) = (
+            text(params, "localPath"),
+            text(params, "peer"),
+            text(params, "peerPath"),
+        );
+        if local.is_empty() || peer.is_empty() {
+            return Err("projects.setLink needs localPath and peer".into());
+        }
+        if !peer_path.starts_with('/') {
+            return Err("peerPath must be absolute".into());
+        }
+        if ![PEER_GPU, PEER_MAC, PEER_LAPTOP].contains(&peer) {
+            return Err(format!("unknown peer {peer}"));
+        }
+        self.links
+            .retain(|l| !(l["localPath"] == local && l["peer"] == peer));
+        self.links.push(
+            json!({"localPath": local, "peer": peer, "peerPath": peer_path,
+            "createdAt": wall_now()}),
+        );
+        Ok(json!({"links": self.links}))
+    }
+
+    fn remove_link(&mut self, params: &Value) -> Result<Value, String> {
+        let (local, peer) = (text(params, "localPath"), text(params, "peer"));
+        self.links
+            .retain(|l| !(l["localPath"] == local && l["peer"] == peer));
+        Ok(json!({"links": self.links}))
     }
 
     fn queue_set_config(&mut self, params: &Value) -> Result<Value, String> {
@@ -874,9 +1002,25 @@ impl Catalog {
         let host = match text(params, "host") {
             "" | "local" | "any" => LOCAL_HUB,
             PEER_GPU => PEER_GPU,
+            PEER_MAC => PEER_MAC,
             PEER_LAPTOP => return Err("peer laptop is not connected".into()),
             other => return Err(format!("unknown peer {other}")),
         };
+        // A peer gets the translated folder; the local one is kept.
+        let mut spawn = params["spawn"].clone();
+        let mut origin_cwd = Value::Null;
+        if host != LOCAL_HUB {
+            let cwd = text(&spawn, "cwd").to_owned();
+            match self.resolve(&cwd, host) {
+                (Some((path, _)), _) => {
+                    if path != cwd {
+                        origin_cwd = json!(cwd);
+                    }
+                    spawn["cwd"] = json!(path);
+                }
+                (None, suggestions) => return Err(no_match(&cwd, host, &suggestions)),
+            }
+        }
         self.queue_seq += 1;
         let item = json!({
             "id": format!("q_fixture{:03}", self.queue_seq),
@@ -885,8 +1029,9 @@ impl Catalog {
             "priority": params["priority"].as_i64().unwrap_or(0),
             "state": "queued",
             "source": {"kind": if host == LOCAL_HUB { "prompt" } else { "remote" },
-                "origin": if host == LOCAL_HUB { "" } else { LOCAL_HUB }},
-            "spawn": params["spawn"],
+                "origin": if host == LOCAL_HUB { "" } else { LOCAL_HUB },
+                "originCwd": origin_cwd},
+            "spawn": spawn,
             "enqueuedAt": wall_now(), "startedAt": 0, "finishedAt": 0,
             "exitCode": null, "detail": "", "waitReason": "no free agent slot",
         });
@@ -1427,6 +1572,63 @@ impl Catalog {
 const LOCAL_HUB: &str = "studio";
 const PEER_GPU: &str = "gpu-box";
 const PEER_LAPTOP: &str = "laptop";
+/// A macOS peer: the same projects under `/Users`, none of them at the same
+/// path. `hub` is matched by its git remote, `workspacer` only by name, the
+/// infra checkouts share one remote (ambiguous), and the native app is
+/// linked by hand.
+const PEER_MAC: &str = "mac";
+const MAC_NATIVE: &str = "/Users/dev/code/workspacer/apps/native";
+
+/// This hub's project folders as directory objects.
+fn local_dirs() -> Value {
+    json!([
+        {"path": WORKSPACER, "name": "workspacer", "remote": "github.com/dev/workspacer",
+         "git": true, "source": "project"},
+        {"path": NATIVE, "name": "native", "remote": null, "git": true, "source": "live"},
+        {"path": HUB, "name": "hub-rs", "remote": "github.com/dev/hub-rs", "git": true,
+         "source": "project"},
+        {"path": INFRA, "name": "infra", "remote": "gitlab.com/ops/infra", "git": true,
+         "source": "project"},
+    ])
+}
+
+/// What each peer offers. The GPU box has the workspacer checkout under the
+/// same remote (an automatic match) and an `infra` folder with no remote (a
+/// name-only suggestion).
+fn peer_dirs(peer: &str) -> Value {
+    match peer {
+        PEER_GPU => json!([
+            {"path": "/srv/dev/workspacer", "name": "workspacer",
+             "remote": "github.com/dev/workspacer", "git": true, "source": "project"},
+            {"path": "/srv/dev/models", "name": "models", "remote": "github.com/dev/models",
+             "git": true, "source": "project"},
+            {"path": "/srv/dev/infra", "name": "infra", "remote": null, "git": false,
+             "source": "project"},
+        ]),
+        PEER_MAC => json!([
+            {"path": "/Users/dev/code/hub", "name": "hub", "remote": "github.com/dev/hub-rs",
+             "git": true, "source": "project"},
+            {"path": "/Users/dev/code/workspacer", "name": "workspacer", "remote": null,
+             "git": true, "source": "project"},
+            {"path": MAC_NATIVE, "name": "native", "remote": null, "git": true, "source": "live"},
+            {"path": "/Users/dev/code/infra-a", "name": "infra-a",
+             "remote": "gitlab.com/ops/infra", "git": true, "source": "project"},
+            {"path": "/Users/dev/code/infra-b", "name": "infra-b",
+             "remote": "gitlab.com/ops/infra", "git": true, "source": "project"},
+        ]),
+        _ => json!([]),
+    }
+}
+
+/// The contract's refusal for a folder a peer has no match for.
+fn no_match(cwd: &str, peer: &str, suggestions: &[Value]) -> String {
+    match suggestions.first().and_then(|s| s["path"].as_str()) {
+        Some(path) => format!(
+            "cwd {cwd} has no match on {peer} (suggested: {path} — link it in Hosts → Projects)"
+        ),
+        None => format!("cwd {cwd} has no match on {peer}"),
+    }
+}
 
 /// This hub's queue: one agent running, two waiting (one at a higher
 /// priority, from the nightly job), a finished shell item and one whose
@@ -1876,7 +2078,7 @@ mod tests {
         assert_eq!(snapshot.support(), Support::Supported);
         let cards = hosts::cards(&snapshot, &hosts::Live::default());
         let names: Vec<_> = cards.iter().map(|c| c.host.as_str()).collect();
-        assert_eq!(names, ["local", PEER_GPU, PEER_LAPTOP]);
+        assert_eq!(names, ["local", PEER_GPU, PEER_LAPTOP, PEER_MAC]);
         let local = cards[0].resources.as_ref().unwrap();
         assert_eq!(local.agent_line(), "1/4 agents");
         assert_eq!(local.queued_line(), "2 queued");
@@ -1903,6 +2105,133 @@ mod tests {
         assert_eq!(resources.agent_line(), "1/6 agents");
         let targets = hosts::parse_targets(&call("queue.targets", json!({"provider": "codex"})));
         assert!(!targets.unwrap().find(PEER_GPU).unwrap().eligible);
+    }
+
+    #[test]
+    fn project_links_fixture_resolves_like_the_contract() {
+        use crate::hosts;
+        use crate::project_links::{CellState, CellView, Snapshot, Via};
+        let mut catalog = Catalog::new(wall_now());
+        let mut call = |method: &str, params: Value| catalog.call(method, &params, &[]).unwrap();
+
+        // Old-hub shape still parses: no cwd asked, no resolution fields.
+        let plain = hosts::parse_targets(&call("queue.targets", json!({}))).unwrap();
+        let gpu = plain.find(PEER_GPU).unwrap();
+        assert_eq!(gpu.resolved_cwd, None);
+        assert_eq!(
+            gpu.cwds[0].remote.as_deref(),
+            Some("github.com/dev/workspacer")
+        );
+
+        let targets = |call: &mut dyn FnMut(&str, Value) -> Value, cwd: &str| {
+            hosts::parse_targets(&call("queue.targets", json!({"cwd": cwd}))).unwrap()
+        };
+        let ws = targets(&mut call, WORKSPACER);
+        assert_eq!(
+            ws.find(PEER_GPU).unwrap().resolved_cwd.as_deref(),
+            Some("/srv/dev/workspacer")
+        );
+        assert_eq!(ws.find(PEER_GPU).unwrap().match_label(), Some("git remote"));
+        let mac = ws.find(PEER_MAC).unwrap();
+        assert_eq!(
+            mac.resolved_cwd, None,
+            "a name match is never used unlinked"
+        );
+        assert!(!mac.eligible);
+        assert!(
+            mac.reasons[0].contains("link it in Hosts → Projects"),
+            "{:?}",
+            mac.reasons
+        );
+        assert_eq!(mac.suggestions[0].why, "name");
+        assert_eq!(
+            targets(&mut call, NATIVE)
+                .find(PEER_MAC)
+                .unwrap()
+                .match_label(),
+            Some("linked")
+        );
+        let infra = targets(&mut call, INFRA);
+        assert_eq!(infra.find(PEER_GPU).unwrap().suggestions[0].why, "name");
+        let ambiguous = &infra.find(PEER_MAC).unwrap().suggestions;
+        assert_eq!(ambiguous.len(), 2);
+        assert!(ambiguous.iter().all(|s| s.why == "remote"));
+
+        let matrix = |call: &mut dyn FnMut(&str, Value) -> Value| {
+            Snapshot::parse(&json!({"matrix": call("projects.linkMatrix", json!({})),
+                "links": call("projects.links", json!({}))}))
+        };
+        let snapshot = matrix(&mut call);
+        let m = snapshot.matrix.as_ref().unwrap();
+        assert_eq!(m.peers(), [PEER_GPU, PEER_MAC, PEER_LAPTOP]);
+        let cell = |s: &Snapshot, row: usize, col: usize| {
+            let m = s.matrix.as_ref().unwrap();
+            CellView::new(&m.projects[row], &m.projects[row].peers[col], s.saved())
+        };
+        assert!(matches!(
+            cell(&snapshot, 0, 0).state,
+            CellState::Matched {
+                via: Via::Remote,
+                ..
+            }
+        ));
+        assert!(matches!(
+            cell(&snapshot, 0, 1).state,
+            CellState::Suggested(_)
+        ));
+        assert!(cell(&snapshot, 0, 2).offline);
+        assert!(matches!(cell(&snapshot, 1, 1).state, CellState::Linked(_)));
+        assert!(matches!(
+            cell(&snapshot, 2, 1).state,
+            CellState::Matched {
+                via: Via::Remote,
+                ..
+            }
+        ));
+        assert_eq!(cell(&snapshot, 2, 0).state, CellState::Missing);
+
+        // Accept the suggestion; then a named-peer submit translates the cwd.
+        let refused = call(
+            "projects.setLink",
+            json!({"localPath": WORKSPACER, "peer": PEER_MAC, "peerPath": "relative"}),
+        );
+        assert_eq!(refused["ok"], false);
+        let saved = call(
+            "projects.setLink",
+            json!({"localPath": WORKSPACER, "peer": PEER_MAC,
+            "peerPath": "/Users/dev/code/workspacer"}),
+        );
+        assert_eq!(crate::project_links::parse_links(&saved).unwrap().len(), 2);
+        let snapshot = matrix(&mut call);
+        assert!(matches!(cell(&snapshot, 0, 1).state, CellState::Linked(_)));
+        let submitted = call(
+            "queue.submit",
+            json!({"host": PEER_MAC, "kind": "spawn",
+            "spawn": {"provider": "claude", "cwd": WORKSPACER, "prompt": "go"}}),
+        );
+        let (host, item) = hosts::parse_submitted(&submitted).unwrap();
+        assert_eq!(host, PEER_MAC);
+        assert_eq!(item.cwd, "/Users/dev/code/workspacer");
+        assert_eq!(item.origin_cwd, WORKSPACER);
+        let unmatched = call(
+            "queue.submit",
+            json!({"host": PEER_GPU, "kind": "spawn",
+            "spawn": {"provider": "claude", "cwd": HUB, "prompt": "go"}}),
+        );
+        assert!(
+            unmatched["error"]
+                .as_str()
+                .unwrap()
+                .contains("has no match on gpu-box")
+        );
+        let removed = call(
+            "projects.removeLink",
+            json!({"localPath": WORKSPACER, "peer": PEER_MAC}),
+        );
+        assert_eq!(
+            crate::project_links::parse_links(&removed).unwrap().len(),
+            1
+        );
     }
 
     #[test]

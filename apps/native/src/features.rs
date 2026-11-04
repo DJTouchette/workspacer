@@ -38,6 +38,34 @@ pub enum HostAction {
     SetConfig(Value),
 }
 
+/// The owner's project-link writes (`projects.setLink` /
+/// `projects.removeLink`), each answered with the hub's `{links}`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkAction {
+    /// Use `peer_path` on `peer` for the local folder `local_path`.
+    Set {
+        local_path: String,
+        peer: String,
+        peer_path: String,
+    },
+    Remove {
+        local_path: String,
+        peer: String,
+    },
+}
+
+impl LinkAction {
+    /// The (local folder, peer) pair the write is about.
+    pub fn pair(&self) -> (&str, &str) {
+        match self {
+            Self::Set {
+                local_path, peer, ..
+            }
+            | Self::Remove { local_path, peer } => (local_path, peer),
+        }
+    }
+}
+
 /// The owner's writes to a repository from Review. Each one runs in the
 /// repository holding `cwd`; `path: None` stages or unstages everything under
 /// it. There is no discard: the hub offers no way to throw changes away.
@@ -308,10 +336,20 @@ pub enum Request {
     /// A Hosts write, answered with a fresh snapshot. Never superseded.
     HostAction(HostAction),
     /// Where a spawn of `provider` could run (`queue.targets`), for the
-    /// launch host picker.
+    /// launch host picker. With `cwd` (the local project), each target also
+    /// says where that folder is there (`resolvedCwd`, `resolvedVia`,
+    /// `suggestions`).
     QueueTargets {
         provider: Option<String>,
+        cwd: Option<String>,
     },
+    /// Every local project against every peer (`projects.linkMatrix`) and
+    /// the saved links (`projects.links`), read together; see
+    /// `project_links::Snapshot`.
+    ProjectLinks,
+    /// Save or remove a project link, answered with `{links}`. Never
+    /// superseded.
+    LinkAction(LinkAction),
     /// A launch through the work queue (`queue.submit` params). Never
     /// superseded: the hub may already have enqueued it.
     QueueSubmit(Value),
@@ -589,6 +627,8 @@ impl Request {
             Self::Hosts => "hosts",
             Self::HostAction(_) => "host-action",
             Self::QueueTargets { .. } => "queue-targets",
+            Self::ProjectLinks => "project-links",
+            Self::LinkAction(_) => "link-action",
             Self::QueueSubmit(_) => "queue-submit",
             Self::ScratchList { .. } => "scratch",
             Self::ScratchRead { .. } => "scratch-read",
@@ -823,7 +863,37 @@ impl Request {
                 }
                 Ok(backend.hosts_snapshot().await)
             }
-            Self::QueueTargets { provider } => backend.queue_targets(provider.as_deref()).await,
+            Self::QueueTargets { provider, cwd } => {
+                backend
+                    .queue_targets(provider.as_deref(), cwd.as_deref())
+                    .await
+            }
+            Self::ProjectLinks => Ok(backend.project_links_snapshot().await),
+            Self::LinkAction(action) => {
+                let links = match action {
+                    LinkAction::Set {
+                        local_path,
+                        peer,
+                        peer_path,
+                    } => {
+                        ensure!(
+                            crate::launch::absolute_directory(peer_path),
+                            "Choose a full folder path on {peer}."
+                        );
+                        backend
+                            .project_set_link(local_path, peer, peer_path)
+                            .await?
+                    }
+                    LinkAction::Remove { local_path, peer } => {
+                        backend.project_remove_link(local_path, peer).await?
+                    }
+                };
+                ensure!(
+                    crate::project_links::parse_links(&links).is_some(),
+                    "The hub saved the link but did not list the links."
+                );
+                Ok(links)
+            }
             Self::QueueSubmit(params) => {
                 let submitted = backend.queue_submit(params.clone()).await?;
                 ensure!(

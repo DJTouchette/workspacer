@@ -5,9 +5,10 @@
 use std::{sync::Arc, time::Duration};
 use wks_native::{
     controller::{Command, Controller, View},
-    features::{HostAction, Request, RequestState},
+    features::{HostAction, LinkAction, Request, RequestState},
     host::{Mode, NativeHost, RustOptions},
     hosts::{self, Snapshot, Support},
+    project_links,
 };
 
 async fn run(controller: &Controller, request: Request) -> RequestState {
@@ -93,6 +94,7 @@ async fn hosts_view_reads_and_owner_writes_round_trip_through_the_hub() {
         &controller,
         Request::QueueTargets {
             provider: Some("claude".into()),
+            cwd: None,
         },
     )
     .await;
@@ -101,6 +103,88 @@ async fn hosts_view_reads_and_owner_writes_round_trip_through_the_hub() {
         assert!(hosts::parse_targets(&picker.value).is_some());
     } else {
         assert!(picker.error.as_deref().is_some_and(hosts::unsupported));
+    }
+
+    // The picker asks with the local project; a hub without project links
+    // simply leaves the resolution fields out.
+    let project = root.join("home").to_string_lossy().into_owned();
+    let resolved = run(
+        &controller,
+        Request::QueueTargets {
+            provider: Some("claude".into()),
+            cwd: Some(project.clone()),
+        },
+    )
+    .await;
+    if targets_supported {
+        assert_eq!(resolved.error, None);
+        assert!(hosts::parse_targets(&resolved.value).is_some());
+    }
+
+    // Project links may land on the hub after the queue (built in parallel);
+    // until then they must read as unsupported, which hides the Projects
+    // section rather than failing it.
+    let read = run(&controller, Request::ProjectLinks).await;
+    assert_eq!(read.error, None);
+    let links = project_links::Snapshot::parse(&read.value);
+    eprintln!(
+        "project links on this hub: {}",
+        if links.unsupported() {
+            "not yet"
+        } else {
+            "supported"
+        }
+    );
+    if links.unsupported() {
+        assert!(
+            links.links.as_ref().is_err_and(|e| hosts::unsupported(e)),
+            "{}",
+            read.value
+        );
+    } else {
+        let matrix = links.matrix.clone().expect("projects.linkMatrix");
+        assert!(
+            matrix.peers().is_empty(),
+            "no peers configured: {}",
+            read.value
+        );
+        assert_eq!(links.links.clone().expect("projects.links"), vec![]);
+        // The owner links a project to a peer that is not even configured
+        // (it may be offline), then removes it.
+        let set = run(
+            &controller,
+            Request::LinkAction(LinkAction::Set {
+                local_path: project.clone(),
+                peer: "mac".into(),
+                peer_path: "/Users/dev/app".into(),
+            }),
+        )
+        .await;
+        assert_eq!(set.error, None, "{}", set.value);
+        let saved = project_links::parse_links(&set.value).unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].peer_path, "/Users/dev/app");
+        let reread = run(&controller, Request::ProjectLinks).await;
+        assert_eq!(
+            project_links::Snapshot::parse(&reread.value).saved().len(),
+            1,
+            "{}",
+            reread.value
+        );
+        let removed = run(
+            &controller,
+            Request::LinkAction(LinkAction::Remove {
+                local_path: project.clone(),
+                peer: "mac".into(),
+            }),
+        )
+        .await;
+        assert_eq!(removed.error, None);
+        assert!(
+            project_links::parse_links(&removed.value)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     // The owner (this embedded connection) changes a limit; the answer is
