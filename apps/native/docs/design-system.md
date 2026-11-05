@@ -365,6 +365,8 @@ Each entry gives:
 - **API:**
   - `primitives::card(&p)`, `CardHead::new(title).icon(..).avatar(..).status(..).meta(..).action(..).render(&p)`.
   - `system::tile(&p)` (a card at natural height) inside `system::tile_grid(columns, &p)` (top-aligned, never stretched).
+  - `system::waiting_tile(&p)`: a tile that waits on the user (the `border_strong` edge and the attention bar).
+  - `system::tile_frame(id, focused, &p)`: the frame a tile sits in, carrying the 2px focus ring outside the tile.
   - `primitives::inset(&p)` for the one recessed well inside a card.
 - **Do:** use `tile_grid` for cards of different lengths (Fleet).
 - **Don't:**
@@ -387,21 +389,30 @@ Each entry gives:
 
 ### DecisionCard
 
-- **Purpose:** a decision waiting on the user: a tool approval, a question, a plan, a job proposal.
+- **Purpose:** a decision waiting on the user: a tool approval, a question, a plan, a job proposal. One component in the conversation's dock, on a Fleet tile and in Jobs. The gallery shows one specimen per kind.
 - **Anatomy:**
   - The question headline (15/600, code spans wrap).
   - The reason.
   - The full request (mono, when it is long).
   - Where it applies (folder · host, tertiary).
-  - The actions: Allow (Primary), alternates (Secondary, "Always allow" with its exact rule in the tooltip), Deny (Secondary split with "Deny with note…"), then Details (Tertiary, expanding the request in place).
-- **States:** keys on or off (keycaps appear only on the decision that the number keys answer), Details open, note open (the note's send owns the Primary; "Deny and tell it" is Destructive).
+  - The risk cue, when one is plain from the request: "Deletes files", "Writes outside the project", "Uses the network" (secondary text with a warning glyph; never amber or red). `decision::risk(approval, cwd)` derives it.
+  - The body, when there is one: a plan, a question's option list or its answer field.
+  - The answer row: **Allow (Primary) and Deny (Destructive) side by side on one line, never wrapped apart**, then any Secondary alternative ("Approve · run with Codex"). Deny may be a split with "Deny with note…".
+  - The quiet row: each **"Always allow"** as a short Tertiary button with the rule and scope it saves beside it ("Saves `cargo test *` · this session"; the full explanation in its tooltip), then **Details** (Tertiary). Details expands **below** its toggle and shows only what the card does not already say (the tool, other arguments, the exact provider rule).
+- **States:** keys on or off (keycaps appear only on the decision that the number keys answer: the dock's top decision, the focused Fleet tile), Details open, note open (the note's send owns the Primary; "Deny and tell it" is Destructive).
+- **Tiers:** Allow is Primary unless a note owns it. Deny and Reject are Destructive. A "no" that removes nothing (Keep planning) sets `deny_variant = Secondary`.
+- **Submit label:** every question card submits with `decision::SUBMIT_ANSWER` ("Send answer"; "Send answers" for a set). "Next" only steps a multi-question set.
+- **Scope:** the hub offers session-scoped grants only, so the scope reads "this session". Project scope needs a hub option.
 - **API** (`decision.rs`):
-  - `Decision::new(selector, Choice::new(id, label).key(Some(1)), Frame::{Card { compact }, Inline})`. Fill in `headline`, `reason`, `request`, `folder`, `host`, `alternates`, `deny`, `deny_note`, `details` and `keys`, then call `.render(&p)`.
+  - `Decision::new(selector, Choice::new(id, label).key(Some(1)), Frame::{Card { compact }, Inline})`. Fill in `headline`, `reason`, `request`, `folder`, `host`, `risk`, `body`, `alternates`, `grants`, `deny`, `deny_variant`, `deny_note`, `details` and `keys`; `show_allow = false` when the body answers (an option list). Then call `.render(&p)`.
   - `Choice::new(id, label).key(..).tooltip(..).enabled(..).on_click(..)`.
+  - `Grant::new(choice, provider_words, command)`: the rule as read, the exact rule and the scope (`grant_rule`).
+  - `Details::facts(toggle, open, selector, prefix, rows)` (rows are filtered against the card) or `Details::element(toggle, open, content)`.
 - **Don't:**
-  - Stack the actions one per line.
+  - Stack Allow and Deny, or let a long "Always allow" button outweigh Deny.
   - Make Deny blue.
-  - Show keycaps on an unfocused card.
+  - Show keycaps on an unfocused card. Keycaps keep their hairline box, also on a Primary fill, so they never read as counts.
+  - Repeat the card in Details.
 
 ### PageShell
 
@@ -473,13 +484,13 @@ Prose is above activity, and activity is above meta.
 
 ### Fleet card anatomy
 
-- A `tile` at natural height.
+- A `tile` at natural height in a `tile_grid` (top-aligned).
 - Title (14/600), then elapsed time.
 - StatusCell, then project, model and context.
-- Up to three `EventRow`s.
-- The ask as an inline `Decision` (`Frame::Inline`), with Allow and Deny side by side.
+- The ask, near the top, as an inline `Decision` (`Frame::Inline`): Allow and Deny side by side; a question answered on the card (an option list whose keys send, or a field where Enter sends); a job proposal is a card of its own (Approve, Reject).
+- Up to three `EventRow`s: a working session's last tools, live.
 
-The focused tile alone shows keycaps and the focus ring outside its attention bar. Waiting tiles use `attention_frame`.
+The focused tile alone shows keycaps and the focus ring (`tile_frame`) outside its attention bar. Waiting tiles use `waiting_tile`. Every filter count is the number of cards it shows, job proposals included. The dense view is a Table: one row per session (StatusCell, title, project, doing, needs, two fixed action slots), toggled with Grid/Table and remembered per device (`Settings::fleet_table`).
 
 ### Empty, loading and error states
 

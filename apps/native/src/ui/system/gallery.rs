@@ -5,7 +5,7 @@
 //!
 //! Interaction states (hover, pressed) are drawn as static specimens
 //! (`primitives::button_specimen`) so one frame shows all of them.
-use super::super::decision::{Choice, Decision, Frame};
+use super::super::decision::{Choice, Decision, Details, Frame, Grant, Risk, SUBMIT_ANSWER};
 use super::super::primitives::{
     self as prim, ButtonSize, ButtonVariant, Col, ControlState, CountTone, StatusKind,
 };
@@ -104,10 +104,10 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
                         .child(overlays(p))
                         .child(cards(p))
                         .child(table(p))
-                        .child(decision(p))
                         .child(composers(p)),
                 ),
         )
+        .child(decision(p))
         .into_any_element()
 }
 
@@ -889,30 +889,147 @@ fn table(p: &Palette) -> Div {
         )
 }
 
+/// r5-fleet (R5.4): the DecisionCard, one specimen per kind, each at a
+/// Fleet tile's width so the answer row is seen not to stack: a tool
+/// approval (keys on, a risk cue, an "Always allow" grant with its rule),
+/// a question answered on the card, a plan, and a job proposal.
 fn decision(p: &Palette) -> Div {
-    let mut d = Decision::new(
+    let t = p.tokens;
+    let specimen = |label: &'static str, card: Div| {
+        div()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.sm))
+            .child(caption(label, p))
+            .child(card)
+    };
+    // A tool approval, as the conversation's dock shows it.
+    let mut tool = Decision::new(
         "gallery-decision",
         Choice::new("gallery-allow", "Allow").key(Some(1)),
         Frame::Card { compact: false },
     );
-    d.headline = vec![
+    tool.headline = vec![
         ("Run".into(), false),
-        ("cargo test".into(), true),
-        ("in apps/native?".into(), false),
+        ("git push origin main".into(), true),
+        ("?".into(), false),
     ];
-    d.reason = Some("Run the workspace tests before committing".into());
-    d.folder = Some("/home/dev/src/workspacer/apps/native".into());
-    d.host = Some("studio (this machine)".into());
-    d.alternates = vec![
+    tool.reason = Some("Publish the release branch".into());
+    tool.folder = Some("/home/dev/src/workspacer".into());
+    tool.host = Some("studio (this machine)".into());
+    tool.risk = Some(Risk::Network);
+    tool.grants = vec![Grant::new(
         Choice::new("gallery-always", "Always allow")
             .key(Some(2))
-            .tooltip("Bash(cargo test:*) for this session"),
-    ];
-    d.deny = Some(Choice::new("gallery-deny", "Deny").key(Some(3)));
-    d.keys = true;
+            .tooltip("Until this session ends, any command starting with “git push” runs"),
+        "Always allow Bash(git push:*) this session",
+        "git push origin main",
+    )];
+    tool.deny = Some(Choice::new("gallery-deny", "Deny").key(Some(3)));
+    tool.details = Some(Details::facts(
+        Choice::new("gallery-details", "Details"),
+        false,
+        "gallery-details",
+        "gallery-fact",
+        vec![("Tool".into(), "Bash".into(), false)],
+    ));
+    tool.keys = true;
+
+    // A question, answered on the card: its options send at once.
+    let mut question = Decision::new(
+        "gallery-question",
+        Choice::new("gallery-question-send", SUBMIT_ANSWER),
+        Frame::Inline,
+    );
+    question.headline = vec![("What should I call the new release branch?".into(), false)];
+    question.show_allow = false;
+    question.body = Some(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xxs))
+            .children(
+                [("release/0.9", "Matches the milestone"), ("rc-0.9.0", "")]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (label, about))| {
+                        prim::list_row(("gallery-option", ix), false, true, p)
+                            .h_auto()
+                            .py(px(t.space.xs))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(label)
+                                    .when(!about.is_empty(), |d| {
+                                        d.child(
+                                            div()
+                                                .text_size(px(t.text.meta))
+                                                .text_color(rgb(p.roles.text_tertiary))
+                                                .child(about),
+                                        )
+                                    }),
+                            )
+                            .child(prim::keycap_hint((ix + 1).to_string(), false, p))
+                    }),
+            )
+            .into_any_element(),
+    );
+
+    // A plan: its "no" removes nothing, so it is Secondary.
+    let mut plan = Decision::new(
+        "gallery-plan",
+        Choice::new("gallery-plan-approve", "Approve plan"),
+        Frame::Card { compact: false },
+    );
+    plan.headline = vec![("Start on this plan?".into(), false)];
+    plan.reason = Some("Nothing runs until you approve".into());
+    plan.body = Some(
+        prim::inset(p)
+            .text_size(px(t.text.body))
+            .text_color(rgb(p.roles.text_secondary))
+            .child("1. Split the session store")
+            .child("2. Move restore into the hub")
+            .into_any_element(),
+    );
+    plan.deny = Some(Choice::new("gallery-plan-revise", "Keep planning"));
+    plan.deny_variant = ButtonVariant::Secondary;
+
+    // A job proposal, as a Fleet card shows it.
+    let mut job = Decision::new(
+        "gallery-job",
+        Choice::new("gallery-job-approve", "Approve"),
+        Frame::Inline,
+    );
+    job.headline = vec![("Schedule the job “Nightly tests”?".into(), false)];
+    job.reason = Some("Runs the workspace tests · every day at 02:00".into());
+    job.request = Some("$ cargo test --workspace".into());
+    job.host = Some("studio (this machine)".into());
+    job.deny = Some(Choice::new("gallery-job-reject", "Reject"));
+    job.details = Some(Details::element(
+        Choice::new("gallery-job-details", "Details"),
+        false,
+        None,
+    ));
+
     section("DecisionCard", p)
         .debug_selector(|| "gallery-decisions".into())
-        .child(d.render(p))
+        .child(
+            super::tile_grid(4, p)
+                .child(specimen("Tool approval · keys on", tool.render(p)))
+                .child(specimen(
+                    "Question · answered on the card",
+                    super::waiting_tile(p).child(question.render(p)),
+                ))
+                .child(specimen("Plan", plan.render(p)))
+                .child(specimen(
+                    "Job proposal · Fleet card",
+                    super::waiting_tile(p).child(job.render(p)),
+                )),
+        )
 }
 
 /// TextField / Composer (R5.4): the one composer, in its states. Static

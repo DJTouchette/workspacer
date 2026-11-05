@@ -74,6 +74,8 @@ mod transcript_v2;
 mod fleet;
 // r4-approvals
 mod decision;
+// r5-fleet
+mod grants;
 use chrome::ControlTextStyle;
 pub(crate) use chrome::custom_caption;
 use gpui::{
@@ -1747,6 +1749,7 @@ impl Workspace {
             Command::Select(id) => Some(id.clone()),
             _ => None,
         };
+        self.note_grant(&command); // r5-fleet: Session details lists grants
         match self.controller.command(command) {
             Ok(()) => {
                 if let Some(id) = selection {

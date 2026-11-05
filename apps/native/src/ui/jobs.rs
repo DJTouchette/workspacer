@@ -1546,7 +1546,31 @@ impl Workspace {
     /// Approve primary, Reject secondary, and Details for the full spec
     /// (and, for a change, the job as it is now).
     fn job_proposal_v2(&self, ix: usize, job: &Job, all: &[Job], cx: &mut Context<Self>) -> Div {
-        use super::decision::{Choice, Decision, Details, Frame};
+        let p = self.palette();
+        self.job_proposal_decision(
+            ix,
+            job,
+            all,
+            "job",
+            super::decision::Frame::Card { compact: false },
+            cx,
+        )
+        .render(&p)
+    }
+
+    /// r5-fleet (R5.4): a job proposal as the DecisionCard, in Jobs (a card,
+    /// `prefix` "job") or on a Fleet tile (inline, `prefix` "fleet-job"), so
+    /// the Fleet's Needs you shows it as a card it counts.
+    pub(super) fn job_proposal_decision(
+        &self,
+        ix: usize,
+        job: &Job,
+        all: &[Job],
+        prefix: &'static str,
+        frame: super::decision::Frame,
+        cx: &mut Context<Self>,
+    ) -> super::decision::Decision {
+        use super::decision::{Choice, Decision, Details};
         let p = self.palette();
         let enabled = self.view.connected && !self.demo && !self.job_busy();
         let target = job
@@ -1582,7 +1606,7 @@ impl Workspace {
             peer => peer.to_owned(),
         };
         let approval = job.approval();
-        let allow = Choice::new(format!("job-approve-{ix}"), "Approve")
+        let allow = Choice::new(format!("{prefix}-approve-{ix}"), "Approve")
             .tooltip("Approve: it runs on its schedule from now on")
             .enabled(can_approve)
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -1590,7 +1614,7 @@ impl Workspace {
                 this.job_action(JobAction::Save(approval.clone()), cx);
             }));
         let remove_id = job.id.clone();
-        let reject = Choice::new(format!("job-remove-{ix}"), "Reject")
+        let reject = Choice::new(format!("{prefix}-remove-{ix}"), "Reject")
             .tooltip("Reject the proposal; nothing runs")
             .enabled(enabled)
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -1599,24 +1623,24 @@ impl Workspace {
             }));
         let open = self.extras.job_expanded.as_deref() == Some(job.id.as_str());
         let toggle = job.id.clone();
-        let mut decision = Decision::new(
-            format!("job-row-{ix}"),
-            allow,
-            Frame::Card { compact: false },
-        );
+        let mut decision = Decision::new(format!("{prefix}-row-{ix}"), allow, frame);
         decision.headline = vec![(headline, false)];
-        decision.headline_selector = Some(format!("job-headline-{ix}").into());
+        decision.headline_selector = Some(format!("{prefix}-headline-{ix}").into());
         decision.reason = Some(reason);
         decision.request = command.map(|c| format!("$ {c}"));
-        decision.request_selector = format!("job-action-{ix}").into();
+        decision.request_selector = format!("{prefix}-action-{ix}").into();
         decision.folder = folder;
         decision.host = Some(host);
         decision.deny = Some(reject);
-        decision.details = Some(Details {
-            toggle: Choice::new(format!("job-details-{ix}"), "Details")
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx))),
+        decision.details = Some(Details::element(
+            Choice::new(format!("{prefix}-details-{ix}"), "Details").on_click(cx.listener(
+                move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_job(&toggle, cx)
+                },
+            )),
             open,
-            content: open.then(|| {
+            open.then(|| {
                 let t = p.tokens;
                 primitives::inset(&p)
                     .debug_selector(|| "job-detail".into())
@@ -1639,8 +1663,8 @@ impl Workspace {
                     })
                     .into_any_element()
             }),
-        });
-        decision.render(&p)
+        ));
+        decision
     }
 
     /// The column labels over a jobs table.

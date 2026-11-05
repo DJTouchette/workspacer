@@ -236,17 +236,12 @@ fn approval_details_read_as_facts(cx: &mut TestAppContext) {
     assert!(inside(&mut visual, "approval-request", "approval-card"));
     tap(&mut visual, "approval-toggle");
     assert!(inside(&mut visual, "approval-details", "approval-card"));
-    // Tool, Command, Timeout, Folder, Host.
-    for fact in [
-        "approval-fact-0",
-        "approval-fact-1",
-        "approval-fact-2",
-        "approval-fact-3",
-        "approval-fact-4",
-    ] {
+    // r5-fleet (R5.4): only what the card does not already say: Tool and
+    // Timeout (the command, folder and host are on the card).
+    for fact in ["approval-fact-0", "approval-fact-1"] {
         assert!(visual.debug_bounds(fact).is_some(), "{fact}");
     }
-    assert!(visual.debug_bounds("approval-fact-5").is_none());
+    assert!(visual.debug_bounds("approval-fact-2").is_none());
     workspace.read_with(&visual, |this, _| assert!(this.extras.approval_details));
 }
 

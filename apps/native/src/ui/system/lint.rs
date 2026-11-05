@@ -75,8 +75,6 @@ use Rule::{BorderColour as B, RawColour as C, RawPx as P, Shadow as S};
 const ALLOWED: &[Allowed] = &[
     // ── To migrate: v2-only surfaces ─────────────────────────────────────
     a("src/ui/capsule.rs", S, 1, TO_MIGRATE),
-    a("src/ui/fleet.rs", S, 1, TO_MIGRATE),
-    a("src/ui/fleet.rs", B, 4, TO_MIGRATE),
     a("src/ui/review/v2.rs", B, 1, TO_MIGRATE),
     // ── To migrate: shared v1/v2 files (the v1 share stays) ──────────────
     a("src/ui/async_questions.rs", P, 4, MIXED),

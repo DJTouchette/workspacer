@@ -1509,6 +1509,7 @@ impl Workspace {
         let context = self.render_context_card(s, cx);
         let mcp = self.render_mcp_card(s, cx);
         let codex = self.render_codex_card(s, cx);
+        let grants = self.render_grants_card(s, cx); // r5-fleet (v2 only)
         div()
             .flex()
             .flex_col()
@@ -1525,6 +1526,7 @@ impl Workspace {
             .children(context)
             .children(codex)
             .children(mcp)
+            .children(grants)
     }
     fn render_history(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = self.palette();

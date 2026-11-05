@@ -39,7 +39,7 @@ mod contrast;
 mod lint;
 
 pub(crate) use actions::{composer_send_state, send_state, stop_variant};
-pub(crate) use card::{tile, tile_grid};
+pub(crate) use card::{tile, tile_frame, tile_grid, waiting_tile};
 pub(crate) use composer::{
     ComposerState, composer_body, composer_field, composer_specimen, composer_text,
     composer_toolbar,

@@ -132,6 +132,10 @@ pub struct Settings {
     /// `vim_navigation`, on by default). Settings → Keyboard sets whichever
     /// the current design reads (`Settings::vim`).
     pub vim_navigation_v2: bool,
+    // r5-fleet
+    /// The Fleet shows its dense table (one row per session) instead of
+    /// the tile grid; remembered on this device.
+    pub fleet_table: bool,
 }
 // area-transcript
 /// The transcript's reading measure under design v2: Settings -> Chat.
@@ -203,6 +207,7 @@ impl Default for Settings {
             review_split: false,
             // r2-shell
             vim_navigation_v2: false,
+            fleet_table: false,
         }
     }
 }

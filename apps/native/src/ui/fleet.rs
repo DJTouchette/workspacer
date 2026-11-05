@@ -1,4 +1,5 @@
-//! r3-fleet (R3.7): the Fleet view, a responsive grid of live session tiles
+//! r3-fleet (R3.7), r5-fleet (R5.4): the Fleet view, a grid of live session
+//! tiles at their natural height (or a dense table, one row per session)
 //! for supervising several agents at once. Each tile shows the session's
 //! title and project, its status in the R3.1 lexicon, how long it has been
 //! at it, its latest events and the ask it waits on, with that ask's own
@@ -16,12 +17,13 @@ use super::composer_v2::{
     StripKey, approval_context, approval_facts, approval_headline, approval_request, plan_text,
     strip_keys,
 };
-use super::primitives::{
-    self, ButtonSize, ButtonVariant, CountTone, EventRow, StatusBadge, StatusKind,
-};
+use super::primitives::{self, ButtonSize, ButtonVariant, Col, CountTone, EventRow, StatusKind};
 use super::system;
 use super::*;
 use gpui::AnyElement;
+use gpui_component::input::{Input, InputEvent, InputState};
+use serde_json::Value;
+use std::collections::HashMap;
 
 actions!(
     native,
@@ -56,8 +58,17 @@ pub(super) struct FleetUi {
     pub(super) filter: Filter,
     /// The tile whose request Details is open, by session id.
     pub(super) details: Option<String>,
-    /// Columns the grid was last drawn with, for Up and Down.
+    /// Columns the grid was last drawn with, for Up and Down (1 in the
+    /// table).
     pub(super) columns: usize,
+    /// r5-fleet: each session's last few tools (tool, summary), oldest
+    /// first: a working tile's live tail.
+    pub(super) recent: HashMap<String, Vec<(String, String)>>,
+    /// r5-fleet: the answer field of each text-question tile, by session.
+    pub(super) answers: HashMap<String, (Entity<InputState>, gpui::Subscription)>,
+    /// r5-fleet: the "Always allow" grants sent from this window (Session
+    /// details lists them; see `grants.rs`).
+    pub(super) grants: Vec<super::grants::Granted>,
 }
 
 /// A step of the keyboard focus across the grid.
@@ -187,8 +198,9 @@ pub(super) enum Ask {
     /// A tool waits for permission (R4.3, as in the conversation): the
     /// request as a headline (words and code spans), why, a long command
     /// whole, its folder and host, each "Always allow" grant as (option id,
-    /// the provider's label, the exact rule shown, tooltip), the keys in button order (Allow, each grant,
-    /// Deny) and the full request for Details.
+    /// the provider's label, the exact rule shown, tooltip), the keys in
+    /// button order (Allow, each grant, Deny), the full request for Details
+    /// and its risk cue.
     Approval {
         headline: Vec<(String, bool)>,
         context: Option<String>,
@@ -198,13 +210,79 @@ pub(super) enum Ask {
         always: Vec<(String, String, String, String)>,
         keys: Vec<StripKey>,
         facts: Vec<(String, String, bool)>,
+        command: String,
+        risk: Option<super::decision::Risk>,
     },
-    /// A plan or a question: its headline, answered in the session (1).
+    /// r5-fleet (R5.4): one question, answered on the tile: its options
+    /// (label, description) as a list (keys 1…n send one), or with none an
+    /// inline field (1 focuses it, Enter sends). `card` binds the answer.
+    Question {
+        headline: String,
+        options: Vec<(String, Option<String>)>,
+        card: Option<String>,
+    },
+    /// A plan, or a question set the tile cannot answer (several
+    /// questions, multiple choice, a secret, an MCP form): its headline,
+    /// answered in the session (1 opens it).
     Open {
         headline: String,
         verb: &'static str,
     },
 }
+
+impl Ask {
+    /// The ask in one line, for the table's Needs column.
+    pub(super) fn text(&self) -> String {
+        match self {
+            Self::Approval { headline, .. } => super::decision::headline_text(headline)
+                .0
+                .replace('\u{2009}', ""),
+            Self::Question { headline, .. } | Self::Open { headline, .. } => headline.clone(),
+        }
+    }
+}
+
+/// The question a tile answers itself: exactly one, single choice, not
+/// secret and not an MCP form. (headline, options).
+pub(super) fn answerable(
+    questions: &Value,
+    elicitation: Option<&str>,
+) -> Option<(String, Vec<(String, Option<String>)>)> {
+    if elicitation.is_some() {
+        return None;
+    }
+    let list = super::questions::question_list(questions);
+    let [question] = list.as_slice() else {
+        return None;
+    };
+    if question["multiSelect"].as_bool() == Some(true) || super::questions::secret(question) {
+        return None;
+    }
+    let headline = question["question"]
+        .as_str()
+        .or(question["header"].as_str())
+        .map(str::trim)
+        .filter(|q| !q.is_empty())?
+        .to_owned();
+    let options = question["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|o| {
+            let label = o["label"].as_str().or(o.as_str())?.trim();
+            let description = o["description"]
+                .as_str()
+                .map(str::trim)
+                .filter(|d| !d.is_empty())
+                .map(str::to_owned);
+            (!label.is_empty()).then(|| (label.to_owned(), description))
+        })
+        .collect();
+    Some((headline, options))
+}
+
+/// Most tool lines a working tile keeps as its live tail.
+const TAIL: usize = 3;
 
 /// One tile of the grid.
 #[derive(Clone)]
@@ -267,6 +345,16 @@ impl Workspace {
             .collect()
     }
 
+    /// The job proposals the Fleet shows as cards under its filter (R5.4:
+    /// they count in Needs you, so they show there).
+    pub(super) fn fleet_jobs(&self) -> Vec<wks_native::jobs::Job> {
+        if shown(Bucket::NeedsYou, self.fleet.filter) {
+            self.job_proposals()
+        } else {
+            Vec::new()
+        }
+    }
+
     fn fleet_tile(&self, subtree: &[(usize, usize)], now: i64) -> Tile {
         let index = subtree[0].0;
         let session = &self.view.sessions[index];
@@ -295,7 +383,7 @@ impl Workspace {
                     };
                 }
                 // Every grant, with the same exact rule the conversation
-                // shows (R4.3), never shortened to "Always allow".
+                // shows (R4.3).
                 let always: Vec<(String, String, String, String)> =
                     wks_native::session_controls::always_options(approval)
                         .into_iter()
@@ -314,7 +402,28 @@ impl Workspace {
                     keys: strip_keys(always.len(), false),
                     always,
                     facts: approval_facts(approval, &session.cwd, &host),
+                    command: super::composer_v2::approval_summary(approval).1,
+                    risk: super::decision::risk(approval, &session.cwd),
                 }
+            })
+            .or_else(|| {
+                let questions = session.questions.as_ref().filter(|_| self.view.connected)?;
+                Some(
+                    match answerable(questions, session.elicitation_server.as_deref()) {
+                        Some((headline, options)) => Ask::Question {
+                            headline,
+                            options,
+                            card: session.card(),
+                        },
+                        None => Ask::Open {
+                            headline: reason
+                                .as_ref()
+                                .map(|r| r.text.clone())
+                                .unwrap_or_else(|| "Questions wait for your answers".into()),
+                            verb: "Open to answer",
+                        },
+                    },
+                )
             })
             .or_else(|| {
                 reason
@@ -322,10 +431,10 @@ impl Workspace {
                     .filter(|r| r.action == attention::InboxAction::Answer)
                     .map(|r| Ask::Open {
                         headline: r.text.clone(),
-                        verb: "Answer",
+                        verb: "Open to answer",
                     })
             });
-        let mut lines = self.fleet_lines(session, subtree);
+        let mut lines = self.fleet_lines(session, subtree, kind == StatusKind::Working);
         // A stall or failure that put the session in Needs you, when no
         // line already names it (its own silence, say), leads.
         if let Some(reason) = reason.as_ref().filter(|r| r.fault)
@@ -373,11 +482,42 @@ impl Workspace {
         }
     }
 
+    /// Remember each session's latest tool as it changes, so a working
+    /// tile shows its last few tools live (R5.4), not only the latest.
+    fn record_fleet_tools(&mut self) {
+        let sessions = self.view.sessions.clone();
+        let recent = &mut self.fleet.recent;
+        recent.retain(|id, _| sessions.iter().any(|s| &s.id == id));
+        for session in sessions.iter() {
+            let tool = session.telemetry.last_tool_name.trim();
+            if tool.is_empty() {
+                continue;
+            }
+            let entry = (
+                tool.to_owned(),
+                session.telemetry.last_tool_summary.trim().to_owned(),
+            );
+            let tail = recent.entry(session.id.clone()).or_default();
+            if tail.last() != Some(&entry) {
+                tail.push(entry);
+                if tail.len() > TAIL {
+                    tail.remove(0);
+                }
+            }
+        }
+    }
+
     /// What the session row reports it is doing, failures first and each
     /// one named: a subagent that stopped answering or failed, a failed
-    /// background command; then the last tool, the plan step in progress,
-    /// the subagents at work and the background work still running.
-    fn fleet_lines(&self, session: &Session, subtree: &[(usize, usize)]) -> Vec<Line> {
+    /// background command; then its tools (a working session's last few,
+    /// newest last), the plan step in progress, the subagents at work and
+    /// the background work still running.
+    fn fleet_lines(
+        &self,
+        session: &Session,
+        subtree: &[(usize, usize)],
+        working: bool,
+    ) -> Vec<Line> {
         let now = timing::now_ms();
         let mut faults = Vec::new();
         let mut lines = Vec::new();
@@ -432,13 +572,22 @@ impl Workspace {
             });
         }
         let tool = session.telemetry.last_tool_name.trim();
-        if !tool.is_empty() {
+        let summary = session.telemetry.last_tool_summary.trim();
+        let mut tools: Vec<(String, String)> = match self.fleet.recent.get(&session.id) {
+            Some(tail) if working => tail.clone(),
+            _ => Vec::new(),
+        };
+        let latest = (tool.to_owned(), summary.to_owned());
+        if !tool.is_empty() && tools.last() != Some(&latest) {
+            tools.push(latest);
+        }
+        let keep = if working { TAIL } else { 1 };
+        for (tool, summary) in tools.iter().skip(tools.len().saturating_sub(keep)) {
             let (icon, verb) = tool_line(tool);
-            let summary = session.telemetry.last_tool_summary.trim();
             lines.push(Line {
                 icon,
                 verb,
-                argument: (!summary.is_empty()).then(|| summary.to_owned()),
+                argument: (!summary.is_empty()).then(|| summary.clone()),
                 summary: None,
                 fault: None,
             });
@@ -539,8 +688,9 @@ impl Workspace {
     }
 
     /// Key `n` (1-based) on tile `position`'s ask: an approval's Allow,
-    /// Always allow and Deny in button order; a plan's or question's 1
-    /// opens the session at it.
+    /// Always allow and Deny in button order; a question's option `n`
+    /// (sent at once), or 1 into its answer field; a plan's 1 opens the
+    /// session at it.
     fn fleet_answer(
         &mut self,
         position: usize,
@@ -554,12 +704,13 @@ impl Workspace {
         };
         self.fleet.focus = Some(tile.id.clone());
         window.focus(&self.focus);
+        let ready = self.view.connected && !self.view.busy;
         match &tile.ask {
             Some(Ask::Approval { keys, always, .. }) => {
                 let Some(key) = n.checked_sub(1).and_then(|ix| keys.get(ix)) else {
                     return;
                 };
-                if !self.view.connected || self.view.busy {
+                if !ready {
                     return;
                 }
                 let card = self.view.sessions[tile.index].card();
@@ -583,10 +734,93 @@ impl Workspace {
                     self.fleet.focus = Some(next);
                 }
             }
+            Some(Ask::Question { options, card, .. }) if !options.is_empty() => {
+                let Some((label, _)) = n.checked_sub(1).and_then(|ix| options.get(ix)) else {
+                    return;
+                };
+                if !ready {
+                    return;
+                }
+                self.fleet_act(
+                    tile.index,
+                    Action::Answers(vec![label.clone()], card.clone()),
+                    cx,
+                );
+                if let Some(next) = next_asking(&tiles, position) {
+                    self.fleet.focus = Some(next);
+                }
+            }
+            Some(Ask::Question { .. }) if n == 1 => {
+                if let Some((input, _)) = self.fleet.answers.get(&tile.id) {
+                    let input = input.clone();
+                    input.update(cx, |input, cx| input.focus(window, cx));
+                }
+            }
             Some(Ask::Open { .. }) if n == 1 => self.open_listed_session(tile.index, cx),
             _ => {}
         }
         cx.notify();
+    }
+
+    /// Send the typed answer of question tile `id` (Enter, or its Send
+    /// answer): the session's card, then the focus back on the grid and on
+    /// to the next ask.
+    fn submit_fleet_answer(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let tiles = self.fleet_tiles(cx);
+        let Some(position) = tiles.iter().position(|t| t.id == id) else {
+            return;
+        };
+        let tile = &tiles[position];
+        let Some(Ask::Question { card, .. }) = &tile.ask else {
+            return;
+        };
+        let Some((input, _)) = self.fleet.answers.get(id) else {
+            return;
+        };
+        let input = input.clone();
+        let text = input.read(cx).value().trim().to_owned();
+        if text.is_empty() || !self.view.connected || self.view.busy {
+            return;
+        }
+        self.fleet_act(tile.index, Action::Answers(vec![text], card.clone()), cx);
+        input.update(cx, |input, cx| input.set_value("", window, cx));
+        window.focus(&self.focus);
+        self.fleet.focus = next_asking(&tiles, position).or(Some(id.to_owned()));
+        cx.notify();
+    }
+
+    /// One answer field per text-question tile on screen, made as tiles
+    /// need them and dropped with their question.
+    fn sync_fleet_answers(&mut self, tiles: &[Tile], window: &mut Window, cx: &mut Context<Self>) {
+        let wanted: Vec<&str> = tiles
+            .iter()
+            .filter(|t| matches!(&t.ask, Some(Ask::Question { options, .. }) if options.is_empty()))
+            .map(|t| t.id.as_str())
+            .collect();
+        self.fleet
+            .answers
+            .retain(|id, _| wanted.contains(&id.as_str()));
+        for id in wanted {
+            if self.fleet.answers.contains_key(id) {
+                continue;
+            }
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Type your answer"));
+            let owner = id.to_owned();
+            let subscription = cx.subscribe_in(
+                &input,
+                window,
+                move |this, _, event: &InputEvent, window, cx| match event {
+                    InputEvent::Change => cx.notify(),
+                    InputEvent::PressEnter { secondary: false } => {
+                        this.submit_fleet_answer(&owner, window, cx)
+                    }
+                    _ => {}
+                },
+            );
+            self.fleet
+                .answers
+                .insert(id.to_owned(), (input, subscription));
+        }
     }
 
     /// The hub acts on the selected session only, so a tile's decision
@@ -647,24 +881,32 @@ impl Workspace {
         let p = self.palette();
         let t = p.tokens;
         let f = t.fleet();
+        let table = self.settings.fleet_table;
         // The page's room: the window less the sidebar and the page gutters.
         let width = unzoom(window.viewport_size().width);
         let room = (width - self.sidebar_footprint(width) - 2. * t.space.xxl).min(f.grid_max);
-        let cols = columns(room, f.tile_min, t.space.lg, f.columns_max);
+        let cols = if table {
+            1
+        } else {
+            columns(room, f.tile_min, t.space.lg, f.columns_max)
+        };
         self.fleet.columns = cols;
+        self.record_fleet_tools();
         // r4-truth: the sidebar's counts (top-level trees per group, job
-        // proposals in Needs you), never a tally of its own.
+        // proposals in Needs you), never a tally of its own. R5.4: every
+        // count is what its filter shows, proposals included (as cards).
         let groups = self.fleet_sessions(cx);
         let counts = self.attention_counts(cx);
-        let proposals = self.job_proposals().len();
-        let trees: usize = counts.iter().sum::<usize>() - proposals;
-        let active = counts[Bucket::NeedsYou.index()] + counts[Bucket::Working.index()] - proposals;
-        let quiet = trees - active;
+        let all_count: usize = counts.iter().sum();
+        let needs = counts[Bucket::NeedsYou.index()];
+        let active = needs + counts[Bucket::Working.index()];
+        let quiet = all_count - active;
         let tiles = self.fleet_tiles(cx);
+        let jobs = self.fleet_jobs();
+        self.sync_fleet_answers(&tiles, window, cx);
         let focus = self.fleet_focus(&tiles);
         let current = self.fleet.filter;
         let all = current == Filter::All;
-        let needs = counts[Bucket::NeedsYou.index()];
         let back = self.page_back_v2(cx);
         let filter = |id: &'static str, label: &'static str, on: Filter, n: usize| {
             primitives::segment(id, label, current == on, &p)
@@ -681,61 +923,54 @@ impl Workspace {
                     cx.notify();
                 }))
         };
+        let view = |id: &'static str, label: &'static str, on: bool| {
+            primitives::segment(id, label, table == on, &p)
+                .debug_selector(move || id.into())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if this.settings.fleet_table != on {
+                        this.settings.fleet_table = on;
+                        this.save_settings(cx);
+                    }
+                    window.focus(&this.focus);
+                    cx.notify();
+                }))
+        };
         let header = primitives::page_header(
             back,
             "Fleet",
             Some(summary(counts).into()),
             vec![
-                primitives::segmented(&p)
-                    .child(filter(
-                        "fleet-filter-needs",
-                        "Needs you",
-                        Filter::NeedsYou,
-                        needs,
-                    ))
-                    .child(filter(
-                        "fleet-filter-active",
-                        "Active",
-                        Filter::Active,
-                        active,
-                    ))
-                    .child(filter("fleet-filter-all", "All", Filter::All, trees))
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(t.space.md))
+                    .child(
+                        primitives::segmented(&p)
+                            .child(view("fleet-view-grid", "Grid", false))
+                            .child(view("fleet-view-table", "Table", true)),
+                    )
+                    .child(
+                        primitives::segmented(&p)
+                            .child(filter(
+                                "fleet-filter-needs",
+                                "Needs you",
+                                Filter::NeedsYou,
+                                needs,
+                            ))
+                            .child(filter(
+                                "fleet-filter-active",
+                                "Active",
+                                Filter::Active,
+                                active,
+                            ))
+                            .child(filter("fleet-filter-all", "All", Filter::All, all_count)),
+                    )
                     .into_any_element(),
             ],
             &p,
         );
-        // r4-truth (R4.2): a job proposal waits on the user too; All clear
-        // only when nothing does.
-        let waiting_jobs = (proposals > 0).then(|| {
-            div()
-                .id("fleet-jobs-waiting")
-                .debug_selector(|| "fleet-jobs-waiting".into())
-                .cursor_pointer()
-                .flex()
-                .items_center()
-                .gap(px(t.space.sm))
-                .text_size(px(t.text.body))
-                .text_color(rgb(p.roles.text_secondary))
-                .child(primitives::status_indicator(StatusKind::NeedsYou, &p))
-                .child(if proposals == 1 {
-                    "1 job proposal waits for your approval".to_owned()
-                } else {
-                    format!("{proposals} job proposals wait for your approval")
-                })
-                .child(div().text_color(rgb(p.accent)).child("Review in Jobs"))
-                .on_click(
-                    cx.listener(|this, _, window, cx| this.open_feature(Screen::Jobs, window, cx)),
-                )
-        });
-        let body: AnyElement = if tiles.is_empty() && waiting_jobs.is_some() {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(t.space.lg))
-                .children(waiting_jobs)
-                .into_any_element()
-        } else if tiles.is_empty() {
-            let (title, body) = if groups.is_empty() {
+        let body: AnyElement = if tiles.is_empty() && jobs.is_empty() {
+            let (title, body) = if groups.is_empty() && all_count == 0 {
                 (
                     "No sessions yet",
                     "Start a session and it shows here, live, beside every other.".to_owned(),
@@ -758,7 +993,7 @@ impl Workspace {
             let (wider, label) = if current == Filter::NeedsYou && active > 0 {
                 (Filter::Active, format!("Show active {active}"))
             } else {
-                (Filter::All, format!("Show all {trees}"))
+                (Filter::All, format!("Show all {all_count}"))
             };
             let offer = !all && (quiet > 0 || wider == Filter::Active);
             primitives::empty_state(IconName::CircleCheck, title, Some(body.into()), &p)
@@ -786,11 +1021,37 @@ impl Workspace {
                 })
                 .into_any_element()
         } else {
+            let all_jobs = self.job_rows().unwrap_or_default();
+            let content: AnyElement = if table {
+                self.render_fleet_table(&tiles, &jobs, &all_jobs, focus, cx)
+                    .into_any_element()
+            } else {
+                // R5.4: tiles at their natural height, top-aligned: a short
+                // tile is never a tall empty box. Job proposals are cards
+                // too, after the sessions that wait on you.
+                let waiting = tiles
+                    .iter()
+                    .take_while(|t| t.bucket == Bucket::NeedsYou)
+                    .count();
+                let mut cards: Vec<AnyElement> = Vec::new();
+                for n in 0..waiting {
+                    cards.push(self.render_fleet_tile(n, &tiles[n], n == focus, cx));
+                }
+                for (ix, job) in jobs.iter().enumerate() {
+                    cards.push(self.render_fleet_job(ix, job, &all_jobs, cx));
+                }
+                for n in waiting..tiles.len() {
+                    cards.push(self.render_fleet_tile(n, &tiles[n], n == focus, cx));
+                }
+                system::tile_grid(cols as u16, &p)
+                    .debug_selector(|| "fleet-grid".into())
+                    .children(cards)
+                    .into_any_element()
+            };
             div()
                 .flex()
                 .flex_col()
                 .gap(px(t.space.lg))
-                .children(waiting_jobs)
                 .when(needs == 0, |d| {
                     d.child(
                         div()
@@ -808,25 +1069,10 @@ impl Workspace {
                             .child("All clear · nothing is waiting on you"),
                     )
                 })
-                .child(
-                    div()
-                        .debug_selector(|| "fleet-grid".into())
-                        .w_full()
-                        .grid()
-                        .grid_cols(cols as u16)
-                        // R4.7: tiles in one row share its height (the
-                        // tallest, at least `tile_height`); a tile's ask
-                        // sits at its foot, so asks line up across a row.
-                        .gap(px(t.space.lg))
-                        .children(
-                            tiles
-                                .iter()
-                                .enumerate()
-                                .map(|(n, tile)| self.render_fleet_tile(n, tile, n == focus, cx)),
-                        ),
-                )
+                .child(content)
                 .into_any_element()
         };
+        let asks = tiles.iter().any(|t| t.ask.is_some());
         // r5-shell (R5.4): the shared PageShell, at the grid's width.
         let content = system::page_shell(
             header,
@@ -836,7 +1082,7 @@ impl Workspace {
                 .flex_col()
                 .gap(px(t.space.xxl))
                 .child(body)
-                .child(self.fleet_hints()),
+                .child(self.fleet_hints(asks, table)),
             system::PageWidth::Grid,
             &p,
         )
@@ -844,8 +1090,9 @@ impl Workspace {
         self.page_view("fleet-scroll", f.grid_max, false, content)
     }
 
-    /// The keys, once, under the grid: faint keycaps and plain words.
-    fn fleet_hints(&self) -> Div {
+    /// The keys, once, under the grid: faint keycaps and plain words. The
+    /// number keys show only while something asks.
+    fn fleet_hints(&self, asks: bool, table: bool) -> Div {
         let p = self.palette();
         let t = p.tokens;
         let hint = |keys: &[&'static str], label: &'static str| {
@@ -864,27 +1111,25 @@ impl Workspace {
             .gap(px(t.space.xl))
             .text_size(px(t.text.meta))
             .text_color(rgb(p.roles.text_tertiary))
-            .child(hint(&["←", "↑", "↓", "→"], "Move"))
+            .child(if table {
+                hint(&["↑", "↓"], "Move")
+            } else {
+                hint(&["←", "↑", "↓", "→"], "Move")
+            })
             .child(hint(&["↵"], "Open"))
-            .child(hint(&["1", "2", "3"], "Answer the focused ask"))
+            .when(asks, |d| {
+                d.child(hint(&["1", "2", "3"], "Answer the focused ask"))
+            })
             .child(hint(&["Esc"], "Back"))
     }
 
-    fn render_fleet_tile(
-        &self,
-        n: usize,
-        tile: &Tile,
-        focused: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// A tile's first lines: the title (it truncates) and the time, then
+    /// the status (a StatusCell), project, model and context.
+    fn fleet_tile_head(&self, n: usize, tile: &Tile) -> Div {
         let p = self.palette();
         let t = p.tokens;
-        let f = t.fleet();
-        let index = tile.index;
         let kind = tile.kind;
-        let waiting = kind == StatusKind::NeedsYou;
         let ended = tile.bucket == Bucket::Ended;
-        // Line one: the title (it truncates) and the time.
         let head = div()
             .w_full()
             .min_w_0()
@@ -915,7 +1160,6 @@ impl Workspace {
                         .child(time),
                 )
             }));
-        // Line two: the status in the lexicon, then where and which model.
         let meta = div()
             .w_full()
             .min_w_0()
@@ -928,19 +1172,11 @@ impl Workspace {
                 div()
                     .debug_selector(move || format!("fleet-status-{n}-{kind:?}"))
                     .flex_shrink_0()
-                    .child(if kind.has_glyph() {
-                        StatusBadge::new(kind)
+                    .child(
+                        system::StatusCell::new(kind)
                             .render(&p)
-                            .debug_selector(move || format!("fleet-status-{n}"))
-                    } else {
-                        // Idle draws no glyph (R3.1); its empty glyph box
-                        // would read as an indent here, so the word leads.
-                        div()
-                            .debug_selector(move || format!("fleet-status-{n}"))
-                            .font_weight(FontWeight(t.weight.medium))
-                            .text_color(rgb(kind.text_color(&p)))
-                            .child(kind.label())
-                    }),
+                            .debug_selector(move || format!("fleet-status-{n}")),
+                    ),
             )
             .child("·")
             .child(div().flex_shrink_0().child(tile.project.clone()))
@@ -963,7 +1199,27 @@ impl Workspace {
                         .child(wks_native::format::context_label(Some(pct))),
                 )
             }));
-        let lines = if tile.lines.is_empty() {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xxs))
+            .child(head)
+            .child(meta)
+    }
+
+    fn render_fleet_tile(
+        &self,
+        n: usize,
+        tile: &Tile,
+        focused: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let t = p.tokens;
+        let f = t.fleet();
+        let index = tile.index;
+        let waiting = tile.kind == StatusKind::NeedsYou;
+        let lines: Vec<AnyElement> = if tile.lines.is_empty() && tile.ask.is_none() {
             vec![
                 div()
                     .h(px(f.event_row))
@@ -971,14 +1227,11 @@ impl Workspace {
                     .items_center()
                     .text_size(px(t.text.body))
                     .text_color(rgb(p.roles.text_tertiary))
-                    .child(match (tile.bucket, &tile.ask) {
-                        (Bucket::Ended, _) => "Ended",
-                        (Bucket::Working, _) => "Starting…",
-                        (Bucket::NeedsYou, Some(Ask::Open { verb: "Answer", .. })) => {
-                            "Waiting for your answer"
-                        }
-                        (Bucket::NeedsYou, _) => "Waiting for your decision",
-                        (Bucket::Idle, _) => "Ready for your next message",
+                    .child(match tile.bucket {
+                        Bucket::Ended => "Ended",
+                        Bucket::Working => "Starting…",
+                        Bucket::NeedsYou => "Waiting for you",
+                        Bucket::Idle => "Ready for your next message",
                     })
                     .into_any_element(),
             ]
@@ -1008,59 +1261,33 @@ impl Workspace {
             .ask
             .as_ref()
             .map(|ask| self.render_fleet_ask(n, tile, ask, focused, cx));
-        let group: SharedString = format!("fleet-tile-{n}").into();
+        // R5.4: the ask sits near the top, under the title and status; the
+        // event lines (a working tile's live tail) follow.
         let surface = if waiting {
-            primitives::attention_frame(t.radius.panel, &p)
-                .pl(px(t.space.xl + t.signals().attention_bar))
+            system::waiting_tile(&p)
         } else {
-            div()
-                .relative()
-                .rounded(px(t.radius.panel))
-                .border(px(t.stroke.hairline))
-                .border_color(rgb(p.roles.card_border))
-                .group_hover(group.clone(), |s| {
-                    s.border_color(rgb(p.roles.border_strong))
-                })
-                .pl(px(t.space.xl))
+            system::tile(&p)
         };
         let card = surface
-            .size_full()
-            .min_h(px(f.tile_height))
-            .pr(px(t.space.xl))
-            .py(px(t.space.lg))
-            .flex()
-            .flex_col()
-            .gap(px(t.space.md))
-            .bg(rgb(p.surface))
-            .shadow(primitives::elevation(&p, t.elevation.raised))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.xxs))
-                    .child(head)
-                    .child(meta),
-            )
-            .child(
-                div()
-                    .debug_selector(move || format!("fleet-lines-{n}"))
-                    .flex()
-                    .flex_col()
-                    .children(lines),
-            )
-            .child(div().flex_1())
-            .children(ask);
-        chrome::interactive_control(
-            div().id(SharedString::from(format!("fleet-tile-{}", tile.id))),
-            p,
-            true,
+            .child(self.fleet_tile_head(n, tile))
+            .children(ask)
+            .when(!lines.is_empty(), |d| {
+                d.child(
+                    div()
+                        .debug_selector(move || format!("fleet-lines-{n}"))
+                        .flex()
+                        .flex_col()
+                        .children(lines),
+                )
+            });
+        system::tile_frame(
+            SharedString::from(format!("fleet-tile-{}", tile.id)),
+            focused,
+            &p,
         )
         .debug_selector(move || format!("fleet-tile-{n}"))
-        .group(group)
-        .rounded(px(t.radius.panel + t.stroke.focus))
         .when(focused, |d| {
-            d.border_color(rgb(p.roles.focus))
-                .child(div().debug_selector(move || format!("fleet-focused-{n}")))
+            d.child(div().debug_selector(move || format!("fleet-focused-{n}")))
         })
         .tooltip(primitives::tooltip_view(
             format!("Open {}", tile.title),
@@ -1078,12 +1305,73 @@ impl Workspace {
         .into_any_element()
     }
 
-    /// A tile's ask, under a hairline, drawn by the one decision component
-    /// (R4.3): the request as a headline, why, a long command whole, its
-    /// folder and host, then Allow (always the Primary), each "Always allow"
-    /// with its exact rule and Deny (Secondary). Details expands the full
-    /// request in place. Keycaps show only on the focused tile, where the
-    /// number keys go.
+    /// A job proposal as a Fleet card (R5.4): the job, then the one
+    /// decision component inline (Approve, Reject, Details).
+    fn render_fleet_job(
+        &self,
+        ix: usize,
+        job: &wks_native::jobs::Job,
+        all: &[wks_native::jobs::Job],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let t = p.tokens;
+        let head = div()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xxs))
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(t.text.subheading))
+                    .font_weight(FontWeight(t.weight.semibold))
+                    .text_color(rgb(p.text))
+                    .child(job.name.clone()),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(t.space.sm))
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .child(system::StatusCell::new(StatusKind::NeedsYou).render(&p)),
+                    )
+                    .child("·")
+                    .child(div().flex_shrink_0().child("Job proposal")),
+            );
+        let decision = self.job_proposal_decision(
+            ix,
+            job,
+            all,
+            "fleet-job",
+            super::decision::Frame::Inline,
+            cx,
+        );
+        div()
+            .id(("fleet-job-card", ix))
+            .debug_selector(move || format!("fleet-job-{ix}"))
+            .w_full()
+            .min_w_0()
+            .child(
+                system::waiting_tile(&p)
+                    .child(head)
+                    .child(decision.render(&p)),
+            )
+            .into_any_element()
+    }
+
+    /// A tile's ask, drawn by the one decision component (R5.4): the
+    /// request as a headline, why, a long command whole, where it runs and
+    /// its risk, then Allow (Primary) and Deny (Destructive) side by side,
+    /// each "Always allow" with the rule it saves, and Details below its
+    /// toggle. A question is answered here: an option list or a field.
+    /// Keycaps show only on the focused tile, where the number keys go.
     fn render_fleet_ask(
         &self,
         n: usize,
@@ -1092,7 +1380,7 @@ impl Workspace {
         focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        use super::decision::{Choice, Decision, Details, Frame};
+        use super::decision::{Choice, Decision, Details, Frame, Grant};
         let p = self.palette();
         let t = p.tokens;
         let enabled = self.view.connected && !self.view.busy;
@@ -1115,6 +1403,8 @@ impl Workspace {
                 always,
                 keys,
                 facts,
+                command,
+                risk,
             } => {
                 let number = |key: &StripKey| keys.iter().position(|k| k == key).map(|ix| ix + 1);
                 let allow = choice(
@@ -1132,10 +1422,11 @@ impl Workspace {
                 decision.request_selector = format!("fleet-request-{n}").into();
                 decision.folder = Some(folder.clone());
                 decision.host = Some(host.clone());
-                decision.alternates = always
+                decision.risk = *risk;
+                decision.grants = always
                     .iter()
                     .enumerate()
-                    .filter_map(|(ix, (_, _, rule, tip))| {
+                    .filter_map(|(ix, (_, words, _, tip))| {
                         let key = number(&StripKey::Always(ix))?;
                         // The first grant keeps its selector.
                         let id = if ix == 0 {
@@ -1143,7 +1434,8 @@ impl Workspace {
                         } else {
                             format!("fleet-always-{n}-{ix}")
                         };
-                        Some(choice(id, key, rule.clone().into()).tooltip(tip.clone()))
+                        let choice = choice(id, key, "Always allow".into()).tooltip(tip.clone());
+                        Some(Grant::new(choice, words, command))
                     })
                     .collect();
                 decision.deny = number(&StripKey::Deny).map(|key| {
@@ -1152,9 +1444,9 @@ impl Workspace {
                 });
                 let open = self.fleet.details.as_deref() == Some(tile.id.as_str());
                 let id = tile.id.clone();
-                decision.details = Some(Details {
-                    toggle: Choice::new(format!("fleet-details-{n}"), "Details").on_click(
-                        cx.listener(move |this, _, _, cx| {
+                decision.details = Some(Details::facts(
+                    Choice::new(format!("fleet-details-{n}"), "Details").on_click(cx.listener(
+                        move |this, _, _, cx| {
                             cx.stop_propagation();
                             this.fleet.focus = Some(id.clone());
                             this.fleet.details = if this.fleet.details.as_ref() == Some(&id) {
@@ -1163,15 +1455,47 @@ impl Workspace {
                                 Some(id.clone())
                             };
                             cx.notify();
-                        }),
-                    ),
+                        },
+                    )),
                     open,
-                    content: open.then(|| {
-                        super::decision::facts("fleet-details", "fleet-fact", facts.clone(), &p)
-                            .into_any_element()
-                    }),
-                });
+                    "fleet-details",
+                    "fleet-fact",
+                    facts.clone(),
+                ));
                 decision.keys = focused;
+                decision
+            }
+            Ask::Question {
+                headline, options, ..
+            } => {
+                let send_enabled = enabled
+                    && self
+                        .fleet
+                        .answers
+                        .get(&tile.id)
+                        .is_some_and(|(input, _)| !input.read(cx).value().trim().is_empty());
+                let id = tile.id.clone();
+                let send = Choice::new(
+                    format!("fleet-answer-send-{n}"),
+                    super::decision::SUBMIT_ANSWER,
+                )
+                .enabled(send_enabled)
+                .tooltip("Send the answer to the agent")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.submit_fleet_answer(&id, window, cx);
+                }));
+                let mut decision =
+                    Decision::new(format!("fleet-decision-{n}"), send, Frame::Inline);
+                decision.headline = vec![(headline.clone(), false)];
+                decision.headline_selector = Some(format!("fleet-headline-{n}").into());
+                decision.keys = focused;
+                if options.is_empty() {
+                    decision.body = self.fleet_answer_field(n, &tile.id, cx);
+                } else {
+                    decision.show_allow = false;
+                    decision.body = Some(self.fleet_options(n, options, focused, enabled, cx));
+                }
                 decision
             }
             Ask::Open { headline, verb } => {
@@ -1189,13 +1513,336 @@ impl Workspace {
         div()
             .debug_selector(move || format!("fleet-ask-{n}"))
             .w_full()
-            .flex()
-            .flex_col()
-            .pt(px(t.space.lg))
-            .border_t(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.card_border))
+            .min_w_0()
+            .pt(px(t.space.xs))
             .child(decision.render(&p))
             .into_any_element()
+    }
+
+    /// A question tile's answer field: Enter sends, Esc gives the keys back
+    /// to the grid. Clicks in it stay in it (the tile opens on a click).
+    fn fleet_answer_field(&self, n: usize, id: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let p = self.palette();
+        let t = p.tokens;
+        let (input, _) = self.fleet.answers.get(id)?;
+        Some(
+            div()
+                .id(("fleet-answer", n))
+                .debug_selector(move || format!("fleet-answer-{n}"))
+                .w_full()
+                .min_w_0()
+                .text_size(px(t.text.body))
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "escape" {
+                        cx.stop_propagation();
+                        window.focus(&this.focus);
+                        cx.notify();
+                    }
+                }))
+                .child(Input::new(input).disabled(!self.view.connected))
+                .into_any_element(),
+        )
+    }
+
+    /// A question's options as a list: label, description, and the number
+    /// key on the focused tile. Choosing one sends it.
+    fn fleet_options(
+        &self,
+        n: usize,
+        options: &[(String, Option<String>)],
+        focused: bool,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let t = p.tokens;
+        div()
+            .debug_selector(move || format!("fleet-options-{n}"))
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xxs))
+            .children(
+                options
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, (label, description))| {
+                        let key = ix + 1;
+                        primitives::list_row(("fleet-option", n * 64 + ix), false, enabled, &p)
+                            .debug_selector(move || format!("fleet-option-{n}-{ix}"))
+                            .h_auto()
+                            .py(px(t.space.xs))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(div().min_w_0().child(label.clone()))
+                                    .children(description.clone().map(|d| {
+                                        div()
+                                            .min_w_0()
+                                            .text_size(px(t.text.meta))
+                                            .text_color(rgb(p.roles.text_tertiary))
+                                            .child(d)
+                                    })),
+                            )
+                            .when(focused && key <= 5, |d| {
+                                d.child(primitives::keycap_hint(key.to_string(), false, &p))
+                            })
+                            .when(enabled, |d| {
+                                d.on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.fleet_answer(n, key, window, cx);
+                                }))
+                            })
+                    }),
+            )
+            .into_any_element()
+    }
+
+    /// The dense view (R5.4): one row per session (and per job proposal),
+    /// with its status, title, project, what it is doing, what it needs and
+    /// its actions in fixed slots. Up and Down move the focus row; Enter
+    /// opens it; the number keys answer it as on a tile.
+    fn render_fleet_table(
+        &self,
+        tiles: &[Tile],
+        jobs: &[wks_native::jobs::Job],
+        all_jobs: &[wks_native::jobs::Job],
+        focus: usize,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let pg = t.pages();
+        let slots = primitives::action_slots_width(2, &p);
+        let cols = [
+            ("Status", Col::Keep(pg.status)),
+            ("Session", Col::Flex),
+            ("Project", Col::Fixed(pg.machine)),
+            ("Doing", Col::Flex),
+            ("Needs", Col::Flex),
+            ("", Col::Keep(slots)),
+        ];
+        let enabled = self.view.connected && !self.view.busy;
+        // Each proposal's Approve and Reject, as its decision card wires them.
+        let job_actions: Vec<(
+            Option<super::decision::OnClick>,
+            Option<super::decision::OnClick>,
+        )> = jobs
+            .iter()
+            .enumerate()
+            .map(|(ix, job)| {
+                let decision = self.job_proposal_decision(
+                    ix,
+                    job,
+                    all_jobs,
+                    "fleet-job",
+                    super::decision::Frame::Inline,
+                    cx,
+                );
+                let approve = decision
+                    .allow
+                    .on_click
+                    .clone()
+                    .filter(|_| decision.allow.enabled);
+                let reject = decision
+                    .deny
+                    .as_ref()
+                    .and_then(|d| d.on_click.clone().filter(|_| d.enabled));
+                (approve, reject)
+            })
+            .collect();
+        let text = |s: String, tone: u32| div().min_w_0().truncate().text_color(rgb(tone)).child(s);
+        let slot_button = |id: SharedString,
+                           label: &'static str,
+                           variant: ButtonVariant,
+                           on: Option<super::decision::OnClick>| {
+            let ok = enabled && on.is_some();
+            let sel = id.clone();
+            primitives::slot_button(
+                primitives::button(id, label, None, variant, ButtonSize::Small, ok, &p),
+                &p,
+            )
+            .debug_selector(move || sel.to_string())
+            .when_some(on.filter(|_| ok), |d, f| {
+                d.on_click(move |e, w, cx| {
+                    cx.stop_propagation();
+                    f(e, w, cx)
+                })
+            })
+            .into_any_element()
+        };
+        let answer = |n: usize, key: usize| -> super::decision::OnClick {
+            std::rc::Rc::new(
+                cx.listener(move |this, _, window, cx| this.fleet_answer(n, key, window, cx)),
+            )
+        };
+        let open = |index: usize| -> super::decision::OnClick {
+            std::rc::Rc::new(cx.listener(move |this, _, _, cx| this.open_listed_session(index, cx)))
+        };
+        let waiting = tiles
+            .iter()
+            .take_while(|t| t.bucket == Bucket::NeedsYou)
+            .count();
+        let session_row = |n: usize| {
+            let tile = &tiles[n];
+            let index = tile.index;
+            let (first, second) = match &tile.ask {
+                Some(Ask::Approval { keys, .. }) => {
+                    let key = |k: StripKey| keys.iter().position(|x| *x == k).map(|ix| ix + 1);
+                    (
+                        key(StripKey::Allow).map(|k| {
+                            slot_button(
+                                format!("fleet-row-allow-{n}").into(),
+                                "Allow",
+                                ButtonVariant::Secondary,
+                                Some(answer(n, k)),
+                            )
+                        }),
+                        key(StripKey::Deny).map(|k| {
+                            slot_button(
+                                format!("fleet-row-deny-{n}").into(),
+                                "Deny",
+                                ButtonVariant::Destructive,
+                                Some(answer(n, k)),
+                            )
+                        }),
+                    )
+                }
+                _ => (
+                    None,
+                    Some(slot_button(
+                        format!("fleet-row-open-{n}").into(),
+                        "Open",
+                        ButtonVariant::Tertiary,
+                        Some(open(index)),
+                    )),
+                ),
+            };
+            let doing = tile
+                .lines
+                .first()
+                .map(|l| {
+                    [Some(l.verb.clone()), l.argument.clone(), l.summary.clone()]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            let need = tile.ask.as_ref().map(Ask::text).unwrap_or_default();
+            let kind = tile.kind;
+            primitives::page_table_row(&p)
+                .id(SharedString::from(format!("fleet-row-{}", tile.id)))
+                .debug_selector(move || format!("fleet-row-{n}"))
+                .cursor_pointer()
+                .when(n == focus, |d| d.bg(rgb(p.selected)))
+                .when(n != focus, |d| d.hover(|s| s.bg(rgb(p.roles.hover))))
+                .child(
+                    primitives::page_cell(cols[0].1)
+                        .debug_selector(move || format!("fleet-status-{n}-{kind:?}"))
+                        .child(system::StatusCell::new(kind).render(&p))
+                        // The focus marker, inside a cell so it takes no gap.
+                        .when(n == focus, |d| {
+                            d.child(div().debug_selector(move || format!("fleet-focused-{n}")))
+                        }),
+                )
+                .child(
+                    primitives::page_cell(cols[1].1)
+                        .font_weight(FontWeight(t.weight.medium))
+                        .child(text(tile.title.clone(), p.text)),
+                )
+                .child(
+                    primitives::page_cell(cols[2].1)
+                        .child(text(tile.project.clone(), p.roles.text_secondary)),
+                )
+                .child(primitives::page_cell(cols[3].1).child(text(doing, p.roles.text_secondary)))
+                .child(primitives::page_cell(cols[4].1).child(text(need, p.text)))
+                .child(
+                    primitives::page_cell(cols[5].1).child(primitives::action_slots(
+                        vec![
+                            primitives::action_slot(pg.action_slot, first),
+                            primitives::action_slot(pg.action_slot, second),
+                        ],
+                        &p,
+                    )),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let tiles = this.fleet_tiles(cx);
+                    if let Some(tile) = tiles.iter().find(|t| t.index == index) {
+                        this.fleet.focus = Some(tile.id.clone());
+                    }
+                    this.open_listed_session(index, cx);
+                }))
+                .into_any_element()
+        };
+        let job_row = |ix: usize, job: &wks_native::jobs::Job| {
+            let (approve, reject) = job_actions[ix].clone();
+            primitives::page_table_row(&p)
+                .debug_selector(move || format!("fleet-job-row-{ix}"))
+                .child(
+                    primitives::page_cell(cols[0].1)
+                        .child(system::StatusCell::new(StatusKind::NeedsYou).render(&p)),
+                )
+                .child(
+                    primitives::page_cell(cols[1].1)
+                        .font_weight(FontWeight(t.weight.medium))
+                        .child(text(job.name.clone(), p.text)),
+                )
+                .child(
+                    primitives::page_cell(cols[2].1)
+                        .child(text("Jobs".into(), p.roles.text_secondary)),
+                )
+                .child(
+                    primitives::page_cell(cols[3].1).child(text(
+                        Some(job.proposed_by.trim())
+                            .filter(|b| !b.is_empty())
+                            .map(|b| format!("Proposed by {b}"))
+                            .unwrap_or_else(|| "Proposed".into()),
+                        p.roles.text_secondary,
+                    )),
+                )
+                .child(
+                    primitives::page_cell(cols[4].1)
+                        .child(text("Approve this job?".into(), p.text)),
+                )
+                .child(
+                    primitives::page_cell(cols[5].1).child(primitives::action_slots(
+                        vec![
+                            primitives::action_slot(
+                                pg.action_slot,
+                                Some(slot_button(
+                                    format!("fleet-job-row-approve-{ix}").into(),
+                                    "Approve",
+                                    ButtonVariant::Secondary,
+                                    approve,
+                                )),
+                            ),
+                            primitives::action_slot(
+                                pg.action_slot,
+                                Some(slot_button(
+                                    format!("fleet-job-row-reject-{ix}").into(),
+                                    "Reject",
+                                    ButtonVariant::Destructive,
+                                    reject,
+                                )),
+                            ),
+                        ],
+                        &p,
+                    )),
+                )
+                .into_any_element()
+        };
+        let mut rows: Vec<AnyElement> = (0..waiting).map(session_row).collect();
+        rows.extend(jobs.iter().enumerate().map(|(ix, job)| job_row(ix, job)));
+        rows.extend((waiting..tiles.len()).map(session_row));
+        primitives::page_table(&p)
+            .debug_selector(|| "fleet-table".into())
+            .child(primitives::page_table_head(&cols, &p))
+            .children(rows)
     }
 }
 

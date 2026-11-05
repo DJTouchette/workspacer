@@ -1,22 +1,31 @@
-//! R4.3: the one approval / decision component. A tool approval in the
-//! conversation, a plan review, a Fleet tile's ask and a job proposal all
-//! draw through [`Decision::render`], so they look and read the same:
+//! R5.4 The DecisionCard: the design system's one decision component
+//! (`docs/design-system.md` → DecisionCard). A tool approval in the
+//! conversation, a plan review, a question and a job proposal, in the
+//! conversation, on a Fleet tile and in Jobs, all draw through
+//! [`Decision::render`], so they look and read the same:
 //!
 //! - a question headline whose code spans wrap, never truncate;
-//! - the agent's reason, then the full request (a long or multi-line
-//!   command, wrapped, in mono) and where it would run: folder and host;
-//! - Allow as the one Primary, any "Always allow …" grant with its exact
-//!   scoped rule, then Deny (and Deny with note) as Secondary, never blue;
-//! - Details, a tertiary toggle that expands the full request in place;
-//! - number keys as faint keycaps only while this decision takes them
-//!   (the top decision in the dock, the focused Fleet tile).
+//! - the agent's reason, the full request (a long or multi-line command,
+//!   wrapped, in mono), where it would run (folder and host) and, when one
+//!   is plain from the request, a risk cue ([`risk`]);
+//! - Allow (Primary) and Deny (Destructive) side by side on one line,
+//!   never stacked, even in a narrow Fleet tile;
+//! - each "Always allow" as a short Tertiary button with the exact rule
+//!   and scope it saves beside it ([`Grant`]), then Details, which expands
+//!   *below* itself and shows only what the card does not already say;
+//! - number keys as keycaps only while this decision takes them (the top
+//!   decision in the dock, the focused Fleet tile).
 //!
 //! Callers describe the decision and hand in click handlers; this module
-//! owns the layout, the button roles and the keycaps. Design v2 only.
+//! owns the layout, the button tiers and the keycaps. Design v2 only.
 use super::primitives::{self, ButtonSize, ButtonVariant};
 use super::*;
 use gpui::{AnyElement, ClickEvent, relative};
 use std::rc::Rc;
+
+/// The one submit label of every question card (the conversation's
+/// question set, a Fleet tile's question).
+pub(crate) const SUBMIT_ANSWER: &str = "Send answer";
 
 /// A click handler, as `cx.listener(…)` builds one.
 pub(crate) type OnClick = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -139,11 +148,255 @@ pub(crate) struct NoteMenu {
     pub on_dismiss: Option<OnDismiss>,
 }
 
-/// The Details toggle and, while open, what it expands to.
+/// An "Always allow" grant (R5.4): a short Tertiary "Always allow" whose
+/// exact rule and scope show beside it ("Saves `cargo test *` · this
+/// session"), never a long Secondary button that outweighs Deny.
+#[derive(Clone)]
+pub(crate) struct Grant {
+    pub choice: Choice,
+    /// The rule as people read it (`cargo test *`).
+    pub rule: String,
+    /// The provider's exact rule (`Bash(cargo test:*)`), for Details.
+    pub exact: String,
+    /// How long it lasts ("this session").
+    pub scope: String,
+}
+
+impl Grant {
+    /// A grant from the provider's words ("Always allow Bash(cargo test:*)
+    /// this session"); `command` names "this command" grants.
+    pub(crate) fn new(choice: Choice, label: &str, command: &str) -> Self {
+        let (rule, exact, scope) = grant_rule(label, command);
+        Self {
+            choice,
+            rule,
+            exact,
+            scope,
+        }
+    }
+}
+
+/// What a grant's words save: (the rule as read, the exact rule, the
+/// scope). Claude's `Bash(x:*)` allows every command starting with `x`
+/// (read `x *`); a bare `Bash(x)` only `x`; other tools read "Tool
+/// content". Every grant the hub offers lasts for this session.
+pub(crate) fn grant_rule(label: &str, command: &str) -> (String, String, String) {
+    const SESSION: &str = "this session";
+    let label = label.trim();
+    let body = label
+        .strip_suffix(SESSION)
+        .map(|b| b.trim_end())
+        .map(|b| b.strip_suffix(" for").unwrap_or(b))
+        .unwrap_or(label)
+        .trim();
+    let scope = SESSION.to_owned();
+    if let Some(rest) = body.strip_prefix("Allow all ") {
+        // The `setMode` grant: edits run without asking.
+        return (format!("all {rest}"), body.to_owned(), scope);
+    }
+    let body = body.strip_prefix("Always allow ").unwrap_or(body).trim();
+    if body.eq_ignore_ascii_case("this command") {
+        let command = command.trim();
+        let rule = if command.is_empty() { body } else { command };
+        return (rule.to_owned(), rule.to_owned(), scope);
+    }
+    if let Some(dirs) = body.strip_prefix("access to ") {
+        return (format!("files in {dirs}"), body.to_owned(), scope);
+    }
+    let read: Vec<String> = body
+        .split(", ")
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(|rule| {
+            match rule
+                .strip_suffix(')')
+                .and_then(|r| r.split_once('('))
+                .filter(|(tool, content)| !tool.is_empty() && !content.is_empty())
+            {
+                Some(("Bash", content)) => match content.strip_suffix(":*") {
+                    Some(prefix) => format!("{prefix} *"),
+                    None => content.to_owned(),
+                },
+                Some((tool, content)) => format!("{tool} {content}"),
+                None => rule.to_owned(),
+            }
+        })
+        .collect();
+    let rule = if read.is_empty() {
+        body.to_owned()
+    } else {
+        read.join(", ")
+    };
+    (rule, body.to_owned(), scope)
+}
+
+/// A cheap risk cue (R5.4), derived from the request alone: what the
+/// request would do that is hard to take back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Risk {
+    Deletes,
+    OutsideProject,
+    Network,
+}
+
+impl Risk {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Deletes => "Deletes files",
+            Self::OutsideProject => "Writes outside the project",
+            Self::Network => "Uses the network",
+        }
+    }
+}
+
+/// The risk an approval carries, if one is plain from its tool and input:
+/// a delete (`rm`, `git clean`, `git reset --hard`), a write outside the
+/// session's folder, or network use (`curl`, `git push`, installs, web
+/// tools). The first that applies, in that order.
+pub(crate) fn risk(approval: &serde_json::Value, cwd: &str) -> Option<Risk> {
+    let tool = approval
+        .get("toolName")
+        .or_else(|| approval.get("tool"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let input = approval
+        .get("toolInput")
+        .unwrap_or(&serde_json::Value::Null);
+    let cwd = cwd.trim().trim_end_matches('/');
+    let outside = |path: &str| {
+        let path = path.trim();
+        !cwd.is_empty()
+            && (path.starts_with('/') || path.starts_with('~'))
+            && !(path == cwd || path.starts_with(&format!("{cwd}/")))
+    };
+    match tool {
+        "WebFetch" | "WebSearch" | "web_fetch" | "web_search" => return Some(Risk::Network),
+        "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "apply_patch" => {
+            let path = ["file_path", "path", "notebook_path"]
+                .into_iter()
+                .find_map(|k| input.get(k).and_then(serde_json::Value::as_str));
+            return path.filter(|p| outside(p)).map(|_| Risk::OutsideProject);
+        }
+        _ => {}
+    }
+    let command = input.get("command").and_then(serde_json::Value::as_str)?;
+    // Words, with shell separators as words of their own.
+    let spaced = command
+        .replace("&&", " ; ")
+        .replace("||", " ; ")
+        .replace(['|', ';', '\n', '(', ')'], " ; ");
+    let words: Vec<&str> = spaced.split_whitespace().collect();
+    // Each simple command's program and its first argument.
+    let commands: Vec<(&str, Option<&str>)> = words
+        .split(|w| *w == ";")
+        .filter_map(|c| {
+            let mut c = c
+                .iter()
+                .copied()
+                .skip_while(|w| *w == "sudo" || w.contains('='));
+            let program = c.next()?.rsplit('/').next()?;
+            Some((program, c.find(|w| !w.starts_with('-'))))
+        })
+        .collect();
+    let has = |program: &str, sub: Option<&str>| {
+        commands
+            .iter()
+            .any(|(p, s)| *p == program && sub.is_none_or(|sub| *s == Some(sub)))
+    };
+    if ["rm", "rmdir", "unlink", "shred"]
+        .iter()
+        .any(|p| has(p, None))
+        || has("git", Some("clean"))
+        || (has("git", Some("reset")) && words.contains(&"--hard"))
+        || (has("find", None) && words.contains(&"-delete"))
+    {
+        return Some(Risk::Deletes);
+    }
+    let redirected = words
+        .windows(2)
+        .any(|w| matches!(w[0], ">" | ">>" | "tee") && outside(w[1]))
+        || words.iter().any(|w| {
+            w.strip_prefix(">>")
+                .or(w.strip_prefix('>'))
+                .is_some_and(outside)
+        });
+    if redirected {
+        return Some(Risk::OutsideProject);
+    }
+    let network = ["curl", "wget", "ssh", "scp", "rsync", "nc", "ftp", "fly"]
+        .iter()
+        .any(|p| has(p, None))
+        || ["push", "pull", "fetch", "clone"]
+            .iter()
+            .any(|s| has("git", Some(s)))
+        || [
+            ("npm", "install"),
+            ("npm", "i"),
+            ("pnpm", "add"),
+            ("pnpm", "install"),
+            ("yarn", "add"),
+            ("pip", "install"),
+            ("pip3", "install"),
+            ("cargo", "install"),
+            ("gem", "install"),
+            ("brew", "install"),
+            ("apt", "install"),
+            ("apt-get", "install"),
+        ]
+        .iter()
+        .any(|(p, s)| has(p, Some(s)));
+    network.then_some(Risk::Network)
+}
+
+/// The Details toggle and, while open, what it expands to. It opens
+/// *below* its toggle and shows only what the card does not already say.
 pub(crate) struct Details {
     pub toggle: Choice,
     pub open: bool,
+    /// Free content (a job's spec).
     pub content: Option<AnyElement>,
+    /// Or the request as fact rows, filtered against the card.
+    pub facts: Option<Facts>,
+}
+
+/// Fact rows for [`Details`]: (label, value, monospace), drawn by
+/// [`facts`] under `selector`, one `prefix-{ix}` per row.
+pub(crate) struct Facts {
+    pub selector: &'static str,
+    pub prefix: &'static str,
+    pub rows: Vec<(String, String, bool)>,
+}
+
+impl Details {
+    /// Details that expand to `content` (built only while open).
+    pub(crate) fn element(toggle: Choice, open: bool, content: Option<AnyElement>) -> Self {
+        Self {
+            toggle,
+            open,
+            content,
+            facts: None,
+        }
+    }
+
+    /// Details that expand to the request's facts, less what the card shows.
+    pub(crate) fn facts(
+        toggle: Choice,
+        open: bool,
+        selector: &'static str,
+        prefix: &'static str,
+        rows: Vec<(String, String, bool)>,
+    ) -> Self {
+        Self {
+            toggle,
+            open,
+            content: None,
+            facts: Some(Facts {
+                selector,
+                prefix,
+                rows,
+            }),
+        }
+    }
 }
 
 /// Where the decision is drawn.
@@ -168,9 +421,12 @@ pub(crate) struct Decision {
     pub request_selector: SharedString,
     pub folder: Option<String>,
     pub host: Option<String>,
+    /// What the request would do that is hard to take back.
+    pub risk: Option<Risk>,
     /// "2/3" while more than one waits.
     pub pager: Option<String>,
-    /// A body between the head and the actions (a plan).
+    /// A body between the head and the actions (a plan, a question's
+    /// options or answer field).
     pub body: Option<AnyElement>,
     pub details: Option<Details>,
     /// A note being written (Deny with note, Keep planning).
@@ -178,10 +434,17 @@ pub(crate) struct Decision {
     pub allow: Choice,
     /// Allow is the Primary unless a note being written owns it.
     pub allow_primary: bool,
-    /// Secondary alternatives to Allow: "Always allow …", "Approve · run
-    /// with Codex".
+    /// Whether Allow shows at all: off when the body answers (a
+    /// question's options send on a click).
+    pub show_allow: bool,
+    /// Secondary alternatives to Allow ("Approve · run with Codex").
     pub alternates: Vec<Choice>,
+    /// "Always allow" grants, each with its exact rule and scope.
+    pub grants: Vec<Grant>,
     pub deny: Option<Choice>,
+    /// Deny's tier: Destructive (Deny, Reject), or Secondary for a "no"
+    /// that removes nothing (Keep planning).
+    pub deny_variant: ButtonVariant,
     pub deny_note: Option<NoteMenu>,
     /// Whether this decision shows its number keys.
     pub keys: bool,
@@ -199,21 +462,65 @@ impl Decision {
             request_selector: "decision-request".into(),
             folder: None,
             host: None,
+            risk: None,
             pager: None,
             body: None,
             details: None,
             note: None,
             allow,
             allow_primary: true,
+            show_allow: true,
             alternates: Vec::new(),
+            grants: Vec::new(),
             deny: None,
+            deny_variant: ButtonVariant::Destructive,
             deny_note: None,
             keys: false,
             frame,
         }
     }
 
-    pub(crate) fn render(self, p: &Palette) -> Div {
+    /// `rows` less what the card already says (the reason, the request,
+    /// the folder, the host, a code span of the headline), plus each
+    /// grant's exact rule: Details adds, it never repeats.
+    pub(crate) fn detail_rows(
+        &self,
+        rows: Vec<(String, String, bool)>,
+    ) -> Vec<(String, String, bool)> {
+        let shown: Vec<&str> = [
+            self.reason.as_deref(),
+            self.request.as_deref(),
+            self.folder.as_deref(),
+            self.host.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .chain(
+            self.headline
+                .iter()
+                .filter(|(_, code)| *code)
+                .map(|(t, _)| t.as_str()),
+        )
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+        let mut rows: Vec<_> = rows
+            .into_iter()
+            .filter(|(_, value, _)| !shown.contains(&value.trim()))
+            .collect();
+        for grant in &self.grants {
+            if !grant.exact.is_empty() && grant.exact != grant.rule {
+                rows.push((
+                    "Always allow saves".to_owned(),
+                    format!("{} · {}", grant.exact, grant.scope),
+                    true,
+                ));
+            }
+        }
+        rows
+    }
+
+    pub(crate) fn render(mut self, p: &Palette) -> Div {
         let t = p.tokens;
         let keys = self.keys;
         let selector = self.selector.clone();
@@ -255,35 +562,75 @@ impl Decision {
                 .text_color(rgb(p.roles.text_tertiary))
                 .child(place)
         });
-        let details_toggle = self.details.as_ref().map(|d| {
-            let tip = if d.open {
-                "Hide the full request"
-            } else {
-                "Show the full request: every argument, the folder and the host"
+        // A risk is a fact about the request, not a status: secondary
+        // text with its glyph, never amber or red.
+        let risk = self.risk.map(|risk| {
+            div()
+                .debug_selector(|| "decision-risk".into())
+                .flex()
+                .items_center()
+                .gap(px(t.space.xs))
+                .text_size(px(t.text.meta))
+                .font_weight(FontWeight(t.weight.medium))
+                .text_color(rgb(p.roles.text_secondary))
+                .child(Icon::new(IconName::TriangleAlert).size(px(t.icon.sm)))
+                .child(risk.label())
+        });
+        // Details: only what the card does not already say. Nothing left
+        // to add, no toggle.
+        let details = self.details.take().and_then(|d| {
+            let Details {
+                toggle,
+                open,
+                content,
+                facts: rows,
+            } = d;
+            let content = match rows {
+                Some(Facts {
+                    selector,
+                    prefix,
+                    rows,
+                }) => {
+                    let rows = self.detail_rows(rows);
+                    if rows.is_empty() {
+                        return None;
+                    }
+                    open.then(|| facts(selector, prefix, rows, p).into_any_element())
+                }
+                None => content.filter(|_| open),
             };
-            let id = d.toggle.id.clone();
+            Some((toggle, open, content))
+        });
+        let details_toggle = details.as_ref().map(|(toggle, open, _)| {
+            let tip = if *open {
+                "Hide the details"
+            } else {
+                "Show what the card leaves out: the tool, every argument, the exact rule"
+            };
+            let id = toggle.id.clone();
             let control = primitives::button(
-                d.toggle.id.clone(),
-                d.toggle.label.clone(),
-                Some(if d.open {
+                toggle.id.clone(),
+                toggle.label.clone(),
+                Some(if *open {
                     IconName::ChevronDown
                 } else {
                     IconName::ChevronRight
                 }),
                 ButtonVariant::Tertiary,
                 ButtonSize::Small,
-                d.toggle.enabled,
+                toggle.enabled,
                 p,
             )
             .debug_selector(move || id.to_string())
             .tooltip(primitives::tooltip_view(tip, None, p));
-            match d.toggle.on_click.clone().filter(|_| d.toggle.enabled) {
+            match toggle.on_click.clone().filter(|_| toggle.enabled) {
                 Some(f) => control
                     .on_click(move |e, w, cx| f(e, w, cx))
                     .into_any_element(),
                 None => control.into_any_element(),
             }
         });
+        let details = details.and_then(|(_, _, content)| content);
         let head = primitives::waiting_head(
             headline,
             self.reason
@@ -294,39 +641,77 @@ impl Decision {
             Vec::new(),
             p,
         );
-        let details = self
-            .details
-            .and_then(|d| d.open.then_some(d.content).flatten());
 
-        // Actions: Allow (Primary), the alternatives (Secondary), Deny and
-        // its note (Secondary). Never a second fill, never blue on Deny.
-        let mut actions = primitives::waiting_actions(p).child(self.allow.render(
-            if self.allow_primary {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Secondary
-            },
-            keys,
-            p,
-        ));
-        for choice in &self.alternates {
-            actions = actions.child(choice.render(ButtonVariant::Secondary, keys, p));
-        }
-        if let Some(deny) = &self.deny {
-            actions = actions.child(deny_control(deny, self.deny_note, keys, p));
-        }
-        // Details, tertiary, last in the row: it expands the request in
-        // place and decides nothing.
-        actions = actions.children(details_toggle);
+        // The answer: Allow (Primary) and Deny (Destructive) side by side,
+        // never stacked; any Secondary alternative after them.
+        let allow = self.show_allow.then(|| {
+            self.allow.render(
+                if self.allow_primary {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Secondary
+                },
+                keys,
+                p,
+            )
+        });
+        let deny = self
+            .deny
+            .as_ref()
+            .map(|deny| deny_control(deny, self.deny_variant, self.deny_note.take(), keys, p));
+        let answer =
+            (allow.is_some() || deny.is_some() || !self.alternates.is_empty()).then(|| {
+                let pair = div()
+                    .debug_selector(|| "decision-answer".into())
+                    .flex()
+                    .flex_nowrap()
+                    .items_center()
+                    .flex_shrink_0()
+                    .gap(px(t.space.sm))
+                    .children(allow)
+                    .children(deny);
+                primitives::waiting_actions(p).child(pair).children(
+                    self.alternates
+                        .iter()
+                        .map(|c| c.render(ButtonVariant::Secondary, keys, p)),
+                )
+            });
+        // Then the quiet row: each grant with its exact rule and scope,
+        // and Details (it decides nothing) at the end.
+        let grants: Vec<Div> = self.grants.iter().map(|g| grant_row(g, keys, p)).collect();
+        let quiet = (!grants.is_empty() || details_toggle.is_some()).then(|| {
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(t.space.sm))
+                .when(!grants.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .flex_1()
+                            // Narrower than this, Details wraps below.
+                            .min_w(px(t.system().tile_min * 0.75))
+                            .flex()
+                            .flex_col()
+                            .gap(px(t.space.xxs))
+                            .children(grants),
+                    )
+                })
+                .children(details_toggle.map(|d| div().flex_shrink_0().child(d)))
+        });
 
         let content = |d: Div| {
             d.child(head)
                 .children(request)
                 .children(place)
+                .children(risk)
                 .children(self.body)
-                .children(details)
                 .children(self.note)
-                .child(actions)
+                .children(answer)
+                .children(quiet)
+                .children(details)
         };
         match self.frame {
             Frame::Card { compact } => content(primitives::waiting_card(compact, p))
@@ -345,19 +730,61 @@ impl Decision {
     }
 }
 
-/// Deny as a Secondary button, or a Secondary split whose menu holds
-/// "Deny with note…".
-fn deny_control(deny: &Choice, note: Option<NoteMenu>, keys: bool, p: &Palette) -> Div {
+/// "Always allow" (Tertiary, with its key) and, beside it, what it saves.
+fn grant_row(grant: &Grant, keys: bool, p: &Palette) -> Div {
+    let t = p.tokens;
+    let id = grant.choice.id.clone();
+    // One text, so the rule wraps as prose in a narrow tile.
+    let lead = "Saves ";
+    let text = format!("{lead}\u{2009}{}\u{2009} · {}", grant.rule, grant.scope);
+    let start = lead.len();
+    let end = start + '\u{2009}'.len_utf8() * 2 + grant.rule.len();
+    let code = gpui::HighlightStyle {
+        color: Some(rgb(p.text).into()),
+        background_color: Some(rgb(p.code_inline).into()),
+        ..Default::default()
+    };
+    div()
+        .debug_selector(move || format!("{id}-row"))
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap(px(t.space.xs))
+        .child(
+            div()
+                .flex_shrink_0()
+                .child(grant.choice.render(ButtonVariant::Tertiary, keys, p)),
+        )
+        .child(
+            div()
+                .flex_1()
+                // Narrower than this, the rule wraps under the button.
+                .min_w(px(t.system().tile_min / 2.))
+                .text_size(px(t.text.meta))
+                .line_height(relative(t.text.line_height))
+                .text_color(rgb(p.roles.text_tertiary))
+                .child(gpui::StyledText::new(text).with_highlights([(start..end, code)])),
+        )
+}
+
+/// Deny in its tier, or a split whose menu holds "Deny with note…".
+fn deny_control(
+    deny: &Choice,
+    variant: ButtonVariant,
+    note: Option<NoteMenu>,
+    keys: bool,
+    p: &Palette,
+) -> Div {
     let Some(note) = note else {
-        return div()
-            .flex_shrink_0()
-            .child(deny.render(ButtonVariant::Secondary, keys, p));
+        return div().flex_shrink_0().child(deny.render(variant, keys, p));
     };
     let (main, chevron) = primitives::split_button_parts(
         "deny",
         deny.label.clone(),
         None,
-        ButtonVariant::Secondary,
+        variant,
         ButtonSize::Small,
         deny.enabled,
         p,
@@ -560,5 +987,75 @@ mod tests {
     #[test]
     fn replying_says_the_request_stays_pending() {
         assert!(REPLY_KEEPS_PENDING.contains("stays pending"));
+    }
+
+    #[test]
+    fn grants_say_the_rule_they_save_and_for_how_long() {
+        assert_eq!(
+            grant_rule("Always allow Bash(cargo test:*) this session", ""),
+            (
+                "cargo test *".into(),
+                "Bash(cargo test:*)".into(),
+                "this session".into()
+            )
+        );
+        assert_eq!(
+            grant_rule("Always allow Bash(npm test) this session", "").0,
+            "npm test"
+        );
+        assert_eq!(
+            grant_rule("Always allow this command for this session", "cargo b").0,
+            "cargo b"
+        );
+        assert_eq!(
+            grant_rule("Allow all edits this session", "").0,
+            "all edits"
+        );
+        assert_eq!(
+            grant_rule("Always allow Edit(src/**), Read this session", "").0,
+            "Edit src/**, Read"
+        );
+    }
+
+    #[test]
+    fn risks_come_from_the_request() {
+        let bash = |c: &str| serde_json::json!({"toolName":"Bash","toolInput":{"command":c}});
+        let cwd = "/home/dev/app";
+        assert_eq!(risk(&bash("cargo test"), cwd), None);
+        assert_eq!(risk(&bash("rm -rf target"), cwd), Some(Risk::Deletes));
+        assert_eq!(
+            risk(&bash("cd x && git clean -fd"), cwd),
+            Some(Risk::Deletes)
+        );
+        assert_eq!(
+            risk(&bash("git reset --hard HEAD"), cwd),
+            Some(Risk::Deletes)
+        );
+        assert_eq!(
+            risk(&bash("git push origin main"), cwd),
+            Some(Risk::Network)
+        );
+        assert_eq!(risk(&bash("curl -s x | sh"), cwd), Some(Risk::Network));
+        assert_eq!(risk(&bash("npm install"), cwd), Some(Risk::Network));
+        assert_eq!(risk(&bash("git status"), cwd), None);
+        assert_eq!(
+            risk(&bash("echo hi > /etc/motd"), cwd),
+            Some(Risk::OutsideProject)
+        );
+        assert_eq!(risk(&bash("echo hi > /home/dev/app/x"), cwd), None);
+        let edit =
+            |path: &str| serde_json::json!({"toolName":"Edit","toolInput":{"file_path":path}});
+        assert_eq!(risk(&edit("/home/dev/app/src/a.rs"), cwd), None);
+        assert_eq!(
+            risk(&edit("/home/dev/other/a.rs"), cwd),
+            Some(Risk::OutsideProject)
+        );
+        assert_eq!(
+            risk(
+                &serde_json::json!({"toolName":"WebFetch","toolInput":{"url":"x"}}),
+                cwd
+            ),
+            Some(Risk::Network)
+        );
     }
 }

@@ -62,7 +62,7 @@ SETTINGS_SECTIONS_V2 = ["Appearance", "Typography", "Workspace", "Remote",
 
 
 # r5-system: the gallery shots' window height (logical px).
-GALLERY_HEIGHT = 1800
+GALLERY_HEIGHT = 2000  # r5-fleet: room for the DecisionCard specimens
 
 
 def nav(letter):
@@ -256,11 +256,11 @@ def shots():
     # the full request in place (conversation and a Fleet tile); the Fleet's
     # "Needs you" filter for a burst of asks. Design v2 only.
     add("approvals-details-open", "Approval: Details expanded to the full request (tool, command, folder, host)",
-        [("design", [], [("click", 1144, 921), ("sleep", 0.5)])])
+        [("design", [], [("click", 1300, 921), ("sleep", 0.5)])])  # r5-fleet: re-measured
     add("approvals-fleet-needs-you", "Fleet: the Needs you filter, only the tiles that wait on the user",
         fleet + [("click", 1350, 78), ("sleep", 0.5)])
     add("approvals-fleet-details", "Fleet: the approval tile's Details open in place",
-        fleet + [("click", 482, 540), ("sleep", 0.5)])  # r4-integration: re-measured
+        fleet + [("click", 680, 364), ("sleep", 0.5)])  # r5-fleet: re-measured
     # r5-system (R5.3): the component gallery (`wks-native --gallery`, dev
     # builds only) in every built-in theme. Taller window: one frame holds
     # every component in every state.
@@ -268,6 +268,10 @@ def shots():
                   "everforest", "catppuccin-latte"):
         add(f"system-gallery-{theme}", f"Component gallery (design system), {theme}",
             theme=theme, app_args=["--gallery"], height=GALLERY_HEIGHT)
+    # r5-fleet (R5.4): the Fleet's dense table, one row per session (and
+    # per job proposal); the Grid/Table choice is remembered per device.
+    add("fleet-table", "Fleet: the dense table view, one row per session",
+        fleet, settings={"fleet_table": True})
     return s
 
 
@@ -507,8 +511,8 @@ LANDMARKS = {
     "APPROVAL_DETAILS": lambda shot: (1289, 805) if shot["v2"] else (1361, 749),  # r2-systems: the approval is a card above the composer
     # r3-composer: v2's Deny with note is the first item of Deny's menu.
     # (r3-integration: v1's moved right when the fixture's grant label grew.)
-    "APPROVAL_DENY_NOTE": lambda shot: (960, 952) if shot["v2"] else (1030, 797),
-    "APPROVAL_DENY_MENU": lambda shot: (1098, 921),  # r3-composer: Deny's chevron (v2; r3-integration re-measured)
+    "APPROVAL_DENY_NOTE": lambda shot: (588, 924) if shot["v2"] else (1030, 797),  # r5-fleet re-measured
+    "APPROVAL_DENY_MENU": lambda shot: (750, 885),  # r3-composer: Deny's chevron (v2; r5-fleet re-measured: Allow and Deny side by side)
     "COMPOSER_REPLY": lambda shot: (700, 922),       # r5-conversation: the composer field under the card (v2: always a field)
     "QUESTION_ANSWER": lambda shot: (900, 884),      # r3-composer: the release question's answer field (v2)
     "COMPOSER_SEND_MENU": lambda shot: (1333, 960),  # r3-composer: Queue's chevron while working (v2; r3-integration re-measured)

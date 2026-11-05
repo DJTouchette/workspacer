@@ -1206,15 +1206,17 @@ impl Workspace {
                     this.act(Action::Approve(true, card.clone()), cx)
                 }))
         };
-        // One button per grant the card offers, each with its exact scope:
-        // the user sees what "always" would allow, and until when.
-        let alternates = always
+        // One grant per option the card offers, each with its exact rule
+        // and scope beside it (r5-fleet: the DecisionCard's Grant).
+        let command = approval_summary(approval).1;
+        let grants = always
             .into_iter()
             .enumerate()
             .map(|(ix, option)| {
                 let card = card.clone();
-                let (label, scope) = always_copy(&option.label, approval);
-                Choice::new(format!("always-option-{ix}"), label)
+                let (_, scope) = always_copy(&option.label, approval);
+                let words = option.label.clone();
+                let choice = Choice::new(format!("always-option-{ix}"), "Always allow")
                     .key(number(&StripKey::Always(ix)))
                     .tooltip(scope)
                     .enabled(enabled && card.is_some())
@@ -1230,7 +1232,8 @@ impl Workspace {
                             },
                             cx,
                         )
-                    }))
+                    }));
+                super::decision::Grant::new(choice, &words, &command)
             })
             .collect();
         let deny = {
@@ -1270,24 +1273,16 @@ impl Workspace {
             }
         });
         let details_open = self.extras.approval_details;
-        let details = Details {
-            toggle: Choice::new("approval-toggle", "Details").on_click(cx.listener(
-                |this, _, _, cx| {
-                    this.extras.approval_details = !this.extras.approval_details;
-                    cx.notify();
-                },
-            )),
-            open: details_open,
-            content: details_open.then(|| {
-                super::decision::facts(
-                    "approval-details",
-                    "approval-fact",
-                    approval_facts(approval, &cwd, &host),
-                    &p,
-                )
-                .into_any_element()
-            }),
-        };
+        let details = Details::facts(
+            Choice::new("approval-toggle", "Details").on_click(cx.listener(|this, _, _, cx| {
+                this.extras.approval_details = !this.extras.approval_details;
+                cx.notify();
+            })),
+            details_open,
+            "approval-details",
+            "approval-fact",
+            approval_facts(approval, &cwd, &host),
+        );
         let mut decision =
             super::decision::Decision::new("approval-card", allow, Frame::Card { compact });
         decision.headline = approval_headline(approval, &cwd);
@@ -1305,7 +1300,8 @@ impl Workspace {
         });
         // While a note is being written, sending it is the primary.
         decision.allow_primary = !self.extras.deny_open;
-        decision.alternates = alternates;
+        decision.grants = grants;
+        decision.risk = super::decision::risk(approval, &cwd);
         decision.deny = Some(deny);
         decision.deny_note = deny_note;
         decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval));
@@ -1598,6 +1594,8 @@ impl Workspace {
             })
             .into_iter()
             .collect();
+        // Keep planning removes nothing: Secondary, not Destructive.
+        decision.deny_variant = ButtonVariant::Secondary;
         decision.deny = (!deny_open).then(|| {
             let card = card.clone();
             Choice::new("plan-revise", "Keep planning")

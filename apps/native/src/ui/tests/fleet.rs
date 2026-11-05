@@ -109,7 +109,9 @@ fn tiles_render_with_their_statuses_most_urgent_first(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("fleet-allow-0").is_some());
     assert!(visual.debug_bounds("fleet-always-0").is_some());
     assert!(visual.debug_bounds("fleet-deny-0").is_some());
-    assert!(visual.debug_bounds("fleet-open-1").is_some());
+    // R5.4: the question is answered on its tile (a field and Send answer).
+    assert!(visual.debug_bounds("fleet-answer-1").is_some());
+    assert!(visual.debug_bounds("fleet-answer-send-1").is_some());
     assert!(visual.debug_bounds("fleet-line-2-0").is_some());
     assert!(visual.debug_bounds("fleet-ask-2").is_none());
     // Three tiles in one row of the 3-column grid, the first focused.
@@ -119,8 +121,21 @@ fn tiles_render_with_their_statuses_most_urgent_first(cx: &mut TestAppContext) {
     );
     assert_eq!(a.top(), c.top());
     assert!(c.left() > a.right());
-    // R4.7: tiles in one row share a height (the approval's is tallest).
-    assert_eq!(a.size.height, c.size.height);
+    // R5.4: tiles keep their natural height, top-aligned: the working
+    // tile is shorter than the approval beside it, never stretched.
+    assert!(c.size.height < a.size.height);
+    // Allow and Deny side by side, on one line.
+    let (allow, deny) = (
+        visual.debug_bounds("fleet-allow-0").unwrap(),
+        visual.debug_bounds("fleet-deny-0").unwrap(),
+    );
+    assert_eq!(allow.top(), deny.top());
+    assert!(deny.left() > allow.right());
+    // The ask sits near the top, right under the title and status.
+    let ask = visual.debug_bounds("fleet-ask-0").unwrap();
+    let title = visual.debug_bounds("fleet-title-0").unwrap();
+    assert!(ask.top() > title.bottom());
+    assert!(ask.top() - title.top() < px(80.));
     // R4.3: the approval reads as in the conversation: where it runs, and
     // "Always allow" with its exact rule, never shortened.
     assert!(visual.debug_bounds("fleet-decision-0").is_some());
@@ -260,18 +275,88 @@ fn allow_on_a_focused_tile_resolves_that_tiles_approval(cx: &mut TestAppContext)
         }
     )));
 
-    // The question tile (focused again after the decision): 1 opens the
-    // session at its question.
+    // r5-fleet: the grant is remembered for Session details, with the rule
+    // it saves.
+    workspace.read_with(&visual, |this, _| {
+        let grants = this.session_grants("ask");
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0].1.rule, "cargo test *");
+        assert_eq!(grants[0].1.exact, "Bash(cargo test:*)");
+        assert!(!grants[0].1.revocable(), "the hub cannot remove a rule");
+    });
+
+    // The question tile (focused again after the decision): 1 puts the
+    // keys in its answer field; Enter sends the answer from the Fleet.
     assert_eq!(focused(&workspace, &visual).as_deref(), Some("q"));
     visual.simulate_keystrokes("1");
-    workspace.read_with(&visual, |this, _| {
-        assert!(this.screen == Screen::Conversation)
-    });
+    refresh(&mut visual);
+    visual.simulate_input("release/0.9");
+    visual.simulate_keystrokes("enter");
+    workspace.read_with(&visual, |this, _| assert!(this.screen == Screen::Fleet));
+    assert!(effects(&mut commands).iter().any(|c| matches!(c,
+        Command::Act { session, action: Action::Answers(answers, _) }
+            if session == "q" && answers == &["release/0.9".to_owned()])));
+}
+
+/// R5.4: the dense table, one row per session, remembered per device; Up
+/// and Down move its focus row and the number keys answer as on a tile.
+#[gpui::test]
+fn the_table_view_lists_one_row_per_session(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    click(&mut visual, "fleet-view-table");
+    refresh(&mut visual);
+    workspace.read_with(&visual, |this, _| assert!(this.settings.fleet_table));
+    assert!(visual.debug_bounds("fleet-table").is_some());
+    for row in ["fleet-row-0", "fleet-row-1", "fleet-row-2"] {
+        assert!(visual.debug_bounds(row).is_some(), "{row}");
+    }
     assert!(
-        effects(&mut commands)
-            .iter()
-            .any(|c| matches!(c, Command::Select(id) if id == "q"))
+        visual.debug_bounds("fleet-row-3").is_none(),
+        "Active hides idle"
     );
+    assert!(visual.debug_bounds("fleet-status-0-NeedsYou").is_some());
+    assert!(visual.debug_bounds("fleet-row-allow-0").is_some());
+    assert!(visual.debug_bounds("fleet-row-deny-0").is_some());
+    visual.simulate_keystrokes("down");
+    assert_eq!(focused(&workspace, &visual).as_deref(), Some("q"));
+    visual.simulate_keystrokes("up");
+    effects(&mut commands);
+    click(&mut visual, "fleet-row-deny-0");
+    assert!(effects(&mut commands).iter().any(|c| matches!(c,
+        Command::Act { session, action: Action::Approve(false, _) } if session == "ask")));
+    click(&mut visual, "fleet-view-grid");
+    refresh(&mut visual);
+    assert!(visual.debug_bounds("fleet-grid").is_some());
+}
+
+/// R5.4: an option question is answered on its tile: a list whose number
+/// keys send the option.
+#[gpui::test]
+fn an_option_question_is_answered_on_its_tile(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    let mut view = fleet_view();
+    let mut sessions = (*view.sessions).clone();
+    sessions[3] = row(
+        "q",
+        "Release checklist",
+        "question",
+        json!({"pendingRequestId":"req-q","pendingQuestions":[{"header":"Name",
+            "question":"Which branch name?","multiSelect":false,
+            "options":[{"label":"release/0.9","description":"The milestone"},{"label":"rc-0.9"}]}]}),
+    );
+    view.sessions = Arc::new(sessions);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+    });
+    refresh(&mut visual);
+    assert!(visual.debug_bounds("fleet-options-1").is_some());
+    assert!(visual.debug_bounds("fleet-option-1-1").is_some());
+    visual.simulate_keystrokes("right");
+    effects(&mut commands);
+    visual.simulate_keystrokes("2");
+    assert!(effects(&mut commands).iter().any(|c| matches!(c,
+        Command::Act { session, action: Action::Answers(answers, Some(card)) }
+            if session == "q" && answers == &["rc-0.9".to_owned()] && card == "req-q")));
 }
 
 /// v1 has no Fleet: Ctrl+Shift+F does nothing there.
