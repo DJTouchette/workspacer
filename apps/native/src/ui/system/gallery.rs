@@ -103,7 +103,8 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
                         .child(overlays(p))
                         .child(cards(p))
                         .child(table(p))
-                        .child(decision(p)),
+                        .child(decision(p))
+                        .child(composers(p)),
                 ),
         )
         .into_any_element()
@@ -856,4 +857,70 @@ fn decision(p: &Palette) -> Div {
     section("DecisionCard", p)
         .debug_selector(|| "gallery-decisions".into())
         .child(d.render(p))
+}
+
+/// TextField / Composer (R5.4): the one composer, in its states. Static
+/// specimens: the live one needs the app's `InputState`.
+fn composers(p: &Palette) -> Div {
+    let t = p.tokens;
+    let specimen = |id: &'static str,
+                    state: ComposerState,
+                    text: &'static str,
+                    placeholder: bool,
+                    deciding: bool,
+                    can_send: bool,
+                    note: &'static str| {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xs))
+            .child(composer_specimen(
+                id,
+                state,
+                text,
+                placeholder,
+                deciding,
+                can_send,
+                p,
+            ))
+            .child(caption(note, p))
+    };
+    section("Composer", p)
+        .debug_selector(|| "gallery-composers".into())
+        .child(specimen(
+            "gallery-composer-rest",
+            ComposerState::Rest,
+            "Ask anything, or describe a task…",
+            true,
+            false,
+            false,
+            "Rest, empty: Send is the disabled Primary",
+        ))
+        .child(specimen(
+            "gallery-composer-focus",
+            ComposerState::Focus,
+            "Run only the UI tests first",
+            false,
+            false,
+            true,
+            "Focus with a draft: Send is Primary",
+        ))
+        .child(specimen(
+            "gallery-composer-yielded",
+            ComposerState::Yielded,
+            "Reply instead — the request stays pending",
+            true,
+            true,
+            true,
+            "A decision waits: still a bordered field; Send is Secondary",
+        ))
+        .child(specimen(
+            "gallery-composer-disabled",
+            ComposerState::Disabled,
+            "Reconnecting…",
+            true,
+            false,
+            false,
+            "Disabled: offline or busy",
+        ))
 }

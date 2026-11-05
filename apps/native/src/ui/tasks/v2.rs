@@ -457,8 +457,7 @@ impl Workspace {
             .flex()
             .items_center()
             .gap(px(t.space.sm))
-            .border_b(px(t.stroke.hairline))
-            .border_color(rgb(p.border))
+            .map(|d| system::edge(d, system::Side::Bottom, system::EdgeTone::Divider, &p))
             .when(in_log, |d| {
                 d.child(
                     primitives::icon_button(

@@ -95,8 +95,7 @@ impl Workspace {
             .flex()
             .items_center()
             .gap(px(t.space.md))
-            .border_b(px(t.stroke.hairline))
-            .border_color(rgb(p.border))
+            .map(|d| system::edge(d, system::Side::Bottom, system::EdgeTone::Divider, &p))
             .child(
                 Icon::new(IconName::SquareTerminal)
                     .size(px(t.icon.md))

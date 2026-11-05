@@ -39,6 +39,13 @@ struct Frozen {
     estimated: bool,
 }
 
+/// Whether `row` opens a new turn: a message of yours. Under v2 a fleet or
+/// supervisor wake (another session's news, delivered as a "You" row) does
+/// not: the turn around it is one turn with one "Changed N files" (R5.4).
+fn starts_turn(row: &Row, v2: bool) -> bool {
+    row.role == "You" && !(v2 && content::fleet(&row.text).is_some())
+}
+
 fn turn_id(rows: &std::collections::VecDeque<Arc<Row>>, start: usize) -> String {
     serde_json::to_string(&Anchor::at(rows, start)).unwrap_or_default()
 }
@@ -191,10 +198,11 @@ impl Workspace {
             }) && new.is_some_and(|s| {
                 matches!(s.state.as_str(), "idle" | "input" | "done" | "background")
             }) {
+                let v2 = self.design().is_v2();
                 let rows = &view.transcript.rows;
                 let start = rows
                     .iter()
-                    .rposition(|r| r.role == "You")
+                    .rposition(|r| starts_turn(r, v2))
                     .map_or(0, |i| i + 1);
                 let files = content::turn_changes(rows.iter().skip(start).map(AsRef::as_ref));
                 if !files.is_empty() {
@@ -346,10 +354,10 @@ impl Workspace {
         } else {
             body = body.child(self.render_message(row, "live", false, window, cx));
         }
-        if row.role != "You" && (ix + 1 == rows.len() || rows[ix + 1].role == "You") {
+        if !starts_turn(row, v2) && (ix + 1 == rows.len() || starts_turn(&rows[ix + 1], v2)) {
             let start = (0..=ix)
                 .rev()
-                .find(|i| rows[*i].role == "You")
+                .find(|i| starts_turn(&rows[*i], v2))
                 .map_or(0, |i| i + 1);
             let key = format!("{session}\0{}", turn_id(rows, start));
             let turn = rows.range(start..=ix);
@@ -1155,8 +1163,9 @@ impl Workspace {
                             d.p(px(t.space.lg))
                                 .gap(px(t.space.md))
                                 .rounded(px(t.radius.panel))
-                                .border(px(t.stroke.hairline))
-                                .border_color(rgb(p.roles.card_border))
+                                .map(|d| {
+                                    system::edge(d, system::Side::All, system::EdgeTone::Card, &p)
+                                })
                                 .text_size(px(t.text.body))
                         })
                         .map(|d| {

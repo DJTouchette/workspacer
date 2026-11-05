@@ -87,7 +87,8 @@ fn inside(visual: &mut VisualTestContext, inner: &'static str, outer: &'static s
 /// The approval is the "waiting on you" card in the composer's slot (R3.2):
 /// a question headline and where/why line, its buttons keep their
 /// selectors and card binding, the number keys pick them, and the composer
-/// collapses to one "Reply instead…" line that opens into the field.
+/// stays a visible bordered field under it (R5.4) whose placeholder says
+/// the request stays pending.
 #[gpui::test]
 fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
@@ -99,13 +100,13 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
     assert!(inside(&mut visual, "approve", "approval-card"));
     assert!(inside(&mut visual, "headline-code", "approval-card"));
     assert!(inside(&mut visual, "waiting-context", "approval-card"));
-    // One input at most: the composer is the reply line, under the card.
-    assert!(visual.debug_bounds("chat-composer").is_none());
-    let (card, reply) = (
+    // The composer is still the field, under the card.
+    let (card, composer) = (
         visual.debug_bounds("approval-card").unwrap(),
-        visual.debug_bounds("composer-reply").unwrap(),
+        visual.debug_bounds("chat-composer").unwrap(),
     );
-    assert!(reply.top() >= card.bottom());
+    assert!(composer.top() >= card.bottom());
+    assert!(visual.debug_bounds("composer-model").is_some());
     workspace.read_with(&visual, |this, _| {
         assert_eq!(
             this.composer_ui.placeholder,
@@ -183,10 +184,11 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
         [Action::DenyWithNote(note, Some(card))] if note == "only the session tests" && card == "req-1"));
 }
 
-/// "Reply instead…" opens the composer under the card, and it stays open
-/// (its chips usable) while the same decision waits, even unfocused.
+/// R5.4: while a decision waits the composer never collapses: unfocused and
+/// empty it is still the bordered field with its chips and Send, and its
+/// placeholder says replying leaves the request pending.
 #[gpui::test]
-fn reply_instead_opens_the_composer_under_a_decision(cx: &mut TestAppContext) {
+fn the_composer_stays_a_field_under_a_decision(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.simulate_resize(size(px(1200.), px(800.)));
     v2(&workspace, &mut visual);
@@ -195,16 +197,16 @@ fn reply_instead_opens_the_composer_under_a_decision(cx: &mut TestAppContext) {
     focus_root(&workspace, &mut visual);
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
-    assert!(visual.debug_bounds("chat-composer").is_none());
-    tap(&mut visual, "composer-reply");
     assert!(visual.debug_bounds("chat-composer").is_some());
-    focus_root(&workspace, &mut visual);
-    visual.update(|window, _| window.refresh());
-    visual.run_until_parked();
+    assert!(visual.debug_bounds("composer-reply").is_none());
+    assert!(inside(&mut visual, "composer-model", "chat-composer"));
+    assert!(inside(&mut visual, "composer-send", "chat-composer"));
     workspace.read_with(&visual, |this, _| {
-        assert!(this.composer_ui.reply_open.is_some())
+        assert_eq!(
+            this.composer_ui.placeholder,
+            Some(super::super::composer_v2::REPLY_INSTEAD)
+        )
     });
-    assert!(visual.debug_bounds("composer-model").is_some());
 }
 
 /// R4.3: a short command is the headline, the reason and where it runs

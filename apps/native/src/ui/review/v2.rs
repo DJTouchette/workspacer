@@ -565,8 +565,7 @@ fn file_header(
         .pr(px(t.space.sm))
         .bg(rgb(p.roles.raised))
         .border_t(px(t.stroke.hairline))
-        .border_b(px(t.stroke.hairline))
-        .border_color(rgb(p.border))
+        .map(|d| system::edge(d, system::Side::Bottom, system::EdgeTone::Divider, p))
         .child(toggle)
         // r3-pages: one status pill per file ("Modified · Staged").
         .when(!data.badges.is_empty(), |d| {
@@ -1014,8 +1013,7 @@ impl Workspace {
                     div()
                         .px(px(t.space.lg))
                         .py(px(t.space.md))
-                        .border_t(px(t.stroke.hairline))
-                        .border_color(rgb(p.border))
+                        .map(|d| system::edge(d, system::Side::Top, system::EdgeTone::Divider, &p))
                         .text_size(px(t.text.caption))
                         .text_color(rgb(p.roles.text_secondary))
                         .child(if skipped > 0 {
@@ -1405,8 +1403,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap(px(t.space.md))
-            .border_t(px(t.stroke.hairline))
-            .border_color(rgb(p.border))
+            .map(|d| system::edge(d, system::Side::Top, system::EdgeTone::Divider, &p))
             .bg(rgb(p.surface))
             .child(
                 div()
@@ -1484,8 +1481,7 @@ impl Workspace {
             .flex()
             .items_center()
             .gap(px(t.space.md))
-            .border_b(px(t.stroke.hairline))
-            .border_color(rgb(p.border))
+            .map(|d| system::edge(d, system::Side::Bottom, system::EdgeTone::Divider, &p))
             .child(
                 div()
                     .flex_shrink_0()
@@ -1574,8 +1570,7 @@ impl Workspace {
             .flex_col()
             .rounded(px(t.radius.panel))
             .bg(rgb(p.surface))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.card_border))
+            .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
             .overflow_hidden()
             .child(header)
             .children(notice)
@@ -1943,7 +1938,7 @@ impl Workspace {
             },
         )
         .absolute()
-        .size(px(0.))
+        .size(Pixels::ZERO)
     }
 }
 

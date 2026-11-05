@@ -383,7 +383,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        use super::primitives::{StatusKind, elevation, status_indicator, tonal};
+        use super::primitives::{StatusKind, status_indicator, tonal};
         let p = self.palette();
         let t = p.tokens;
         let kind = match (task_plan::active(steps), done == total) {
@@ -448,9 +448,8 @@ impl Workspace {
             .p(px(t.space.xs))
             .rounded(px(t.radius.panel))
             .bg(rgb(p.roles.raised))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.card_border))
-            .shadow(elevation(&p, t.elevation.floating))
+            .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
+            .map(|d| system::floating(d, &p))
             .flex()
             .flex_col()
             .child(header)

@@ -265,6 +265,33 @@ fn check(theme: Appearance) -> Vec<String> {
         }
     }
 
+    // Composer (R5.4): every live state keeps its text and placeholder
+    // readable on the field (a decision waiting never fades it), and the
+    // focused edge reads as the focus ring.
+    for state in super::ComposerState::ALL {
+        if state == super::ComposerState::Disabled {
+            continue;
+        }
+        g.at_least(
+            &format!("composer {state:?}: text on field"),
+            p.text,
+            p.surface,
+            TEXT,
+        );
+        g.at_least(
+            &format!("composer {state:?}: placeholder on field"),
+            r.text_tertiary,
+            p.surface,
+            TEXT,
+        );
+    }
+    g.at_least(
+        "composer Focus: edge on field",
+        super::ComposerState::Focus.edge(&p),
+        p.surface,
+        NON_TEXT,
+    );
+
     // Avatars.
     for &fill in &r.avatar {
         g.at_least("avatar monogram", p.avatar_text(), fill, TEXT);

@@ -700,7 +700,8 @@ impl Tokens {
                 tool_row: 28.,
                 visible_steps: 4,
                 row_gap: 6.,
-                turn_gap: 16.,
+                // R5.4: turns sit 32-40 apart (32 plus the row gap).
+                turn_gap: 32.,
                 details_max: 480.,
                 brief_max: 120.,
                 prose_line_height: 1.6,

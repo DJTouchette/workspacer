@@ -233,7 +233,7 @@ def shots():
     # r3-composer: the decision holds the composer's slot; "Reply instead…"
     # opens it, a typed answer turns the question's Send primary, and while
     # the agent works a draft makes the primary Queue (its menu open).
-    add("composer-reply-open", "Approval pending: the composer opened from Reply instead…",
+    add("composer-reply-open", "Approval pending: a reply typed in the composer under the card",
         [("click", "COMPOSER_REPLY"), ("sleep", 0.5), ("type", "Run only the UI tests first")])
     add("composer-question-answered", "The release question with an answer typed (Send enabled)",
         [("click", "SIDEBAR_ROW_QUESTION"), ("sleep", 2), ("click", "QUESTION_ANSWER"), ("type", "release/0.9")])
@@ -509,7 +509,7 @@ LANDMARKS = {
     # (r3-integration: v1's moved right when the fixture's grant label grew.)
     "APPROVAL_DENY_NOTE": lambda shot: (960, 952) if shot["v2"] else (1030, 797),
     "APPROVAL_DENY_MENU": lambda shot: (1098, 921),  # r3-composer: Deny's chevron (v2; r3-integration re-measured)
-    "COMPOSER_REPLY": lambda shot: (615, 970),       # r3-composer: "Reply instead…" under the card (v2)
+    "COMPOSER_REPLY": lambda shot: (700, 922),       # r5-conversation: the composer field under the card (v2: always a field)
     "QUESTION_ANSWER": lambda shot: (900, 884),      # r3-composer: the release question's answer field (v2)
     "COMPOSER_SEND_MENU": lambda shot: (1333, 960),  # r3-composer: Queue's chevron while working (v2; r3-integration re-measured)
     # (r4-integration: v2 re-measured; the first tile centres at y 179.)

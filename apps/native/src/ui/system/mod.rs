@@ -21,6 +21,8 @@ use gpui::AnyElement;
 
 mod actions;
 mod card;
+mod composer;
+mod edge;
 mod elevation;
 pub(crate) mod gallery;
 mod icon_button;
@@ -36,8 +38,13 @@ mod contrast;
 #[cfg(test)]
 mod lint;
 
-pub(crate) use actions::{send_state, stop_variant};
+pub(crate) use actions::{composer_send_state, send_state, stop_variant};
 pub(crate) use card::{tile, tile_grid};
+pub(crate) use composer::{
+    ComposerState, composer_body, composer_field, composer_specimen, composer_text,
+    composer_toolbar,
+};
+pub(crate) use edge::{EdgeTone, Side, edge, floating, framed, lifted};
 pub(crate) use elevation::{Level, elevated, scrim_color};
 pub(crate) use icon_button::IconButton;
 pub(crate) use menu::{MenuAnchor, anchored_menu};

@@ -237,8 +237,7 @@ impl Workspace {
             .flex_col()
             .rounded(px(t.radius.panel))
             .bg(rgb(p.surface))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.card_border))
+            .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
             .overflow_hidden()
             .child(
                 div()
@@ -249,8 +248,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap(px(t.space.md))
-                    .border_b(px(t.stroke.hairline))
-                    .border_color(rgb(p.border))
+                    .map(|d| system::edge(d, system::Side::Bottom, system::EdgeTone::Divider, &p))
                     .child(title)
                     .children(counts)
                     .child(self.stack_controls(cx)),
@@ -304,8 +302,7 @@ impl Workspace {
             .flex_col()
             .rounded(px(t.radius.panel))
             .bg(rgb(p.surface))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.card_border))
+            .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
             .overflow_hidden()
             .child(toggle);
         match mode {

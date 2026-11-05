@@ -106,6 +106,31 @@ pub(super) fn work_line(running: bool, duration_ms: Option<i64>, tools: usize) -
     }
 }
 
+/// Whether a run of calls ended well although some failed: its last
+/// finished call succeeded (a failed `cargo test`, fixed, then passing).
+/// The run is then coloured by that final outcome, never red (R5.4).
+pub(super) fn recovered<'a>(rows: impl IntoIterator<Item = &'a Row>) -> bool {
+    let calls: Vec<_> = rows.into_iter().filter_map(|r| r.tool.as_ref()).collect();
+    // Every failed call was run again later (same tool, same target) and
+    // that run passed: `cargo test` failed, then passed. Reading a file
+    // after a failed build fixes nothing.
+    let mut any = false;
+    for (at, failed) in calls.iter().enumerate().filter(|(_, t)| t.is_error) {
+        any = true;
+        let target = failed.target();
+        let fixed = calls[at + 1..].iter().any(|later| {
+            later.complete
+                && !later.is_error
+                && later.name == failed.name
+                && later.target() == target
+        });
+        if !fixed {
+            return false;
+        }
+    }
+    any
+}
+
 /// A response card action in plain words (r2-transcript: no "Prefill").
 pub(super) fn card_action_label(action: &wks_native::transcript::CardAction) -> String {
     use wks_native::transcript::CardAction;
@@ -167,6 +192,18 @@ pub(super) fn fleet_eyebrow(kind: FleetKind, pending: bool, entries: usize) -> S
         FleetKind::Threshold if pending => "Threshold crossed".into(),
         FleetKind::Threshold => "Threshold handled".into(),
         FleetKind::Progress => "Progress update".into(),
+    }
+}
+
+/// A fleet entry's state (`fleet_card::entry_status`) as the lower-case
+/// word the one-line wake uses ("Release checklist answered").
+pub(super) fn fleet_word(label: &str) -> String {
+    match label {
+        "Needs approval" | "Has a question" | "Needs a decision" => "needs you".into(),
+        "Finished" => "done".into(),
+        "Still running" => "is still running".into(),
+        "Threshold crossed" => "crossed a threshold".into(),
+        other => other.to_lowercase(),
     }
 }
 
@@ -402,7 +439,8 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
                 } else {
                     t.weight.medium
                 }))
-                .text_color(rgb(p.text))
+                // R5.4: activity is the middle level, under the prose.
+                .text_color(rgb(p.roles.text_secondary))
                 .child(row.verb),
         )
         .when_some(row.target, |d, target| {
@@ -473,13 +511,16 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
 pub(super) fn event_guide(p: &Palette) -> Div {
     let t = p.tokens;
     let tt = t.transcript();
-    div()
-        .flex()
-        .flex_col()
-        .ml(px(tt.event_icon / 2.))
-        .pl(px(tt.event_icon / 2. + t.space.md - t.stroke.hairline))
-        .border_l(px(t.stroke.hairline))
-        .border_color(rgb(p.border))
+    system::edge(
+        div()
+            .flex()
+            .flex_col()
+            .ml(px(tt.event_icon / 2.))
+            .pl(px(tt.event_icon / 2. + t.space.md - t.stroke.hairline)),
+        system::Side::Left,
+        system::EdgeTone::Divider,
+        p,
+    )
 }
 
 impl Workspace {
@@ -498,7 +539,7 @@ impl Workspace {
         let tt = t.transcript();
         let gutter = t.layout.chat_gutter;
         let cap = px(self.settings.reading_width.measure(&t) + 2. * gutter);
-        if self.chat_width <= px(0.) {
+        if self.chat_width <= Pixels::ZERO {
             return cap;
         }
         let rail = if self.tools_float_v2(false) {
@@ -582,6 +623,7 @@ impl Workspace {
     pub(super) fn render_step_v2(
         &mut self,
         row: &Arc<Row>,
+        recovered: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -644,14 +686,27 @@ impl Workspace {
                 .then(|| tool_result_meta(tool.category(), &tool.name, &tool.output))
                 .flatten()
                 .map(Into::into);
-        event.fault = tool
+        let code = tool
             .is_error
             .then(|| exit_code(&tool.output))
             .flatten()
-            .map(|code| format!("exit code {code}").into());
-        event.failed = tool.is_error;
+            .map(|code| format!("exit code {code}"));
+        // R5.4: a failure the run later recovered from keeps a muted mark
+        // (tertiary "Failed · exit code 1"), never red.
+        let muted = tool.is_error && recovered;
+        if muted {
+            event.summary = Some(
+                code.map_or_else(|| "Failed".to_owned(), |c| format!("Failed · {c}"))
+                    .into(),
+            );
+        } else {
+            event.fault = code.map(Into::into);
+        }
+        event.failed = tool.is_error && !muted;
         event.disclosure = Some(expanded);
-        event.end = if tool.is_error {
+        event.end = if muted {
+            duration.map_or(EventEnd::Nothing, EventEnd::Quiet)
+        } else if tool.is_error {
             EventEnd::Badge(StatusBadge::new(StatusKind::Failed))
         } else if running {
             EventEnd::Badge(StatusBadge::new(StatusKind::Working))
@@ -665,8 +720,13 @@ impl Workspace {
             );
         let mut step = div().flex().flex_col().child(header);
         if let Some((lines, before)) = inline.filter(|_| !expanded) {
-            step =
-                step.child(self.inline_output_v2(&element_key, lines, before, tool.is_error, cx));
+            step = step.child(self.inline_output_v2(
+                &element_key,
+                lines,
+                before,
+                tool.is_error && !muted,
+                cx,
+            ));
         }
         if expanded {
             let mut details = self
@@ -798,8 +858,7 @@ impl Workspace {
             .p(px(t.space.lg))
             .rounded(px(t.radius.control))
             .bg(rgb(p.surface))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.card_border))
+            .map(|d| system::framed(d, &p))
             .flex()
             .flex_col()
             .gap(px(t.space.lg))
@@ -903,6 +962,10 @@ impl Workspace {
             .range(span.clone())
             .filter(|r| r.tool.is_some())
             .count();
+        // R5.4: coloured by the final outcome: a failure later recovered
+        // from is not red at the run's level.
+        let recovered = recovered(rows.range(span.clone()).map(AsRef::as_ref));
+        let failed = if recovered { 0 } else { summary.failed };
         // r3-transcript: finished work folds to one line ("Worked 5m 40s ·
         // 6 tools ›") so the reply and its changes lead the turn; the block
         // still in progress (the transcript's last, while the session is
@@ -917,7 +980,7 @@ impl Workspace {
                 .open
                 .get(&card_key)
                 .copied()
-                .unwrap_or(in_progress || summary.failed > 0);
+                .unwrap_or(in_progress || failed > 0);
         let earlier_key = format!("{card_key}:earlier");
         let show_earlier = expand_all || self.chat.open.get(&earlier_key).copied().unwrap_or(false);
         let hidden = if show_earlier {
@@ -939,10 +1002,10 @@ impl Workspace {
             // diff counts belong to the turn's Changed line, the breakdown to
             // the rows inside.
             let toggle_key = card_key.clone();
-            let default_open = in_progress || summary.failed > 0;
+            let default_open = in_progress || failed > 0;
             let mut event = EventRow::new(
                 format!("{card_key}-header"),
-                Glyph::Status(if summary.failed > 0 {
+                Glyph::Status(if failed > 0 {
                     StatusKind::Failed
                 } else if in_progress {
                     StatusKind::Working
@@ -955,7 +1018,7 @@ impl Workspace {
             event.disclosure = Some(open);
             event.reveal = true;
             // The glyph carries the state; a failure is also named inline.
-            event.fault = (summary.failed > 0).then(|| format!("{} failed", summary.failed).into());
+            event.fault = (failed > 0).then(|| format!("{failed} failed").into());
             card = card.child(
                 event_row(event, &p)
                     .debug_selector(|| "work-card-toggle".into())
@@ -1018,7 +1081,7 @@ impl Workspace {
             }
             for row in rows.range(span.start + hidden..span.end) {
                 list = list.child(if row.tool.is_some() {
-                    self.render_step_v2(row, window, cx)
+                    self.render_step_v2(row, recovered, window, cx)
                 } else {
                     self.render_note_v2(row, &session, window, cx)
                 });
@@ -1103,6 +1166,9 @@ impl Workspace {
             .iter()
             .map(|c| child_view(c, connected, now))
             .collect();
+        // R5.4: a delegation rolls up its worst child: never "Working"
+        // beside a child that is not responding.
+        let stalled = views.iter().any(|v| v.stalled);
         let verb = tool_verb(&tool.name, category, running)
             .unwrap_or("Used")
             .to_owned();
@@ -1126,9 +1192,12 @@ impl Workspace {
         event.disclosure = Some(expanded);
         event.end = if tool.is_error {
             EventEnd::Badge(StatusBadge::new(StatusKind::Failed))
-        } else if running {
+        } else if running && !stalled {
             EventEnd::Badge(StatusBadge::new(StatusKind::Working))
-        } else if let Some(badge) = (views.len() > 1).then(|| children_badge(&views)).flatten() {
+        } else if let Some(badge) = (views.len() > 1 || stalled)
+            .then(|| children_badge(&views))
+            .flatten()
+        {
             EventEnd::Badge(badge)
         } else {
             duration.map_or(EventEnd::Nothing, EventEnd::Quiet)
@@ -1649,13 +1718,13 @@ impl Workspace {
                 .relative()
                 .rounded(px(t.radius.full))
                 .bg(rgb(p.roles.raised))
-                .shadow(primitives::elevation(&p, t.elevation.floating))
+                .map(|d| system::floating(d, &p))
                 .occlude()
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.follow = true;
                     this.list.scroll_to(ListOffset {
                         item_ix: this.view.transcript.rows.len(),
-                        offset_in_item: px(0.),
+                        offset_in_item: Pixels::ZERO,
                     });
                     cx.notify();
                 })),
@@ -1719,109 +1788,141 @@ impl Workspace {
             .collect::<Vec<_>>();
         let open_key = format!("{key}-v2-open");
         let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
-        let mut lines = div()
+        // R5.4: other sessions' news is one quiet line with one button
+        // ("Go to Release checklist"), set apart from this conversation:
+        // an inbox mark, "From other sessions", tertiary words. An ask that
+        // has since been answered reads as resolved, never as pending.
+        let words: Vec<(String, StatusKind)> = fleet
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let (label, _) = super::fleet_card::entry_status(
+                    fleet.kind,
+                    entry,
+                    lookup(&entry.session_id).as_ref(),
+                    p,
+                );
+                let word = fleet_word(label);
+                let line = match &entry.failed {
+                    Some(why) => format!("{} {word}: {why}", names[index]),
+                    None => format!("{} {word}", names[index]),
+                };
+                (line, states[index])
+            })
+            .collect();
+        // The one button: the session that waits on you now (live, not the
+        // wake's say-so), else the first one this conversation can open.
+        let waits = |index: usize| {
+            states[index] == StatusKind::NeedsYou
+                && self.view.connected
+                && lookup(&fleet.entries[index].session_id)
+                    .is_some_and(|s| s.approval.is_some() || s.questions.is_some())
+        };
+        let target = (0..fleet.entries.len()).find(|&i| waits(i)).or_else(|| {
+            (0..fleet.entries.len())
+                .find(|&i| self.fleet_openable(&owner, &fleet.entries[i].session_id))
+        });
+        let worst = [StatusKind::NeedsYou, StatusKind::Failed]
+            .into_iter()
+            .find(|kind| {
+                states
+                    .iter()
+                    .enumerate()
+                    .any(|(i, k)| k == kind && (*kind != StatusKind::NeedsYou || waits(i)))
+            });
+        let button = target.map(|index| {
+            let id = fleet.entries[index].session_id.clone();
+            let owner = owner.clone();
+            let name = super::status::short_title(&names[index], 32);
+            primitives::button(
+                SharedString::from(format!("{key}-open-{index}")),
+                format!("Go to {name}"),
+                Some(IconName::ArrowRight),
+                ButtonVariant::Tertiary,
+                ButtonSize::Small,
+                true,
+                &p,
+            )
+            .debug_selector(move || format!("fleet-entry-open-{index}"))
+            // Its label, not its padding, meets the column's right edge.
+            .mr(px(-(t.space.md + t.space.xxs)))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                let needs_you = this
+                    .view
+                    .sessions
+                    .iter()
+                    .any(|s| s.id == id && (s.approval.is_some() || s.questions.is_some()));
+                if this.view.selected.as_deref() == Some(owner.as_str())
+                    && this.view.connected
+                    && (needs_you || this.fleet_openable(&owner, &id))
+                {
+                    this.command(Command::Select(id.clone()), cx);
+                }
+            }))
+        });
+        let summary = words
+            .iter()
+            .map(|(line, _)| line.as_str())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let toggle = open_key.clone();
+        let line = div()
+            .id(SharedString::from(format!("{key}-line")))
+            .debug_selector(|| "fleet-card-header".into())
+            .group("event-row")
+            .h(px(t.transcript().tool_row))
+            .mx(px(-t.space.sm))
+            .px(px(t.space.sm))
+            .rounded(px(t.radius.control))
+            .flex()
+            .items_center()
+            .gap(px(t.space.md))
+            .min_w_0()
+            .cursor_pointer()
+            .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
+            .text_size(px(t.text.meta))
+            .text_color(rgb(p.roles.text_tertiary))
+            .child(match worst {
+                Some(kind) => glyph_box(Glyph::Status(kind), p.roles.text_tertiary, &p),
+                None => glyph_box(Glyph::Named(IconName::Inbox), p.roles.text_tertiary, &p),
+            })
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .font_weight(FontWeight(t.weight.medium))
+                    .child("From other sessions"),
+            )
+            .child(div().min_w_0().flex_1().truncate().child(summary))
+            .children((0..fleet.entries.len()).map(|index| {
+                div()
+                    .absolute()
+                    .debug_selector(move || format!("fleet-entry-status-{index}"))
+            }))
+            .when(fleet.entries.len() == 1, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .debug_selector(|| "fleet-card-status".into()),
+                )
+            })
+            .children(button)
+            .tooltip(primitives::tooltip_view(
+                format!("From another session · {eyebrow}"),
+                None,
+                &p,
+            ))
+            .on_click(
+                cx.listener(move |this, _, _, cx| this.toggle_open(toggle.clone(), false, cx)),
+            );
+        let lines = div()
             .debug_selector(|| "fleet-card".into())
             .pb(px(t.space.sm))
             .w_full()
             .flex()
-            .flex_col();
-        for (index, entry) in fleet.entries.iter().enumerate() {
-            let kind = states[index];
-            let live = lookup(&entry.session_id);
-            let id = entry.session_id.clone();
-            // Go to a session that needs you now (its state is live, not the
-            // wake's say-so), or open one of this conversation's workers.
-            let waits = kind == StatusKind::NeedsYou
-                && self.view.connected
-                && live
-                    .as_ref()
-                    .is_some_and(|s| s.approval.is_some() || s.questions.is_some());
-            let reachable = waits || self.fleet_openable(&owner, &id);
-            let mut event = EventRow::new(
-                format!("{key}-entry-{index}"),
-                Glyph::Status(kind),
-                if kind == StatusKind::NeedsYou {
-                    format!("{} needs you", names[index])
-                } else {
-                    names[index].clone()
-                },
-            );
-            event.quiet = kind != StatusKind::NeedsYou;
-            if kind != StatusKind::NeedsYou {
-                event.summary = Some(kind.label().into());
-            }
-            event.fault = entry
-                .failed
-                .clone()
-                .or_else(|| entry.crossed.clone())
-                .map(Into::into);
-            event.disclosure = (index == 0).then_some(open);
-            if reachable {
-                let (owner, id) = (owner.clone(), id.clone());
-                event.trailing.push(
-                    primitives::button(
-                        SharedString::from(format!("{key}-open-{index}")),
-                        if waits { "Go" } else { "Open" },
-                        Some(IconName::ArrowRight),
-                        ButtonVariant::Tertiary,
-                        ButtonSize::Small,
-                        true,
-                        &p,
-                    )
-                    .debug_selector(move || format!("fleet-entry-open-{index}"))
-                    // Its label, not its padding, meets the column's right edge.
-                    .mr(px(-(t.space.md + t.space.xxs)))
-                    .when(!waits, |d| {
-                        d.opacity(0.).group_hover("event-row", |s| s.opacity(1.))
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        let needs_you =
-                            this.view.sessions.iter().any(|s| {
-                                s.id == id && (s.approval.is_some() || s.questions.is_some())
-                            });
-                        if this.view.selected.as_deref() == Some(owner.as_str())
-                            && this.view.connected
-                            && (needs_you || this.fleet_openable(&owner, &id))
-                        {
-                            this.command(Command::Select(id.clone()), cx);
-                        }
-                    }))
-                    .into_any_element(),
-                );
-            }
-            let toggle = open_key.clone();
-            lines = lines.child(
-                event_row(event, &p)
-                    .debug_selector(move || {
-                        if index == 0 {
-                            "fleet-card-header".into()
-                        } else {
-                            format!("fleet-entry-{index}")
-                        }
-                    })
-                    .child(
-                        div()
-                            .absolute()
-                            .debug_selector(move || format!("fleet-entry-status-{index}")),
-                    )
-                    .when(index == 0, |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .debug_selector(|| "fleet-card-status".into()),
-                        )
-                    })
-                    .tooltip(primitives::tooltip_view(
-                        format!("From another session · {eyebrow}"),
-                        None,
-                        &p,
-                    ))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.toggle_open(toggle.clone(), false, cx)
-                    })),
-            );
-        }
+            .flex_col()
+            .child(line);
         if !open {
             return lines;
         }
@@ -1835,13 +1936,15 @@ impl Workspace {
             .text_color(rgb(p.roles.text_secondary));
         for (index, entry) in fleet.entries.iter().enumerate() {
             let quote = |text: String| {
-                div()
-                    .pl(px(t.space.md))
-                    .border_l(px(t.stroke.focus))
-                    .border_color(rgb(p.border))
-                    .text_size(px(t.text.body))
-                    .text_color(rgb(p.prose))
-                    .child(text)
+                system::edge(
+                    div().pl(px(t.space.md)),
+                    system::Side::Left,
+                    system::EdgeTone::Quote,
+                    &p,
+                )
+                .text_size(px(t.text.body))
+                .text_color(rgb(p.prose))
+                .child(text)
             };
             let reply = format!("Re: {} — ", names[index]);
             let single = fleet.entries.len() == 1;
@@ -2433,7 +2536,9 @@ impl Workspace {
         let mut event = EventRow::new(
             format!("{key}-toggle"),
             Glyph::Named(IconName::Bot),
-            plural(total, "subagent", "subagents"),
+            // R5.4: this block knows one turn's delegations; the sidebar
+            // counts the whole tree. Say which this is.
+            format!("{total} delegated this turn"),
         );
         event.disclosure = Some(open);
         event.end = match children_badge(&views) {
@@ -2568,8 +2673,7 @@ impl Workspace {
                         .pl(px(
                             t.transcript().event_icon / 2. + t.space.md - t.stroke.hairline
                         ))
-                        .border_l(px(t.stroke.hairline))
-                        .border_color(rgb(p.border))
+                        .map(|d| system::edge(d, system::Side::Left, system::EdgeTone::Divider, &p))
                         .child(
                             self.render_markdown(
                                 &format!("{key}-thinking-text"),
@@ -2647,6 +2751,38 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn call(name: &str, command: &str, failed: bool) -> Row {
+        Row {
+            tool: Some(wks_native::transcript::Tool {
+                name: name.into(),
+                input: serde_json::json!({ "command": command, "file_path": command }).to_string(),
+                complete: true,
+                is_error: failed,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_failure_is_recovered_only_by_a_passing_rerun() {
+        // R5.4: cargo test failed, then passed: the run ends well.
+        let fixed = [
+            call("Bash", "cargo test", true),
+            call("Edit", "src/a.rs", false),
+            call("Bash", "cargo test", false),
+        ];
+        assert!(recovered(fixed.iter()));
+        // A read after a failed build fixes nothing.
+        let open = [
+            call("Bash", "cargo test", true),
+            call("Read", "src/a.rs", false),
+        ];
+        assert!(!recovered(open.iter()));
+        // Nothing failed: nothing to recover from.
+        assert!(!recovered([call("Read", "src/a.rs", false)].iter()));
+    }
 
     #[test]
     fn tool_rows_say_what_a_call_produced_in_a_few_words() {

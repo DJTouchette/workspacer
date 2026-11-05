@@ -2231,45 +2231,32 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         let t = p.tokens;
-        div()
+        // R5.4: the one composer component, as in the conversation.
+        let state = if busy {
+            system::ComposerState::Disabled
+        } else {
+            system::ComposerState::Rest
+        };
+        let leading = self.launch_chips_v2(panel, busy, welcome, p, cx);
+        system::composer_field(state, p)
             .debug_selector(|| "launch-task".into())
-            .w_full()
-            .flex()
-            .flex_col()
-            .rounded(px(t.radius.composer))
-            .bg(rgb(p.surface))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.border_strong))
-            .shadow(primitives::elevation(p, t.elevation.raised))
             .child(
-                div()
-                    .debug_selector(|| "launch-prompt".into())
-                    .px(px(t.space.xl))
-                    .pt(px(t.space.lg))
-                    .min_h(px(t.layout.control_height * 3.))
-                    .flex()
-                    .flex_col()
-                    .text_size(px(t.text.ui))
+                system::composer_body(state, false, p)
                     .child(
-                        Input::new(&self.prompt)
-                            .appearance(false)
-                            .flex_1()
-                            .min_h(px(t.layout.control_height * 3.))
-                            .disabled(busy),
+                        system::composer_text(3., p)
+                            .debug_selector(|| "launch-prompt".into())
+                            .child(
+                                Input::new(&self.prompt)
+                                    .appearance(false)
+                                    .flex_1()
+                                    .min_h(px(t.layout.control_height * 3.))
+                                    .disabled(busy),
+                            ),
+                    )
+                    .child(
+                        system::composer_toolbar(leading, [trailing], p)
+                            .debug_selector(|| "launch-chips".into()),
                     ),
-            )
-            .child(
-                div()
-                    .debug_selector(|| "launch-chips".into())
-                    .px(px(t.space.md))
-                    .py(px(t.space.md))
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(t.space.xs))
-                    .children(self.launch_chips_v2(panel, busy, welcome, p, cx))
-                    .child(div().flex_1())
-                    .child(trailing),
             )
     }
 

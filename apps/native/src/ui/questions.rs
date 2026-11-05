@@ -546,9 +546,8 @@ impl Workspace {
             .when(v2, |d| {
                 d.p(px(if compact { t.space.md } else { t.space.lg }))
                     .rounded(px(t.radius.panel))
-                    .border(px(t.stroke.hairline))
-                    .border_color(rgb(p.roles.card_border))
-                    .shadow(primitives::elevation(&p, t.elevation.floating))
+                    .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
+                    .map(|d| system::floating(d, &p))
                     .gap(px(if compact { t.space.sm } else { t.space.md }))
             });
         if list.is_empty() {

@@ -109,6 +109,21 @@ All three are at least 4.5:1 on chat, surface, base and raised, and on selected 
 - `scrim_color(&p)` gives the scrim colour.
 - An overlay always has a shadow. A centred overlay also always has a scrim.
 - Menus and popovers are Overlay but anchored, so they have no scrim.
+- `floating(el, &p)` adds the floating shadow (the composer, Jump to latest: above the transcript, under an Overlay); `lifted(el, level, &p)` adds a level's shadow to a surface that draws its own fill and edge (`src/ui/system/edge.rs`).
+
+### Edges (`system::edge`, `src/ui/system/edge.rs`)
+
+A surface never picks a border colour. It asks for a side and a tone:
+
+| Tone | Colour | Width | Use |
+|---|---|---|---|
+| `Divider` | `border` | hairline | Header strips, panel splits, the event guide |
+| `Card` | `card_border` | hairline | A Raised edge drawn without `elevated` |
+| `Strong` | `border_strong` | hairline | Inputs, Overlay edges |
+| `Quote` | `border` | `stroke.focus` | The rule beside quoted text |
+
+- `edge(el, Side::{All, Top, Bottom, Left, Right}, EdgeTone, &p)` on any `Styled` element; in a builder chain, `.map(|d| system::edge(d, Side::Bottom, EdgeTone::Divider, &p))`.
+- `framed(el, &p)` is `edge(el, Side::All, EdgeTone::Card, &p)`.
 
 ### Motion (`t.motion`, `t.signals()`)
 
@@ -275,13 +290,29 @@ Each entry gives:
 
 ### TextField / Composer
 
-- **Purpose:** text entry. There is one composer, shared by the welcome screen, New session and the conversation (`launch_task_box_v2`, `composer_v2.rs`).
-- **Anatomy:** a `border_strong` field on `surface`, then the toolbar chips (`primitives::toolbar_chip`), then the Send slot.
-- **States:** Rest, Focus (ring), Yielded (a decision waits: `wash.yielded`, but still visible and still bordered), Disabled.
-- **API:** gpui-component `Input` styled by `configure_theme_v2`; `toolbar_chip(id, leading, label, opens, enabled, &p)`.
+- **Purpose:** text entry. There is one composer component, used by the welcome screen, New session (`launch_task_box_v2`) and the conversation (`render_composer_v2`). Pages own where it sits; the composer owns how it looks.
+- **Anatomy:** the field (`surface`, a hairline edge, `radius.composer`, the floating shadow), holding the body: draft attachments, the text (gpui-component `Input` with `appearance(false)`), then the toolbar. The toolbar's leading side holds attach (IconButton) and context chips (`toolbar_chip`: folder, model, context meter), which shrink and clip first. Its trailing side holds the status, then the Send slot, which never shrink.
+- **States** (`system::ComposerState`):
+
+| State | Edge | Body | Placeholder | Send |
+|---|---|---|---|---|
+| `Rest` | `border_strong` | full | "Ask anything, or describe a task…" | Primary, disabled until there is a draft |
+| `Focus` | `focus` | full | as Rest | Primary when there is a draft |
+| `Yielded` (a decision waits) | `border_strong` | full, never faded or collapsed | "Reply instead — the request stays pending" | **Secondary**: the decision card owns the Primary. Its tooltip says replying leaves the request pending |
+| `Disabled` (offline, busy) | `border_strong` | `wash.yielded` | the connection's words | disabled |
+
+- **Send slot:** Send (`system::composer_send_state(can_send, deciding)`), Queue (a Primary split button while the agent works and there is a draft; its menu holds Send now and After this turn) or Stop · Esc (Destructive while the agent works and nothing is drafted). One slot, one place.
+- **Slash menu:** a `menu` of `list_row`s anchored above the composer (`anchored_menu`, `MenuAnchor::AboveStart`). While a decision waits it sits in the dock's flow above the composer instead, pushing the decision up (the dock's cards shrink and scroll), so it never covers the request.
+- **API** (`src/ui/system/composer.rs`):
+  - `composer_field(state, &p) -> Div`, then `composer_body(state, compact, &p)` holding `composer_text(min_lines, &p)` (the input) and `composer_toolbar(leading, trailing, &p)`.
+  - `composer_specimen(id, state, text, placeholder, deciding, can_send, &p)` draws a static composer (the gallery: the live one needs an `InputState`).
+- **Do:**
+  - Change only the placeholder and Send's tier while a decision waits.
+  - Use `composer_send_state`; never pick Send's tier locally.
 - **Don't:**
-  - Hide the field while a decision waits.
-  - Build a second composer.
+  - Hide, collapse or fade the field while a decision waits.
+  - Build a second composer, or style a task box locally.
+  - Let the slash menu (or any menu) cover a pending decision.
 
 ### Menu
 
@@ -412,8 +443,11 @@ Prose is above activity, and activity is above meta.
 - Prose and headings are primary.
 - Activity rows (Ran, Edited, Changed 2 files, subagents) are 13 secondary, with the verb in medium.
 - Meta is tertiary.
-- Turns are 32–40 apart.
-- A finished turn folds into one summary row ("Worked 5m 40s · 6 tools"), coloured by its **final** outcome. A failure that later recovered is not red at the turn level.
+- Turns are 32–40 apart (`transcript().turn_gap` 32 plus the row gap).
+- A finished turn folds into one summary row ("Worked 5m 40s · 6 tools"), coloured by its **final** outcome (`transcript_v2::recovered`: every failed call was run again, same tool and target, and passed). A failure that later recovered is not red at the turn level, and the run does not open by default; expanded, only the failed step keeps a muted mark (tertiary "Failed · exit code 1", no red badge).
+- One "Changed N files" per turn. A wake from another session inside a turn does not split it (`starts_turn`).
+- **Other sessions:** a fleet or supervisor wake is one quiet line, set apart from the conversation: an inbox mark (or the amber/red glyph when one waits or failed), "From other sessions", the agents' states in tertiary words, and one Tertiary button ("Go to Release checklist"). An ask that has since been answered reads "answered" / "resolved", never as pending. Clicking the line opens what the wake carried.
+- **Subagents:** every subagent state comes from `status::derive` (`children::child_status_v2` for a provider subagent), so its own header and the sidebar agree on "Not responding · 7m". A transcript block that knows one turn's delegations says so ("2 delegated this turn"); the tree's total lives in the sidebar ("4 subagents · 3 working"). A delegation rolls up its worst child.
 - The composer stays a visible bordered field, even while a decision is pending.
 
 ### Fleet card anatomy

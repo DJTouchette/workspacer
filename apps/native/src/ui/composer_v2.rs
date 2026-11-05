@@ -4,9 +4,10 @@
 //!
 //! Rules (`docs/design-v2-direction.md` §4 and the Round 2 and 3 addenda):
 //! - One primary per region. The composer's send is the primary until a
-//!   decision is open; then the decision card takes the composer's slot
-//!   (R3.2) and the composer collapses to one "Reply instead…" line that
-//!   opens into the field (its send then a secondary).
+//!   decision is open; then the decision card owns the primary and the
+//!   composer stays a visible, bordered field (R5.4, `system::composer_field`)
+//!   whose placeholder says "Reply instead — the request stays pending" and
+//!   whose Send is Secondary (`system::composer_send_state`).
 //! - One primary button in one place whose label says what it does:
 //!   "Send" when idle; "Queue" while the agent works and there is a draft
 //!   (Enter: it runs after the current step), with Send now and After this
@@ -30,9 +31,6 @@ pub(super) struct ComposerUi {
     pub send_menu: bool,
     /// The approval's Deny split menu (Deny with note…) is open.
     pub deny_menu: bool,
-    /// "Reply instead…" was opened for this session and these decisions:
-    /// the composer stays open (its chips usable) until they change.
-    pub reply_open: Option<(String, Vec<Decision>)>,
     /// The question a multi-question set's stepper shows (0-based).
     pub question_step: usize,
     /// The placeholder last given to the composer, when v2 changed it.
@@ -294,13 +292,12 @@ pub(super) const SEND_NOW_COPY: &str =
 pub(super) const AFTER_TURN_COPY: &str =
     "Hold it until this turn ends, then send it as the next message.";
 
-/// The one line the composer collapses to while a decision waits, and the
-/// placeholder of the field it opens into.
+/// The composer's placeholder while a decision waits (R5.4: the field
+/// stays, only its words change).
 pub(super) const REPLY_INSTEAD: &str = "Reply instead — the request stays pending";
 
 /// The composer's placeholder while a decision waits on the user (the
-/// default otherwise). While a decision is open the composer is the "Reply
-/// instead…" line it opened from; it never repeats the card.
+/// default otherwise). It never repeats the card.
 pub(super) fn composer_placeholder(decision: Option<Decision>) -> &'static str {
     match decision {
         None => DEFAULT_PLACEHOLDER,
@@ -546,61 +543,11 @@ impl Workspace {
         true
     }
 
-    /// The composer collapsed while a decision holds its slot: one quiet
-    /// line, "Reply instead…", that opens the field (focus it, and it
-    /// stays open until it is left empty).
-    fn render_reply_instead(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let (hover, pressed) = (p.roles.hover, p.roles.pressed);
-        div()
-            .debug_selector(|| "chat-composer-group".into())
-            .w_full()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.md))
-            .children(self.render_cold_note(cx))
-            .child(
-                chrome::interactive_control(div().id("composer-reply"), p, enabled)
-                    .debug_selector(|| "composer-reply".into())
-                    .occlude()
-                    .w_full()
-                    .h(px(t.layout.control_height_sm))
-                    .px(px(t.space.lg + t.signals().attention_bar))
-                    .flex()
-                    .items_center()
-                    .rounded(px(t.radius.control))
-                    .text_size(px(t.text.meta))
-                    .text_color(rgb(if enabled {
-                        p.roles.text_secondary
-                    } else {
-                        p.disabled
-                    }))
-                    .tooltip(primitives::tooltip_view(
-                        super::decision::REPLY_KEEPS_PENDING,
-                        None,
-                        &p,
-                    ))
-                    .when(enabled, |d| {
-                        d.hover(move |s| s.bg(rgb(hover)).text_color(rgb(p.text)))
-                            .active(move |s| s.bg(rgb(pressed)))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.composer_ui.reply_open = this
-                                    .selected_session()
-                                    .map(|s| (s.id.clone(), this.decisions(s)));
-                                this.composer
-                                    .update(cx, |input, cx| input.focus(window, cx));
-                                cx.notify();
-                            }))
-                    })
-                    .child(REPLY_INSTEAD),
-            )
-    }
-
-    /// The v2 composer: one surface holding draft attachments, the slash
-    /// menu, the input and a toolbar of chips, status and the send control.
-    /// While a decision holds its slot it collapses to "Reply instead…".
+    /// The v2 composer: the one composer component (`system::composer_field`)
+    /// holding draft attachments, the input and a toolbar of chips, status
+    /// and the send control, with the slash menu anchored above it. It is
+    /// always a visible, bordered field; while a decision waits only its
+    /// placeholder and its Send's tier change (R5.4).
     pub(super) fn render_composer_v2(
         &mut self,
         layout: ChatLayout,
@@ -645,27 +592,17 @@ impl Workspace {
                 input.set_placeholder(placeholder, window, cx)
             });
         }
-        // Collapsed to one line until it is opened (focused) or holds a
-        // draft; there is never a second input under the card.
-        let opened = selected.as_ref().is_some_and(|s| {
-            self.composer_ui
-                .reply_open
-                .as_ref()
-                .is_some_and(|(id, open)| *id == s.id && *open == decisions)
-        });
-        if takes_slot && empty && draft_files.is_empty() && !uploading && !focused && !opened {
-            self.composer_ui.send_menu = false;
-            return self.render_reply_instead(enabled, cx);
-        }
         let slash_rows = self.slash_menu(cx);
-        // A usage limit alone leaves the composer in place, dimmed until used.
-        let yielded = deciding && !takes_slot && !focused && empty;
-        let edge = if focused {
-            p.roles.focus
+        let draft = !empty || !draft_files.is_empty();
+        let state = if !enabled {
+            system::ComposerState::Disabled
+        } else if focused {
+            system::ComposerState::Focus
+        } else if deciding {
+            system::ComposerState::Yielded
         } else {
-            p.roles.border_strong
+            system::ComposerState::Rest
         };
-        let pad = if compact { t.space.md } else { t.space.lg };
 
         // Toolbar, left: attach, then the session's context as quiet chips.
         let attach = primitives::icon_button(
@@ -768,43 +705,20 @@ impl Workspace {
         if slot != SendSlot::Queue {
             self.composer_ui.send_menu = false;
         }
-        let send = self.render_send_control(slot, enabled, can_send, cx);
+        let send = self.render_send_control(slot, enabled, can_send && draft, deciding, cx);
 
-        let toolbar = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(t.space.md))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .flex()
-                    .items_center()
-                    .gap(px(t.space.xxs))
-                    .child(attach)
-                    .children(folder)
-                    .children(model)
-                    .children(meter),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(t.space.md))
-                    .children(status)
-                    .child(send),
-            );
+        let mut leading = vec![attach.into_any_element()];
+        leading.extend(folder.map(IntoElement::into_any_element));
+        leading.extend(model.map(IntoElement::into_any_element));
+        leading.extend(meter.map(IntoElement::into_any_element));
+        let mut trailing: Vec<AnyElement> = status
+            .into_iter()
+            .map(IntoElement::into_any_element)
+            .collect();
+        trailing.push(send);
+        let toolbar = system::composer_toolbar(leading, trailing, &p);
 
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.sm))
-            .px(px(pad))
-            .pt(px(pad))
-            .pb(px(t.space.md))
+        let body = system::composer_body(state, compact, &p)
             .when(!draft_files.is_empty() || uploading, |d| {
                 d.child(
                     div()
@@ -816,33 +730,35 @@ impl Workspace {
                 )
             })
             .child(
-                div().px(px(t.space.xs)).child(
+                system::composer_text(1., &p).child(
                     Input::new(&self.composer)
                         .appearance(false)
                         .disabled(self.view.busy),
                 ),
             )
-            .child(toolbar)
-            .when(yielded, |d| d.opacity(t.wash.yielded));
-        // The slash menu floats above the composer, over everything else in
-        // the dock, never between a decision and the input.
+            .child(toolbar);
+        // The slash menu (R5.4) never covers a pending decision: with one
+        // waiting it sits in the dock's flow above the composer, pushing
+        // the decision up (the dock's cards shrink and scroll); otherwise it
+        // is anchored above the composer (`system::anchored_menu`).
         let slash = (!slash_rows.is_empty()).then(|| {
-            div()
+            primitives::menu(&p)
                 .debug_selector(|| "slash-menu-layer".into())
-                .absolute()
-                .left_0()
-                .right_0()
-                .bottom(relative(1.))
-                .pb(px(t.space.sm))
-                .child(
-                    primitives::popover(&p)
-                        .occlude()
-                        .p(px(t.space.xs))
-                        .child(self.render_slash_menu(slash_rows, cx)),
-                )
+                .occlude()
+                .map(|d| {
+                    if deciding {
+                        d.w_full()
+                    } else {
+                        d.w(self
+                            .composer_dock_bounds
+                            .size
+                            .width
+                            .min(px(t.system().overlay_width)))
+                    }
+                })
+                .child(self.render_slash_menu(slash_rows, cx))
         });
-
-        let composer = div()
+        let composer = system::composer_field(state, &p)
             .id("floating-composer")
             .debug_selector(|| "chat-composer".into())
             .key_context(
@@ -854,17 +770,14 @@ impl Workspace {
                 },
             )
             .occlude()
-            .relative()
-            .flex()
-            .flex_col()
-            .bg(rgb(p.surface))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(edge))
-            .rounded(px(t.radius.composer))
-            .shadow(primitives::elevation(&p, t.elevation.floating))
             .child(body);
         let menu = (self.composer_ui.send_menu && slot == SendSlot::Queue)
             .then(|| self.render_send_menu(can_send, cx));
+        let (pushed, anchored) = if deciding {
+            (slash, None)
+        } else {
+            (None, slash)
+        };
         div()
             .debug_selector(|| "chat-composer-group".into())
             .w_full()
@@ -873,12 +786,15 @@ impl Workspace {
             .flex_col()
             .gap(px(t.space.md))
             .children(self.render_cold_note(cx))
+            .children(pushed)
             .child(
-                div()
-                    .relative()
-                    .child(composer)
-                    .children(menu)
-                    .children(slash.map(gpui::deferred)),
+                system::anchored_menu(
+                    div().relative().w_full().child(composer).children(menu),
+                    anchored,
+                    system::MenuAnchor::AboveStart,
+                    &p,
+                )
+                .w_full(),
             )
     }
 
@@ -994,10 +910,17 @@ impl Workspace {
         slot: SendSlot,
         enabled: bool,
         can_send: bool,
+        deciding: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = self.palette();
         let (label, tip) = send_copy(slot);
+        // A reply while a decision waits does not answer it.
+        let tip = if deciding && slot == SendSlot::Send {
+            super::decision::REPLY_KEEPS_PENDING
+        } else {
+            tip
+        };
         let label = if self.view.busy { "Sending…" } else { label };
         match slot {
             SendSlot::Stop => {
@@ -1034,10 +957,10 @@ impl Workspace {
                 .into_any_element()
             }
             SendSlot::Send => {
-                // r5-system (R5.2): Send is the Primary exactly when it can
-                // send, and the disabled Primary otherwise: never outlined
-                // while it can act (it was Secondary under a decision).
-                let (variant, enabled) = system::send_state(can_send);
+                // R5.2/R5.4: Send is the Primary exactly when it can send,
+                // and the disabled Primary otherwise; while a decision waits
+                // the card owns the Primary and Send is Secondary.
+                let (variant, enabled) = system::composer_send_state(can_send, deciding);
                 primitives::button(
                     "send",
                     label,
@@ -1740,7 +1663,7 @@ impl Workspace {
                     .w_full()
                     .flex_shrink_0()
                     .p(px(if compact { t.space.md } else { t.space.lg }))
-                    .shadow(primitives::elevation(&p, t.elevation.floating))
+                    .map(|d| system::floating(d, &p))
                     .child(
                         div()
                             .flex()

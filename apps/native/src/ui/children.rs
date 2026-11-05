@@ -19,6 +19,41 @@ pub(super) struct ChildUi {
     pinned: HashMap<String, u64>,
 }
 
+/// R5.4 one subagent truth: a subagent's state through the one derivation
+/// ([`super::status::derive`]), from the same facts the sidebar's child row
+/// reads (failed, stalled past the heartbeat, running, settled, waiting on
+/// the user). Its own header shows this, so the two agree on "Not
+/// responding". A settled subagent is Done (the derivation's Idle).
+pub(super) fn child_status_v2(
+    child: &ChildAgent,
+    connected: bool,
+    now: i64,
+) -> super::primitives::StatusKind {
+    use super::primitives::StatusKind;
+    let failed = child.failed();
+    let running = child.running();
+    let needs_you = !running
+        && !failed
+        && !child.settled()
+        && wks_native::child_agents::provider_active(&child.status);
+    let status = super::status::derive(super::status::Facts {
+        connected,
+        stopped: !running && !failed && !needs_you,
+        paused: false,
+        needs_you,
+        failed,
+        stalled: super::attention::child_stalled(child, now),
+        streaming: false,
+        working: running,
+        children_working: false,
+    });
+    if status.kind == StatusKind::Idle && child.settled() {
+        StatusKind::Done
+    } else {
+        status.kind
+    }
+}
+
 pub(super) fn status(child: &ChildAgent, connected: bool) -> &'static str {
     if !connected {
         return "Offline";
@@ -638,6 +673,9 @@ impl Workspace {
     /// Title pill while a subagent is the chat: back to the parent, the
     /// subagent's title and model, and refresh.
     pub(super) fn render_child_title_bar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        if self.design().is_v2() {
+            return self.render_child_title_bar_v2(cx);
+        }
         let (parent, child) = self.viewed_child()?;
         let p = self.palette();
         let title = Self::child_title(child.as_ref());
@@ -731,6 +769,103 @@ impl Workspace {
                     .when(self.view.connected && !self.view.loading, |d| {
                         d.on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
                     }),
+                ),
+        )
+    }
+
+    /// v2's subagent header (R5.4): back, the parent, the subagent's title
+    /// and model, and its one status from [`child_status_v2`] (the
+    /// sidebar's: "Not responding · 7m" here too, never "Working"), then
+    /// Refresh. Every part is a system component.
+    fn render_child_title_bar_v2(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let (parent, child) = self.viewed_child()?;
+        let p = self.palette();
+        let t = p.tokens;
+        let now = timing::now_ms();
+        let connected = self.view.connected;
+        let title = Self::child_title(child.as_ref());
+        let model = child
+            .as_ref()
+            .map(|c| wks_native::model::model_display_name(&c.model))
+            .unwrap_or_default();
+        let status = child.as_ref().map(|c| {
+            let kind = child_status_v2(c, connected, now);
+            let label = if kind == super::primitives::StatusKind::NotResponding {
+                wks_native::format::not_responding(
+                    c.telemetry.last_activity_ms.or(c.telemetry.started_at_ms),
+                    now,
+                )
+            } else {
+                kind.label().to_owned()
+            };
+            system::StatusCell::new(kind)
+                .label(label)
+                .render(&p)
+                .debug_selector(|| "child-title-status".into())
+        });
+        let refresh = connected && !self.view.loading;
+        Some(
+            div()
+                .id("title-bar")
+                .debug_selector(|| "child-title-bar".into())
+                .occlude()
+                .max_w_full()
+                .min_w_0()
+                .h_full()
+                .flex()
+                .items_center()
+                .gap(px(t.space.sm))
+                .child(
+                    system::IconButton::new("child-back", IconName::ArrowLeft, "Back to parent")
+                        .render(&p)
+                        .on_click(cx.listener(|this, _, _, cx| this.leave_child(cx))),
+                )
+                .child(
+                    div()
+                        .flex_shrink()
+                        .min_w_0()
+                        .max_w(px(t.layout.menu_width))
+                        .truncate()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(self.session_title(&parent)),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child("/"),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_shrink()
+                        .truncate()
+                        .text_size(px(t.text.body))
+                        .font_weight(FontWeight(t.weight.semibold))
+                        .text_color(rgb(p.text))
+                        .child(title),
+                )
+                .when(!model.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_secondary))
+                            .child(model),
+                    )
+                })
+                .children(status)
+                .child(
+                    system::IconButton::new("refresh", IconName::Redo, "Refresh subagent")
+                        .enabled(refresh)
+                        .render(&p)
+                        .when(refresh, |d| {
+                            d.on_click(
+                                cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)),
+                            )
+                        }),
                 ),
         )
     }

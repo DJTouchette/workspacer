@@ -894,9 +894,9 @@ impl Workspace {
                         .border_1()
                         .border_color(rgb(p.border))
                         .when(v2, |d| {
-                            d.rounded(px(t.radius.panel))
-                                .border(px(t.stroke.hairline))
-                                .border_color(rgb(p.roles.card_border))
+                            d.rounded(px(t.radius.panel)).map(|d| {
+                                system::edge(d, system::Side::All, system::EdgeTone::Card, &p)
+                            })
                         })
                         .bg(rgb(p.surface))
                         .overflow_hidden()

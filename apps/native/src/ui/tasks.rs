@@ -792,8 +792,9 @@ impl Workspace {
                         d.mx(px(t.space.lg))
                             .mb(px(t.space.lg))
                             .rounded(px(t.radius.control))
-                            .border(px(t.stroke.hairline))
-                            .border_color(rgb(p.border))
+                            .map(|d| {
+                                system::edge(d, system::Side::All, system::EdgeTone::Divider, &p)
+                            })
                     })
                     .overflow_hidden()
                     .child(if count == 0 {
@@ -972,8 +973,7 @@ impl Workspace {
             .border_color(rgb(p.border))
             .when(v2, |d| {
                 d.rounded(px(t.radius.panel))
-                    .border(px(t.stroke.hairline))
-                    .border_color(rgb(p.roles.card_border))
+                    .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
             })
             .overflow_hidden()
             .child(self.render_tasks_header(cx))

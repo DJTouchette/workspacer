@@ -312,9 +312,8 @@ impl Workspace {
                 let t = p.tokens;
                 d.p(px(t.space.lg))
                     .rounded(px(t.radius.panel))
-                    .border(px(t.stroke.hairline))
-                    .border_color(rgb(p.roles.card_border))
-                    .shadow(primitives::elevation(&p, t.elevation.raised))
+                    .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
+                    .map(|d| system::lifted(d, system::Level::Raised, &p))
                     .gap(px(t.space.md))
                     .text_size(px(t.text.body))
             })

@@ -229,9 +229,14 @@ impl Workspace {
                                     .border_color(rgb(p.border))
                                     .bg(rgb(p.base))
                                     .when(v2, |d| {
-                                        d.rounded(px(t.radius.control))
-                                            .border(px(t.stroke.hairline))
-                                            .border_color(rgb(p.roles.card_border))
+                                        d.rounded(px(t.radius.control)).map(|d| {
+                                            system::edge(
+                                                d,
+                                                system::Side::All,
+                                                system::EdgeTone::Card,
+                                                &p,
+                                            )
+                                        })
                                     })
                                     .child(
                                         div()
@@ -284,8 +289,14 @@ impl Workspace {
                                         .gap(px(t.space.sm))
                                         .rounded(px(t.radius.control))
                                         .bg(rgb(p.chat))
-                                        .border(px(t.stroke.hairline))
-                                        .border_color(rgb(p.roles.card_border))
+                                        .map(|d| {
+                                            system::edge(
+                                                d,
+                                                system::Side::All,
+                                                system::EdgeTone::Card,
+                                                &p,
+                                            )
+                                        })
                                         .text_color(rgb(p.roles.text_secondary))
                                 })
                                 .flex()

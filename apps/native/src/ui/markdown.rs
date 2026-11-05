@@ -381,8 +381,7 @@ impl Workspace {
             code_block: div()
                 .rounded(px(t.radius.control))
                 .bg(rgb(p.code_block))
-                .border(px(t.stroke.hairline))
-                .border_color(rgb(p.roles.card_border))
+                .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
                 .style()
                 .clone(),
             // r3-transcript: one content width (prose spans the column, as
