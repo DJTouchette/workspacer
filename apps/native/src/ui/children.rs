@@ -47,6 +47,7 @@ pub(super) fn child_status_v2(
         streaming: false,
         working: running,
         children_working: false,
+        review: false,
     });
     if status.kind == StatusKind::Idle && child.settled() {
         StatusKind::Done
@@ -1347,7 +1348,7 @@ impl Workspace {
         };
         let mut decision = Decision::new(
             format!("{prefix}-decision"),
-            choice(StallKey::Nudge, "Nudge", nudge_tip),
+            choice(StallKey::Nudge, wks_native::format::NUDGE, nudge_tip),
             frame,
         );
         decision.headline = vec![(stall.headline(), false)];

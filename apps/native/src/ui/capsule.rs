@@ -476,7 +476,7 @@ impl Workspace {
                     primitives::with_tooltip(
                         primitives::button(
                             "title-nudge",
-                            "Nudge",
+                            wks_native::format::NUDGE,
                             None,
                             primitives::ButtonVariant::Secondary,
                             primitives::ButtonSize::Small,
@@ -693,11 +693,13 @@ impl Workspace {
         });
         // r6-qa: a failed task escalates to the toolbar, not only inside
         // the open panel (its red count beside the running one).
-        let failed = session.map_or(0, |s| s.tasks.iter().filter(|t| t.failed()).count());
+        // r7-status (R7.3): only failures still open (not since passed, not
+        // dismissed), so the toolbar agrees with the session's one status.
+        let failed = session.map_or(0, |s| self.open_failures(s).len());
         let tasks_tip: SharedString = session
             .and_then(|s| running_words(&s.tasks, s.background_tasks))
-            .map(|words| format!("Tasks · {words} running"))
-            .unwrap_or_else(|| "Tasks · background work".into())
+            .map(|words| format!("{} · {words} running", wks_native::format::BACKGROUND_TASKS))
+            .unwrap_or_else(|| wks_native::format::BACKGROUND_TASKS.into())
             .into();
         let tasks_tip: SharedString = if failed > 0 {
             format!("{tasks_tip} · {failed} failed").into()
@@ -737,7 +739,8 @@ impl Workspace {
                         .into_any_element()
                 }),
             )
-            .text(labelled.then_some("Tasks"))
+            // r7-status (R7.4): the label is the panel's title.
+            .text(labelled.then_some(wks_native::format::BACKGROUND_TASKS))
             .render(&p)
             .when(selected, |d| {
                 d.on_click(cx.listener(|this, _, window, cx| this.toggle_tasks(window, cx)))

@@ -1054,8 +1054,8 @@ impl Workspace {
                             .text_color(rgb(p.roles.text_tertiary))
                             .child(
                                 [
-                                    r.agent_line(),
-                                    r.shell_line(),
+                                    r.agent_words(),
+                                    r.shell_words(),
                                     r.queued_line(),
                                     format!("{} disk", r.disk_free()),
                                     r.sampled_at
@@ -1311,6 +1311,13 @@ impl Workspace {
         if item.state == State::Unknown {
             return "Workspacer restarted while this ran, so how it ended is unknown".to_owned();
         }
+        // r7-status (R7.4): an insider reason in plain words.
+        if item.state == State::Queued && !item.wait_reason.is_empty() {
+            return format!(
+                "Waiting: {}",
+                wks_native::hosts::plain_wait(&item.wait_reason)
+            );
+        }
         item.note()
     }
 }
@@ -1447,12 +1454,11 @@ fn metric_v2(
 ) -> Stateful<Div> {
     let t = p.tokens;
     let share = pressure.map(|v| (v / limit.max(0.1) * 100.).clamp(0., 100.));
-    let intent = match share {
-        Some(s) if s >= 90. => primitives::Intent::Danger,
-        Some(s) if s >= 70. => primitives::Intent::Warning,
-        Some(_) => primitives::Intent::Info,
-        None => primitives::Intent::Neutral,
-    };
+    // r7-status (R7.4): the meter's two colours (neutral, the warning hue
+    // from 80%); never teal.
+    let intent = share.map_or(primitives::Intent::Neutral, |s| {
+        primitives::level_intent(wks_native::format::level(s))
+    });
     let tooltip = match pressure {
         Some(v) => format!(
             "Pressure (PSI) {} · pauses new work at {}",

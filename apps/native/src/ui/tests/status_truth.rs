@@ -95,7 +95,7 @@ fn open(workspace: &Entity<Workspace>, visual: &mut VisualTestContext, view: Vie
             this.demo = false;
             this.force_design(Some(Design::V2));
             this.fleet.filter = crate::ui::fleet::Filter::All;
-            this.shell.folded = [false; 4];
+            this.shell.folded = [false; 5];
             this.update_view(Arc::new(view), window, cx);
         })
     });
@@ -205,7 +205,7 @@ fn every_surface_agrees_for_each_state(cx: &mut TestAppContext) {
         }
         assert_eq!(
             counts,
-            [4, 2, 2, 1],
+            [4, 0, 2, 2, 1],
             "needs you: fail, need, stall, stuck · working: work, kids · idle: idle, pause · ended"
         );
         // R6.2: the stalled subagent is the reason, named, on every surface

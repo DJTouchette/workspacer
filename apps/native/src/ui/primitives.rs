@@ -753,19 +753,22 @@ pub(crate) enum CountTone {
 /// and `Failed` fill with their status colour.
 pub(crate) fn count_badge(label: impl Into<SharedString>, tone: CountTone, p: &Palette) -> Div {
     let t = p.tokens;
+    let sys = t.system();
     let (bg, fg) = match tone {
         CountTone::Neutral => (tonal(p, t.wash.pressed), p.roles.text_secondary),
         CountTone::NeedsYou => (Hsla::from(rgb(p.roles.status.attention)), p.base),
         CountTone::Failed => (Hsla::from(rgb(p.roles.status.fault)), p.base),
     };
+    // r7-status (R7.8): every measure from `system()` badge tokens.
     tabular(
         div()
             .flex()
             .items_center()
             .justify_center()
             .flex_shrink_0()
-            .min_w(px(t.text.caption + t.space.sm))
-            .px(px(t.space.xs))
+            .h(px(sys.badge_height))
+            .min_w(px(sys.badge_min))
+            .px(px(sys.badge_pad))
             .rounded(px(t.radius.full))
             .bg(bg)
             .text_size(px(t.text.overline))
@@ -786,10 +789,11 @@ pub(crate) fn count_text(n: usize) -> String {
 /// heavier neutral, never a hue), red only at the hard limit.
 pub(crate) fn level_color(level: wks_native::format::Level, p: &Palette) -> Option<u32> {
     use wks_native::format::Level;
+    // r7-status (R7.4): two colours only, neutral and the warning hue;
+    // a spent limit says so in words, not in a third colour.
     match level {
         Level::Normal => None,
-        Level::Warn => Some(p.roles.caution),
-        Level::Fault => Some(p.roles.status.fault),
+        Level::Warn | Level::Fault => Some(p.roles.caution),
     }
 }
 
@@ -800,8 +804,7 @@ pub(crate) fn level_intent(level: wks_native::format::Level) -> Intent {
     use wks_native::format::Level;
     match level {
         Level::Normal => Intent::Neutral,
-        Level::Warn => Intent::Caution,
-        Level::Fault => Intent::Danger,
+        Level::Warn | Level::Fault => Intent::Caution,
     }
 }
 
@@ -815,7 +818,7 @@ pub(crate) fn meter(fraction: f32, intent: Intent, p: &Palette) -> Div {
         0.
     };
     div()
-        .h(px(t.layout.meter_height))
+        .h(px(t.system().meter_height))
         .w_full()
         .rounded(px(t.radius.full))
         .bg(tonal(p, t.wash.hover))
@@ -1199,6 +1202,9 @@ pub(crate) enum StatusKind {
     Working,
     /// Blocked on this user now: an approval, a question, a plan.
     NeedsYou,
+    /// r7-status (R7.3): a finished turn left uncommitted changes: "Ready
+    /// for review". A Needs-you state with its own glyph and group.
+    Review,
     /// Should be working but has gone quiet (no heartbeat): a fault, never
     /// also "Working".
     NotResponding,
@@ -1233,27 +1239,22 @@ pub(crate) enum StatusShape {
     Arc,
     /// A filled dot.
     Dot,
-    /// A ring with clock hands.
-    Clock,
+    /// A ring, its left half filled (work finished, waiting for your eyes).
+    Half,
     /// ✕.
     Cross,
     /// A hollow ring.
     Ring,
-    /// A small filled square (stop).
-    Square,
-    /// A ring of four dashes (in line, not started).
-    DashedRing,
-    /// Three dots in a row (not known).
-    Ellipsis,
-    /// A ring around a dot (a target).
-    Target,
     /// A check.
     Check,
-    /// Two pause bars.
-    Bars,
     /// A level dash.
     Dash,
 }
+
+/// r7-status (R7.3): the most status glyphs the app may draw. States share
+/// a glyph where they mean the same to the user (a fault, at rest, healthy,
+/// stopped); the word tells them apart.
+pub(crate) const MAX_STATUS_GLYPHS: usize = 7;
 
 /// Which status role colours a glyph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1290,7 +1291,7 @@ pub(crate) struct StatusRow {
 
 /// The one status table: state → glyph → colour → word. In
 /// [`StatusKind::ALL`] order.
-pub(crate) const STATUS_TABLE: [StatusRow; 12] = [
+pub(crate) const STATUS_TABLE: [StatusRow; 13] = [
     StatusRow {
         kind: StatusKind::Working,
         label: "Working",
@@ -1308,9 +1309,17 @@ pub(crate) const STATUS_TABLE: [StatusRow; 12] = [
         also: "Proposed change, a parent whose subagent stalled",
     },
     StatusRow {
+        kind: StatusKind::Review,
+        label: "Ready for review",
+        shape: StatusShape::Half,
+        tone: StatusTone::Attention,
+        words: StatusWords::Hue,
+        also: "Finished with uncommitted changes",
+    },
+    StatusRow {
         kind: StatusKind::NotResponding,
         label: wks_native::format::NOT_RESPONDING,
-        shape: StatusShape::Clock,
+        shape: StatusShape::Cross,
         tone: StatusTone::Fault,
         words: StatusWords::Hue,
         also: "",
@@ -1334,7 +1343,7 @@ pub(crate) const STATUS_TABLE: [StatusRow; 12] = [
     StatusRow {
         kind: StatusKind::Ended,
         label: "Ended",
-        shape: StatusShape::Square,
+        shape: StatusShape::Dash,
         tone: StatusTone::Idle,
         words: StatusWords::Tertiary,
         also: "Exited, Cancelled",
@@ -1342,7 +1351,7 @@ pub(crate) const STATUS_TABLE: [StatusRow; 12] = [
     StatusRow {
         kind: StatusKind::Waiting,
         label: "Waiting to start",
-        shape: StatusShape::DashedRing,
+        shape: StatusShape::Ring,
         tone: StatusTone::Idle,
         words: StatusWords::Tertiary,
         also: "Queued, Not run yet",
@@ -1350,7 +1359,7 @@ pub(crate) const STATUS_TABLE: [StatusRow; 12] = [
     StatusRow {
         kind: StatusKind::Unknown,
         label: "Unknown",
-        shape: StatusShape::Ellipsis,
+        shape: StatusShape::Ring,
         tone: StatusTone::Idle,
         words: StatusWords::Tertiary,
         also: "Not checked, No sample yet, Result unknown, Couldn't check",
@@ -1358,7 +1367,7 @@ pub(crate) const STATUS_TABLE: [StatusRow; 12] = [
     StatusRow {
         kind: StatusKind::Ready,
         label: "Ready",
-        shape: StatusShape::Target,
+        shape: StatusShape::Check,
         tone: StatusTone::Done,
         words: StatusWords::Secondary,
         also: "Accepting work, Online, Set up",
@@ -1374,7 +1383,7 @@ pub(crate) const STATUS_TABLE: [StatusRow; 12] = [
     StatusRow {
         kind: StatusKind::Paused,
         label: "Paused",
-        shape: StatusShape::Bars,
+        shape: StatusShape::Dash,
         tone: StatusTone::Idle,
         words: StatusWords::Tertiary,
         also: "Not accepting work",
@@ -1390,9 +1399,10 @@ pub(crate) const STATUS_TABLE: [StatusRow; 12] = [
 ];
 
 impl StatusKind {
-    pub(crate) const ALL: [Self; 12] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::Working,
         Self::NeedsYou,
+        Self::Review,
         Self::NotResponding,
         Self::Failed,
         Self::Idle,
@@ -1447,15 +1457,25 @@ impl StatusKind {
         matches!(self.row().tone, StatusTone::Attention | StatusTone::Fault)
     }
 
-    /// Whether this state draws a glyph in a sidebar row (Idle shows the
-    /// row's age instead). Status cells always draw one ([`status_mark`]).
+    /// Whether this state draws a glyph. r7-status (R7.3): every state
+    /// does, Idle included (its hollow ring), wherever it is listed.
     pub(crate) fn has_glyph(self) -> bool {
-        self != Self::Idle
+        true
+    }
+
+    /// r7-status (R7.3): whether the state asks for the user (Needs you,
+    /// Ready for review, a fault): the rows that stay strong in the calm
+    /// sidebar.
+    pub(crate) fn wants_you(self) -> bool {
+        matches!(
+            self,
+            Self::NeedsYou | Self::Review | Self::NotResponding | Self::Failed
+        )
     }
 }
 
-/// The 8px status glyph for `kind` (`signals().glyph`), or `None` for Idle,
-/// which has no glyph. Drawn as vector strokes so every shape stays crisp at
+/// The 8px status glyph for `kind` (`signals().glyph`). r7-status: always
+/// `Some` (Idle draws its ring); the `Option` keeps old call sites. Drawn as vector strokes so every shape stays crisp at
 /// any interface size. Working's arc turns once per `signals().spin_ms` and
 /// holds still under reduced motion.
 pub(crate) fn status_glyph(kind: StatusKind, p: &Palette) -> Option<Div> {
@@ -1567,37 +1587,24 @@ fn glyph_paths(
     };
     let mut out: Vec<(PathBuilder, Paint)> = Vec::new();
     // r6-surfaces (R6.2): the shape comes from the status table.
-    let dot_at = |cx: f32, cy: f32, d: f32| {
-        let mut dot = PathBuilder::fill();
-        let radii = point(px_raw(d * s), px_raw(d * s));
-        dot.move_to(at(cx, cy - d));
-        dot.arc_to(radii, px_raw(0.), false, true, at(cx, cy + d));
-        dot.arc_to(radii, px_raw(0.), false, true, at(cx, cy - d));
-        dot.close();
-        dot
-    };
     match kind.row().shape {
-        // r5-system: Idle draws a hollow ring where a glyph is always shown
-        // ([`status_mark`]: status cells); `status_glyph` still gives none.
+        // Idle, Waiting to start and Unknown: at rest, a hollow ring.
         StatusShape::Ring => {
             let mut b = PathBuilder::stroke(px_raw(stroke));
             ring(&mut b);
             out.push((b, Paint::Ink));
         }
-        // Healthy: a ring around a dot (a "target"), so it never shares the
-        // amber filled dot's shape.
-        StatusShape::Target => {
+        // r7-status (R7.3): Ready for review: the ring with its left half
+        // filled, never the amber dot's full disc.
+        StatusShape::Half => {
             let mut b = PathBuilder::stroke(px_raw(stroke));
             ring(&mut b);
             out.push((b, Paint::Ink));
-            let mut dot = PathBuilder::fill();
-            let d = r * 0.45;
-            let radii = point(px_raw(d * s), px_raw(d * s));
-            dot.move_to(at(c, c - d));
-            dot.arc_to(radii, px_raw(0.), false, true, at(c, c + d));
-            dot.arc_to(radii, px_raw(0.), false, true, at(c, c - d));
-            dot.close();
-            out.push((dot, Paint::Ink));
+            let mut half = PathBuilder::fill();
+            half.move_to(on(0., r));
+            half.arc_to(radii, px_raw(0.), false, false, on(180., r));
+            half.close();
+            out.push((half, Paint::Ink));
         }
         StatusShape::Dot => {
             let mut b = PathBuilder::fill();
@@ -1624,16 +1631,6 @@ fn glyph_paths(
             );
             out.push((arc, Paint::Ink));
         }
-        StatusShape::Clock => {
-            let mut b = PathBuilder::stroke(px_raw(stroke));
-            ring(&mut b);
-            out.push((b, Paint::Ink));
-            // Clock hands: twelve and three o'clock.
-            out.push((
-                line(&[(c, c - r * 0.55), (c, c), (c + r * 0.45, c)]),
-                Paint::Ink,
-            ));
-        }
         StatusShape::Cross => {
             let (a, z) = (stroke / s / 2. + 0.08, 0.92 - stroke / s / 2.);
             out.push((line(&[(a, a), (z, z)]), Paint::Ink));
@@ -1642,40 +1639,8 @@ fn glyph_paths(
         StatusShape::Check => {
             out.push((line(&[(0.1, 0.55), (0.4, 0.82), (0.92, 0.22)]), Paint::Ink));
         }
-        StatusShape::Bars => {
-            out.push((line(&[(0.3, 0.12), (0.3, 0.88)]), Paint::Ink));
-            out.push((line(&[(0.7, 0.12), (0.7, 0.88)]), Paint::Ink));
-        }
         StatusShape::Dash => {
             out.push((line(&[(0.12, 0.5), (0.88, 0.5)]), Paint::Ink));
-        }
-        // Stopped on purpose: a small filled square (the stop mark).
-        StatusShape::Square => {
-            let (a, z) = (0.2, 0.8);
-            let mut b = PathBuilder::fill();
-            b.move_to(at(a, a));
-            b.line_to(at(z, a));
-            b.line_to(at(z, z));
-            b.line_to(at(a, z));
-            b.close();
-            out.push((b, Paint::Ink));
-        }
-        // In line, not started: the ring broken into four dashes.
-        StatusShape::DashedRing => {
-            for quarter in 0..4 {
-                let from = quarter as f32 * 90. + 15.;
-                let mut b = PathBuilder::stroke(px_raw(stroke));
-                b.move_to(on(from, r));
-                b.arc_to(radii, px_raw(0.), false, true, on(from + 60., r));
-                out.push((b, Paint::Ink));
-            }
-        }
-        // Not known: three dots in a row.
-        StatusShape::Ellipsis => {
-            let d = 0.11;
-            for x in [0.16, 0.5, 0.84] {
-                out.push((dot_at(x, c, d), Paint::Ink));
-            }
         }
     }
     out.into_iter()

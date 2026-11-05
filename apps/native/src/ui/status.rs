@@ -14,6 +14,14 @@
 //! session… not responding · 7m"). The child gets no entry of its own: the
 //! parent's one status is the one source.
 //!
+//! r7-status (R7.3): a finished, healthy turn that left uncommitted
+//! changes is **Ready for review** ([`StatusKind::Review`], its own group
+//! under Needs you), below Working and above Idle. It counts as needing
+//! you: "All clear" is false while one exists, and Alt+N stops on it.
+//!
+//! The verification line ([`verification`]) is the session's latest test
+//! run, for decision cards and Fleet tiles.
+//!
 //! Pure: `Workspace::session_status` gathers the [`Facts`] and the surfaces
 //! draw what comes back. No surface decides a session's state on its own.
 use super::attention::Bucket;
@@ -45,6 +53,8 @@ pub(crate) struct Facts {
     pub working: bool,
     /// A subagent of it is at work (and answering).
     pub children_working: bool,
+    /// r7-status (R7.3): its turn is over and left uncommitted changes.
+    pub review: bool,
 }
 
 /// A session's status: its state word and glyph, and the sidebar group (and
@@ -99,6 +109,8 @@ fn kind(f: &Facts) -> StatusKind {
         StatusKind::NeedsYou
     } else if f.working || f.streaming || f.children_working {
         StatusKind::Working
+    } else if f.review {
+        StatusKind::Review
     } else {
         StatusKind::Idle
     }
@@ -109,6 +121,7 @@ fn kind(f: &Facts) -> StatusKind {
 fn bucket_of(kind: StatusKind, stopped: bool) -> Bucket {
     match kind {
         StatusKind::Failed | StatusKind::NeedsYou | StatusKind::NotResponding => Bucket::NeedsYou,
+        StatusKind::Review => Bucket::Review,
         StatusKind::Working => Bucket::Working,
         StatusKind::Idle | StatusKind::Done if stopped => Bucket::Ended,
         _ => Bucket::Idle,
@@ -181,6 +194,156 @@ pub(crate) fn open_failures<'a>(
         .collect();
     failed.sort_by_key(|t| std::cmp::Reverse((t.ended_at, t.started_at)));
     failed
+}
+
+// ── r7-status (R7.3): the verification line ────────────────────────────
+
+/// How the session's latest test run ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TestOutcome {
+    Running,
+    Passed,
+    Failed,
+}
+
+/// The latest test run of a session: what decision cards and Fleet tiles
+/// show as one line ("Tests failed 4m ago · cargo test").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Verification {
+    pub outcome: TestOutcome,
+    /// The command, cut before its first flag ("cargo test").
+    pub command: String,
+    /// When it ended (or started, while running), epoch ms.
+    pub at: Option<i64>,
+    /// The transcript claims a pass after this recorded failure.
+    pub contradicted: bool,
+}
+
+impl Verification {
+    /// The status the line's glyph and word take: Failed (red), Done
+    /// (passed) or Working.
+    pub(crate) fn kind(&self) -> StatusKind {
+        match self.outcome {
+            TestOutcome::Running => StatusKind::Working,
+            TestOutcome::Passed => StatusKind::Done,
+            TestOutcome::Failed => StatusKind::Failed,
+        }
+    }
+
+    /// The words before the command: "Tests failed 4m ago", "Tests passed
+    /// just now", "Tests running".
+    pub(crate) fn headline(&self, now: i64) -> String {
+        let when = self.at.map(|at| match wks_native::format::age(at, now) {
+            age if age == "now" => "just now".to_owned(),
+            age => format!("{age} ago"),
+        });
+        let word = match self.outcome {
+            TestOutcome::Running => return "Tests running".into(),
+            TestOutcome::Passed => "Tests passed",
+            TestOutcome::Failed => "Tests failed",
+        };
+        match when {
+            Some(when) => format!("{word} {when}"),
+            None => word.to_owned(),
+        }
+    }
+
+    /// The whole line: "Tests failed 4m ago · cargo test", plus the flag
+    /// when the transcript claims otherwise.
+    pub(crate) fn text(&self, now: i64) -> String {
+        wks_native::format::meta([
+            self.headline(now),
+            self.command.clone(),
+            if self.contradicted {
+                CONTRADICTED.to_owned()
+            } else {
+                String::new()
+            },
+        ])
+    }
+}
+
+/// What the verification line adds when the agent says the tests pass
+/// after a recorded failure.
+pub(crate) const CONTRADICTED: &str = "the reply says they pass";
+
+/// Whether a command runs a test suite.
+pub(crate) fn is_test_command(command: &str) -> bool {
+    let c = command
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    const RUNNERS: [&str; 16] = [
+        "cargo test",
+        "cargo nextest",
+        "npm test",
+        "npm run test",
+        "pnpm test",
+        "yarn test",
+        "bun test",
+        "npx jest",
+        "npx vitest",
+        "vitest",
+        "jest",
+        "pytest",
+        "go test",
+        "mix test",
+        "rspec",
+        "make test",
+    ];
+    RUNNERS.iter().any(|r| {
+        c.starts_with(r) || c.contains(&format!("&& {r}")) || c.contains(&format!("; {r}"))
+    })
+}
+
+/// Whether reply text claims the tests pass ("the session test passes",
+/// "all tests pass", "tests are green").
+pub(crate) fn claims_pass(text: &str) -> bool {
+    let t = text.to_lowercase();
+    if !t.contains("test") {
+        return false;
+    }
+    [
+        "tests pass",
+        "test passes",
+        "tests passed",
+        "test passed",
+        "tests are green",
+        "all green",
+        "suite passes",
+    ]
+    .iter()
+    .any(|claim| t.contains(claim))
+}
+
+/// r7-status (R7.3): the session's latest test run from its background
+/// tasks, newest first by end (or start); `claim` is the latest reply's
+/// text when known, which flags a pass claimed after a recorded failure.
+/// `None` when it has run no tests.
+pub(crate) fn verification(tasks: &[Task], claim: Option<&str>) -> Option<Verification> {
+    let latest = tasks
+        .iter()
+        .filter(|t| is_test_command(&t.title()))
+        .max_by_key(|t| (t.ended_at.or(t.started_at), t.started_at))?;
+    let outcome = if latest.running() {
+        TestOutcome::Running
+    } else if latest.failed() {
+        TestOutcome::Failed
+    } else if latest.status == "completed" {
+        TestOutcome::Passed
+    } else {
+        // Killed or stopped: no result to report.
+        return None;
+    };
+    Some(Verification {
+        outcome,
+        command: wks_native::format::failed_label(&latest.title(), 40)
+            .trim_end_matches(" failed")
+            .to_owned(),
+        at: latest.ended_at.or(latest.started_at),
+        contradicted: outcome == TestOutcome::Failed && claim.is_some_and(claims_pass),
+    })
 }
 
 /// What a failure chip says: the command that broke and the work it belongs
@@ -449,5 +612,66 @@ mod tests {
             short_title("Supercalifragilistic expialidocious", 10),
             "Supercali…"
         );
+    }
+    #[test]
+    fn a_finished_turn_with_changes_is_ready_for_review() {
+        let f = Facts {
+            review: true,
+            ..live()
+        };
+        let s = derive(f);
+        assert_eq!((s.kind, s.bucket), (StatusKind::Review, Bucket::Review));
+        assert_eq!(s.label(), "Ready for review");
+        // Still working: one status, Working.
+        let s = derive(Facts { working: true, ..f });
+        assert_eq!(s.kind, StatusKind::Working);
+        // A decision outranks it.
+        let s = derive(Facts {
+            needs_you: true,
+            ..f
+        });
+        assert_eq!(s.bucket, Bucket::NeedsYou);
+        // Ended work is not waiting for review.
+        let s = derive(Facts { stopped: true, ..f });
+        assert_eq!(s.bucket, Bucket::Ended);
+        assert!(Bucket::Review.wants_you() && Bucket::NeedsYou.wants_you());
+        assert!(!Bucket::Working.wants_you());
+    }
+
+    #[test]
+    fn the_verification_line_reads_the_latest_test_run() {
+        let failed = task(
+            "a",
+            "failed",
+            "cargo test --locked -- --test-threads=1",
+            1_000,
+        );
+        let v = verification(std::slice::from_ref(&failed), None).expect("a run");
+        assert_eq!(v.kind(), StatusKind::Failed);
+        assert_eq!(
+            v.text(1_010 + 4 * 60_000),
+            "Tests failed 4m ago · cargo test"
+        );
+        // A pass claimed after the failure is flagged.
+        let v = verification(
+            std::slice::from_ref(&failed),
+            Some("Clippy is clean and the session test passes."),
+        )
+        .expect("a run");
+        assert!(v.contradicted);
+        assert_eq!(
+            v.text(1_010),
+            "Tests failed just now · cargo test · the reply says they pass"
+        );
+        // A later pass is the latest result; the claim is then true.
+        let passed = task("b", "completed", "cargo test --locked", 5_000);
+        let v = verification(&[failed, passed], Some("tests pass")).expect("a run");
+        assert_eq!((v.outcome, v.contradicted), (TestOutcome::Passed, false));
+        // Other commands are not test runs.
+        let build = task("c", "failed", "cargo build --release", 9_000);
+        assert!(verification(&[build], None).is_none());
+        assert!(is_test_command("cd apps/native && cargo test -p x"));
+        assert!(is_test_command("pytest -q"));
+        assert!(!is_test_command("cargo clippy"));
     }
 }
