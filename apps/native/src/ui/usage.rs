@@ -9,7 +9,7 @@ fn color(window: &UsageWindow, p: Palette) -> u32 {
     if window.pct >= 90. {
         p.error
     } else if window.pct >= 70. || window.pace.as_deref() == Some("overspending") {
-        p.warning
+        p.warn()
     } else {
         p.success
     }
@@ -26,7 +26,7 @@ fn long_label(window: &UsageWindow) -> &'static str {
 fn pace_line(window: &UsageWindow, p: Palette) -> Option<(String, u32)> {
     let (pace, expected) = (window.pace.as_deref()?, window.expected_pct?);
     let (verdict, tone) = match pace {
-        "overspending" => ("Ahead of pace", p.warning),
+        "overspending" => ("Ahead of pace", p.warn()),
         "ahead" => ("Slightly ahead of pace", p.muted),
         _ => ("On track", p.success),
     };
@@ -177,7 +177,7 @@ fn unmeasured_line(state: &usage::Unmeasured, p: Palette, size: f32) -> Div {
         .child(
             div()
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(rgb(if state.error { p.warning } else { p.muted }))
+                .text_color(rgb(if state.error { p.warn() } else { p.muted }))
                 .child(state.state),
         )
         .child(state.reason.clone())
@@ -324,7 +324,7 @@ impl Workspace {
                             .child(
                                 Icon::new(IconName::TriangleAlert)
                                     .size(px(11.))
-                                    .text_color(rgb(p.warning)),
+                                    .text_color(rgb(p.warn())),
                             )
                             .child(
                                 div()
@@ -634,7 +634,7 @@ impl Workspace {
                         d.child(
                             div()
                                 .text_size(px(11.))
-                                .text_color(rgb(p.warning))
+                                .text_color(rgb(p.warn()))
                                 .child(format!("Last refresh failed: {failure}")),
                         )
                     })

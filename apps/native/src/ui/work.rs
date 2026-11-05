@@ -212,7 +212,7 @@ impl Workspace {
                         .px_3()
                         .pb_2()
                         .text_size(px(11.))
-                        .text_color(rgb(p.warning))
+                        .text_color(rgb(p.warn()))
                         .child("Tool content was clipped to the retained-history limit."),
                 );
             }

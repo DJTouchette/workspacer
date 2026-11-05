@@ -1571,7 +1571,7 @@ impl Workspace {
                 d.child(
                     div()
                         .text_size(px(t.text.caption))
-                        .text_color(rgb(p.warning))
+                        .text_color(rgb(p.warn()))
                         .child("This branch and its upstream have both moved; rebase or merge in a terminal."),
                 )
             })

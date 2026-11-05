@@ -412,6 +412,18 @@ impl Palette {
     pub fn avatar_text(&self) -> u32 {
         self.roles.avatar_text
     }
+
+    /// r8-int (R8.1): the hue of a warning that is not Needs you (an
+    /// unsaved file, a failed load, Full access, a changed field). v2: the
+    /// warning hue `roles.caution`, because amber is Needs you's alone; v1:
+    /// the shipped warning colour, unchanged.
+    pub fn warn(&self) -> u32 {
+        if self.tokens.design.is_v2() {
+            self.roles.caution
+        } else {
+            self.warning
+        }
+    }
 }
 
 impl Appearance {

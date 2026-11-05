@@ -44,7 +44,7 @@ impl Intent {
             Self::Accent => p.accent,
             Self::Info => p.roles.info,
             Self::Success => p.success,
-            Self::Warning => p.warning,
+            Self::Warning => p.warn(),
             Self::Danger => p.error,
             Self::Busy => p.busy,
             Self::Caution => p.roles.caution,

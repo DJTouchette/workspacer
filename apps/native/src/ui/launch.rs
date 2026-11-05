@@ -529,7 +529,7 @@ impl Workspace {
         chips.push((
             self.permission.label().to_owned(),
             if self.permission == Permission::FullAccess {
-                p.warning
+                p.warn()
             } else if self.permission != default_access {
                 p.accent
             } else {
@@ -709,7 +709,7 @@ impl Workspace {
         {
             (
                 Some(IconName::TriangleAlert),
-                p.warning,
+                p.warn(),
                 if uncertain {
                     "Outcome unknown".into()
                 } else if detailed {
@@ -739,7 +739,7 @@ impl Workspace {
         } else if !self.view.connected {
             (
                 Some(IconName::TriangleAlert),
-                p.warning,
+                p.warn(),
                 "Waiting for the hub connection…".into(),
             )
         } else if self.design().is_v2() && project.is_some() {
@@ -875,7 +875,7 @@ impl Workspace {
             .p_2()
             .rounded(px(p.control_radius))
             .border_1()
-            .border_color(rgb(p.warning))
+            .border_color(rgb(p.warn()))
             .flex()
             .items_start()
             .gap_2()
@@ -884,7 +884,7 @@ impl Workspace {
                 Icon::new(IconName::TriangleAlert)
                     .size(px(13.))
                     .flex_shrink_0()
-                    .text_color(rgb(p.warning)),
+                    .text_color(rgb(p.warn())),
             )
             .child(
                 div()
@@ -897,7 +897,7 @@ impl Workspace {
                         div()
                             .debug_selector(|| "launch-error-headline".into())
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(p.warning))
+                            .text_color(rgb(p.warn()))
                             .child(headline),
                     )
                     .when_some(guidance, |d, guidance| {
@@ -1054,12 +1054,12 @@ impl Workspace {
         let (status, status_color) = if loading {
             ("Loading models…".to_owned(), p.muted)
         } else if current && catalog.error.is_some() {
-            (catalog.error.clone().unwrap_or_default(), p.warning)
+            (catalog.error.clone().unwrap_or_default(), p.warn())
         } else if current && catalog.models.is_empty() {
             (
                 "No models were returned. Use Provider default or enter a custom model ID."
                     .to_owned(),
-                p.warning,
+                p.warn(),
             )
         } else if !current && self.provider != "claude" && self.projects.cwd.is_empty() {
             (
@@ -1274,7 +1274,7 @@ impl Workspace {
                                     .text_color(rgb(match (active, busy) {
                                         (_, true) => p.disabled,
                                         (true, _) if permission == Permission::FullAccess => {
-                                            p.warning
+                                            p.warn()
                                         }
                                         (true, _) => p.text,
                                         (false, false) => p.muted,
@@ -1297,7 +1297,7 @@ impl Workspace {
                 div()
                     .text_size(px(chrome::scale::META))
                     .text_color(rgb(if self.permission == Permission::FullAccess {
-                        p.warning
+                        p.warn()
                     } else {
                         p.muted
                     }))
@@ -2282,11 +2282,12 @@ impl Workspace {
         let t = p.tokens;
         let uncertain = wks_native::launch::uncertain_outcome(&self.spawn_error);
         let detailed = uncertain || self.spawn_error.chars().count() > 72;
-        let provider = if self.provider == "codex" {
-            "Codex"
+        // r8-int (R8.6): one name per agent ("Claude Code", "Codex CLI").
+        let provider = wks_native::format::agent_name(if self.provider == "codex" {
+            "codex"
         } else {
-            "Claude"
-        };
+            "claude"
+        });
         let project = self.launch_project_title().unwrap_or_default();
         let (warn, status): (bool, String) = if !self.spawn_error.is_empty() {
             (
@@ -2617,11 +2618,12 @@ impl Workspace {
             project,
             "The project's folder",
         ));
-        let provider = if self.provider == "codex" {
-            "Codex"
+        // r8-int (R8.6): one name per agent ("Claude Code", "Codex CLI").
+        let provider = wks_native::format::agent_name(if self.provider == "codex" {
+            "codex"
         } else {
-            "Claude"
-        };
+            "claude"
+        });
         chips.push(chip(
             "launch-chip-agent",
             LaunchPanel::Agent,

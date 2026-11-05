@@ -129,7 +129,7 @@ impl PreviewPane {
                         .size(px(t.layout.status_dot))
                         .flex_shrink_0()
                         .rounded(px(t.radius.full))
-                        .bg(rgb(p.warning)),
+                        .bg(rgb(p.warn())),
                 )
             });
         let modes = self.render_modes_v2(&p, cx);

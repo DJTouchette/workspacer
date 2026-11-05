@@ -1136,8 +1136,8 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .text_color(rgb(p.warning))
-                        .child(status_dot(p.warning))
+                        .text_color(rgb(p.warn()))
+                        .child(status_dot(p.warn()))
                         .child(warning),
                 ),
             );
@@ -1172,8 +1172,8 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .text_color(rgb(p.warning))
-                        .child(status_dot(p.warning))
+                        .text_color(rgb(p.warn()))
+                        .child(status_dot(p.warn()))
                         .child(format!("{provider}'s {window} usage limit is reached{when}")),
                 )
                 .child(

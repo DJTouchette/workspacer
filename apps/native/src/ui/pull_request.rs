@@ -705,7 +705,7 @@ impl Workspace {
                             .child(thread.location()),
                     )
                     .when(thread.outdated, |d| {
-                        d.child(div().text_color(rgb(p.warning)).child("Outdated"))
+                        d.child(div().text_color(rgb(p.warn())).child("Outdated"))
                     })
                     .when(thread.resolved, |d| {
                         d.child(div().text_color(rgb(p.success)).child("Resolved"))

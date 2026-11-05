@@ -205,7 +205,8 @@ pub(super) fn notice_line(text: impl Into<SharedString>, tone: Tone, p: Palette)
     let (color, text_color) = match tone {
         Tone::Info | Tone::Loading => (p.muted, p.muted),
         Tone::Success => (p.success, p.text),
-        Tone::Warning => (p.warning, p.warning),
+        // r8-int (R8.1): v2 warnings take the warning hue, not amber.
+        Tone::Warning => (p.warn(), p.warn()),
         Tone::Error => (p.error, p.error),
     };
     div()
@@ -324,7 +325,7 @@ pub(super) fn tone_glow(tone: Tone, strength: f32, p: Palette) -> gpui::BoxShado
     let color = match tone {
         Tone::Info | Tone::Loading => p.accent,
         Tone::Success => p.success,
-        Tone::Warning => p.warning,
+        Tone::Warning => p.warn(),
         Tone::Error => p.error,
     };
     gpui::BoxShadow {
@@ -1041,7 +1042,7 @@ impl Workspace {
                                     .flex_shrink_0()
                                     .text_color(rgb(
                                         if access == wks_native::launch::Permission::FullAccess {
-                                            p.warning
+                                            p.warn()
                                         } else {
                                             p.muted
                                         },

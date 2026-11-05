@@ -176,7 +176,7 @@ impl Workspace {
                 .rounded(px(p.control_radius))
                 .bg(rgb(p.surface))
                 .border_1()
-                .border_color(gpui::Hsla::from(rgb(p.warning)).opacity(0.45))
+                .border_color(gpui::Hsla::from(rgb(p.warn())).opacity(0.45))
                 .when(self.design().is_v2(), |d| {
                     let t = p.tokens;
                     d.gap(px(t.space.md))
@@ -185,8 +185,8 @@ impl Workspace {
                         .py(px(t.space.xs))
                         .rounded(px(t.radius.panel))
                         .border(px(t.stroke.hairline))
-                        .border_color(primitives::wash(p.warning, t.wash.tone_hover))
-                        .bg(primitives::wash(p.warning, t.wash.rest))
+                        .border_color(primitives::wash(p.warn(), t.wash.tone_hover))
+                        .bg(primitives::wash(p.warn(), t.wash.rest))
                 })
                 .child(marker(p, 13., false))
                 .child(
@@ -195,7 +195,7 @@ impl Workspace {
                         .min_w_0()
                         .text_size(px(chrome::scale::META))
                         .line_height(gpui::relative(1.45))
-                        .text_color(rgb(p.warning))
+                        .text_color(rgb(p.warn()))
                         .child(note_text(cache, now)),
                 )
                 .child(

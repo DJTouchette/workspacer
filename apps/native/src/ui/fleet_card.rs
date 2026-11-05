@@ -85,7 +85,7 @@ pub(super) fn entry_status(
         FleetKind::Failed => ("Failed", p.error),
         FleetKind::Escalated => ("Escalated", p.warning),
         FleetKind::Blocked => ("Blocked", p.warning),
-        FleetKind::Threshold => ("Threshold crossed", p.warning),
+        FleetKind::Threshold => ("Threshold crossed", p.warn()),
         FleetKind::Progress => ("Still running", p.accent),
     }
 }
@@ -400,7 +400,7 @@ impl Workspace {
                 details = details.child(
                     div()
                         .text_size(px(12.))
-                        .text_color(rgb(p.warning))
+                        .text_color(rgb(p.warn()))
                         .child(crossed.clone()),
                 );
             }

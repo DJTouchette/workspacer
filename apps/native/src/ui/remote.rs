@@ -87,7 +87,7 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(self.note(remote.error.clone(), p.warning))
+                .child(self.note(remote.error.clone(), p.warn()))
                 .child(self.note(
                     if self.design().is_v2() {
                         "Remote sharing is managed on the machine that runs your agents."
@@ -191,7 +191,7 @@ impl Workspace {
                     ),
             )
             .when(!remote.hint.is_empty(), |d| {
-                d.child(self.note(remote.hint.clone(), p.warning))
+                d.child(self.note(remote.hint.clone(), p.warn()))
                     .when_some(hint_link, |d, link| {
                         d.child(
                             div().flex().child(
@@ -217,7 +217,7 @@ impl Workspace {
                         .gap_2()
                         .child(self.note(
                             "Turning this off runs `tailscale serve reset`, which removes every Tailscale Serve handler on this machine, not only Workspacer's.",
-                            p.warning,
+                            p.warn(),
                         ))
                         .child(
                             div()
@@ -358,7 +358,7 @@ impl Workspace {
             .child(self.note(
                 description,
                 if scope == "operator" {
-                    p.warning
+                    p.warn()
                 } else {
                     p.muted
                 },
@@ -424,7 +424,7 @@ impl Workspace {
                             !busy,
                         )
                         .debug_selector(move || format!("pairing-revoke-{ix}"))
-                        .when(confirming, |d| d.text_color(rgb(p.warning)))
+                        .when(confirming, |d| d.text_color(rgb(p.warn())))
                         .when(!busy, |d| {
                             d.on_click(cx.listener(move |this, _, _, cx| {
                                 if this.remote.confirm_revoke.as_deref() == Some(&token) {

@@ -902,7 +902,7 @@ impl Workspace {
                     let color = match server.status.as_str() {
                         "connected" => p.success,
                         "failed" => p.error,
-                        "needs-auth" | "pending" => p.warning,
+                        "needs-auth" | "pending" => p.warn(),
                         _ => p.muted,
                     };
                     let name = server.name.clone();

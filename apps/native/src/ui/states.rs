@@ -92,7 +92,7 @@ impl Workspace {
             .child(if copy.animated {
                 brand_spinner(12., p)
             } else {
-                status_dot(p.warning)
+                status_dot(p.warn())
             })
             .child(
                 div().flex_1().min_w_0().child(copy.title).child(

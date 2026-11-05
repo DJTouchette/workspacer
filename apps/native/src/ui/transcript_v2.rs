@@ -905,7 +905,7 @@ impl Workspace {
                     d.child(
                         div()
                             .text_size(px(t.text.meta))
-                            .text_color(rgb(p.warning))
+                            .text_color(rgb(p.warn()))
                             .child("Tool content was clipped to the retained-history limit."),
                     )
                 });

@@ -125,7 +125,7 @@ impl Gauge {
 pub(super) fn gauge_color(pct: Option<f64>, p: Palette) -> u32 {
     match pct {
         Some(pct) if pct >= FULL_PCT => p.error,
-        Some(pct) if pct >= WARN_PCT => p.warning,
+        Some(pct) if pct >= WARN_PCT => p.warn(),
         Some(_) => p.success,
         None => p.muted,
     }

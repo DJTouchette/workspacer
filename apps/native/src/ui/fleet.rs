@@ -340,6 +340,9 @@ pub(super) struct Line {
     pub summary: Option<String>,
     /// A named failure or a stall: red, with its glyph.
     pub fault: Option<StatusKind>,
+    /// r8-int (R8.1): what the line leaves to its tooltip (how long a
+    /// stalled subagent has been quiet), as the sidebar does.
+    pub tip: Option<String>,
 }
 
 /// What a tile waits on, and so what its keys do.
@@ -631,6 +634,7 @@ impl Workspace {
                             StatusKind::Failed
                         },
                     ),
+                    tip: None,
                 },
             );
         }
@@ -707,17 +711,22 @@ impl Workspace {
                 .find(|t| !t.trim().is_empty())
                 .map_or_else(|| "A subagent".to_owned(), |t| t.trim().to_owned());
             if attention::child_stalled(child, now) {
+                // r8-int (R8.1): the word alone on the tile; how long it
+                // has been quiet is in the tooltip, as in the sidebar.
+                let quiet = child
+                    .telemetry
+                    .last_activity_ms
+                    .or(child.telemetry.started_at_ms)
+                    .map(|at| attention::quiet_for(now - at));
                 faults.push(Line {
                     icon: IconName::Bot,
+                    tip: Some(match quiet {
+                        Some(quiet) => format!("{name} · not responding for {quiet}"),
+                        None => format!("{name} · not responding"),
+                    }),
                     verb: name,
                     argument: None,
-                    summary: Some(wks_native::format::not_responding(
-                        child
-                            .telemetry
-                            .last_activity_ms
-                            .or(child.telemetry.started_at_ms),
-                        now,
-                    )),
+                    summary: Some(wks_native::format::NOT_RESPONDING.to_owned()),
                     fault: Some(StatusKind::NotResponding),
                 });
             } else if child.failed() {
@@ -727,6 +736,7 @@ impl Workspace {
                     argument: None,
                     summary: Some("Failed".into()),
                     fault: Some(StatusKind::Failed),
+                    tip: None,
                 });
             }
         }
@@ -748,6 +758,7 @@ impl Workspace {
                 argument: None,
                 summary: None,
                 fault: Some(StatusKind::Failed),
+                tip: None,
             });
         }
         let tool = session.telemetry.last_tool_name.trim();
@@ -769,6 +780,7 @@ impl Workspace {
                 argument: (!summary.is_empty()).then(|| summary.clone()),
                 summary: None,
                 fault: None,
+                tip: None,
             });
         }
         if let Some(plan) = &session.plan {
@@ -789,6 +801,7 @@ impl Workspace {
                     argument: None,
                     summary: Some(step.label().to_owned()),
                     fault: None,
+                    tip: None,
                 });
             }
         }
@@ -804,6 +817,7 @@ impl Workspace {
                 argument: None,
                 summary: None,
                 fault: None,
+                tip: None,
             });
         }
         let running = if session.stopped() {
@@ -822,6 +836,7 @@ impl Workspace {
                 argument: None,
                 summary: None,
                 fault: None,
+                tip: None,
             });
         }
         faults.extend(lines);
@@ -1728,10 +1743,17 @@ impl Workspace {
                     if let Some(fault) = line.fault {
                         row = row.lead_status(fault);
                     }
-                    row.render(&p)
+                    let row = row
+                        .render(&p)
                         .debug_selector(move || format!("fleet-line-{n}-{ix}"))
-                        .h(px(f.event_row))
-                        .into_any_element()
+                        .h(px(f.event_row));
+                    match &line.tip {
+                        Some(tip) => row
+                            .id(SharedString::from(format!("fleet-line-{n}-{ix}")))
+                            .tooltip(primitives::tooltip_view(tip.clone(), None, &p))
+                            .into_any_element(),
+                        None => row.into_any_element(),
+                    }
                 })
                 .collect()
         };

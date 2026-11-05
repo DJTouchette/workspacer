@@ -333,7 +333,7 @@ pub(crate) fn composer_specimen(
 /// composer is hidden; "Reply instead" on the card opens this: the one
 /// input (the composer's own, so a draft survives), a quiet line saying the
 /// request stays open, and `actions` (Cancel, then the send that names
-/// where the text goes, "Send to Claude"). It goes last in the card.
+/// where the text goes, "Send to Claude Code"). It goes last in the card.
 pub(crate) fn card_reply(
     input: impl IntoElement,
     note: impl Into<SharedString>,

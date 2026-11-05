@@ -1678,7 +1678,7 @@ impl Workspace {
         let color = match status {
             "responding" => p.success,
             "unchecked" | "unsupported" => p.muted,
-            _ => p.warning,
+            _ => p.warn(),
         };
         let description = if checking {
             "Checking this agent…"
@@ -1697,7 +1697,7 @@ impl Workspace {
         let installed = if found == Some(true) {
             p.success
         } else if found == Some(false) {
-            p.warning
+            p.warn()
         } else {
             p.muted
         };
@@ -2236,7 +2236,7 @@ impl Workspace {
                             .text_size(px(chrome::scale::META))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(rgb(match (active, busy) {
-                                (true, _) if permission == Permission::FullAccess => p.warning,
+                                (true, _) if permission == Permission::FullAccess => p.warn(),
                                 (true, _) => p.text,
                                 (false, true) => p.disabled,
                                 (false, false) => p.muted,

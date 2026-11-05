@@ -51,7 +51,7 @@ The code lives in:
 | Warning | `roles.caution` (`Intent::Caution`) | The capacity warning hue (R6.2): an orange, kept apart from amber and red in every theme (the separation test), readable as text. Meters at 80% and over, and their number |
 | Scrim | `roles.scrim_alpha` | How much an overlay dims the whole window, sidebar included: 45–55% in every theme (dark 0.5, light 0.45) |
 
-- **Amber** means blocked on you (Needs you). Nothing else is amber: warnings, meters, Full access and links use the warning hue or neutral.
+- **Amber** means blocked on you (Needs you). Nothing else is amber: warnings, meters, Full access and links use the warning hue or neutral. A warning that is not Needs you takes `Palette::warn()` (r8-int): `roles.caution` in v2, the shipped warning colour in v1; `p.warning` (amber in v2) is for Needs you alone. Notices in `Tone::Warning` go through it.
 - **Violet** (`roles.review`) means finished with changes to look at (To review).
 - **Red** means a named failure.
 - **Orange** (the warning hue) means a capacity running out: a meter at 80% or more.
@@ -382,7 +382,7 @@ The table itself, its seven glyphs and the words, are in [Status and vocabulary 
   - `system::waiting_tile(&p)`: a tile that waits on the user (the `border_strong` edge and the attention bar).
   - `system::waiting_tile_focused(&p)` (r6): the same tile while it has the keyboard focus. R8.4: focus changes only weight, so the attention bar **stays**; the focus ring is added around the tile (`tile_frame`) and nothing moves.
   - `system::tile_columns(columns, cards, &p)` (R8.5): masonry. Card `i` goes to column `i % columns` and each column stacks its cards at their own height, so reading order is still row by row and a tall card leaves no hole beside it. The Fleet uses it for its band and for the rest.
-  - `system::side_sheet(&p)` (R8.5): a panel on the right edge of a `.relative()` page frame, full height, `system().overlay_width` wide, on the Overlay elevation, over the page (which does not reflow). Give it a header with a close button; Esc closes it. The Fleet's Details open in one.
+  - `system::side_sheet(&p)` (R8.5): a panel on the right edge of a `.relative()` page frame, full height, `system().overlay_width` wide, on the Overlay elevation, over the page (which does not reflow). Give it a header with a close button; Esc closes it. The Fleet's Details open in one. Gallery specimen: `gallery-sheet`.
   - `system::tile_frame(id, focused, &p)`: the frame a tile sits in, carrying the 2px focus ring outside the tile.
   - `primitives::inset(&p)` for the one recessed well inside a card.
 - **Do:** use `tile_grid` (or, where cards differ a lot in height, `tile_columns`) for every grid of cards (R7.6: a card is as tall as its content; a row without a decision does not stretch to match one with it). `even_tile_grid` is gone.

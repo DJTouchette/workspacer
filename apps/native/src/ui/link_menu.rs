@@ -183,7 +183,7 @@ impl Workspace {
                             .shadow(super::primitives::elevation(&p, t.elevation.floating))
                             .text_size(px(t.text.meta))
                             .text_color(rgb(if matches!(link, Link::Refused(_)) {
-                                p.warning
+                                p.warn()
                             } else {
                                 p.roles.text_secondary
                             }))
@@ -210,7 +210,7 @@ impl Workspace {
                         .shadow(chrome::floating_shadow(p))
                         .text_size(px(11.))
                         .text_color(rgb(if matches!(link, Link::Refused(_)) {
-                            p.warning
+                            p.warn()
                         } else {
                             p.muted
                         }))

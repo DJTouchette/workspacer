@@ -936,7 +936,7 @@ impl Workspace {
                                 .flex_1()
                                 .min_w_0()
                                 .text_size(px(chrome::scale::CAPTION))
-                                .text_color(rgb(p.warning))
+                                .text_color(rgb(p.warn()))
                                 .child("Press again to delete; folders stay."),
                         )
                     })

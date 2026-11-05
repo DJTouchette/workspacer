@@ -332,13 +332,13 @@ impl Workspace {
                     &p,
                 )
             } else {
-                status_dot(if queue.paused { p.warning } else { p.accent })
+                status_dot(if queue.paused { p.warn() } else { p.accent })
             })
             .child(
                 div()
                     .flex_shrink_0()
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(if queue.paused { p.warning } else { p.text }))
+                    .text_color(rgb(if queue.paused { p.warn() } else { p.text }))
                     .child(match (count, queue.paused) {
                         (0, true) => "Queue · paused".to_owned(),
                         (0, false) => "Queue".to_owned(),
@@ -462,7 +462,7 @@ impl Workspace {
             .debug_selector(|| "queue-uncertain".into())
             .p_2()
             .rounded(px(p.control_radius))
-            .bg(gpui::Hsla::from(rgb(p.warning)).opacity(0.08))
+            .bg(gpui::Hsla::from(rgb(p.warn())).opacity(0.08))
             .flex()
             .flex_col()
             .gap_1()

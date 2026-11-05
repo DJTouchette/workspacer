@@ -104,6 +104,7 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
                     column()
                         .child(menus(p))
                         .child(overlays(p))
+                        .child(side_sheets(p))
                         .child(cards(p))
                         .child(table(p))
                         .child(composers(p)),
@@ -843,6 +844,82 @@ fn overlays(p: &Palette) -> Div {
         )
 }
 
+/// r8-int (R8.5): the side sheet over a page's right edge, as the Fleet's
+/// Details open: a header with its close button, then key/value rows. The
+/// page under it keeps its layout.
+fn side_sheets(p: &Palette) -> Div {
+    let t = p.tokens;
+    let fact = |key: &'static str, value: &'static str| {
+        div()
+            .flex()
+            .gap(px(t.space.md))
+            .text_size(px(t.text.meta))
+            .child(
+                div()
+                    .w(px(t.space.huge * 2.))
+                    .flex_none()
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(key),
+            )
+            .child(div().min_w_0().text_color(rgb(p.text)).child(value))
+    };
+    let sheet = side_sheet(p)
+        .debug_selector(|| "gallery-side-sheet".into())
+        .w(px(t.system().overlay_width / 2.))
+        .child(
+            div()
+                .flex()
+                .items_start()
+                .gap(px(t.space.md))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(t.space.xxs))
+                        .child(caption("Details · Release checklist", p))
+                        .child(
+                            div()
+                                .text_size(px(t.text.body))
+                                .font_weight(FontWeight(t.weight.semibold))
+                                .text_color(rgb(p.text))
+                                .child("Run cargo test?"),
+                        ),
+                )
+                .child(prim::icon_button(
+                    "gallery-side-sheet-close",
+                    IconName::Close,
+                    "Close (Esc)",
+                    ButtonVariant::Tertiary,
+                    true,
+                    p,
+                )),
+        )
+        .child(fact("Command", "cargo test --workspace"))
+        .child(fact("Folder", "apps/native"))
+        .child(fact("Runs on", "studio (this machine)"));
+    section("SideSheet", p)
+        .debug_selector(|| "gallery-sheet".into())
+        .child(
+            div()
+                .relative()
+                .h(px(t.layout.dialog_width / 2.))
+                .rounded(px(t.radius.panel))
+                .overflow_hidden()
+                .bg(rgb(p.chat))
+                .p(px(t.space.lg))
+                .child(
+                    div()
+                        .text_size(px(t.text.lead))
+                        .text_color(rgb(p.prose))
+                        .child("The page keeps its layout."),
+                )
+                .child(sheet),
+        )
+        .child(caption("Close button and Esc close it", p))
+}
+
 fn cards(p: &Palette) -> Div {
     let tile_body = |title: &'static str, kind: StatusKind, lines: usize| {
         tile(p)
@@ -1281,7 +1358,7 @@ fn composers(p: &Palette) -> Div {
                         )
                         .into_any_element(),
                         prim::button_specimen(
-                            "Send to Claude",
+                            "Send to Claude Code",
                             ButtonVariant::Secondary,
                             ButtonSize::Small,
                             ControlState::Rest,

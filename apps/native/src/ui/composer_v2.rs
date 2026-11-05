@@ -710,11 +710,12 @@ impl Workspace {
         })
     }
 
-    /// The agent the reply goes to, by name ("Claude", "Codex").
+    /// The agent the reply goes to, by its one name (R8.6: "Claude Code",
+    /// "Codex CLI").
     pub(super) fn reply_target(&self) -> &'static str {
         match self.selected_session().map(Session::provider_id) {
-            Some("codex") => "Codex",
-            _ => "Claude",
+            Some("codex") => wks_native::format::agent_name("codex"),
+            _ => wks_native::format::agent_name("claude"),
         }
     }
 
@@ -1013,8 +1014,8 @@ impl Workspace {
                 let model = s.display_model();
                 if model.is_empty() {
                     match s.provider_id() {
-                        "codex" => "Codex".to_owned(),
-                        _ => "Claude".to_owned(),
+                        "codex" => wks_native::format::agent_name("codex").to_owned(),
+                        _ => wks_native::format::agent_name("claude").to_owned(),
                     }
                 } else {
                     model
@@ -2006,8 +2007,8 @@ impl Workspace {
     fn limit_context(&self, session: &Session) -> Option<String> {
         let (window, resets_at) = session.limits.exhausted()?;
         let provider = match session.provider_id() {
-            "codex" => "Codex",
-            _ => "Claude",
+            "codex" => wks_native::format::agent_name("codex"),
+            _ => wks_native::format::agent_name("claude"),
         };
         let when = resets_at
             .map(|at| {
@@ -2052,8 +2053,8 @@ impl Workspace {
         let number = |key: PlanKey| key.number();
         let agent = session
             .map(|s| match s.provider_id() {
-                "codex" => "Codex",
-                _ => "Claude",
+                "codex" => wks_native::format::agent_name("codex"),
+                _ => wks_native::format::agent_name("claude"),
             })
             .unwrap_or("the agent");
         let context = match session
@@ -2151,8 +2152,8 @@ impl Workspace {
     fn other_agent(&self) -> Option<&'static str> {
         let session = self.selected_session()?;
         Some(match session.provider_id() {
-            "codex" => "Claude",
-            _ => "Codex",
+            "codex" => wks_native::format::agent_name("claude"),
+            _ => wks_native::format::agent_name("codex"),
         })
     }
 
@@ -2196,10 +2197,12 @@ impl Workspace {
             return None;
         }
         let provider = match session.provider_id() {
-            "codex" => "Codex",
-            _ => "Claude",
+            "codex" => wks_native::format::agent_name("codex"),
+            _ => wks_native::format::agent_name("claude"),
         };
-        let other = self.other_agent().unwrap_or("Codex");
+        let other = self
+            .other_agent()
+            .unwrap_or(wks_native::format::agent_name("codex"));
         let can_hand_off = self.supported_session() && self.view.connected && !self.demo;
         let key = (session.id.clone(), window, resets_at);
         let context = self

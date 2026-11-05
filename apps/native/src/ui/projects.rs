@@ -1052,7 +1052,7 @@ impl Workspace {
             ),
             Some(Ok(Inspection::Missing(_))) => (
                 IconName::TriangleAlert,
-                p.warning,
+                p.warn(),
                 "Not found on the hub. Choose another folder, or create it first.".into(),
             ),
             Some(Err(error)) => (
@@ -1318,7 +1318,7 @@ impl Workspace {
                         .items_center()
                         .gap_2()
                         .text_size(px(chrome::scale::CAPTION))
-                        .text_color(rgb(p.warning))
+                        .text_color(rgb(p.warn()))
                         .child(
                             Icon::new(IconName::TriangleAlert)
                                 .size(px(12.))
@@ -1693,7 +1693,7 @@ impl Workspace {
                         .gap_2()
                         .text_size(px(chrome::scale::CAPTION))
                         .text_color(rgb(if self.projects.fallback.is_some() {
-                            p.warning
+                            p.warn()
                         } else {
                             p.muted
                         }))

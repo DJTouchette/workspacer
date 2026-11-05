@@ -536,7 +536,7 @@ impl Workspace {
             );
         if let Some(error) = &state.error {
             return body
-                .child(div().text_color(rgb(p.warning)).child(error.clone()))
+                .child(div().text_color(rgb(p.warn())).child(error.clone()))
                 .into_any_element();
         }
         if state.loading {

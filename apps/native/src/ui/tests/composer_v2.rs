@@ -210,7 +210,7 @@ fn the_card_holds_the_one_reply_while_a_decision_waits(cx: &mut TestAppContext) 
     workspace.read_with(&visual, |this, _| {
         assert!(this.reply_active());
         assert!(!this.composer_ui.digits_to_card);
-        assert_eq!(this.reply_target(), "Claude");
+        assert_eq!(this.reply_target(), "Claude Code");
     });
     visual.simulate_keystrokes("2");
     assert!(acts(&mut commands).is_empty(), "digits type in the reply");

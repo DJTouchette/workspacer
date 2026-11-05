@@ -434,7 +434,7 @@ impl Workspace {
                                     } else if wks_native::child_agents::provider_active(
                                         &child.status,
                                     ) {
-                                        p.warning
+                                        p.warn()
                                     } else {
                                         p.muted
                                     }))
@@ -776,7 +776,7 @@ impl Workspace {
                         IconName::Info,
                         true,
                     )
-                    .text_color(rgb(p.warning))
+                    .text_color(rgb(p.warn()))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open_peek(super::portrait::Peek::Pinned, cx)
                     })),
@@ -907,7 +907,7 @@ impl Workspace {
                         IconName::Redo,
                         self.view.can_resume_power_pause,
                     )
-                    .text_color(rgb(p.warning))
+                    .text_color(rgb(p.warn()))
                     .when(self.view.can_resume_power_pause, |d| {
                         d.on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
                     }),
@@ -952,7 +952,7 @@ impl Workspace {
                     })),
             )
             .when(!self.view.connected, |d| {
-                d.child(div().py_1().child(status_dot(p.warning)))
+                d.child(div().py_1().child(status_dot(p.warn())))
             })
             .into_any_element()
     }
@@ -1090,7 +1090,7 @@ impl Workspace {
                         .px_3()
                         .pb_3()
                         .text_size(px(chrome::scale::META))
-                        .text_color(rgb(p.warning))
+                        .text_color(rgb(p.warn()))
                         .child(self.view.notice.clone())
                         .when(self.view.can_resume_power_pause, |d| {
                             d.child(
@@ -1650,7 +1650,7 @@ impl Workspace {
                                 .text_size(px(chrome::scale::OVERLINE))
                                 .text_color(rgb(p.muted))
                                 .child(label)
-                                .when(!self.view.connected, |d| d.child(status_dot(p.warning))),
+                                .when(!self.view.connected, |d| d.child(status_dot(p.warn()))),
                         )
                     }),
             )

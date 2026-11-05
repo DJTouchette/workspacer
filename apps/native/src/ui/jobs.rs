@@ -187,7 +187,7 @@ impl Workspace {
             IconName::TriangleAlert,
             UNAVAILABLE_TITLE,
             UNAVAILABLE,
-            p.warning,
+            p.warn(),
             p,
         )
         .debug_selector(|| "jobs-unavailable".into())
@@ -1142,7 +1142,7 @@ impl Workspace {
                             .w(px(72.))
                             .flex_shrink_0()
                             .text_size(px(chrome::scale::CAPTION))
-                            .text_color(rgb(if changed { p.warning } else { p.muted }))
+                            .text_color(rgb(if changed { p.warn() } else { p.muted }))
                             .child(label),
                     )
                     .child(

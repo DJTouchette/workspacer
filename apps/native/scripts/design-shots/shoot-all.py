@@ -57,7 +57,7 @@ LANDMARKS_V2 = {
     "NEW_TASK_FIELD": lambda shot: (720, 455),      # r6-conversation: the task text in the centred composer (New session is the welcome)
     "WAKE_STRIP": lambda shot: (744, 19),           # r8-conversation: the header's "2 updates" chip (R8.4; was the strip above the transcript)
     "HOSTS_DETAILS": lambda shot: (1520, 173),      # r3-pages: Machines' first "Details" (table row; r6-integration: studio, this machine)
-    "JOB_OVERFLOW": lambda shot: (1548, 523),       # r7-int: re-measured (one page template)  # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal; r6-qa: under the risk chip)
+    "JOB_OVERFLOW": lambda shot: (1548, 487),       # r8-int: re-measured (the proposal card is shorter)  # r7-int: re-measured (one page template)  # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal; r6-qa: under the risk chip)
     "REVIEW_DOCK_MORE": lambda shot: (1535, 30),    # r3-pages: Changes dock header "..."
     "REVIEW_DOCK_EXPAND_ITEM": lambda shot: (1440, 166),  # r3-pages: its "Open full page" item
 }
@@ -162,9 +162,11 @@ def shots():
         [("design", [("move", "TITLE_PILL")], [("move", 1262, 19), ("sleep", 1.5)])])
     # r3-composer: under v2 the pending approval holds the composer's slot,
     # so "Reply instead…" opens the composer (and its model chip) first.
-    add("model-popover", "Model, effort and access from the title's model chip",
-        [("design", [("move", "TITLE_PILL")], [("click", "COMPOSER_REPLY"), ("sleep", 0.5)]),
-         ("click", "TITLE_MODEL"), ("sleep", 1.5)])
+    # r8-int: under v2 a pending decision hides the composer (R8.4), so the
+    # popover opens from the header's overflow menu ("Model, effort and access").
+    add("model-popover", "Model, effort and access from the title's model chip (v2: the header's menu)",
+        [("design", [("move", "TITLE_PILL"), ("click", "TITLE_MODEL")],
+          [("click", "HEADER_MORE"), ("sleep", 0.8), ("click", "HEADER_MENU_MODEL")]), ("sleep", 1.5)])
     add("shortcuts", "Keyboard cheat sheet (? in Normal mode)", [("key", "Escape"), ("key", "question"), ("sleep", 0.8)])
     add("sidebar-compact", "Compact session list (28px rows)", settings={"sidebar_compact": True})
     add("sidebar-row-hover", "A session row's actions on hover", [("move", "SIDEBAR_ROW_BUS")])
@@ -186,7 +188,8 @@ def shots():
     add("transcript-earlier", "Transcript further back: tool rows, work cards, user turns",
         # r2-transcript: v2's denser rows need fewer notches; v1 keeps its own.
         # (r4-integration: v2's smoothed wheel lands unpredictably; Ctrl+U is exact.)
-        [("design", [("wheel", 10, 1000, 400)], [("key", "Escape"), ("keys", *(["ctrl+u"] * 4))])])
+        # (r8-int: two pages now; the hidden composer gave the transcript its height.)
+        [("design", [("wheel", 10, 1000, 400)], [("key", "Escape"), ("keys", *(["ctrl+u"] * 2))])])
     add("transcript-start", "Transcript start: the first turns",
         [("key", "Escape"), ("keys", *(["ctrl+u"] * 12))])
     add("transcript-fleet", "Transcript: supervisor and fleet wakes, subagents",
@@ -245,7 +248,7 @@ def shots():
     # the agent works a draft makes the primary Queue (its menu open).
     # r8-conversation (R8.4): the composer is hidden while a decision
     # waits; Ctrl+L (like "Reply instead") opens the card's one input.
-    add("composer-reply-open", "Approval pending: a reply typed in the card's own input (Send to Claude)",
+    add("composer-reply-open", "Approval pending: a reply typed in the card's own input (Send to Claude Code)",
         [("design", [("click", "COMPOSER_REPLY"), ("sleep", 0.5), ("type", "Run only the UI tests first")],
           [("key", "ctrl+l"), ("sleep", 0.8), ("type", "Run only the UI tests first"), ("sleep", 0.5), ("key", "End")])])
     add("composer-question-answered", "The release question with an answer typed (Send enabled)",
@@ -271,7 +274,7 @@ def shots():
     add("approvals-details-open", "Approval: Details expanded to the full request (tool, command, folder, host)",
         [("design", [], [("click", 1340, 957), ("sleep", 0.5)])])  # r8-conversation: v2 re-measured  # r6-integration: re-measured (880 column)
     add("approvals-fleet-needs-you", "Fleet: the Needs you filter, only the tiles that wait on the user",
-        fleet + [("design", [("click", 1350, 78)], [("click", 1350, 43)]), ("sleep", 0.5)])  # r6-integration: v2's filters share the title row (v1 never opens Fleet; its click is kept)
+        fleet + [("design", [("click", 1350, 78)], [("click", 1220, 43)]), ("sleep", 0.5)])  # r8-int: v2 re-measured (To review has its own filter)  # r6-integration: v2's filters share the title row (v1 never opens Fleet; its click is kept)
     add("approvals-fleet-details", "Fleet: the approval tile's Details open in the side sheet",
         fleet + [("design", [("click", 530, 342)], [("click", 512, 398)]), ("sleep", 0.5)])  # r8-decisions: v2 re-measured (Needs-you band, Details at the right, side sheet)  # r6-integration: v1 keeps its click
     # r5-system (R5.3): the component gallery (`wks-native --gallery`, dev
@@ -536,26 +539,28 @@ LANDMARKS = {
     # The title pill grows when hovered (context meter appears), so hover it
     # first; these two are the chips' positions once it has grown.
     "TITLE_PILL": lambda shot: (900, 30),
-    "WAKE_STRIP": lambda shot: (744, 19),           # r8-conversation: v2 only (the header's "2 updates" chip); harmless under v1
+    "WAKE_STRIP": lambda shot: (744, 19) if shot.get("v2") else (640, 62),  # r8-int: v1 keeps its r7 click (its shots stay comparable)  # r8-conversation: v2 only (the header's "2 updates" chip)
     # "Sonnet" chip: v1 in the hovered title pill, v2 on the composer (r2).
     # (r3-integration: the reading column is centred; the chip once the composer is open.)
     "TITLE_MODEL": lambda shot: (672, 960) if shot.get("v2") else (1005, 30),  # r6-conversation: the composer's model chip in the 880 column
     # Background work: v1 the hovered pill's badge; v2 (r3-shell) the
     # header toolbar's "Tasks 3" (r4-calm: icon tools, re-measured).
+    "HEADER_MORE": lambda shot: (1575, 19),         # r8-int: v2 header's "…" (session tools menu)
+    "HEADER_MENU_MODEL": lambda shot: (1470, 126),  # r8-int: that menu's "Model, effort and access"
     "TITLE_TASKS_BADGE": lambda shot: (1532, 20) if shot.get("v2") else (1078, 30),
     # v1: the approval card above the composer; v2: the strip on the composer.
     "APPROVAL_DETAILS": lambda shot: (1340, 957) if shot["v2"] else (1361, 749),  # r8-conversation: v2 re-measured (no composer under the card)  # r7-int: v2 re-measured (Details ends the quiet row)  # r2-systems: the approval is a card above the composer
     # (r3-integration: v1's moved right when the fixture's grant label grew.)
     "APPROVAL_DENY_NOTE": lambda shot: (1208, 957) if shot["v2"] else (1030, 797),  # r8-conversation: v2 re-measured  # r7-int: v2 re-measured (a visible Text button; Deny's menu is gone)
     "COMPOSER_REPLY": lambda shot: (700, 964),       # r6-conversation: the one-line "Reply instead…" under the card (it expands on focus)
-    "QUESTION_ANSWER": lambda shot: (900, 920),      # r8-conversation: the release question's answer field (v2; no composer under the card)
+    "QUESTION_ANSWER": lambda shot: (900, 920) if shot.get("v2") else (900, 874),  # r8-int: v1 keeps its r7 click  # r8-conversation: the release question's answer field (v2; no composer under the card)
     "COMPOSER_SEND_MENU": lambda shot: (1373, 960),  # r3-composer: Queue chevron while working (v2; r6-conversation: the 880 column)
     # (r4-integration: v2 re-measured; the first tile centres at y 179.)
     "RAIL_FIRST_MARK": lambda shot: (35, 179 if shot.get("v2") else 219),  # first session in the rail
     # (r4-integration: v2 re-measured after the decision gained its where line.)
     # (r5-integration: v2 re-measured; the decision card is shorter.)
     "README_LINK": lambda shot: (592, 604) if shot["v2"] else (591, 497),  # r8-conversation: v2 re-measured (no wake strip, no composer)  # r6-integration: v2 re-measured (wake strip, 8/16/32)  # r6-conversation: the 880 column and 8/16/32 rhythm  # README.md link, last assistant message
-    "TALL_README_LINK": lambda shot: (168, 1187) if shot["v2"] else (169, 1097),  # r6-integration: v2 re-measured  # r5-integration: v2 re-measured  # same link, 1000x1600 tall layout
+    "TALL_README_LINK": lambda shot: (165, 1203) if shot["v2"] else (169, 1097),  # r8-int: v2 re-measured (no composer under the card)  # r6-integration: v2 re-measured  # r5-integration: v2 re-measured  # same link, 1000x1600 tall layout
     "TASK_ROW_DEV": lambda shot: (1200, 85),        # the fixture hub task in the tasks panel
     # The failed cargo test task: v2 its "Open log" button, v1 its row.
     # (r4-integration: v1 re-measured; the fixture's passing run now lists first.)

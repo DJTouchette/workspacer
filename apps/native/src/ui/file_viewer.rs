@@ -962,7 +962,7 @@ impl PreviewPane {
                 .child(
                     Icon::new(IconName::TriangleAlert)
                         .size(px(20.))
-                        .text_color(rgb(p.warning)),
+                        .text_color(rgb(p.warn())),
                 )
                 .child(
                     div()
@@ -1047,7 +1047,7 @@ impl PreviewPane {
         div()
             .flex_1()
             .p_6()
-            .text_color(rgb(p.warning))
+            .text_color(rgb(p.warn()))
             .child("This preview could not be displayed.")
             .into_any_element()
     }
@@ -1426,7 +1426,7 @@ impl Render for PreviewPane {
                                         .size(px(7.))
                                         .flex_shrink_0()
                                         .rounded_full()
-                                        .bg(rgb(p.warning)),
+                                        .bg(rgb(p.warn())),
                                 )
                             }),
                     )
@@ -1479,7 +1479,7 @@ impl Render for PreviewPane {
                 .border_b_1()
                 .border_color(rgb(p.border))
                 .text_size(px(12.))
-                .text_color(rgb(p.warning))
+                .text_color(rgb(p.warn()))
                 .child(Icon::new(IconName::Info).size(px(12.)).flex_shrink_0())
                 .child(div().flex_1().min_w_0().child(notice))
         });
@@ -1513,7 +1513,7 @@ impl Render for PreviewPane {
                     "{name} could not be read back before saving ({error}). It may have been moved or deleted. Overwrite to write your version there anyway."
                 ),
             };
-            banner("file-viewer-conflict", p.warning, IconName::TriangleAlert, text)
+            banner("file-viewer-conflict", p.warn(), IconName::TriangleAlert, text)
                 .child(overwrite.on_click(cx.listener(|this, _, _, cx| this.save(true, cx))))
                 .when(matches!(conflict, Conflict::Changed { .. }), |d| {
                     d.child(reload.on_click(cx.listener(|this, _, window, cx| {
@@ -1542,7 +1542,7 @@ impl Render for PreviewPane {
             };
             banner(
                 "file-viewer-unsaved",
-                p.warning,
+                p.warn(),
                 IconName::TriangleAlert,
                 format!("{name} has unsaved changes. Save them {next}?"),
             )
