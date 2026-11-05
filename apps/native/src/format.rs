@@ -231,14 +231,69 @@ pub fn usage_line(account: &str, limit: &str, pct: f64, resets_in: Option<i64>) 
     line
 }
 
-/// The composer's context gauge label (R3.2/R3.5, r4-calm R4.6): "Context
-/// 42% full", never "ctx" or a bare share. Colour it only from
-/// [`Level`] (`level(pct)`).
+/// The composer's context gauge label (R3.2/R3.5, r4-calm R4.6, r7-status
+/// R7.4): "Context 42% used", never "ctx" or a bare share. Colour it only
+/// from [`Level`] (`level(pct)`).
 pub fn context_label(pct: Option<f64>) -> String {
     match pct {
-        Some(pct) => format!("Context {}% full", pct.max(0.).round() as u64),
-        None => "Context —".into(),
+        Some(pct) => format!("Context {}% used", pct.max(0.).round() as u64),
+        None => format!("Context {EMPTY}"),
     }
+}
+
+// r7-status (R7.4, R7.8)
+/// The stall recovery's verb in plain words (R7.4): it sends a short line
+/// asking the agent to carry on.
+pub const NUDGE: &str = "Nudge (ask to continue)";
+
+/// The toolbar label and panel title for a session's background work
+/// (R7.4): one name for both.
+pub const BACKGROUND_TASKS: &str = "Background tasks";
+
+/// The one mark for "no value" in a cell or a meta line: an em dash.
+pub const EMPTY: &str = "—";
+
+/// The one separator between meta facts: a middle dot with a space each
+/// side.
+pub const SEP: &str = " · ";
+
+/// The one join helper for meta text (R7.8): trims each part, drops the
+/// empty ones and any stray leading or trailing "·", and joins the rest
+/// with [`SEP`]. `meta(["", " Sonnet 4.6", "· 3 tools"])` is
+/// "Sonnet 4.6 · 3 tools", never "· Sonnet 4.6  · 3 tools".
+pub fn meta<I, S>(parts: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    parts
+        .into_iter()
+        .filter_map(|part| {
+            let part = part.as_ref().trim().trim_matches('·').trim().to_owned();
+            (!part.is_empty()).then_some(part)
+        })
+        .collect::<Vec<_>>()
+        .join(SEP)
+}
+
+/// A usage window's short name for a meter's label: "5h", "Weekly",
+/// "Monthly" (the hub's "Week" reads "Weekly").
+pub fn window_name(label: &str) -> &str {
+    match label {
+        "Week" | "7d" => "Weekly",
+        "Month" => "Monthly",
+        other => other,
+    }
+}
+
+/// The sidebar's usage line names its window (R7.4): "Claude · 5h limit
+/// 42%".
+pub fn usage_short(account: &str, window: &str, pct: f64) -> String {
+    format!(
+        "{account} · {} limit {}%",
+        window_name(window),
+        pct.max(0.).round() as u64
+    )
 }
 
 /// The red chip that names what broke (R3.1): "cargo test failed". A
@@ -288,8 +343,19 @@ mod tests {
             usage_line("Codex", "Weekly", 93., None),
             "Codex · 93% of weekly limit used"
         );
-        assert_eq!(context_label(Some(41.6)), "Context 42% full");
+        assert_eq!(context_label(Some(41.6)), "Context 42% used");
         assert_eq!(context_label(None), "Context —");
+        assert_eq!(
+            meta(["", " Sonnet 4.6", "· 3 tools ", "  "]),
+            "Sonnet 4.6 · 3 tools"
+        );
+        assert_eq!(meta(["Worked 2m", "3 tools  ·"]), "Worked 2m · 3 tools");
+        assert_eq!(meta(Vec::<String>::new()), "");
+        assert_eq!(usage_short("Claude", "5h", 41.6), "Claude · 5h limit 42%");
+        assert_eq!(
+            usage_short("Codex", "Week", 12.),
+            "Codex · Weekly limit 12%"
+        );
         assert_eq!(failed_label("cargo test", 32), "cargo test failed");
         assert_eq!(
             failed_label("cargo test --locked -- --test-threads=1", 32),

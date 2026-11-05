@@ -429,6 +429,9 @@ impl Workspace {
         }
         lines.push("How much of each account's usage limit is used. Click for details.".into());
         let tip = lines.join("\n");
+        let top = shown
+            .iter()
+            .max_by(|(_, a), (_, b)| a.pct.total_cmp(&b.pct));
         Some(
             chrome::interactive_control(div().id("sidebar-usage"), p, true)
                 .debug_selector(|| "sidebar-usage".into())
@@ -453,9 +456,12 @@ impl Workspace {
                             .text_color(rgb(p.roles.text_tertiary)),
                     )
                 })
-                .children(shown.iter().map(|(a, w)| {
-                    // r6-surfaces (R6.5): a bar plus a number ("Claude ▬ 42%"),
-                    // never truncated; the sentence is in the tooltip.
+                // r7-status (R7.5): one footer line, the account nearest its
+                // limit; every account's sentence is in the tooltip and the
+                // details open on click.
+                .children(top.iter().map(|(a, w)| {
+                    // r6-surfaces (R6.5), r7-status (R7.4): the meter names
+                    // its window ("Claude · 5h limit ▬ 42%").
                     let selector = format!("sidebar-usage-row-{}", a.provider);
                     let level = wks_native::format::level(w.pct);
                     let tone = super::primitives::level_color(level, &p);
@@ -473,7 +479,11 @@ impl Workspace {
                                 .flex_shrink_0()
                                 .text_color(rgb(p.roles.text_secondary))
                                 .font_weight(FontWeight(t.weight.medium))
-                                .child(a.title.clone()),
+                                .child(format!(
+                                    "{} · {} limit",
+                                    a.title,
+                                    wks_native::format::window_name(w.label)
+                                )),
                         )
                         .child(
                             super::primitives::meter(

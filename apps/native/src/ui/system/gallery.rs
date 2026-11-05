@@ -501,7 +501,11 @@ fn meters(p: &Palette) -> Div {
             row(p)
                 .child(specimen(0.42, prim::Intent::Neutral, "42% · neutral"))
                 .child(specimen(0.93, prim::Intent::Caution, "93% · warning"))
-                .child(specimen(1., prim::Intent::Danger, "100% · at the limit")),
+                .child(specimen(
+                    1.,
+                    prim::Intent::Caution,
+                    "100% · at the limit (still the warning hue)",
+                )),
         )
 }
 
@@ -662,6 +666,17 @@ fn statuses(p: &Palette) -> Div {
                         })
                 })),
         )
+        // r7-status (R7.3): the verification line, failed and contradicted.
+        .child(super::verification_line(
+            &super::super::status::Verification {
+                outcome: super::super::status::TestOutcome::Failed,
+                command: "cargo test".into(),
+                at: Some(0),
+                contradicted: true,
+            },
+            4 * 60_000,
+            p,
+        ))
 }
 
 fn toggles(p: &Palette) -> Div {

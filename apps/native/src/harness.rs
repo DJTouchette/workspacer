@@ -907,6 +907,13 @@ impl Fixture {
                     }
                 }
             }
+            // r7-status (R7.3): the catalog's idle "Bus fan-out
+            // backpressure" finished its turn with uncommitted changes, so
+            // it reads Ready for review (and the fleet is never All clear
+            // while it waits).
+            if catalog && i == 2 {
+                snapshot["uncommittedChanges"] = json!({"files": 3, "added": 48, "removed": 12});
+            }
             if i == 0 && self.options.plan_and_limit {
                 let reset = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)

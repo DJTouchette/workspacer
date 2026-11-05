@@ -260,27 +260,14 @@ R7.2: these four variants draw three tiers: Filled (`Primary`), Bordered (`Secon
 
 - **Purpose:** a state in a table, list or card.
 - **Anatomy:** the glyph slot (16, glyph 8), the word (12/500, the kind's text colour), then an optional tertiary detail.
-- **States:** every `StatusKind`. **The status table** (R6.2) is the one source: `primitives::STATUS_TABLE`, read by `StatusKind::{label, color, text_color}`, `StatusCell`, `status_mark`, `status_glyph` and `StatusBadge`. **Every state has its own glyph** (a test keeps the shapes and words distinct):
+- **States:** every `StatusKind`. **The status table** (R6.2) is the one source: `primitives::STATUS_TABLE`, read by `StatusKind::{label, color, text_color}`, `StatusCell`, `status_mark`, `status_glyph` and `StatusBadge`. **Every state draws a glyph** (r7-status: at most seven shapes, shared only within one colour; a test keeps the words distinct):
 
-| State | Glyph | Colour | Word | Also shown as (same glyph) |
-|---|---|---|---|---|
-| Working | Faint ring with a turning arc | `status.working` (secondary) | Working | Running, Sending… |
-| NeedsYou | Filled dot | `attention` (amber), word in amber | Needs you | Proposed change; a parent session whose subagent stalled |
-| NotResponding | Ring with clock hands | `fault` (red), word in red | Not responding | |
-| Failed | ✕ | `fault`, word in red | Failed | Exit code 1 |
-| Idle | Hollow ring | `idle` | Idle | In the background |
-| Ended | Small filled square (stop) | `idle` | Ended | Exited, Cancelled |
-| Waiting | Ring of four dashes | `idle` | Waiting to start | Queued, Not run yet |
-| Unknown | Three dots | `idle` | Unknown | Not checked, No sample yet, Result unknown, Couldn't check |
-| Ready | Ring around a dot | `done` (green) | Ready | Accepting work, Online, Set up |
-| Done | Check | `done` | Done | Succeeded, Passed |
-| Paused | Two bars | `idle` | Paused | Not accepting work |
-| Offline | Dash | `idle` | Offline | Not installed |
+The table itself, its seven glyphs and the words, are in [Status and vocabulary (R7)](#status-and-vocabulary-r7).
 
 - Words: amber and red states carry their hue; Working, Ready and Done are secondary; the rest tertiary.
 - A parent session with a stalled subagent reads **Needs you** (amber, in the Needs you group, its ask from `child_stall_reason`); the stalled subagent itself reads Not responding, with Nudge, Stop and View output wherever it appears.
-- Sidebar rows show an Idle session's age instead of its ring (`has_glyph`); everywhere else every state draws its glyph.
-- Agent readiness uses the table everywhere (r6-qa): Ready is the target (Welcome's checklist and Agent setup alike), Not installed is Offline's dash, Not checked is Unknown's dots; a check means Done only.
+- r7-status (R7.3): Idle draws its ring everywhere, sidebar rows included (the age follows the title).
+- Agent readiness uses the table everywhere (r6-qa, r7-status): Ready shares Done's green check, Not installed is Offline's dash, Not checked is Unknown's ring; the word says which.
 - **Compact session list** (r6-qa): one line throughout, `layout.sidebar_row_compact` (24) tall. A Needs-you ask follows the title inline, faint, taking only the room the title leaves.
 - An ended session (`status::derive` keeps it Idle in the Ended group) shows Ended's glyph on its badge (`Status::badge`).
 - **Tokens:** `system().glyph_slot`, `signals().glyph`, `glyph_stroke`, `text.meta`.
@@ -480,13 +467,15 @@ R7.2: these four variants draw three tiers: Filled (`Primary`), Bordered (`Secon
 - **Purpose:** a count ("3", "99+").
 - **Anatomy:** a fully rounded chip, 12/600 tabular figures.
 - **States:** `CountTone::Neutral` (a wash with secondary text), `NeedsYou` (amber fill, only for what blocks the user now), `Failed` (red fill, a named failure).
+- **Tokens (R7.8):** `system().badge_height` 16, `badge_min` 18, `badge_pad` 4, `text.overline` / `weight.semibold`, `radius.full`. Section counts in the sidebar stay bare tertiary numerals; only Needs you's count is a badge.
 - **API:** `primitives::count_badge(label, CountTone, &p)`, `count_text(n)`.
 
 ### Meter
 
 - **Purpose:** a share of a limit (usage windows, context).
-- **Tiers:** below 80% `Intent::Neutral` (secondary); from 80% `Intent::Caution` (`roles.caution`, the warning hue, R6.2); at 100% `Intent::Danger` (red). `level_intent(format::level(pct))` and `level_color` pick them. Never amber: amber means "needs you".
-- **Usage in the sidebar footer (R6.5):** one line per account, a bar plus a number ("Claude ▬ 42%"), the number in the meter's tier colour. The name and number never truncate (the bar gives way); the full sentence ("42% of 5-hour limit used", and when it resets) is in the tooltip.
+- **Two colours (R7.4):** below 80% `Intent::Neutral`; from 80% (`system().meter_warn_pct`), the limit included, `Intent::Caution` (`roles.caution`, the warning hue). `level_intent(format::level(pct))` and `level_color` pick them, for usage, context and machine pressure alike. Never amber, never teal, never red: a spent limit says so in words.
+- **Tokens (R7.8):** `system().meter_height` 4, the track `wash.hover`, `radius.full`.
+- **Usage in the sidebar footer (R7.5):** one line beside the gear, the account nearest its limit, naming its window: "Claude · 5h limit ▬ 42%" (`format::window_name`, `format::usage_short`), the number in the meter's colour. Every account's sentence ("42% of 5-hour limit used", and when it resets) is in the tooltip; a click opens the details.
 - **API:** `primitives::meter(fraction, intent, &p)`.
 - **Don't:** use `badge(…)`, the old solid flag, for counts.
 
@@ -498,6 +487,74 @@ R7.2: these four variants draw three tiers: Filled (`Primary`), Bordered (`Secon
 - **Don't:** tint a keycap, or join keycaps without gaps.
 
 ---
+
+---
+
+## Status and vocabulary (R7)
+
+### The glyph table (`primitives::STATUS_TABLE`)
+
+Seven glyphs (`MAX_STATUS_GLYPHS`), 13 states. A glyph is shared only by states of one colour, and the word tells them apart. Every state draws its glyph wherever it is listed, Idle included.
+
+| Glyph | Shape | Colour | States (word) |
+|---|---|---|---|
+| Arc | Faint ring with a turning arc | `status.working` | Working ("Running", "Sending…") |
+| Dot | Filled dot | `attention` (amber) | Needs you |
+| Half | Ring, left half filled | `attention` (amber) | Ready for review |
+| Cross | ✕ | `fault` (red) | Failed ("Exit code 1"), Not responding |
+| Ring | Hollow ring | `idle` | Idle, Waiting to start, Unknown |
+| Check | Check | `done` (green) | Done ("Passed"), Ready ("Online", "Set up") |
+| Dash | Level dash | `idle` | Ended, Paused, Offline |
+
+### One status per element (R7.3)
+
+- `status::derive` gives each session one status, in this order: Offline, Paused/Ended (stopped), Failed, Needs you, Not responding, Needs you (stalled subagent), Working, **Ready for review**, Idle.
+- **Ready for review** (`StatusKind::Review`, `Bucket::Review`): the turn is over, the session is live, and the hub reports uncommitted changes (`Session::uncommitted`, row field `uncommittedChanges: {files, added, removed}`; design v2 only). It has its own group under Needs you in the sidebar ("Ready for review", its row's line "3 files changed · +48 −12", verb Review) and in the Fleet. `Bucket::wants_you()` is true for Needs you and Ready for review: "All clear" is false while either has a member, Alt+N stops on both, and the Fleet's Needs you filter shows both.
+- A parent rolls up its worst child: a run whose delegated subagent is still working shows the child's glyph, never a check beside a spinner.
+- A failed transcript row is red (`EventRow::failed`), even in a run that later recovered; the turn's summary says "1 failed, then passed".
+- The toolbar's failed count is the open failures only (`Workspace::open_failures`): a failure since passed or dismissed does not stay red.
+
+### Verification line (R7.3)
+
+The latest test run of a session, for decision cards and Fleet tiles (rendered by the decisions area).
+
+- **Data:** `Workspace::session_verification(&Session) -> Option<status::Verification>`. Pure form: `status::verification(&session.tasks, claim: Option<&str>)`. It reads the session's background tasks, keeps the test commands (`status::is_test_command`: cargo test, npm test, pytest, go test, vitest, jest…), and takes the newest by end time. `None` when the session ran no tests (or the last one was killed).
+- **`Verification`:** `outcome` (`TestOutcome::{Running, Passed, Failed}`), `command` ("cargo test", cut before its first flag), `at` (epoch ms), `contradicted` (the latest reply claims a pass after this failure: `status::claims_pass`; checked for the open conversation only).
+- **Words:** `v.text(now)` = "Tests failed 4m ago · cargo test", plus "· the reply says they pass" when contradicted. `v.headline(now)` is the part before the command; `v.kind()` is Failed / Done / Working.
+- **Render:** `system::verification_line(&v, now, &p) -> Div` (selector `verification-line`): a StatusCell, red ✕ and red word when it failed, the command and any contradiction as its tertiary detail. The sidebar row's tooltip carries `v.text(now)`.
+
+### Words (R7.4)
+
+One word per concept, everywhere:
+
+| Concept | Word | Not |
+|---|---|---|
+| A conversation with an agent | Session | Chat, thread, worker |
+| A helper a session starts | Subagent | Helper, child, delegate |
+| A shell or agent running beside the turn | Background task (toolbar label "Background tasks", `format::BACKGROUND_TASKS`, the panel's title) | Tasks, job |
+| Scheduled work | Job | Task, cron |
+| All sessions at once | Fleet | Dashboard |
+| Finished with changes to look at | Ready for review | Done, idle |
+| Asking a quiet agent to carry on | Nudge (ask to continue) (`format::NUDGE`) | Nudge, ping |
+| A machine's capacity | "1 of 4 agent slots in use", "0 of 2 command slots in use" (`hosts::Resources::{agent_words, shell_words}`) | "1/4 agents", "0/2 shell" |
+| A queue item that cannot start | "every agent slot is busy" (`hosts::plain_wait`) | "no free agent slot" |
+| Context in the composer | "Context 42% used" (`format::context_label`) | "Context 42% full", "ctx" |
+| A usage meter | "Claude · 5h limit 42%" | "Claude 42%" |
+
+- **Fleet counts:** the summary line ("2 need you · 1 to review · 3 working · 5 idle · 20 ended", `fleet::summary`) counts top-level sessions per group, job proposals in Needs you. Each filter's count is a sum of those numbers, and its tooltip says which (`fleet::filter_tip`).
+
+### Meta text (R7.8)
+
+- `format::meta(parts)` is the one join helper: it trims each part, drops empty parts and stray "·", and joins with `format::SEP` (" · "). Never start a line with "·" or build one with `join(" · ")` by hand in new code.
+- `format::EMPTY` ("—", an em dash) is the one empty-cell mark.
+
+### A calm sidebar (R7.5)
+
+- Rows that want the user (Needs you, Ready for review, a fault) are semibold in the primary text colour. The selected row is primary, regular. Every other row is regular in `text_secondary`.
+- Only those rows carry a second line (the ask, or the review's change counts).
+- Group labels are 12/500 tertiary. Needs you's count is the one badge (amber); other groups show a bare tertiary numeral.
+- Usage is one footer line (see Meter).
+- The collapsed rail lists Needs you, Ready for review and Working sessions; every tile and icon has a hover label (a session's title and project in its hover card, each destination's name in its tooltip).
 
 ## Patterns
 

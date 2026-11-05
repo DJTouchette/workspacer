@@ -55,7 +55,7 @@ pub(crate) use nav::NavItem;
 pub(crate) use overlay::{Placement, overlay};
 pub(crate) use page::{PageWidth, page_shell};
 pub(crate) use segmented::{Segment, segmented_control};
-pub(crate) use status_cell::StatusCell;
+pub(crate) use status_cell::{StatusCell, verification_line};
 // The re-exports are the system's API: some are only used by the
 // migration still to come (R5.4) or by the tests.
 #[allow(unused_imports)]

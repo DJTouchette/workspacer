@@ -96,6 +96,39 @@ pub struct Session {
     pub slash_commands: Vec<SlashCommand>,
     /// The pull request this session is linked to (the hub's `pullRequest`).
     pub pull_request: Option<crate::pull_requests::Link>,
+    /// r7-status (R7.3): the uncommitted changes in the session's working
+    /// tree as the hub last reported them (`uncommittedChanges`), which a
+    /// finished turn leaves for review. `None` when not reported.
+    pub uncommitted: Option<ChangeCounts>,
+}
+
+/// Files changed and lines added and removed, as a diff summary counts them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChangeCounts {
+    pub files: usize,
+    pub added: usize,
+    pub removed: usize,
+}
+
+impl ChangeCounts {
+    /// `{"files": 3, "added": 48, "removed": 12}`; `None` for anything else.
+    pub fn parse(value: &Value) -> Option<Self> {
+        let n = |key: &str| {
+            value
+                .get(key)
+                .and_then(Value::as_u64)
+                .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
+        };
+        Some(Self {
+            files: n("files")?,
+            added: n("added").unwrap_or(0),
+            removed: n("removed").unwrap_or(0),
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files == 0 && self.added == 0 && self.removed == 0
+    }
 }
 
 /// One entry of the composer's `/` menu.
@@ -719,6 +752,11 @@ impl Session {
         match field(&["pullRequest"]) {
             Some(link) => self.pull_request = crate::pull_requests::Link::parse(link),
             None if full => self.pull_request = None,
+            None => {}
+        }
+        match field(&["uncommittedChanges", "uncommitted_changes"]) {
+            Some(changes) => self.uncommitted = ChangeCounts::parse(changes),
+            None if full => self.uncommitted = None,
             None => {}
         }
         match field(&["collaborationMode", "collaboration_mode"]) {
