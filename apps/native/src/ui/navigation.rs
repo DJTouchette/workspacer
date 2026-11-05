@@ -24,6 +24,10 @@ pub(super) enum Screen {
     // r3-fleet
     /// Every live session as a grid of tiles (design v2).
     Fleet,
+    // r5-system (R5.3)
+    /// The design system's component gallery: every component in every
+    /// state. Dev builds only (`wks-native --gallery`); never in the nav.
+    Gallery,
 }
 
 impl Workspace {

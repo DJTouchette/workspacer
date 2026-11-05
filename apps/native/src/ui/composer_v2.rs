@@ -1005,11 +1005,13 @@ impl Workspace {
                 // Esc means Normal mode, so the hint is not offered.
                 let key = self.escape_stops().then_some("Esc");
                 match key {
+                    // r5-system (R5.2): Stop interrupts, so it is
+                    // Destructive, never the brand-blue Primary.
                     Some(key) => primitives::keyed_button(
                         "stop",
                         key,
                         label,
-                        ButtonVariant::Primary,
+                        system::stop_variant(),
                         ButtonSize::Small,
                         enabled,
                         &p,
@@ -1018,7 +1020,7 @@ impl Workspace {
                         "stop",
                         label,
                         None,
-                        ButtonVariant::Primary,
+                        system::stop_variant(),
                         ButtonSize::Small,
                         enabled,
                         &p,
@@ -1032,20 +1034,17 @@ impl Workspace {
                 .into_any_element()
             }
             SendSlot::Send => {
-                let deciding = self
-                    .selected_session()
-                    .is_some_and(|s| !self.decisions(s).is_empty());
+                // r5-system (R5.2): Send is the Primary exactly when it can
+                // send, and the disabled Primary otherwise: never outlined
+                // while it can act (it was Secondary under a decision).
+                let (variant, enabled) = system::send_state(can_send);
                 primitives::button(
                     "send",
                     label,
                     Some(IconName::ArrowUp),
-                    if deciding {
-                        ButtonVariant::Secondary
-                    } else {
-                        ButtonVariant::Primary
-                    },
+                    variant,
                     ButtonSize::Small,
-                    can_send,
+                    enabled,
                     &p,
                 )
                 .debug_selector(|| "composer-send".into())
@@ -1378,7 +1377,7 @@ impl Workspace {
         decision.pager = position_label(decisions, Decision::Approval);
         decision.details = Some(details);
         decision.note = self.extras.deny_open.then(|| {
-            self.render_deny_note_v2(enabled, "Deny and tell it", cx)
+            self.render_deny_note_v2(enabled, "Deny and tell it", ButtonVariant::Destructive, cx)
                 .into_any_element()
         });
         // While a note is being written, sending it is the primary.
@@ -1420,6 +1419,7 @@ impl Workspace {
         &self,
         enabled: bool,
         send: &'static str,
+        variant: ButtonVariant,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.palette();
@@ -1463,11 +1463,13 @@ impl Workspace {
                 })),
             )
             .child(
+                // r5-system (R5.2): a denial is Destructive, never blue;
+                // "Keep planning" stays the Primary.
                 primitives::button(
                     "deny-note-send",
                     send,
                     None,
-                    ButtonVariant::Primary,
+                    variant,
                     ButtonSize::Small,
                     enabled,
                     &p,
@@ -1700,7 +1702,7 @@ impl Workspace {
                 .into_any_element(),
         );
         decision.note = deny_open.then(|| {
-            self.render_deny_note_v2(enabled, "Keep planning", cx)
+            self.render_deny_note_v2(enabled, "Keep planning", ButtonVariant::Primary, cx)
                 .into_any_element()
         });
         decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan));

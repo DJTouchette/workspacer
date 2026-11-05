@@ -905,11 +905,6 @@ pub struct PageTokens {
     pub action_slot: f32,
     /// The same in a side panel's rows (Tasks: Stop, or the row's chevron).
     pub action_slot_compact: f32,
-    /// A short form page (New session, Agent setup) drops its whole column
-    /// by a share of the window's spare height, at most this much, so it
-    /// is not pinned to the top over an empty field. Content-independent:
-    /// opening a picker never moves the header.
-    pub short_top: f32,
 }
 
 impl Tokens {
@@ -927,7 +922,61 @@ impl Tokens {
             actions: 232.,
             action_slot: 88.,
             action_slot_compact: 56.,
-            short_top: 160.,
+        }
+    }
+}
+
+// r5-system (R5.1)
+/// The design system's component measures (`docs/design-system.md`): the
+/// pieces R5 added on top of the shared scale. Read with
+/// `p.tokens.system()`; v1 draws none of them, so both designs carry the
+/// v2 values. Every value sits on the 4/8 grid.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SystemTokens {
+    /// A status cell's fixed glyph slot (R5.1 StatusCell): every state's
+    /// glyph is centred in it, so the labels after it share one left edge.
+    pub glyph_slot: f32,
+    /// A NavItem row's height and its icon slot.
+    pub nav_row: f32,
+    pub nav_icon_slot: f32,
+    /// A NavItem tile (icon only, label in its tooltip).
+    pub nav_tile: f32,
+    /// Toggle track and knob (the knob sits `toggle_inset` inside the track).
+    pub toggle_width: f32,
+    pub toggle_height: f32,
+    pub toggle_knob: f32,
+    pub toggle_inset: f32,
+    /// The gap between a menu and its trigger.
+    pub menu_gap: f32,
+    /// Overlays (dialogs, the palette, the shortcuts sheet) open this far
+    /// below the window's top when placed at the top.
+    pub overlay_top: f32,
+    /// The palette and sheet width.
+    pub overlay_width: f32,
+    /// A tile's minimum width in a tile grid.
+    pub tile_min: f32,
+    /// How far a Destructive label moves toward the text colour while the
+    /// button is hovered or pressed, so it keeps ≥ 4.5:1 on the wash.
+    pub danger_lift: f32,
+}
+
+impl Tokens {
+    /// The design system's component measures.
+    pub const fn system(&self) -> SystemTokens {
+        SystemTokens {
+            glyph_slot: 16.,
+            nav_row: 32.,
+            nav_icon_slot: 16.,
+            nav_tile: 32.,
+            toggle_width: 32.,
+            toggle_height: 20.,
+            toggle_knob: 16.,
+            toggle_inset: 2.,
+            menu_gap: 4.,
+            overlay_top: 96.,
+            overlay_width: 640.,
+            tile_min: 280.,
+            danger_lift: 0.55,
         }
     }
 }
@@ -987,6 +1036,26 @@ mod tests {
         assert!(sig.glyph < t.layout.status_box);
         assert_eq!(sig.attention_bar, t.stroke.stripe);
         assert!(sig.warn_at < sig.fault_at);
+        // r5-system: the component measures sit on the 4/8 grid, and the
+        // toggle's knob fits its track with the inset on both sides.
+        let sys = t.system();
+        for v in [
+            sys.glyph_slot,
+            sys.nav_row,
+            sys.nav_icon_slot,
+            sys.nav_tile,
+            sys.toggle_width,
+            sys.toggle_height,
+            sys.toggle_knob,
+            sys.menu_gap,
+            sys.overlay_top,
+            sys.overlay_width,
+            sys.tile_min,
+        ] {
+            assert_eq!(v % 4., 0., "{v} is off the 4px grid");
+        }
+        assert_eq!(sys.toggle_knob + 2. * sys.toggle_inset, sys.toggle_height);
+        assert!(sys.glyph_slot >= t.layout.status_box);
     }
 
     // area-transcript

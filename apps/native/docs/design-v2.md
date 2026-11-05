@@ -1,5 +1,13 @@
 # Design v2 (preview)
 
+> **Source of truth: [`design-system.md`](design-system.md)** (R5). It
+> defines the foundations, every component (purpose, anatomy, states,
+> tokens, Rust API, do/don't) and the patterns, and it wins wherever this
+> page disagrees. This page keeps the switch, the history of each round and
+> the per-area notes. The component gallery (`wks-native --gallery`, shots
+> `system-gallery-<theme>`), the contrast test (`ui::system::contrast`) and
+> the design lint (`ui::system::lint`) enforce it.
+
 The native client is being redesigned behind one device-local setting. This
 page is the contract for everyone restyling an area: how the switch works,
 where the tokens live, which shared primitives exist, and the one rule.
@@ -80,7 +88,7 @@ everywhere:
 | Edges | `border` (dividers), `roles.border_strong` (inputs, secondary buttons, popovers), `roles.card_border` (the 1px card edge; visible in Light) |
 | Text tiers | `text`, `prose` (chat copy), `roles.text_secondary` (= `muted`), `roles.text_tertiary` (= `disabled`, so v1 code under v2 inherits the hierarchy) |
 | One accent | `accent` (links, focus = `roles.focus`), `primary` / `primary_hover` / `primary_pressed` (hover and press move away from the label colour), `on_primary` |
-| Status (R2.1) | `roles.status: StatusRoles { attention, fault, working, done, idle }`, aliased by `warning` / `error` / `busy` / `success` / `text_tertiary`: attention amber (Light #B45309), fault red, working neutral secondary grey (r4-calm; it was cyan/teal, which `busy` keeps), done muted green, idle grey. Status colours are only for status; **accent blue means interactive**. No purple |
+| Status (R2.1) | `roles.status: StatusRoles { attention, fault, working, done, idle }`, aliased by `warning` / `error` / `busy` / `success` / `text_tertiary`: attention amber (Light #A64C08 since R5; was #B45309), fault red, working neutral secondary grey (r4-calm; it was cyan/teal, which `busy` keeps), done muted green, idle grey. Status colours are only for status; **accent blue means interactive**. No purple |
 | Identity | `roles.provider` (= tertiary: provider glyphs and model names); avatars: `Palette::avatar_fill(name)` picks one of `roles.avatar[6]` (a curated ramp at one OKLCH lightness per theme) by `format::avatar_index`; monograms in `roles.avatar_text` |
 | Code | `code_block` = `surface` (with a `border` edge), `code_header` = raised, `code_inline` |
 
@@ -92,7 +100,7 @@ Everforest's accent is its blue (green is success only).
 `appearance::tests::v2_meets_the_direction_floors` enforces, in all 8 themes,
 on chat / surface / base / raised: text and prose ≥ 4.5:1, secondary ≥ 4.5:1,
 tertiary (meta text) ≥ 4.5:1, five distinct status roles with working ≥ 25°
-from the accent and from done, Light attention = #B45309, Nord's label on
+from the accent and from done, Light attention = #A64C08 (R5), Nord's label on
 primary ≥ 4.5:1, accent and status colours ≥ 3:1; primary button vs surface
 and chat ≥ 3:1; on-accent label ≥ 4.5:1 (rest, hover and pressed); visible
 borders and selection; a real tier hierarchy; code on the card surface;
@@ -205,6 +213,7 @@ capsule, palette, history, machines, children, fleet):
 | `Done` | Done | `status.done` (muted) | check |
 | `Paused` | Paused | `status.idle` | pause bars (machines, jobs) |
 | `Offline` | Offline | `status.idle` | dash (machines, the hub) |
+| `Ready` (R5) | Ready | `status.done` | ring with a dot (healthy: accepting work, online); `StatusCell` also draws Idle as a hollow ring |
 
 - `StatusKind::label()` is the canonical label function; `StatusBadge::label(…)`
   overrides it only for a more specific fact ("Succeeded 3h ago", "Cancelled").
@@ -237,7 +246,7 @@ capsule, palette, history, machines, children, fleet):
 | `Primary` | filled `primary`, `on_primary` label (≥ 4.5:1 rest/hover/pressed in every theme) |
 | `Secondary` | 1px `border_strong` edge, no fill, `text` label; neutral wash on hover |
 | `Tertiary` | text only (`text_secondary` → `text` on hover) |
-| `Destructive` | the Secondary shape with `error` text |
+| `Destructive` | the Secondary shape with `error` text; hover/press take the neutral wash and lift the label toward `text` (R5) |
 
 - No other variants (the filled `Danger` and the `Ghost`/`DangerGhost` names
   are gone). `button_label_color(variant, enabled, &p)` gives a tier's label colour.

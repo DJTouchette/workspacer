@@ -151,3 +151,14 @@ Recommended key: **`design_refresh`** (a boolean, default `false`). Steps:
    re-run `configure_theme` when it changes.
 5. Capture: `shoot-all.py --setting design_refresh=true --out ...` and compare
    with a baseline run of the same commit.
+
+## Component gallery (r5-system)
+
+`system-gallery-<theme>` shots (one per built-in theme) launch the app with
+`--gallery`, which opens `Screen::Gallery` (debug builds only) in a taller
+window (`GALLERY_HEIGHT`). A shot can pass extra app arguments with its
+`app_args` key. The gallery renders every component of
+`docs/design-system.md` in every state:
+
+    python3 apps/native/scripts/design-shots/shoot-all.py --no-build \
+        --setting design_v2=true --only system-gallery --out /tmp/gallery

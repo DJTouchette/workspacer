@@ -940,13 +940,8 @@ impl Workspace {
             // Every feature page shares one frame under v2: the shared page
             // header (back link, title, description, actions) in the shared
             // page width (`docs/design-v2.md`, "Migrating a screen").
-            // R4.5: a short form page drops below the shared top.
-            let top = if self.screen == Screen::Setup {
-                primitives::short_page_top(f32::from(window.viewport_size().height), &p)
-            } else {
-                0.
-            };
-            return self.feature_page_v2(title.to_owned(), description, notice, body, top, cx);
+            // r5-system (R5.1 PageShell): one top for every page.
+            return self.feature_page_v2(title.to_owned(), description, notice, body, cx);
         }
         let header = self.page_header(
             Some(back),
@@ -2569,7 +2564,6 @@ impl Workspace {
         description: Option<SharedString>,
         notice: Option<Div>,
         body: Div,
-        top: f32,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.palette();
@@ -2587,15 +2581,16 @@ impl Workspace {
                 .child(self.session_summary_line(s)),
             _ => header,
         };
-        // r3-pages: forms keep a readable measure, left-aligned under the
-        // shared header, while tables use the page's width.
-        let body = match self.screen {
+        // r3-pages: forms keep a readable measure, left-aligned, while
+        // tables use the page's width. r5-system (PageShell): the header
+        // takes the same width rule, so a form's actions sit on its edge.
+        let width = match self.screen {
             Screen::Model
             | Screen::Session
             | Screen::Handoff
             | Screen::PullRequest
-            | Screen::Setup => div().w_full().max_w(px(t.pages().form)).child(body),
-            _ => body,
+            | Screen::Setup => system::PageWidth::Form,
+            _ => system::PageWidth::Wide,
         };
         if self.screen == Screen::Recent {
             // Its rows are the page's own children, so the keyboard cursor
@@ -2615,14 +2610,13 @@ impl Workspace {
             "feature-view",
             t.pages().wide,
             false,
-            div()
-                .pt(px(top))
-                .flex()
-                .flex_col()
-                .gap(px(t.space.xxl))
-                .child(header)
-                .children(notice)
-                .child(body),
+            system::page_shell(
+                header,
+                notice.map(IntoElement::into_any_element),
+                div().w_full().child(body),
+                width,
+                &p,
+            ),
         )
     }
 

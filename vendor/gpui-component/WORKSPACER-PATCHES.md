@@ -195,3 +195,9 @@ Native interaction polish also patches:
   costs a comparison per visible message instead of a channel send.
 
 Reapply these interaction changes explicitly when upgrading the component.
+
+- `ThemeColor::switch_thumb_off` (r5-system): an optional thumb colour for an
+  unchecked `Switch`. `None` (the default, and what every upstream theme
+  deserializes to) keeps upstream behaviour; Workspacer's design v2 sets it
+  so an off switch is a quiet track with a darker knob, never a heavy filled
+  pill that reads as "on" (`apps/native/src/ui.rs`, `configure_theme_v2`).

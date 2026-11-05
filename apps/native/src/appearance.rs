@@ -478,15 +478,17 @@ impl Appearance {
                 accent: 0x1f5fd6,
                 primary: 0x2563eb,
                 on_primary: 0xffffff,
-                attention: 0xb45309,
+                attention: 0xa64c08,
                 fault: 0xc81e1e,
-                done: 0x2f7a4f,
+                done: 0x2c734a,
                 working: 0x0d7a80,
                 user: 0xf1f1f3,
                 code_inline: 0xefeff1,
             },
             // Polar night surfaces with frost as the one accent: the primary
             // is Nord8 with nord0 text, bright enough to never read disabled.
+            // r5-system: it was Nord9 (#81a1c1), whose fill sat 3.7:1 off
+            // the raised surface and read as a disabled chip.
             Self::Nord => V2Colors {
                 base: 0x2e3440,
                 chat: 0x292e39,
@@ -502,8 +504,8 @@ impl Appearance {
                 prose: 0xd8dee9,
                 secondary: 0xcbd1db,
                 tertiary: 0xaeb6c3,
-                accent: 0x81a1c1,
-                primary: 0x81a1c1,
+                accent: 0x88c0d0,
+                primary: 0x88c0d0,
                 on_primary: 0x1b1f27,
                 attention: 0xebcb8b,
                 fault: 0xe8a4aa,
@@ -581,7 +583,7 @@ impl Appearance {
                 primary: 0x7daea3,
                 on_primary: 0x1d2021,
                 attention: 0xd8a657,
-                fault: 0xec7670,
+                fault: 0xf88070,
                 done: 0xa9b665,
                 working: 0x89b482,
                 user: 0x32302f,
@@ -603,11 +605,11 @@ impl Appearance {
                 prose: 0xd3c6aa,
                 secondary: 0xc7c9b8,
                 tertiary: 0xb4b7aa,
-                accent: 0x7fbbb3,
+                accent: 0x88c0b8,
                 primary: 0x7fbbb3,
                 on_primary: 0x232a2e,
                 attention: 0xdbbc7f,
-                fault: 0xf2949a,
+                fault: 0xf39fa4,
                 done: 0xa7c080,
                 working: 0x83c092,
                 user: 0x374145,
@@ -628,12 +630,12 @@ impl Appearance {
                 prose: 0x4c4f69,
                 secondary: 0x4c4f66,
                 tertiary: 0x5a5d72,
-                accent: 0x1e66f5,
+                accent: 0x1955cb,
                 primary: 0x1a5fe8,
                 on_primary: 0xffffff,
-                attention: 0x9a5400,
-                fault: 0xc8102f,
-                done: 0x3d7a3a,
+                attention: 0x8e4d00,
+                fault: 0xba0f2c,
+                done: 0x346932,
                 working: 0x157f86,
                 user: 0xe4e7ed,
                 code_inline: 0xe4e7ed,
@@ -1367,8 +1369,9 @@ mod tests {
         let light = Appearance::Light.palette_v2();
         assert!(contrast(light.roles.card_border, light.surface) >= 1.25);
         assert!(contrast(light.warning, light.surface) >= 4.5);
-        // R2.2: Light amber text sits near amber-700 (#B45309).
-        assert_eq!(light.roles.status.attention, 0xb45309);
+        // R2.2: Light amber text sits near amber-700; r5-system darkened it
+        // a step (#A64C08) so a "Needs you" word reads on a selected row.
+        assert_eq!(light.roles.status.attention, 0xa64c08);
         // Nord: a primary that never reads as disabled, with a ≥ 4.5:1 label.
         let nord = Appearance::Nord.palette_v2();
         let (_, saturation) = hue_saturation(nord.primary);

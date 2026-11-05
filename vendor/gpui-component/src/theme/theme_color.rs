@@ -155,6 +155,11 @@ pub struct ThemeColor {
     pub switch: Hsla,
     /// Switch thumb background color.
     pub switch_thumb: Hsla,
+    /// Workspacer patch: the thumb's colour while the switch is off, when it
+    /// should differ from the on thumb (an off knob that reads as "off" on a
+    /// quiet track). `None` keeps upstream behaviour: `switch_thumb` always.
+    #[serde(default)]
+    pub switch_thumb_off: Option<Hsla>,
     /// Tab background color.
     pub tab: Hsla,
     /// Tab active background color.

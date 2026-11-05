@@ -95,7 +95,12 @@ impl RenderOnce for Switch {
 
         let (bg, toggle_bg) = match checked {
             true => (cx.theme().primary, cx.theme().switch_thumb),
-            false => (cx.theme().switch, cx.theme().switch_thumb),
+            false => (
+                cx.theme().switch,
+                cx.theme()
+                    .switch_thumb_off
+                    .unwrap_or(cx.theme().switch_thumb),
+            ),
         };
 
         let (bg, toggle_bg) = if self.disabled {

@@ -61,6 +61,10 @@ SETTINGS_SECTIONS_V2 = ["Appearance", "Typography", "Workspace", "Remote",
                         "Agents", "Keyboard", "Labs", "About"]  # r2-pages: Labs
 
 
+# r5-system: the gallery shots' window height (logical px).
+GALLERY_HEIGHT = 1800
+
+
 def nav(letter):
     """Normal mode, then the vim `g <letter>` jump (see bind_keys in ui.rs)."""
     return [("key", "Escape"), ("keys", "g", letter), ("sleep", 1.5)]
@@ -257,6 +261,13 @@ def shots():
         fleet + [("click", 1350, 78), ("sleep", 0.5)])
     add("approvals-fleet-details", "Fleet: the approval tile's Details open in place",
         fleet + [("click", 482, 540), ("sleep", 0.5)])  # r4-integration: re-measured
+    # r5-system (R5.3): the component gallery (`wks-native --gallery`, dev
+    # builds only) in every built-in theme. Taller window: one frame holds
+    # every component in every state.
+    for theme in ("dark", "light", "nord", "tokyo-night", "catppuccin", "gruvbox",
+                  "everforest", "catppuccin-latte"):
+        add(f"system-gallery-{theme}", f"Component gallery (design system), {theme}",
+            theme=theme, app_args=["--gallery"], height=GALLERY_HEIGHT)
     return s
 
 
@@ -429,6 +440,7 @@ class Rig:
                     stdout=subprocess.DEVNULL, stderr=log, env=env))
                 wait_port(port)
                 command = [str(self.app), "--bus", f"ws://127.0.0.1:{port}/bus"]
+            command += shot.get("app_args", [])  # r5-system: e.g. --gallery
             app = subprocess.Popen(command, stdout=log, stderr=log, env=env)
             procs.append(app)
             window = subprocess.check_output(

@@ -167,16 +167,79 @@ fn button_colors(variant: ButtonVariant, enabled: bool, p: &Palette) -> ButtonCo
             fg: [p.roles.text_secondary, p.text],
             ring: None,
         },
+        // r5-system: hover and press take the neutral wash (a red wash
+        // pulled the red label under 4.5:1 in six themes).
+        // The label lifts toward the text colour on the wash.
         ButtonVariant::Destructive => ButtonColors {
-            bg: [
-                clear,
-                wash(p.error, w.tone_rest),
-                wash(p.error, w.tone_hover),
+            bg: [clear, tonal(p, w.hover), tonal(p, w.pressed)],
+            fg: [
+                p.error,
+                super::system::composite(wash(p.text, p.tokens.system().danger_lift), p.error),
             ],
-            fg: [p.error; 2],
             ring: Some(p.roles.border_strong),
         },
     }
+}
+
+// r5-system
+/// A control's interaction state, for static specimens (the gallery) and
+/// the contrast test. Focus is drawn by `interactive_control`'s ring on top
+/// of any of these.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ControlState {
+    Rest,
+    Hover,
+    Pressed,
+    Disabled,
+}
+
+impl ControlState {
+    pub(crate) const ALL: [Self; 4] = [Self::Rest, Self::Hover, Self::Pressed, Self::Disabled];
+}
+
+/// What a button tier paints in `state`: its fill (may be translucent:
+/// composite it over the surface), its label colour and its 1px edge.
+pub(crate) fn button_paint(
+    variant: ButtonVariant,
+    state: ControlState,
+    p: &Palette,
+) -> (Hsla, u32, Option<u32>) {
+    let c = button_colors(variant, state != ControlState::Disabled, p);
+    match state {
+        ControlState::Rest | ControlState::Disabled => (c.bg[0], c.fg[0], c.ring),
+        ControlState::Hover => (c.bg[1], c.fg[1], c.ring),
+        ControlState::Pressed => (c.bg[2], c.fg[1], c.ring),
+    }
+}
+
+/// A button drawn in a fixed `state` (no interaction): the gallery's
+/// specimens of hover and pressed.
+pub(crate) fn button_specimen(
+    label: impl Into<SharedString>,
+    variant: ButtonVariant,
+    size: ButtonSize,
+    state: ControlState,
+    p: &Palette,
+) -> Div {
+    let t = p.tokens;
+    let (bg, fg, edge) = button_paint(variant, state, p);
+    div()
+        .relative()
+        .h(px(size.height(p)))
+        .px(px(size.padding(p)))
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .rounded(px(t.radius.control))
+        .text_size(px(size.text(p)))
+        .font_weight(FontWeight(t.weight.medium))
+        .bg(bg)
+        .text_color(rgb(fg))
+        .border(px(t.stroke.focus))
+        .border_color(gpui::transparent_black())
+        .when_some(edge, |d, edge| d.child(ring(p, edge, Shape::Whole)))
+        .child(label.into())
 }
 
 /// The label colour of a button variant at rest: what its icons and keycap
@@ -217,7 +280,7 @@ fn ring(p: &Palette, color: u32, shape: Shape) -> Div {
 }
 
 /// Apply a variant's fill, text and hover/press states to a control.
-fn button_states(
+pub(crate) fn button_states(
     control: Stateful<Div>,
     variant: ButtonVariant,
     enabled: bool,
@@ -487,26 +550,12 @@ pub(crate) fn split_button_with_menu(
     menu: Option<Div>,
     p: &Palette,
 ) -> Div {
-    let gap = p.tokens.space.xs;
-    div()
-        .relative()
-        .flex_shrink_0()
-        .child(split_button(main, chevron, p))
-        .when_some(menu, |d, menu| {
-            d.child(
-                div()
-                    .absolute()
-                    .top(relative(1.))
-                    .right_0()
-                    .child(gpui::deferred(
-                        gpui::anchored()
-                            .anchor(gpui::Corner::TopRight)
-                            .offset(gpui::point(px(0.), px(gap)))
-                            .snap_to_window_with_margin(px(gap))
-                            .child(menu),
-                    )),
-            )
-        })
+    super::system::anchored_menu(
+        split_button(main, chevron, p),
+        menu,
+        super::system::MenuAnchor::BelowEnd,
+        p,
+    )
 }
 
 /// The "…" trigger for a row's or card's overflow menu: where Remove,
@@ -529,10 +578,21 @@ pub(crate) fn tooltip_view(
     shortcut: Option<&'static str>,
     p: &Palette,
 ) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
+    tooltip_view_keys(label, shortcut.map(SharedString::from), p)
+}
+
+/// [`tooltip_view`] with an owned shortcut (r5-system: `IconButton`,
+/// `NavItem`).
+pub(crate) fn tooltip_view_keys(
+    label: impl Into<SharedString>,
+    shortcut: Option<SharedString>,
+    p: &Palette,
+) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
     let label: SharedString = label.into();
     let p = *p;
     move |window, cx| {
         let label = label.clone();
+        let shortcut = shortcut.clone();
         Tooltip::element(move |_, _| {
             let t = p.tokens;
             div()
@@ -542,7 +602,7 @@ pub(crate) fn tooltip_view(
                 .text_size(px(t.text.meta))
                 .text_color(rgb(p.text))
                 .child(label.clone())
-                .when_some(shortcut, |d, keys| {
+                .when_some(shortcut.clone(), |d, keys| {
                     d.child(
                         div()
                             .flex()
@@ -931,7 +991,8 @@ pub(crate) fn popover(p: &Palette) -> Div {
         .bg(rgb(p.roles.raised))
         .border(px(t.stroke.hairline))
         .border_color(rgb(p.roles.border_strong))
-        .shadow(elevation(p, t.elevation.floating))
+        // r5-system (R5.1): menus and popovers are the Overlay level.
+        .shadow(super::system::Level::Overlay.shadow(p))
 }
 
 /// A menu: a popover of [`menu_item`]s at the menu width.
@@ -1128,10 +1189,15 @@ pub(crate) enum StatusKind {
     Paused,
     /// Not reachable (a machine, the hub).
     Offline,
+    // r5-system (R5.1 StatusCell)
+    /// Healthy and accepting work: a machine online, an agent set up, a
+    /// service reachable. The positive state a table's most common row
+    /// shows, so it has a glyph like every other state.
+    Ready,
 }
 
 impl StatusKind {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::Working,
         Self::NeedsYou,
         Self::NotResponding,
@@ -1140,6 +1206,7 @@ impl StatusKind {
         Self::Done,
         Self::Paused,
         Self::Offline,
+        Self::Ready,
     ];
 
     /// The canonical word for this state: the only one any surface uses.
@@ -1153,6 +1220,7 @@ impl StatusKind {
             Self::Done => "Done",
             Self::Paused => "Paused",
             Self::Offline => "Offline",
+            Self::Ready => "Ready",
         }
     }
 
@@ -1162,7 +1230,7 @@ impl StatusKind {
         match self {
             Self::NeedsYou => r.attention,
             Self::Working => r.working,
-            Self::Done => r.done,
+            Self::Done | Self::Ready => r.done,
             Self::Failed | Self::NotResponding => r.fault,
             Self::Idle | Self::Paused | Self::Offline => r.idle,
         }
@@ -1175,7 +1243,7 @@ impl StatusKind {
         match self {
             Self::NeedsYou => r.attention,
             Self::Failed | Self::NotResponding => r.fault,
-            Self::Working | Self::Done => p.roles.text_secondary,
+            Self::Working | Self::Done | Self::Ready => p.roles.text_secondary,
             Self::Idle | Self::Paused | Self::Offline => p.roles.text_tertiary,
         }
     }
@@ -1232,6 +1300,35 @@ pub(crate) fn status_glyph_sized(kind: StatusKind, size: f32, p: &Palette) -> Op
     )
 }
 
+/// r5-system (R5.1 StatusCell): the glyph for `kind` at `size`, for every
+/// state: Idle is a hollow ring here. Status cells use it; rows that show
+/// an age instead of an idle glyph keep [`status_glyph`].
+pub(crate) fn status_mark(kind: StatusKind, size: f32, p: &Palette) -> Div {
+    let sig = p.tokens.signals();
+    let color = Hsla::from(rgb(kind.color(p)));
+    let track = color.opacity(sig.track_alpha);
+    let phase = if kind == StatusKind::Working {
+        super::motion::looping(std::time::Duration::from_millis(sig.spin_ms as u64), 0.)
+    } else {
+        0.
+    };
+    div()
+        .size(px(size))
+        .flex_shrink_0()
+        .debug_selector(move || format!("status-mark-{kind:?}"))
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    for (path, fill) in glyph_paths(kind, bounds, sig, phase) {
+                        window.paint_path(path, if fill == Paint::Track { track } else { color });
+                    }
+                },
+            )
+            .size_full(),
+        )
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Paint {
     Ink,
@@ -1276,7 +1373,28 @@ fn glyph_paths(
     };
     let mut out: Vec<(PathBuilder, Paint)> = Vec::new();
     match kind {
-        StatusKind::Idle => {}
+        // r5-system: Idle draws a hollow ring where a glyph is always shown
+        // ([`status_mark`]: status cells); `status_glyph` still gives none.
+        StatusKind::Idle => {
+            let mut b = PathBuilder::stroke(px_raw(stroke));
+            ring(&mut b);
+            out.push((b, Paint::Ink));
+        }
+        // Healthy: a ring around a dot (a "target"), so it never shares the
+        // amber filled dot's shape.
+        StatusKind::Ready => {
+            let mut b = PathBuilder::stroke(px_raw(stroke));
+            ring(&mut b);
+            out.push((b, Paint::Ink));
+            let mut dot = PathBuilder::fill();
+            let d = r * 0.45;
+            let radii = point(px_raw(d * s), px_raw(d * s));
+            dot.move_to(at(c, c - d));
+            dot.arc_to(radii, px_raw(0.), false, true, at(c, c + d));
+            dot.arc_to(radii, px_raw(0.), false, true, at(c, c - d));
+            dot.close();
+            out.push((dot, Paint::Ink));
+        }
         StatusKind::NeedsYou => {
             let mut b = PathBuilder::fill();
             let full = point(px_raw(s / 2.), px_raw(s / 2.));
@@ -1492,14 +1610,6 @@ pub(crate) fn back_link_enabled(
         enabled,
         p,
     )
-}
-
-/// R4.5: how far a short form page's column drops below the shared page
-/// top in a window `viewport_h` tall: a quarter of the height beyond 600,
-/// capped at `pages().short_top`. It reads the window, never the content,
-/// so a picker opening inside the form does not move the header.
-pub(crate) fn short_page_top(viewport_h: f32, p: &Palette) -> f32 {
-    ((viewport_h - 600.) * 0.25).clamp(0., p.tokens.pages().short_top)
 }
 
 /// The shared full-page content column: `layout.page_width` wide at most,

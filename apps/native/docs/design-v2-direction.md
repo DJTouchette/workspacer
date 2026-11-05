@@ -280,6 +280,7 @@ Round 3 council (all five reviewers, average 7.3, up from 6.9) agreed on one roo
 Round 4 averaged 7.3 (flat). Reviewers who judge workflow went up (7.6, 7.6, ranking us first). Reviewers who judge craft held or dropped (7.1, 7.1, 7.0), and almost every defect they named is the same component drawn two ways. Round 5 stops fixing screens one at a time and builds an **enforced design system**: one written spec, one component per job, a gallery that renders every component in every theme, and tests that fail when a surface styles locally.
 
 ## R5.1 The spec: `docs/design-system.md`
+Written: [`design-system.md`](design-system.md).
 This is the single source of truth, and it supersedes the token notes in `design-v2.md` wherever they disagree. It defines:
 - **Foundations:**
   - colour roles

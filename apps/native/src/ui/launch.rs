@@ -2195,18 +2195,18 @@ impl Workspace {
                         ),
                 )
             });
-        // A short form: the column drops by a share of the window's spare
-        // height (never the content's, so a chip's panel never moves it).
-        let top = primitives::short_page_top(f32::from(window.viewport_size().height), &p);
+        // r5-system (R5.1 PageShell): the shared top and the form width
+        // rule for the header too, like every other form page.
         let content = div()
             .debug_selector(|| "launch-content".into())
             .w_full()
-            .pt(px(top))
-            .flex()
-            .flex_col()
-            .gap(px(t.space.xxl))
-            .child(header)
-            .child(form);
+            .child(system::page_shell(
+                header,
+                None,
+                form,
+                system::PageWidth::Form,
+                &p,
+            ));
         div()
             .id("new-session-form")
             .flex_1()

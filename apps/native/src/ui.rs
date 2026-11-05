@@ -29,6 +29,7 @@ mod navigation;
 mod plan;
 mod portrait;
 pub(crate) mod primitives;
+// r5-system: the design system's components (`docs/design-system.md`).
 mod project_groups;
 mod project_links;
 mod projects;
@@ -47,6 +48,7 @@ mod slash;
 mod smooth_scroll;
 mod states;
 mod syntax;
+pub(crate) mod system;
 mod tasks;
 mod terminal;
 mod titles;
@@ -250,6 +252,8 @@ pub fn configure_theme(
         p.surface
     })
     .into();
+    // r5-system: v2 gives an off switch its own knob; v1 keeps one thumb.
+    theme.colors.switch_thumb_off = None;
     theme.colors.popover = rgb(p.surface).into();
     theme.colors.popover_foreground = rgb(p.text).into();
     // Text selection is translucent and painted beneath the glyphs (see the
@@ -281,14 +285,18 @@ fn configure_theme_v2(c: &mut gpui_component::ThemeColor, p: &Palette, dark: boo
     c.secondary_active = tone(p.text, w.pressed);
     c.secondary_foreground = solid(p.text);
     c.primary_active = solid(p.primary_pressed);
-    // Switch: an off track that reads on cards (light themes need the
-    // tertiary grey under a white thumb); the on track is `primary`.
-    c.switch = solid(if dark {
-        r.border_strong
-    } else {
-        r.text_tertiary
-    });
-    c.switch_thumb = solid(if dark { p.text } else { p.surface });
+    // r5-system (R5.1 Toggle): the one toggle's colours, so gpui-component's
+    // Switch and `system::toggle` agree. On: the primary track with an
+    // `on_primary` knob. Off: a quiet track with a secondary-grey knob, so
+    // an off switch never reads as a heavy filled "on" pill (Light used a
+    // dark tertiary track under a white knob).
+    let (on, off) = (
+        system::toggle_colors(true, true, p),
+        system::toggle_colors(false, true, p),
+    );
+    c.switch = solid(off.track);
+    c.switch_thumb = solid(on.knob);
+    c.switch_thumb_off = Some(solid(off.knob));
     c.muted = solid(p.surface);
     c.muted_foreground = solid(r.text_secondary);
     c.border = solid(p.border);
@@ -2200,6 +2208,8 @@ impl Render for Workspace {
                 Screen::Fleet if self.design().is_v2() => {
                     self.render_fleet(window, cx).into_any_element()
                 }
+                // r5-system: the component gallery (dev builds only).
+                Screen::Gallery => self.render_gallery().into_any_element(),
                 Screen::Fleet | Screen::Conversation => self
                     .render_conversation(narrow, compact, window, cx)
                     .into_any_element(),

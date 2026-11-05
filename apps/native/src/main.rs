@@ -62,6 +62,10 @@ struct Args {
     /// as Settings → Appearance → New design (preview) does.
     #[arg(long)]
     design_v2: bool,
+    /// Open the design system's component gallery (dev builds only; the
+    /// design shots use it). Not a user-facing screen.
+    #[arg(long, hide = true)]
+    gallery: bool,
 }
 
 fn token_path() -> Option<PathBuf> {
@@ -405,6 +409,9 @@ fn main() -> Result<()> {
                         view.configure_settings(settings, settings_path, project_scope, window, cx);
                         view.configure_local(local_requested, keep_running.clone());
                         view.force_design(forced_design);
+                        if args.gallery && cfg!(debug_assertions) {
+                            view.open_gallery();
+                        }
                         view.set_appearance(appearance, window, cx);
                         view.open_session(args.session);
                         view.start_update_checks(cx);
