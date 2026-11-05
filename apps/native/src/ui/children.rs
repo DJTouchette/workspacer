@@ -1387,11 +1387,12 @@ impl Workspace {
         }
         let stall = self.viewed_stall(timing::now_ms())?;
         let p = self.palette();
-        let on_key: OnStallKey = std::rc::Rc::new(|this: &mut Self, key, cx: &mut Context<Self>| {
-            if let Some(stall) = this.viewed_stall(timing::now_ms()) {
-                this.stall_act(&stall, key, cx);
-            }
-        });
+        let on_key: OnStallKey =
+            std::rc::Rc::new(|this: &mut Self, key, cx: &mut Context<Self>| {
+                if let Some(stall) = this.viewed_stall(timing::now_ms()) {
+                    this.stall_act(&stall, key, cx);
+                }
+            });
         let decision = self.stall_decision(
             &stall,
             "child-stall",

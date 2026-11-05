@@ -123,7 +123,11 @@ impl Choice {
                 p,
             )
             .gap(px(t.space.md))
-            .child(dim_keycap(key, variant == ButtonVariant::Primary && self.enabled, p)),
+            .child(dim_keycap(
+                key,
+                variant == ButtonVariant::Primary && self.enabled,
+                p,
+            )),
             None => primitives::button(
                 self.id.clone(),
                 self.label.clone(),
@@ -685,9 +689,7 @@ impl Decision {
         // R6.3: the risk is a visible chip, a fact about the request and
         // not a status: never amber or red. One that deletes files reads
         // neutral-strong (`caution`) and asks for a second press.
-        let risk = self
-            .risk
-            .map(|risk| div().flex().child(risk_chip(risk, p)));
+        let risk = self.risk.map(|risk| div().flex().child(risk_chip(risk, p)));
         let live = self.keys_live;
         let confirms = self.risk.is_some_and(Risk::confirms);
         if confirms {
@@ -813,6 +815,7 @@ impl Decision {
             // The table row's slot: the answer alone, right-aligned.
             return div()
                 .debug_selector(move || selector.to_string())
+                .w_full()
                 .flex()
                 .flex_nowrap()
                 .items_center()
@@ -821,8 +824,11 @@ impl Decision {
                 .children(pair)
                 .children(alternates);
         }
-        let answer = (pair.is_some() || !alternates.is_empty())
-            .then(|| primitives::waiting_actions(p).children(pair).children(alternates));
+        let answer = (pair.is_some() || !alternates.is_empty()).then(|| {
+            primitives::waiting_actions(p)
+                .children(pair)
+                .children(alternates)
+        });
         // Then the quiet row: each grant with its exact rule and scope,
         // and Details (it decides nothing) at the end.
         let grants: Vec<Div> = if noting {
@@ -949,11 +955,12 @@ fn grant_row(grant: &Grant, keys: bool, live: bool, p: &Palette) -> Div {
         .flex_wrap()
         .items_center()
         .gap(px(t.space.xs))
-        .child(
-            div()
-                .flex_shrink_0()
-                .child(grant.choice.render(ButtonVariant::Tertiary, keys, live, p)),
-        )
+        .child(div().flex_shrink_0().child(grant.choice.render(
+            ButtonVariant::Tertiary,
+            keys,
+            live,
+            p,
+        )))
         .child(
             div()
                 .flex_1()
@@ -976,7 +983,9 @@ fn deny_control(
     p: &Palette,
 ) -> Div {
     let Some(note) = note else {
-        return div().flex_shrink_0().child(deny.render(variant, keys, live, p));
+        return div()
+            .flex_shrink_0()
+            .child(deny.render(variant, keys, live, p));
     };
     let (main, chevron) = primitives::split_button_parts(
         "deny",

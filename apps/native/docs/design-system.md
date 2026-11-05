@@ -366,9 +366,11 @@ Each entry gives:
   - `primitives::card(&p)`, `CardHead::new(title).icon(..).avatar(..).status(..).meta(..).action(..).render(&p)`.
   - `system::tile(&p)` (a card at natural height) inside `system::tile_grid(columns, &p)` (top-aligned, never stretched).
   - `system::waiting_tile(&p)`: a tile that waits on the user (the `border_strong` edge and the attention bar).
+  - `system::waiting_tile_focused(&p)` (r6): the same tile while it has the keyboard focus. **One accent per card:** the focus ring carries it, so the attention bar steps aside (the inset stays, nothing moves).
   - `system::tile_frame(id, focused, &p)`: the frame a tile sits in, carrying the 2px focus ring outside the tile.
+  - `system::even_tile_grid(columns, &p)` (r6, R6.7): a grid whose tiles in one row share its height; give the frame `.flex().flex_col()` and the tile `.flex_1()`. Content stays at the top (the decision first); the room left falls below it.
   - `primitives::inset(&p)` for the one recessed well inside a card.
-- **Do:** use `tile_grid` for cards of different lengths (Fleet).
+- **Do:** use `tile_grid` for cards of different lengths that do not sit side by side as peers; `even_tile_grid` for a supervising grid (Fleet), where a row reads as one band.
 - **Don't:**
   - Nest cards.
   - Stretch a short card to its row (that is `page_grid`; use it only for equal content).
@@ -395,11 +397,17 @@ Each entry gives:
   - The reason.
   - The full request (mono, when it is long).
   - Where it applies (folder · host, tertiary).
-  - The risk cue, when one is plain from the request: "Deletes files", "Writes outside the project", "Uses the network" (secondary text with a warning glyph; never amber or red). `decision::risk(approval, cwd)` derives it.
+  - The risk chip, when one is plain from the request: "Deletes files", "Writes outside the project", "Uses the network" (r6: a visible chip, its glyph and words on a quiet wash; "Deletes files" in the neutral-strong `caution`, the others secondary; never amber or red). `decision::risk(approval, cwd)` derives it.
   - The body, when there is one: a plan, a question's option list or its answer field.
   - The answer row: **Allow (Primary) and Deny (Destructive) side by side on one line, never wrapped apart**, then any Secondary alternative ("Approve · run with Codex"). Deny may be a split with "Deny with note…".
   - The quiet row: each **"Always allow"** as a short Tertiary button with the rule and scope it saves beside it ("Saves `cargo test *` · this session"; the full explanation in its tooltip), then **Details** (Tertiary). Details expands **below** its toggle and shows only what the card does not already say (the tool, other arguments, the exact provider rule).
-- **States:** keys on or off (keycaps appear only on the decision that the number keys answer: the dock's top decision, the focused Fleet tile; the numbers follow reading order: 1 Allow and 2 Deny side by side, then each Always allow on the row below, then Deny with note from Deny's menu; a plan is 1 Approve, 2 Keep planning, then the hand-off alternate), Details open, note open (the note's send owns the Primary; "Deny and tell it" is Destructive).
+- **States:**
+  - **Keys** (r6, R6.3): every keyed decision shows its keycaps (`keys`). Where the number keys go now (`keys_live`: the dock's top decision, the focused Fleet card or table row, Jobs' first proposal, a stalled subagent's view) they are full strength; elsewhere dimmed (`wash.yielded`), never hidden. The numbers follow reading order: 1 Allow and 2 Deny side by side, then a Fleet batch (3) beside them, then each Always allow on the row below, then Deny with note from Deny's menu; a plan is 1 Approve, 2 Keep planning, then the hand-off alternate; a stalled subagent is 1 Nudge, 2 Stop, 3 View output.
+  - **Destructive** (r6): a request whose risk is "Deletes files" (`Risk::confirms`) is allowed on the **second** press, by click or key. The first arms it (`Workspace::confirm_allow`, keyed by `decision::confirm_key(session, card)`); Allow then reads "Press again to allow" (`armed`). Deny never asks twice. A batch never holds one.
+  - Details open.
+  - **Note open** (r6): the note **replaces** the answer row, the grants and Details: the note field, Cancel and its send ("Deny and tell it", Destructive) are the only controls; never a second Allow / Deny under it.
+- **Frames:** `Card { compact }` (the dock, Jobs), `Inline` (a Fleet tile), `Row` (r6: a table row's actions alone, right-aligned, same tiers and keys: the Fleet table's Allow is the filled Primary, as everywhere).
+- **One component** (r6): every approve / deny is a `Decision`: the dock, Jobs proposals, Fleet tiles, the Fleet table, a stalled subagent (tile, row and its own view: `Workspace::stall_decision`). A Fleet card with a stall behind another ask shows the stall's row without keys and without a Primary (the ask owns both).
 - **Tiers:** Allow is Primary unless a note owns it. Deny and Reject are Destructive. A "no" that removes nothing (Keep planning) sets `deny_variant = Secondary`.
 - **Submit label:** every question card submits with `decision::SUBMIT_ANSWER` ("Send answer"; "Send answers" for a set). "Next" only steps a multi-question set.
 - **Scope:** the hub offers session-scoped grants only, so the scope reads "this session". Project scope needs a hub option.
@@ -411,8 +419,17 @@ Each entry gives:
 - **Don't:**
   - Stack Allow and Deny, or let a long "Always allow" button outweigh Deny.
   - Make Deny blue.
-  - Show keycaps on an unfocused card. Keycaps keep their hairline box, also on a Primary fill, so they never read as counts.
+  - Hide the keycaps of a keyed decision; dim them where the keys do not go. Keycaps keep their hairline box, also on a Primary fill, so they never read as counts.
   - Repeat the card in Details.
+  - Draw an approve / deny pair outside `Decision`.
+
+### SegmentedControl
+
+- **Purpose (r6, R6.7):** one choice of a few, always visible: Grid / Table, By status / Waiting longest, Needs you / Active / All.
+- **Anatomy:** a track (a tonal wash) holding segments: a label and an optional count.
+- **States:** selected (the `selected` fill, a `border_strong` hairline, the raised shadow, 600 primary text; its count secondary), rest (secondary text on the track; count tertiary), hover (a wash, primary text). The selected one reads as selected at a glance in every theme.
+- **API** (`system/segmented.rs`): `system::segmented_control(&p).child(system::Segment::new(id, label).count(n).selected(on).render(&p).on_click(…))`.
+- **Don't:** use count badges inside a segment, or a filter chip row for an exclusive choice.
 
 ### PageShell
 
@@ -484,13 +501,15 @@ Prose is above activity, and activity is above meta.
 
 ### Fleet card anatomy
 
-- A `tile` at natural height in a `tile_grid` (top-aligned).
+- A `tile` in an `even_tile_grid` (r6: a row's cards share its height; the decision first).
 - Title (14/600), then elapsed time.
 - StatusCell, then project, model and context.
 - The ask, near the top, as an inline `Decision` (`Frame::Inline`): Allow and Deny side by side; a question answered on the card (an option list whose keys send, or a field where Enter sends); a job proposal is a card of its own (Approve, Reject).
 - Up to three `EventRow`s: a working session's last tools, live.
 
-The focused tile alone shows keycaps and the focus ring (`tile_frame`) outside its attention bar. Waiting tiles use `waiting_tile`. Every filter count is the number of cards it shows, job proposals included. The dense view is a Table: one row per session (StatusCell, title, project, doing, needs, two fixed action slots), toggled with Grid/Table and remembered per device (`Settings::fleet_table`).
+Every keyed card shows its keycaps; the focused one at full strength, with the focus ring (`tile_frame`) in place of its attention bar (`waiting_tile_focused`: one accent per card). Waiting tiles use `waiting_tile`. Every filter count is the number of cards it shows, job proposals included. The dense view is a Table: one row per session (StatusCell, title, project, waiting, doing, needs, the decision's `Frame::Row`), toggled with Grid/Table and remembered per device (`Settings::fleet_table`).
+
+r6 (R6.7) at scale: the sidebar is its rail while the Fleet is on screen (`track_fleet_rail`; restored on the way out). The header holds three SegmentedControls: Grid / Table, By status / Waiting longest (what waits on you first, longest wait first, then the rest by how long each has been quiet; `fleet::sort_tiles`), and the filter. A tile waiting on you says "Waiting 3m". Identical requests (the same command in the same folder, none that deletes files: `fleet::batch_of`) offer "Allow all 3 · cargo test" on key 3, which allows each on its own card. A session whose subagent stopped answering is Needs you (`status.rs`: `child_stalled`), its reason naming the child ("Trace session… not responding · 7m"), its ask Nudge / Stop / View output.
 
 ### Empty, loading and error states
 

@@ -90,6 +90,12 @@ pub struct Options {
     pub catalog: bool,
     /// Nothing waits on the user: no approval, plan or question.
     pub all_clear: bool,
+    /// r6-decisions: the first session's approval deletes files
+    /// (`rm -rf target/debug`), for the destructive-confirm capture.
+    pub destructive: bool,
+    /// r6-decisions: the working catalog sessions instead wait on the same
+    /// `cargo test` in the first session's folder (a batch to allow).
+    pub batch: bool,
 }
 
 /// One connection's fixture hub: what it serves and remembers between frames.
@@ -848,6 +854,26 @@ impl Fixture {
             }
             if self.options.rich {
                 snapshot = rich_snapshot(i, snapshot);
+            }
+            // r6-decisions: the destructive and batch decision captures.
+            if i == 0 && self.pending && self.options.destructive {
+                snapshot["pendingApproval"] = json!({"toolName": "Bash",
+                    "toolInput": {"command": "rm -rf target/debug",
+                        "description": "Clear the stale debug build before the clean run"},
+                    "requestId": "fixture-approval"});
+            }
+            if self.options.batch
+                && catalog
+                && !self.options.all_clear
+                && state == Some(catalog::Live::Working)
+            {
+                snapshot["pendingApproval"] = json!({"toolName": "Bash",
+                    "toolInput": {"command": "cargo test",
+                        "description": "Run the workspace tests before committing"},
+                    "requestId": format!("fixture-batch-{i}")});
+                snapshot["mode"] = json!("input");
+                snapshot["cwd"] = json!(catalog::live_cwd(0));
+                snapshot["lastActivity"] = json!(now - (i as i64 + 2) * 60_000);
             }
             // All clear means nothing waits on the user, so the stalled
             // subagent is heard from and the test run passed: either would

@@ -118,6 +118,28 @@ pub(super) fn batch_of(tiles: &[Tile], n: usize) -> Vec<usize> {
     if same.len() > 1 { same } else { Vec::new() }
 }
 
+/// R6.7: the batch's number key: right after Allow and Deny, on the
+/// answer row it sits on (reading order); the grants below move up one.
+pub(super) const BATCH_KEY: usize = 3;
+
+/// Key `key`'s number on an approval tile whose keys are `keys`, with a
+/// batch (`batch`) taking [`BATCH_KEY`].
+pub(super) fn key_number(keys: &[StripKey], key: &StripKey, batch: bool) -> Option<usize> {
+    let at = keys.iter().position(|k| k == key)? + 1;
+    Some(if batch && at >= BATCH_KEY { at + 1 } else { at })
+}
+
+/// What number key `n` does on such a tile: `None` the batch.
+pub(super) fn key_at(keys: &[StripKey], n: usize, batch: bool) -> Option<Option<StripKey>> {
+    if batch && n == BATCH_KEY {
+        return Some(None);
+    }
+    let n = if batch && n > BATCH_KEY { n - 1 } else { n };
+    n.checked_sub(1)
+        .and_then(|ix| keys.get(ix))
+        .map(|k| Some(k.clone()))
+}
+
 /// The tiles in `sort` order (stable: ties keep the sidebar's order).
 /// Waiting longest keeps what waits on you first (the proposals sit after
 /// those tiles in both orders), longest wait first, then the rest by how
@@ -844,15 +866,15 @@ impl Workspace {
             Some(Ask::Approval {
                 keys, always, risk, ..
             }) => {
-                // R6.7: the key after the approval's own allows the batch.
+                // R6.7: the batch's key (3, beside Allow and Deny).
                 let batch = batch_of(&tiles, position);
-                if n == keys.len() + 1 && !batch.is_empty() {
+                let Some(key) = key_at(keys, n, !batch.is_empty()) else {
+                    return;
+                };
+                let Some(key) = key.as_ref() else {
                     if ready {
                         self.fleet_batch(&tiles, &batch, cx);
                     }
-                    return;
-                }
-                let Some(key) = n.checked_sub(1).and_then(|ix| keys.get(ix)) else {
                     return;
                 };
                 if !ready {
@@ -1520,6 +1542,8 @@ impl Workspace {
                     cx,
                 );
                 decision.keys = false;
+                // One Primary per card: the ask above owns it.
+                decision.allow_primary = false;
                 // Its line above says what stalled; this row acts on it.
                 div()
                     .debug_selector(move || format!("fleet-stall-row-{n}"))
@@ -1695,7 +1719,7 @@ impl Workspace {
                 command,
                 risk,
             } => {
-                let number = |key: &StripKey| keys.iter().position(|k| k == key).map(|ix| ix + 1);
+                let number = |key: &StripKey| key_number(keys, key, batch > 1);
                 let allow = choice(
                     format!("fleet-allow-{n}"),
                     number(&StripKey::Allow).unwrap_or(1),
@@ -1761,7 +1785,7 @@ impl Workspace {
                     decision.alternates.push(
                         choice(
                             format!("fleet-batch-{n}"),
-                            keys.len() + 1,
+                            BATCH_KEY,
                             batch_label(batch, command).into(),
                         )
                         .tooltip(format!(
@@ -2061,7 +2085,7 @@ impl Workspace {
                         decision.alternates.push(
                             choice(
                                 format!("fleet-row-batch-{n}"),
-                                keys.len() + 1,
+                                BATCH_KEY,
                                 format!("Allow all {batch}").into(),
                             )
                             .tooltip(format!(
@@ -2088,6 +2112,7 @@ impl Workspace {
                 _ => {
                     let sel: SharedString = format!("fleet-row-open-{n}").into();
                     div()
+                        .w_full()
                         .flex()
                         .justify_end()
                         .child(

@@ -56,6 +56,13 @@ fn every_state() -> (View, Vec<(&'static str, StatusKind)>) {
     kids.subagents = Arc::new(serde_json::json!([{"id": "k1", "type": "Explore",
         "description": "Trace restore", "status": "running",
         "startedAt": now - 60_000, "lastActivity": now - 4_000}]));
+    // r6-decisions (R6.2): its own turn is healthy; a subagent of it has
+    // stopped answering. It needs you (one entry: the parent's).
+    let mut stuck = session("stuck", "responding");
+    stuck.telemetry.last_activity_ms = Some(now - 2_000);
+    stuck.subagents = Arc::new(serde_json::json!([{"id": "s1", "type": "Explore",
+        "description": "Trace session restore paths", "status": "running",
+        "startedAt": now - 20 * 60_000, "lastActivity": now - 7 * 60_000 - 5_000}]));
     let mut idle = session("idle", "input");
     idle.telemetry.last_activity_ms = Some(now - 5_000);
     let end = session("end", "ended");
@@ -63,7 +70,7 @@ fn every_state() -> (View, Vec<(&'static str, StatusKind)>) {
     let view = View {
         connected: true,
         selected: Some("idle".into()),
-        sessions: Arc::new(vec![fail, need, stall, work, kids, idle, end, pause]),
+        sessions: Arc::new(vec![fail, need, stall, work, kids, stuck, idle, end, pause]),
         session_open: Some(Arc::new(serde_json::json!({"version": 1,
             "open": {"pause": 1}, "ended": {}}))),
         ..Default::default()
@@ -74,6 +81,7 @@ fn every_state() -> (View, Vec<(&'static str, StatusKind)>) {
         ("stall", StatusKind::NotResponding),
         ("work", StatusKind::Working),
         ("kids", StatusKind::Working),
+        ("stuck", StatusKind::NeedsYou),
         ("idle", StatusKind::Idle),
         ("end", StatusKind::Idle),
         ("pause", StatusKind::Paused),
@@ -194,9 +202,22 @@ fn every_surface_agrees_for_each_state(cx: &mut TestAppContext) {
         }
         assert_eq!(
             counts,
-            [3, 2, 2, 1],
-            "needs you: fail, need, stall · working: work, kids · idle: idle, pause · ended"
+            [4, 2, 2, 1],
+            "needs you: fail, need, stall, stuck · working: work, kids · idle: idle, pause · ended"
         );
+        // R6.2: the stalled subagent is the reason, named, on every surface
+        // that gives one (the sidebar, the palette and the Fleet read it).
+        let stuck = this.view.sessions.iter().find(|s| s.id == "stuck").unwrap();
+        let reason = this.inbox_reason(stuck, now()).expect("a reason");
+        assert_eq!(reason.text, "Trace session… not responding · 7m");
+        assert!(reason.fault);
+        // No entry of its own: one tile, its stall the tile's ask.
+        let tiles = this.fleet_tiles(cx);
+        let tile = tiles.iter().find(|t| t.id == "stuck").unwrap();
+        assert!(matches!(
+            tile.ask,
+            Some(crate::ui::fleet::Ask::Stalled(ref s)) if s.name == "Trace session restore paths"
+        ));
         // The composer says the stall and the subagents as the header does.
         assert_eq!(this.composer_state(false), None, "idle says nothing");
     });

@@ -80,6 +80,13 @@ enum Command {
         /// "all clear" sidebar).
         #[arg(long)]
         all_clear: bool,
+        /// The first session's approval deletes files (destructive confirm).
+        #[arg(long)]
+        destructive: bool,
+        /// The working sessions wait on the first session's `cargo test`
+        /// in its folder (batch approve).
+        #[arg(long)]
+        batch: bool,
     },
     /// Measure the real turn-footer summary path, excluding GPUI layout/GPU work.
     BenchTurnSummary {
@@ -190,6 +197,8 @@ async fn main() -> Result<()> {
             plan_and_limit,
             catalog,
             all_clear,
+            destructive,
+            batch,
         } => {
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("Fixture hub: ws://{}/bus", listener.local_addr()?);
@@ -211,6 +220,8 @@ async fn main() -> Result<()> {
                     plan_and_limit,
                     catalog,
                     all_clear,
+                    destructive,
+                    batch,
                 },
             )
             .await?;

@@ -121,9 +121,9 @@ fn tiles_render_with_their_statuses_most_urgent_first(cx: &mut TestAppContext) {
     );
     assert_eq!(a.top(), c.top());
     assert!(c.left() > a.right());
-    // R5.4: tiles keep their natural height, top-aligned: the working
-    // tile is shorter than the approval beside it, never stretched.
-    assert!(c.size.height < a.size.height);
+    // R6.7: the cards of a row share its height (the decision first in
+    // each; the room left falls below it).
+    assert_eq!(c.size.height, a.size.height);
     // Allow and Deny side by side, on one line.
     let (allow, deny) = (
         visual.debug_bounds("fleet-allow-0").unwrap(),
@@ -475,4 +475,247 @@ fn job_proposals_take_the_keyboard_focus_like_tiles(cx: &mut TestAppContext) {
     // Back on the tiles.
     visual.simulate_keystrokes("left");
     assert_eq!(focused(&workspace, &visual).as_deref(), Some("q"));
+}
+
+/// `fleet_view` with `extra` sessions after it.
+fn with_sessions(
+    workspace: &Entity<Workspace>,
+    visual: &mut VisualTestContext,
+    extra: Vec<Session>,
+) {
+    let mut view = fleet_view();
+    let mut sessions = (*view.sessions).clone();
+    sessions.extend(extra);
+    view.sessions = Arc::new(sessions);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+    });
+    refresh(visual);
+}
+
+fn approval(id: &str, label: &str, command: &str) -> Session {
+    row(
+        id,
+        label,
+        "input",
+        json!({"pendingRequestId":format!("req-{id}"),"pendingApproval":{"toolName":"Bash",
+            "toolInput":{"command":command},"requestId":format!("req-{id}")}}),
+    )
+}
+
+/// r6-decisions (R6.3): a request that deletes files shows its risk chip,
+/// and Allow takes a second press: the first (key or click) only arms it
+/// ("Press again to allow"); the second allows it.
+#[gpui::test]
+fn a_destructive_request_needs_a_second_press(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    let mut view = fleet_view();
+    let mut sessions = (*view.sessions).clone();
+    sessions[1] = approval("ask", "Restore sessions", "rm -rf target");
+    view.sessions = Arc::new(sessions);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+    });
+    refresh(&mut visual);
+    effects(&mut commands);
+    assert!(
+        visual.debug_bounds("decision-risk").is_some(),
+        "the chip shows"
+    );
+    visual.simulate_keystrokes("1");
+    assert!(
+        !effects(&mut commands)
+            .iter()
+            .any(|c| matches!(c, Command::Act { .. })),
+        "the first press only arms it"
+    );
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.armed(&crate::ui::decision::confirm_key("ask", Some("req-ask"))));
+        assert_eq!(this.fleet.focus.as_deref(), Some("ask"), "the focus stays");
+    });
+    visual.simulate_keystrokes("1");
+    assert!(effects(&mut commands).iter().any(|c| matches!(c,
+        Command::Act { session, action: Action::Approve(true, Some(card)) }
+            if session == "ask" && card == "req-ask")));
+    // Deny needs no second press.
+    workspace.update(&mut visual, |this, _| this.fleet.focus = Some("ask".into()));
+    visual.simulate_keystrokes("2");
+    assert!(effects(&mut commands).iter().any(|c| matches!(
+        c,
+        Command::Act {
+            action: Action::Approve(false, _),
+            ..
+        }
+    )));
+}
+
+/// r6-decisions (R6.7): identical requests (the same command in the same
+/// folder) offer "Allow all N"; its key allows each on its own card. A
+/// different command, or the same one elsewhere, is not in the batch.
+#[gpui::test]
+fn identical_requests_are_allowed_in_one_batch(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    let mut elsewhere = approval("far", "Elsewhere", "cargo test");
+    elsewhere.cwd = "/home/dev/other".into();
+    with_sessions(
+        &workspace,
+        &mut visual,
+        vec![
+            approval("twin", "Twin", "cargo test"),
+            approval("other", "Other", "cargo build"),
+            elsewhere,
+        ],
+    );
+    effects(&mut commands);
+    let ids = workspace.read_with(&visual, |this, cx| {
+        let tiles = this.fleet_tiles(cx);
+        let first = tiles.iter().position(|t| t.id == "ask").unwrap();
+        crate::ui::fleet::batch_of(&tiles, first)
+            .into_iter()
+            .map(|ix| tiles[ix].id.clone())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(ids, ["ask", "twin"]);
+    assert!(visual.debug_bounds("fleet-batch-0").is_some());
+    assert_eq!(
+        crate::ui::fleet::batch_label(2, "cargo test"),
+        "Allow all 2 · cargo test"
+    );
+    // Allow 1 and Deny 2, then the batch beside them: 3 (Always allow is 4).
+    visual.simulate_keystrokes("3");
+    let approved: Vec<String> = effects(&mut commands)
+        .into_iter()
+        .filter_map(|c| match c {
+            Command::Act {
+                session,
+                action: Action::Approve(true, _),
+            } => Some(session),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(approved, ["ask", "twin"]);
+}
+
+/// r6-decisions (R6.3): in the table, a row's approve / deny is the
+/// DecisionCard's answer row (Allow the filled Primary), with its keys;
+/// the waiting time has its own column. R6.7: Waiting longest puts the
+/// longest wait first.
+#[gpui::test]
+fn the_table_answers_through_the_decision_card(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands) = open_fleet(cx);
+    click(&mut visual, "fleet-view-table");
+    refresh(&mut visual);
+    assert!(visual.debug_bounds("fleet-row-decision-0").is_some());
+    assert!(visual.debug_bounds("fleet-row-allow-0").is_some());
+    assert!(visual.debug_bounds("fleet-row-waiting-0").is_some());
+    let now = timing::now_ms();
+    let mut view = fleet_view();
+    let mut sessions = (*view.sessions).clone();
+    sessions[1].telemetry.last_activity_ms = Some(now - 60_000);
+    sessions[3].telemetry.last_activity_ms = Some(now - 600_000);
+    view.sessions = Arc::new(sessions);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+    });
+    refresh(&mut visual);
+    click(&mut visual, "fleet-sort-waiting");
+    workspace.read_with(&visual, |this, cx| {
+        assert_eq!(this.fleet.sort, crate::ui::fleet::Sort::Waiting);
+        let ids: Vec<String> = this.fleet_tiles(cx).into_iter().map(|t| t.id).collect();
+        assert_eq!(ids[..2], ["q", "ask"], "the longest wait first");
+    });
+}
+
+/// r6-decisions (R6.7): the sidebar is its rail while the Fleet is on
+/// screen, and comes back on the way out. Cards in a row share its height.
+#[gpui::test]
+fn the_fleet_takes_the_room_and_rows_share_a_height(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands) = open_fleet(cx);
+    workspace.read_with(&visual, |this, _| assert!(this.sidebar_collapsed));
+    let (a, b, c) = (
+        visual.debug_bounds("fleet-tile-0").unwrap(),
+        visual.debug_bounds("fleet-tile-1").unwrap(),
+        visual.debug_bounds("fleet-tile-2").unwrap(),
+    );
+    assert_eq!(a.top(), c.top());
+    assert_eq!(a.size.height, b.size.height);
+    assert_eq!(a.size.height, c.size.height);
+    visual.simulate_keystrokes("escape");
+    refresh(&mut visual);
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.screen == Screen::Conversation);
+        assert!(!this.sidebar_collapsed, "the sidebar is back");
+    });
+}
+
+/// r6-decisions (R6.2): a session whose subagent stopped answering needs
+/// you: its tile asks with Nudge / Stop / View output on 1 2 3.
+#[gpui::test]
+fn a_stalled_subagent_asks_on_its_tile(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    let now = timing::now_ms();
+    let mut stuck = row(
+        "stuck",
+        "Bus fan-out",
+        "responding",
+        json!({"lastToolName":"Read","lastToolSummary":"src/bus.rs"}),
+    );
+    stuck.telemetry.last_activity_ms = Some(now - 1_000);
+    stuck.subagents = Arc::new(json!([{"id":"s1","type":"Explore",
+        "description":"Trace session restore paths","status":"running",
+        "startedAt": now - 20 * 60_000, "lastActivity": now - 7 * 60_000 - 5_000}]));
+    with_sessions(&workspace, &mut visual, vec![stuck]);
+    let at = workspace.read_with(&visual, |this, cx| {
+        let tiles = this.fleet_tiles(cx);
+        let at = tiles.iter().position(|t| t.id == "stuck").unwrap();
+        assert_eq!(tiles[at].kind, crate::ui::primitives::StatusKind::NeedsYou);
+        assert!(matches!(
+            tiles[at].ask,
+            Some(crate::ui::fleet::Ask::Stalled(_))
+        ));
+        at
+    });
+    // Longest wait first: its known wait leads the unknown ones.
+    assert_eq!(at, 0);
+    assert!(visual.debug_bounds("fleet-stall-0-decision").is_some());
+    assert!(visual.debug_bounds("fleet-stall-0-nudge").is_some());
+    workspace.update(&mut visual, |this, _| {
+        this.fleet.focus = Some("stuck".into())
+    });
+    effects(&mut commands);
+    visual.simulate_keystrokes("1");
+    assert!(effects(&mut commands).iter().any(|c| matches!(c,
+        Command::Act { session, action: Action::SendNow(text) }
+            if session == "stuck" && text.contains("Trace session restore paths"))));
+    workspace.update(&mut visual, |this, _| {
+        this.fleet.focus = Some("stuck".into())
+    });
+    visual.simulate_keystrokes("2");
+    assert!(effects(&mut commands).iter().any(|c| matches!(c,
+        Command::Act { session, action: Action::Stop } if session == "stuck")));
+}
+
+/// r6-decisions (R6.3): Deny with note replaces the answer row: the note,
+/// "Deny and tell it" and Cancel, never a second Allow / Deny under it.
+#[gpui::test]
+fn deny_with_note_replaces_the_answer_row(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(800.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            this.force_design(Some(Design::V2));
+            let mut view = fleet_view();
+            view.selected = Some("ask".into());
+            this.update_view(Arc::new(view), window, cx);
+            this.open_deny_note(Some("req-9".into()), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("deny-note").is_some());
+    assert!(visual.debug_bounds("deny-note-send").is_some());
+    assert!(visual.debug_bounds("deny-note-cancel").is_some());
+    assert!(visual.debug_bounds("approve").is_none(), "no second Allow");
+    assert!(visual.debug_bounds("deny").is_none(), "no second Deny");
+    assert!(visual.debug_bounds("always-option-0").is_none());
 }

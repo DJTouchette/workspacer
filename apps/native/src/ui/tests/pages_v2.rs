@@ -294,6 +294,11 @@ fn every_page_shares_one_header_and_left_edge(cx: &mut TestAppContext) {
             .unwrap_or_else(|| panic!("{screen:?} has the back link"));
         assert!(back.bottom() <= title.top(), "{screen:?}: back sits above");
         let left = f32::from(title.left());
+        // r6-decisions (R6.7): the Fleet collapses the sidebar to its rail,
+        // so its page starts further left by design.
+        if screen == Screen::Fleet {
+            continue;
+        }
         let edge = *edge.get_or_insert(left);
         assert!(
             (left - edge).abs() <= 1.,

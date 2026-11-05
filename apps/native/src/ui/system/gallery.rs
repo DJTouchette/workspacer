@@ -1015,6 +1015,87 @@ fn decision(p: &Palette) -> Div {
         None,
     ));
 
+    // r6-decisions (R6.3): a request that deletes files, pressed once: its
+    // risk chip, and Allow asking for the second press.
+    let mut destructive = Decision::new(
+        "gallery-destructive",
+        Choice::new("gallery-destructive-allow", "Allow").key(Some(1)),
+        Frame::Inline,
+    );
+    destructive.headline = vec![
+        ("Run".into(), false),
+        ("rm -rf target/debug".into(), true),
+        ("?".into(), false),
+    ];
+    destructive.folder = Some("/home/dev/src/workspacer".into());
+    destructive.risk = Some(Risk::Deletes);
+    destructive.armed = true;
+    destructive.deny = Some(Choice::new("gallery-destructive-deny", "Deny").key(Some(2)));
+    destructive.keys = true;
+
+    // A keyed decision whose keys go elsewhere (an unfocused Fleet card):
+    // its keycaps dimmed, never hidden.
+    let mut elsewhere = Decision::new(
+        "gallery-keys-elsewhere",
+        Choice::new("gallery-elsewhere-allow", "Allow").key(Some(1)),
+        Frame::Inline,
+    );
+    elsewhere.headline = vec![("Run".into(), false), ("cargo test".into(), true)];
+    elsewhere.deny = Some(Choice::new("gallery-elsewhere-deny", "Deny").key(Some(2)));
+    elsewhere.alternates =
+        vec![Choice::new("gallery-batch", "Allow all 3 · cargo test").key(Some(3))];
+    elsewhere.keys = true;
+    elsewhere.keys_live = false;
+
+    // Deny with note: the note replaces the answer row.
+    let mut noting = Decision::new(
+        "gallery-noting",
+        Choice::new("gallery-noting-allow", "Allow").key(Some(1)),
+        Frame::Inline,
+    );
+    noting.headline = vec![("Run".into(), false), ("cargo test".into(), true)];
+    noting.deny = Some(Choice::new("gallery-noting-deny", "Deny").key(Some(2)));
+    noting.note = Some(
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(t.space.sm))
+            .child(div().w_full().min_w_0().child(
+                super::composer_field(ComposerState::Focus, p).child("Run only the UI tests"),
+            ))
+            .child(prim::button(
+                "gallery-noting-cancel",
+                "Cancel",
+                None,
+                ButtonVariant::Tertiary,
+                ButtonSize::Small,
+                true,
+                p,
+            ))
+            .child(prim::button(
+                "gallery-noting-send",
+                "Deny and tell it",
+                None,
+                ButtonVariant::Destructive,
+                ButtonSize::Small,
+                true,
+                p,
+            ))
+            .into_any_element(),
+    );
+    noting.allow_primary = false;
+    noting.keys = true;
+
+    // A table row's answer (the Fleet table).
+    let mut row_frame = Decision::new(
+        "gallery-row",
+        Choice::new("gallery-row-allow", "Allow").key(Some(1)),
+        Frame::Row,
+    );
+    row_frame.deny = Some(Choice::new("gallery-row-deny", "Deny").key(Some(2)));
+    row_frame.keys = true;
+
     section("DecisionCard", p)
         .debug_selector(|| "gallery-decisions".into())
         .child(
@@ -1028,6 +1109,45 @@ fn decision(p: &Palette) -> Div {
                 .child(specimen(
                     "Job proposal · Fleet card",
                     super::waiting_tile(p).child(job.render(p)),
+                ))
+                .child(specimen(
+                    "Deletes files · pressed once",
+                    super::waiting_tile(p).child(destructive.render(p)),
+                ))
+                .child(specimen(
+                    "Keys go elsewhere · dimmed; a batch",
+                    super::waiting_tile(p).child(elsewhere.render(p)),
+                ))
+                .child(specimen(
+                    "Deny with note · replaces the answer",
+                    super::waiting_tile(p).child(noting.render(p)),
+                ))
+                .child(specimen(
+                    "Table row · Frame::Row; SegmentedControl",
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(t.space.md))
+                        .child(row_frame.render(p))
+                        .child(
+                            super::segmented_control(p)
+                                .child(
+                                    super::Segment::new("gallery-seg-needs", "Needs you")
+                                        .count(3)
+                                        .selected(true)
+                                        .render(p),
+                                )
+                                .child(
+                                    super::Segment::new("gallery-seg-active", "Active")
+                                        .count(5)
+                                        .render(p),
+                                )
+                                .child(
+                                    super::Segment::new("gallery-seg-all", "All")
+                                        .count(30)
+                                        .render(p),
+                                ),
+                        ),
                 )),
         )
 }

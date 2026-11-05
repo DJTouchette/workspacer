@@ -40,6 +40,10 @@ FIXTURES = {
     "plan": ["--rich-transcript", "--catalog", "--turns", "0", "--plan-and-limit"],
     # Nothing waits on the user: no approval or question (an all-clear list).
     "clear": ["--rich-transcript", "--catalog", "--turns", "0", "--all-clear"],
+    # r6-decisions: the first session's approval deletes files; the working
+    # sessions wait on the same `cargo test` in one folder (a batch).
+    "destructive": ["--rich-transcript", "--catalog", "--turns", "0", "--destructive"],
+    "batch": ["--rich-transcript", "--catalog", "--turns", "0", "--batch"],
     # No sessions yet: the first-run welcome (catalog projects to pick from).
     "empty": ["--catalog", "--sessions", "0"],
     "demo": None,
@@ -260,7 +264,7 @@ def shots():
     add("approvals-fleet-needs-you", "Fleet: the Needs you filter, only the tiles that wait on the user",
         fleet + [("click", 1350, 78), ("sleep", 0.5)])
     add("approvals-fleet-details", "Fleet: the approval tile's Details open in place",
-        fleet + [("click", 680, 364), ("sleep", 0.5)])  # r5-fleet: re-measured
+        fleet + [("click", 530, 342), ("sleep", 0.5)])  # r6-decisions: re-measured (rail)
     # r5-system (R5.3): the component gallery (`wks-native --gallery`, dev
     # builds only) in every built-in theme. Taller window: one frame holds
     # every component in every state.
@@ -272,6 +276,13 @@ def shots():
     # per job proposal); the Grid/Table choice is remembered per device.
     add("fleet-table", "Fleet: the dense table view, one row per session",
         fleet, settings={"fleet_table": True})
+    # r6-decisions (R6.3, R6.7): a request that deletes files, pressed once
+    # (its risk chip, "Press again to allow"); and identical requests on the
+    # Fleet, allowed in one batch ("Allow all 3 · cargo test").
+    add("decisions-destructive", "Approval that deletes files: risk chip, Allow pressed once (Press again to allow)",
+        [("key", "1"), ("sleep", 0.6)], fixture="destructive")
+    add("decisions-batch", "Fleet: three sessions ask for the same cargo test in one folder; Allow all 3",
+        fleet, fixture="batch")
     return s
 
 
