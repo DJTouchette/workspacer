@@ -178,7 +178,7 @@ const V2_LIGHT: Syntax = Syntax {
     foreground: "#2c2c31",
     keyword: "#a8402f",
     string: "#3b6e1f",
-    escape: "#8a5300",
+    escape: "#7a4a1a", // r6-integration: clear of the warmer Needs-you amber (#8A5800)
     comment: "#6b6f78",
     function: "#1f5fd6",
     constant: "#8f5a2e",
