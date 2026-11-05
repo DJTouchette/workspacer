@@ -1499,40 +1499,39 @@ impl Workspace {
                 .child(self.new_job_button(cx)),
             );
         }
-        // r3-pages (R3.6): one dense table per group, a job per row: name,
-        // schedule, last runs, next run and actions. Proposals wait in their
-        // own table above, neutral (R3.1: amber is only for what blocks you).
+        // r3-pages (R3.6): one dense table of scheduled jobs, a job per row:
+        // name, schedule, last runs, next run and actions. R4.3: proposals
+        // wait above it as decisions, the same component as a tool approval
+        // (the whole command, where it runs, Approve primary, Reject
+        // secondary, Details for the full spec): they wait on you.
         let waiting = rows.iter().filter(|j| j.proposal()).count();
         let mut page = page;
+        if waiting > 0 {
+            page = page
+                .child(primitives::section_header(
+                    "Waiting for your approval",
+                    Some(waiting.to_string().into()),
+                    &p,
+                ))
+                .children(
+                    rows.iter()
+                        .enumerate()
+                        .take(waiting)
+                        .map(|(ix, job)| self.job_proposal_v2(ix, job, &rows, cx)),
+                );
+        }
         let mut table: Option<Div> = None;
-        for (ix, job) in rows.iter().enumerate() {
-            if ix == 0 || ix == waiting {
-                if let Some(done) = table.take() {
-                    page = page.child(done);
-                }
-                let proposals = ix < waiting;
-                let label = if proposals {
-                    "Waiting for your approval"
-                } else {
-                    "Scheduled"
-                };
+        for (ix, job) in rows.iter().enumerate().skip(waiting) {
+            if ix == waiting {
                 page = page.child(
                     primitives::section_header(
-                        label,
-                        Some(
-                            if proposals {
-                                waiting
-                            } else {
-                                rows.len() - waiting
-                            }
-                            .to_string()
-                            .into(),
-                        ),
+                        "Scheduled",
+                        Some((rows.len() - waiting).to_string().into()),
                         &p,
                     )
                     .when(ix > 0, |d| d.pt(px(t.space.md))),
                 );
-                table = Some(primitives::page_table(&p).child(self.job_table_head(proposals)));
+                table = Some(primitives::page_table(&p).child(self.job_table_head(false)));
             }
             table = table.map(|tb| tb.child(self.render_job(ix, job, &rows, runs.as_deref(), cx)));
         }
@@ -1544,6 +1543,109 @@ impl Workspace {
                 .text_color(rgb(p.roles.text_tertiary))
                 .child(JOBS_FOOTER_V2),
         )
+    }
+
+    /// A job an agent proposed, as the one decision component (R4.3): the
+    /// question, what it does and when, who proposed it, the whole command
+    /// it runs (wrapped, never cut beside Approve), its folder and host,
+    /// Approve primary, Reject secondary, and Details for the full spec
+    /// (and, for a change, the job as it is now).
+    fn job_proposal_v2(&self, ix: usize, job: &Job, all: &[Job], cx: &mut Context<Self>) -> Div {
+        use super::decision::{Choice, Decision, Details, Frame};
+        let p = self.palette();
+        let enabled = self.view.connected && !self.demo && !self.job_busy();
+        let target = job
+            .change()
+            .then(|| all.iter().find(|j| j.id == job.replaces))
+            .flatten();
+        let can_approve = enabled && (!job.change() || target.is_some());
+        let quoted = |name: &str| format!("\u{201c}{name}\u{201d}");
+        let headline = match (job.change(), target) {
+            (true, Some(current)) => format!("Change the job {}?", quoted(&current.name)),
+            (true, None) => format!("Change a removed job to {}?", quoted(&job.name)),
+            (false, _) => format!("Schedule the job {}?", quoted(&job.name)),
+        };
+        let when = schedule(&job.spec["trigger"], self.settings.twelve_hour_clock)
+            .unwrap_or_else(|| job.trigger_summary());
+        let (sentence, command) = job.describe();
+        let by = Some(job.proposed_by.as_str())
+            .filter(|b| !b.is_empty())
+            .map(|b| format!("proposed by {b}"));
+        let reason = [Some(sentence), Some(when), by]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let action = &job.spec["action"];
+        let folder = [&action["spawn"]["cwd"], &action["shell"]["cwd"]]
+            .into_iter()
+            .find_map(|v| v.as_str().map(str::trim).filter(|c| !c.is_empty()))
+            .map(str::to_owned);
+        let host = match job.host() {
+            "" | "local" => self.decision_host(),
+            "any" => "whichever machine is free".to_owned(),
+            peer => peer.to_owned(),
+        };
+        let approval = job.approval();
+        let allow = Choice::new(format!("job-approve-{ix}"), "Approve")
+            .tooltip("Approve: it runs on its schedule from now on")
+            .enabled(can_approve)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.job_action(JobAction::Save(approval.clone()), cx);
+            }));
+        let remove_id = job.id.clone();
+        let reject = Choice::new(format!("job-remove-{ix}"), "Reject")
+            .tooltip("Reject the proposal; nothing runs")
+            .enabled(enabled)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.remove_job(&remove_id, true, cx);
+            }));
+        let open = self.extras.job_expanded.as_deref() == Some(job.id.as_str());
+        let toggle = job.id.clone();
+        let mut decision = Decision::new(
+            format!("job-row-{ix}"),
+            allow,
+            Frame::Card { compact: false },
+        );
+        decision.headline = vec![(headline, false)];
+        decision.headline_selector = Some(format!("job-headline-{ix}").into());
+        decision.reason = Some(reason);
+        decision.request = command.map(|c| format!("$ {c}"));
+        decision.request_selector = format!("job-action-{ix}").into();
+        decision.folder = folder;
+        decision.host = Some(host);
+        decision.deny = Some(reject);
+        decision.details = Some(Details {
+            toggle: Choice::new(format!("job-details-{ix}"), "Details")
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx))),
+            open,
+            content: open.then(|| {
+                let t = p.tokens;
+                primitives::inset(&p)
+                    .debug_selector(|| "job-detail".into())
+                    .gap(px(t.space.md))
+                    .child(
+                        div()
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_secondary))
+                            .child(if job.change() {
+                                CHANGE_NOTE
+                            } else {
+                                PROPOSAL_NOTE
+                            }),
+                    )
+                    .map(|d| match target {
+                        Some(current) => d
+                            .child(self.spec_block(Some("Now"), current, None))
+                            .child(self.spec_block(Some("Proposed"), job, Some(current))),
+                        None => d.child(self.spec_block(None, job, None)),
+                    })
+                    .into_any_element()
+            }),
+        });
+        decision.render(&p)
     }
 
     /// The column labels over a jobs table.

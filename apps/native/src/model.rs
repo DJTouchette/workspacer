@@ -1516,7 +1516,9 @@ pub fn model_display_name(id: &str) -> String {
             .to_owned();
     }
     if let Some(rest) = lower.strip_prefix("gpt-") {
-        let mut words = rest.split('-');
+        // Words split on '-' (an id) or ' ' (a name already shown), so a
+        // display name maps to itself ("GPT-5.6 Sol", never "GPT-5.6 sol").
+        let mut words = rest.split(['-', ' ']).filter(|w| !w.is_empty());
         let version = words.next().unwrap_or_default();
         let mut name = format!("GPT-{version}");
         for word in words {
@@ -2181,6 +2183,8 @@ mod tests {
             ("", ""),
         ] {
             assert_eq!(model_display_name(id), name, "{id}");
+            // R4.7: a name already shown maps to itself (Fleet, palette).
+            assert_eq!(model_display_name(name), name, "{name}");
         }
     }
 

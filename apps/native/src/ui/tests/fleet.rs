@@ -119,12 +119,67 @@ fn tiles_render_with_their_statuses_most_urgent_first(cx: &mut TestAppContext) {
     );
     assert_eq!(a.top(), c.top());
     assert!(c.left() > a.right());
+    // R4.7: tiles in one row share a height (the approval's is tallest).
+    assert_eq!(a.size.height, c.size.height);
+    // R4.3: the approval reads as in the conversation: where it runs, and
+    // "Always allow" with its exact rule, never shortened.
+    assert!(visual.debug_bounds("fleet-decision-0").is_some());
+    workspace.read_with(&visual, |this, cx| {
+        let tiles = this.fleet_tiles(cx);
+        match &tiles[0].ask {
+            Some(super::super::fleet::Ask::Approval {
+                always,
+                folder,
+                host,
+                ..
+            }) => {
+                assert_eq!(always[0].2, "Always allow cargo test commands this session");
+                assert_eq!(folder, "/home/dev/workspacer");
+                assert!(!host.is_empty());
+            }
+            _ => panic!("the first tile asks for approval"),
+        }
+    });
     assert!(visual.debug_bounds("fleet-focused-0").is_some());
     assert!(visual.debug_bounds("nav-fleet").is_some());
 
     click(&mut visual, "fleet-filter-all");
     refresh(&mut visual);
     assert!(visual.debug_bounds("fleet-status-3-Idle").is_some());
+
+    // R4.7: "Needs you" shows only what waits on you, for a burst.
+    click(&mut visual, "fleet-filter-needs");
+    refresh(&mut visual);
+    workspace.read_with(&visual, |this, cx| {
+        let ids: Vec<String> = this.fleet_tiles(cx).into_iter().map(|t| t.id).collect();
+        assert_eq!(ids, ["ask", "q"]);
+    });
+}
+
+/// R4.3: Details on a tile's approval expands the full request in place
+/// (tool, command, folder, host), not a menu; it closes again.
+#[gpui::test]
+fn details_expand_a_tiles_full_request(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    click(&mut visual, "fleet-details-0");
+    refresh(&mut visual);
+    assert!(visual.debug_bounds("fleet-details").is_some());
+    assert!(visual.debug_bounds("fleet-fact-0").is_some());
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.fleet.details.as_deref(), Some("ask"));
+        assert!(
+            this.screen == Screen::Fleet,
+            "Details does not open the session"
+        );
+    });
+    assert!(
+        !effects(&mut commands)
+            .iter()
+            .any(|c| matches!(c, Command::Act { .. })),
+        "Details decides nothing"
+    );
+    click(&mut visual, "fleet-details-0");
+    workspace.read_with(&visual, |this, _| assert_eq!(this.fleet.details, None));
 }
 
 /// Arrows and h j k l move the focus across the grid (no wrap); Enter

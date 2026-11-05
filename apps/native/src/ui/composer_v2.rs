@@ -88,22 +88,26 @@ pub(super) fn approval_summary(approval: &Value) -> (String, String) {
     (tool, summary)
 }
 
-/// The facts an approval shows inline under its headline, as (label,
-/// value, monospace) rows (R3.2: nothing hides behind a Details toggle).
-/// The headline already shows a short one-line request, and the context
-/// line the reason and the folder, so a request value is repeated here only
-/// when the headline cannot show it whole (several lines, or long). The
-/// remaining scalar inputs follow, a short line each. No raw JSON.
-pub(super) fn approval_facts(approval: &Value) -> Vec<(String, String, bool)> {
-    const HEADLINE_FITS: usize = 60;
+/// The full request an approval carries, as (label, value, monospace) rows
+/// for its Details (R4.3: Details expands the whole request in place): the
+/// tool, every input it was given (commands and paths whole), the folder
+/// and the host. No raw JSON.
+pub(super) fn approval_facts(
+    approval: &Value,
+    cwd: &str,
+    host: &str,
+) -> Vec<(String, String, bool)> {
+    const MAX: usize = 4000;
     let input = approval.get("toolInput").unwrap_or(&Value::Null);
-    let mut rows = Vec::new();
+    let (tool, _) = approval_summary(approval);
+    let mut rows = vec![("Tool".to_owned(), tool, false)];
     let named = [
         ("command", "Command"),
         ("file_path", "File"),
         ("path", "Path"),
         ("url", "URL"),
         ("pattern", "Pattern"),
+        ("description", "Reason"),
     ];
     for (key, label) in named {
         if let Some(value) = input
@@ -111,28 +115,44 @@ pub(super) fn approval_facts(approval: &Value) -> Vec<(String, String, bool)> {
             .and_then(Value::as_str)
             .map(str::trim_end)
             .filter(|v| !v.is_empty())
-            .filter(|v| v.contains('\n') || v.chars().count() > HEADLINE_FITS)
         {
-            rows.push((label.to_owned(), value.to_owned(), true));
+            rows.push((label.to_owned(), value.to_owned(), key != "description"));
         }
     }
-    // Anything else the tool was given, as a short line each.
+    // Anything else the tool was given, each in full.
     if let Some(object) = input.as_object() {
         for (key, value) in object {
-            if named.iter().any(|(k, _)| k == key) || key == "description" {
+            if named.iter().any(|(k, _)| k == key) {
                 continue;
             }
             let text = match value {
                 Value::String(s) => s.clone(),
                 Value::Number(_) | Value::Bool(_) => value.to_string(),
                 Value::Null => continue,
-                other => other.to_string(),
+                other => serde_json::to_string_pretty(other).unwrap_or_default(),
             };
-            let text = wks_native::format::truncate_end(&text, 160).unwrap_or(text);
+            let text = wks_native::format::truncate_end(&text, MAX).unwrap_or(text);
             rows.push((sentence_case(key), text, true));
         }
     }
+    if !cwd.trim().is_empty() {
+        rows.push(("Folder".to_owned(), cwd.trim().to_owned(), true));
+    }
+    if !host.trim().is_empty() {
+        rows.push(("Host".to_owned(), host.trim().to_owned(), false));
+    }
     rows
+}
+
+/// The command an approval would run, whole, when the headline cannot show
+/// it (several lines, or long): it then shows wrapped under the headline.
+pub(super) fn approval_request(approval: &Value) -> Option<String> {
+    approval
+        .pointer("/toolInput/command")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|c| super::decision::needs_request_line(c))
+        .map(str::to_owned)
 }
 
 /// `old_string` / `oldString` → "Old string".
@@ -276,7 +296,7 @@ pub(super) const AFTER_TURN_COPY: &str =
 
 /// The one line the composer collapses to while a decision waits, and the
 /// placeholder of the field it opens into.
-pub(super) const REPLY_INSTEAD: &str = "Reply instead…";
+pub(super) const REPLY_INSTEAD: &str = "Reply instead — the request stays pending";
 
 /// The composer's placeholder while a decision waits on the user (the
 /// default otherwise). While a decision is open the composer is the "Reply
@@ -342,9 +362,16 @@ pub(super) fn approval_headline(approval: &Value, cwd: &str) -> Vec<(String, boo
     let folder = (!cwd.is_empty()).then(|| short_path(cwd));
     match lower.as_str() {
         "bash" | "shell" | "exec_command" | "local_shell" if !summary.is_empty() => {
-            let mut parts = vec![text("Run"), code(&summary)];
+            // R4.3: a command the headline cannot show whole shows wrapped
+            // under it (`approval_request`), never cut beside Allow.
+            let mut parts = if approval_request(approval).is_some() {
+                vec![text("Run this command")]
+            } else {
+                vec![text("Run"), code(&summary)]
+            };
             match folder {
                 Some(folder) => parts.push(text(&format!("in {folder}?"))),
+                None if parts.len() == 1 => parts[0].0.push('?'),
                 None => parts.push(text("?")),
             }
             parts
@@ -369,24 +396,18 @@ pub(super) fn approval_headline(approval: &Value, cwd: &str) -> Vec<(String, boo
     }
 }
 
-/// The always-visible where/why line under an approval's headline: the
-/// agent's reason, then the whole folder it would run in (the headline has
-/// only its last two parts). No machine name (R3.5: one workspace needs no
-/// "on Workspace hub").
-pub(super) fn approval_context(approval: &Value, cwd: &str) -> String {
+/// Why the agent asks (its stated reason), for the line under an
+/// approval's headline. Where it would run (folder and host) is the
+/// decision's own line (`decision::where_line`).
+pub(super) fn approval_context(approval: &Value) -> Option<String> {
     let input = approval.get("toolInput").unwrap_or(&Value::Null);
-    let reason = input
+    input
         .get("description")
         .or_else(|| approval.get("reason"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|r| !r.is_empty());
-    let place = Some(cwd.trim().to_owned()).filter(|cwd| !cwd.is_empty());
-    [reason.map(str::to_owned), place]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ")
+        .filter(|r| !r.is_empty())
+        .map(str::to_owned)
 }
 
 /// The pager on a decision card: "2/3" while more than one waits.
@@ -418,6 +439,27 @@ pub(super) fn strip_keys(always: usize, note: bool) -> Vec<StripKey> {
     keys.push(StripKey::Deny);
     if note {
         keys.push(StripKey::DenyWithNote);
+    }
+    keys
+}
+
+/// Number keys on a plan review, in button order (R4.3: numbered like an
+/// approval): Approve plan, "Approve · run with Codex" while a limit
+/// applies, then Keep planning (not while its note is open).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PlanKey {
+    Approve,
+    Handoff,
+    KeepPlanning,
+}
+
+pub(super) fn plan_keys(handoff: bool, keep_planning: bool) -> Vec<PlanKey> {
+    let mut keys = vec![PlanKey::Approve];
+    if handoff {
+        keys.push(PlanKey::Handoff);
+    }
+    if keep_planning {
+        keys.push(PlanKey::KeepPlanning);
     }
     keys
 }
@@ -536,7 +578,7 @@ impl Workspace {
                         p.disabled
                     }))
                     .tooltip(primitives::tooltip_view(
-                        "Write to the agent instead of choosing above",
+                        super::decision::REPLY_KEEPS_PENDING,
                         None,
                         &p,
                     ))
@@ -1129,13 +1171,30 @@ impl Workspace {
             )
     }
 
-    /// A pending tool approval as the "waiting on you" container, in the
-    /// composer's slot (R3.2): the request as a question ("Run `cargo test`
-    /// in native?"), why and the whole folder under it, any fact the
-    /// headline cannot show whole inline, and the numbered actions: 1 Allow
-    /// primary, 2 Always allow (with its scope) secondary, 3 Deny as a
-    /// secondary split whose menu holds 4 Deny with note…. Keys are faint
-    /// trailing hints.
+    /// The host sessions run on, for a decision's where line: the hub's
+    /// machine by name once the Machines snapshot named it, else "this
+    /// machine".
+    pub(super) fn decision_host(&self) -> String {
+        self.host_snapshot()
+            .and_then(|snapshot| {
+                wks_native::hosts::cards(&snapshot, &self.view.hosts_live)
+                    .into_iter()
+                    .find(|card| card.local)
+                    .and_then(|card| {
+                        card.name
+                            .strip_prefix("This machine · ")
+                            .map(|name| format!("{name} (this machine)"))
+                    })
+            })
+            .unwrap_or_else(|| "this machine".to_owned())
+    }
+
+    /// A pending tool approval as the R4.3 decision, in the composer's slot:
+    /// the request as a question ("Run `cargo test` in native?"), why, where
+    /// (folder and host), a long command whole, and the numbered actions:
+    /// 1 Allow primary, 2 Always allow (its exact rule) secondary, 3 Deny as
+    /// a secondary split whose menu holds 4 Deny with note…. Details expands
+    /// the full request. Keys show while this is the decision they answer.
     pub(super) fn render_approval_strip(
         &self,
         approval: &Value,
@@ -1143,130 +1202,40 @@ impl Workspace {
         decisions: &[Decision],
         cx: &mut Context<Self>,
     ) -> Div {
+        use super::decision::{Choice, Details, Frame, NoteMenu};
         let p = self.palette();
-        let t = p.tokens;
         let (compact, enabled) = (layout.compact, layout.enabled);
         let session = self.selected_session();
         let cwd = session.map(|s| s.cwd.clone()).unwrap_or_default();
+        let host = self.decision_host();
         let card = session.and_then(Session::card);
         let always = wks_native::session_controls::always_options(approval);
         let note = self.deny_note_offered() && !self.extras.deny_open;
         let keys = strip_keys(always.len(), note);
-        let number = |key: &StripKey| {
-            keys.iter()
-                .position(|k| k == key)
-                .map(|ix| (ix + 1).to_string())
-                .unwrap_or_default()
+        let number = |key: &StripKey| keys.iter().position(|k| k == key).map(|ix| ix + 1);
+        let allow = {
+            let card = card.clone();
+            Choice::new("approve", "Allow")
+                .key(number(&StripKey::Allow))
+                .tooltip("Allow this once")
+                .enabled(enabled)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.act(Action::Approve(true, card.clone()), cx)
+                }))
         };
-        let headline = primitives::headline(
-            approval_headline(approval, &cwd)
-                .into_iter()
-                .map(|(part, code)| {
-                    if code {
-                        primitives::Headline::Code(part.into())
-                    } else {
-                        primitives::Headline::Text(part.into())
-                    }
-                })
-                .collect(),
-            &p,
-        )
-        .debug_selector(|| "approval-summary".into());
-        let context = approval_context(approval, &cwd);
-        let head = primitives::waiting_head(
-            headline,
-            (!context.is_empty()).then(|| context.into()),
-            position_label(decisions, Decision::Approval).map(Into::into),
-            Vec::new(),
-            &p,
-        );
-        // R3.2: what it would run, where and with what, inline; the facts
-        // the headline and context line cannot show whole sit in an inset.
-        let facts = approval_facts(approval);
-        let details = (!facts.is_empty()).then(|| {
-            primitives::inset(&p)
-                .id("approval-details")
-                .debug_selector(|| "approval-details".into())
-                .children(
-                    facts
-                        .into_iter()
-                        .enumerate()
-                        .map(|(ix, (label, value, mono))| {
-                            div()
-                                .debug_selector(move || format!("approval-fact-{ix}"))
-                                .flex()
-                                .items_start()
-                                .gap(px(t.space.lg))
-                                .text_size(px(t.text.meta))
-                                .line_height(relative(t.text.line_height))
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .w(px(t.layout.avatar_lg * 2.))
-                                        .text_color(rgb(p.roles.text_tertiary))
-                                        .child(label),
-                                )
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .text_color(rgb(p.text))
-                                        .when(mono, |d| d.font_family(mono_font()))
-                                        .child(value),
-                                )
-                        }),
-                )
-        });
-        let deny_note = self
-            .extras
-            .deny_open
-            .then(|| self.render_deny_note_v2(enabled, "Deny and tell it", cx));
-        let actions = primitives::waiting_actions(&p)
-            .child({
+        // One button per grant the card offers, each with its exact scope:
+        // the user sees what "always" would allow, and until when.
+        let alternates = always
+            .into_iter()
+            .enumerate()
+            .map(|(ix, option)| {
                 let card = card.clone();
-                primitives::keyed_button(
-                    "approve",
-                    number(&StripKey::Allow),
-                    "Allow",
-                    // While a note is being written, sending it is the primary.
-                    if self.extras.deny_open {
-                        ButtonVariant::Secondary
-                    } else {
-                        ButtonVariant::Primary
-                    },
-                    ButtonSize::Small,
-                    enabled,
-                    &p,
-                )
-                .debug_selector(|| "approve".into())
-                .tooltip(primitives::tooltip_view("Allow this once", None, &p))
-                .when(enabled, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        this.act(Action::Approve(true, card.clone()), cx)
-                    }))
-                })
-            })
-            // One button per grant the card offers, each with its exact
-            // scope (R3.2): the user sees what "always" would allow, and
-            // until when.
-            .children(always.into_iter().enumerate().map(|(ix, option)| {
-                let card = card.clone();
-                let enabled = enabled && card.is_some();
                 let (label, scope) = always_copy(&option.label, approval);
-                primitives::keyed_button(
-                    SharedString::from(format!("always-option-{ix}")),
-                    number(&StripKey::Always(ix)),
-                    label,
-                    ButtonVariant::Secondary,
-                    ButtonSize::Small,
-                    enabled,
-                    &p,
-                )
-                .debug_selector(move || format!("always-option-{ix}"))
-                .max_w(px(t.layout.dialog_width))
-                .tooltip(primitives::tooltip_view(scope, None, &p))
-                .when(enabled, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
+                Choice::new(format!("always-option-{ix}"), label)
+                    .key(number(&StripKey::Always(ix)))
+                    .tooltip(scope)
+                    .enabled(enabled && card.is_some())
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         let Some(card) = card.clone() else {
                             return;
                         };
@@ -1279,107 +1248,95 @@ impl Workspace {
                             cx,
                         )
                     }))
-                })
-            }))
-            .child(self.render_deny_split(
-                card.clone(),
-                number(&StripKey::Deny),
-                note.then(|| number(&StripKey::DenyWithNote)),
-                enabled,
-                cx,
-            ));
-        primitives::waiting_card(compact, &p)
-            .debug_selector(|| "approval-card".into())
-            .occlude()
-            .child(head)
-            .children(details)
-            .children(deny_note)
-            .child(actions)
-    }
-
-    /// Deny as a Secondary split button (R3.2) with its key as a trailing
-    /// hint; its menu holds "Deny with note…" (and that item's key) where the
-    /// provider takes a note. Without a note there is no chevron.
-    fn render_deny_split(
-        &self,
-        card: Option<String>,
-        key: String,
-        note_key: Option<String>,
-        enabled: bool,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.palette();
-        let deny = |d: Stateful<Div>| {
+            })
+            .collect();
+        let deny = {
             let card = card.clone();
-            d.debug_selector(|| "deny".into())
-                .child(primitives::keycap_hint(key.clone(), false, &p))
-                .tooltip(primitives::tooltip_view("Deny this request", None, &p))
-                .when(enabled, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        this.act(Action::Approve(false, card.clone()), cx)
-                    }))
-                })
-        };
-        let Some(note_key) = note_key else {
-            return div().child(deny(primitives::button(
-                "deny",
-                "Deny",
-                None,
-                ButtonVariant::Secondary,
-                ButtonSize::Small,
-                enabled,
-                &p,
-            )));
-        };
-        let (main, chevron) = primitives::split_button_parts(
-            "deny",
-            "Deny",
-            None,
-            ButtonVariant::Secondary,
-            ButtonSize::Small,
-            enabled,
-            &p,
-        );
-        let chevron = chevron
-            .debug_selector(|| "deny-menu".into())
-            .when(enabled, |d| {
-                d.on_click(cx.listener(|this, _, _, cx| {
-                    this.composer_ui.deny_menu = !this.composer_ui.deny_menu;
-                    cx.notify();
+            Choice::new("deny", "Deny")
+                .key(number(&StripKey::Deny))
+                .tooltip("Deny this request")
+                .enabled(enabled)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.act(Action::Approve(false, card.clone()), cx)
                 }))
-            });
-        let menu = (self.composer_ui.deny_menu && enabled).then(|| {
+        };
+        let deny_note = note.then(|| {
             let card = card.clone();
-            primitives::menu(&p)
-                .debug_selector(|| "deny-menu-list".into())
-                .occlude()
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                    this.composer_ui.deny_menu = false;
-                    cx.notify();
-                }))
-                .child(
-                    primitives::menu_item(
-                        "deny-with-note",
-                        "Deny with note…",
-                        None,
-                        false,
-                        true,
-                        &p,
-                    )
-                    .debug_selector(|| "deny-with-note".into())
-                    .child(primitives::keycap_hint(note_key, false, &p))
-                    .tooltip(primitives::tooltip_view(
-                        "Deny, and tell the agent what to do instead",
-                        None,
-                        &p,
-                    ))
+            let entity = cx.entity().downgrade();
+            NoteMenu {
+                chevron: Choice::new("deny-menu", "")
+                    .enabled(enabled)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.composer_ui.deny_menu = !this.composer_ui.deny_menu;
+                        cx.notify();
+                    })),
+                open: self.composer_ui.deny_menu,
+                item: Choice::new("deny-with-note", "Deny with note…")
+                    .key(number(&StripKey::DenyWithNote))
+                    .tooltip("Deny, and tell the agent what to do instead")
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.composer_ui.deny_menu = false;
                         this.open_deny_note(card.clone(), window, cx)
                     })),
-                )
+                on_dismiss: Some(std::rc::Rc::new(move |_: &mut Window, cx: &mut App| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.composer_ui.deny_menu = false;
+                        cx.notify();
+                    });
+                })),
+            }
         });
-        primitives::split_button_with_menu(deny(main), chevron, menu, &p)
+        let details_open = self.extras.approval_details;
+        let details = Details {
+            toggle: Choice::new("approval-toggle", "Details").on_click(cx.listener(
+                |this, _, _, cx| {
+                    this.extras.approval_details = !this.extras.approval_details;
+                    cx.notify();
+                },
+            )),
+            open: details_open,
+            content: details_open.then(|| {
+                super::decision::facts(
+                    "approval-details",
+                    "approval-fact",
+                    approval_facts(approval, &cwd, &host),
+                    &p,
+                )
+                .into_any_element()
+            }),
+        };
+        let mut decision =
+            super::decision::Decision::new("approval-card", allow, Frame::Card { compact });
+        decision.headline = approval_headline(approval, &cwd);
+        decision.headline_selector = Some("approval-summary".into());
+        decision.reason = approval_context(approval);
+        decision.request = approval_request(approval);
+        decision.request_selector = "approval-request".into();
+        decision.folder = Some(cwd.clone()).filter(|c| !c.is_empty());
+        decision.host = Some(host);
+        decision.pager = position_label(decisions, Decision::Approval);
+        decision.details = Some(details);
+        decision.note = self.extras.deny_open.then(|| {
+            self.render_deny_note_v2(enabled, "Deny and tell it", cx)
+                .into_any_element()
+        });
+        // While a note is being written, sending it is the primary.
+        decision.allow_primary = !self.extras.deny_open;
+        decision.alternates = alternates;
+        decision.deny = Some(deny);
+        decision.deny_note = deny_note;
+        decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval));
+        decision.render(&p)
+    }
+
+    /// The decision the number keys answer (R4.3: their keycaps show only
+    /// there): the approval or plan, else a question set.
+    pub(super) fn keyed_decision(&self, session: &Session) -> Option<Decision> {
+        match &session.approval {
+            Some(approval) if plan_text(approval).is_some() => Some(Decision::Plan),
+            Some(_) => Some(Decision::Approval),
+            None => session.questions.is_some().then_some(Decision::Questions),
+        }
     }
 
     /// Open the note box under a Deny with note / Keep planning.
@@ -1496,7 +1453,30 @@ impl Workspace {
         let Some(session) = self.selected_session().cloned() else {
             return;
         };
-        let Some(approval) = session.approval.as_ref().filter(|a| plan_text(a).is_none()) else {
+        if session
+            .approval
+            .as_ref()
+            .is_some_and(|a| plan_text(a).is_some())
+        {
+            let (handoff, can_hand_off) = self.plan_handoff(Some(&session));
+            let keys = plan_keys(handoff.is_some(), true);
+            let Some(key) = n.checked_sub(1).and_then(|ix| keys.get(ix)) else {
+                return;
+            };
+            cx.stop_propagation();
+            let card = session.card();
+            match key {
+                PlanKey::Approve => self.act(Action::Approve(true, card), cx),
+                PlanKey::Handoff if can_hand_off => {
+                    self.act(Action::Approve(true, card), cx);
+                    self.open_feature(Screen::Handoff, window, cx);
+                }
+                PlanKey::Handoff => {}
+                PlanKey::KeepPlanning => self.open_deny_note(card, window, cx),
+            }
+            return;
+        }
+        let Some(approval) = session.approval.as_ref() else {
             // r2-systems: with no approval, number keys answer the question
             // the stepper shows.
             if session.questions.is_some() && self.question_number_key(n, window, cx) {
@@ -1549,10 +1529,20 @@ impl Workspace {
         Some(format!("{provider}'s {window} limit is reached · {when}"))
     }
 
-    /// Claude finished planning: the plan as a "waiting on you" container.
-    /// A spent usage limit is part of the same card: Approve plan stays the
-    /// primary (it waits for the reset), "Approve · run with Codex" is the
-    /// secondary, Keep planning the tertiary.
+    /// Who a plan waiting under a spent limit could be handed to, and
+    /// whether that is possible now.
+    fn plan_handoff(&self, session: Option<&Session>) -> (Option<&'static str>, bool) {
+        let limited = session.is_some_and(|s| self.decisions(s).contains(&Decision::Limit));
+        let other = limited.then(|| self.other_agent()).flatten();
+        let can = self.supported_session() && self.view.connected && !self.demo;
+        (other, can)
+    }
+
+    /// Claude finished planning: the plan as the R4.3 decision. A spent
+    /// usage limit is part of the same card: Approve plan stays the primary
+    /// (it waits for the reset), "Approve · run with Codex" is the
+    /// secondary, Keep planning (feedback, the plan's Deny with note) is
+    /// secondary too. Numbered like an approval.
     pub(super) fn render_plan_card_v2(
         &self,
         plan: &str,
@@ -1560,6 +1550,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        use super::decision::{Choice, Frame};
         let p = self.palette();
         let t = p.tokens;
         let (compact, enabled) = (layout.compact, layout.enabled);
@@ -1567,9 +1558,10 @@ impl Workspace {
         let decisions = session.map(|s| self.decisions(s)).unwrap_or_default();
         let card = session.and_then(Session::card);
         let limited = decisions.contains(&Decision::Limit);
-        let handoff_to = limited.then(|| self.other_agent()).flatten();
-        let can_hand_off = self.supported_session() && self.view.connected && !self.demo;
+        let (handoff_to, can_hand_off) = self.plan_handoff(session);
         let deny_open = self.extras.deny_open;
+        let keys = plan_keys(handoff_to.is_some(), !deny_open);
+        let number = |key: PlanKey| keys.iter().position(|k| *k == key).map(|ix| ix + 1);
         let agent = session
             .map(|s| match s.provider_id() {
                 "codex" => "Codex",
@@ -1583,116 +1575,75 @@ impl Workspace {
             Some(limit) => format!("{limit} · approving waits for it"),
             None => format!("Nothing runs until you approve · {agent} starts on approval"),
         };
-        let head = primitives::waiting_head(
-            primitives::headline(
-                vec![primitives::Headline::Text("Start on this plan?".into())],
-                &p,
-            )
-            .debug_selector(|| "plan-headline".into()),
-            Some(context.into()),
-            position_label(&decisions, Decision::Plan).map(Into::into),
-            Vec::new(),
-            &p,
-        )
-        .debug_selector(|| "plan-head".into());
-        let approve = |id: &'static str,
-                       label: SharedString,
-                       variant: ButtonVariant,
-                       card: Option<String>,
-                       then_handoff: bool| {
-            // A feedback note being written owns the primary.
-            let variant = if deny_open && variant == ButtonVariant::Primary {
-                ButtonVariant::Secondary
-            } else {
-                variant
-            };
-            let enabled = enabled && (!then_handoff || can_hand_off);
-            primitives::button(id, label, None, variant, ButtonSize::Small, enabled, &p).when(
-                enabled,
-                |d| {
-                    d.on_click(cx.listener(move |this, _, window, cx| {
-                        this.act(Action::Approve(true, card.clone()), cx);
-                        if then_handoff {
-                            this.open_feature(Screen::Handoff, window, cx);
-                        }
-                    }))
-                },
-            )
+        let approve = |id: &'static str, label: String, card: Option<String>, handoff: bool| {
+            Choice::new(id, label)
+                .enabled(enabled && (!handoff || can_hand_off))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.act(Action::Approve(true, card.clone()), cx);
+                    if handoff {
+                        this.open_feature(Screen::Handoff, window, cx);
+                    }
+                }))
         };
-        let actions = primitives::waiting_actions(&p)
-            .child(
+        let allow = approve("plan-approve", "Approve plan".into(), card.clone(), false)
+            .key(number(PlanKey::Approve));
+        let mut decision =
+            super::decision::Decision::new("plan-card", allow, Frame::Card { compact });
+        decision.headline = vec![("Start on this plan?".to_owned(), false)];
+        decision.headline_selector = Some("plan-headline".into());
+        decision.reason = Some(context);
+        decision.folder = session.map(|s| s.cwd.clone()).filter(|c| !c.is_empty());
+        decision.host = Some(self.decision_host());
+        decision.pager = position_label(&decisions, Decision::Plan);
+        // A feedback note being written owns the primary.
+        decision.allow_primary = !deny_open;
+        decision.alternates = handoff_to
+            .map(|other| {
                 approve(
-                    "approve",
-                    "Approve plan".into(),
-                    ButtonVariant::Primary,
-                    card.clone(),
-                    false,
-                )
-                .debug_selector(|| "plan-approve".into()),
-            )
-            .children(handoff_to.map(|other| {
-                approve(
-                    "approve-handoff",
-                    format!("Approve · run with {other}").into(),
-                    ButtonVariant::Secondary,
+                    "plan-approve-handoff",
+                    format!("Approve · run with {other}"),
                     card.clone(),
                     true,
                 )
-                .debug_selector(|| "plan-approve-handoff".into())
-                .tooltip(primitives::tooltip_view(
-                    format!("Approve, then hand this session to {other} instead of waiting"),
-                    None,
-                    &p,
+                .key(number(PlanKey::Handoff))
+                .tooltip(format!(
+                    "Approve, then hand this session to {other} instead of waiting"
                 ))
-            }))
-            .when(!self.extras.deny_open, |d| {
-                let card = card.clone();
-                d.child(
-                    primitives::button(
-                        "plan-revise",
-                        "Keep planning",
-                        None,
-                        ButtonVariant::Tertiary,
-                        ButtonSize::Small,
-                        enabled,
-                        &p,
-                    )
-                    .debug_selector(|| "plan-revise".into())
-                    .tooltip(primitives::tooltip_view(
-                        "Send feedback and let it keep planning",
-                        None,
-                        &p,
-                    ))
-                    .when(enabled, |d| {
-                        d.on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_deny_note(card.clone(), window, cx)
-                        }))
-                    }),
-                )
-            });
-        primitives::waiting_card(compact, &p)
-            .debug_selector(|| "plan-card".into())
-            .occlude()
-            .child(head)
-            .child(
-                primitives::inset(&p)
-                    // Markdown lays out as a block, not a flex column.
-                    .block()
-                    .id("plan-body")
-                    .debug_selector(|| "plan-body".into())
-                    .max_h(px(if compact {
-                        t.layout.row_height * 4.
-                    } else {
-                        t.layout.row_height * 9.
-                    }))
-                    .overflow_y_scroll()
-                    .px(px(t.space.xl))
-                    .child(self.render_markdown("approval-plan", plan, window, cx)),
-            )
-            .when(self.extras.deny_open, |d| {
-                d.child(self.render_deny_note_v2(enabled, "Keep planning", cx))
             })
-            .child(actions)
+            .into_iter()
+            .collect();
+        decision.deny = (!deny_open).then(|| {
+            let card = card.clone();
+            Choice::new("plan-revise", "Keep planning")
+                .key(number(PlanKey::KeepPlanning))
+                .tooltip("Send feedback and let it keep planning")
+                .enabled(enabled)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_deny_note(card.clone(), window, cx)
+                }))
+        });
+        decision.body = Some(
+            primitives::inset(&p)
+                // Markdown lays out as a block, not a flex column.
+                .block()
+                .id("plan-body")
+                .debug_selector(|| "plan-body".into())
+                .max_h(px(if compact {
+                    t.layout.row_height * 4.
+                } else {
+                    t.layout.row_height * 9.
+                }))
+                .overflow_y_scroll()
+                .px(px(t.space.xl))
+                .child(self.render_markdown("approval-plan", plan, window, cx))
+                .into_any_element(),
+        );
+        decision.note = deny_open.then(|| {
+            self.render_deny_note_v2(enabled, "Keep planning", cx)
+                .into_any_element()
+        });
+        decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan));
+        decision.render(&p)
     }
 
     /// The other provider the limit card would hand this session to.
@@ -1841,19 +1792,54 @@ mod tests {
             "timeout": 120000,
             "run_in_background": false,
         }});
-        // A short command is the headline; the reason and folder are the
-        // context line. What is left shows inline, as words.
-        let facts = approval_facts(&approval);
+        // R4.3: Details is the whole request: the tool, every input in
+        // full, the folder and the host, as words.
+        let facts = approval_facts(&approval, "/home/dev/app", "studio");
         let labels: Vec<&str> = facts.iter().map(|(l, _, _)| l.as_str()).collect();
-        assert_eq!(labels, ["Timeout", "Run in background"]);
+        assert_eq!(
+            labels,
+            [
+                "Tool",
+                "Command",
+                "Reason",
+                "Timeout",
+                "Run in background",
+                "Folder",
+                "Host"
+            ]
+        );
         assert!(facts.iter().all(|(_, v, _)| !v.contains('{')));
-        // A command the headline cannot show whole is repeated in full.
+        // A command the headline cannot show whole shows in full under it,
+        // and the headline names it without a cut code span.
         let long = json!({"toolName":"Bash","toolInput":{"command":"cargo test\n--all"}});
         assert_eq!(
-            approval_facts(&long),
-            vec![("Command".into(), "cargo test\n--all".into(), true)]
+            approval_request(&long).as_deref(),
+            Some("cargo test\n--all")
         );
-        assert!(approval_facts(&json!({"toolInput":{"file_path":"a.rs"}})).is_empty());
+        assert_eq!(
+            approval_headline(&long, "/home/dev/app"),
+            [
+                ("Run this command".to_owned(), false),
+                ("in dev/app?".to_owned(), false)
+            ]
+        );
+        assert_eq!(approval_request(&approval), None);
+        assert_eq!(
+            approval_facts(&json!({"toolInput":{"file_path":"a.rs"}}), "", ""),
+            vec![
+                ("Tool".into(), "Tool".into(), false),
+                ("File".into(), "a.rs".into(), true)
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_reviews_are_numbered_like_approvals() {
+        assert_eq!(
+            plan_keys(true, true),
+            [PlanKey::Approve, PlanKey::Handoff, PlanKey::KeepPlanning]
+        );
+        assert_eq!(plan_keys(false, false), [PlanKey::Approve]);
     }
 
     #[test]
@@ -1967,10 +1953,10 @@ mod tests {
                 ("in apps/native?".to_owned(), false)
             ]
         );
-        // No "on Workspace hub" (R3.5); the whole folder.
+        // The reason; where it runs is the decision's own line (R4.3).
         assert_eq!(
-            approval_context(&bash, cwd),
-            "Run the tests before committing · /home/dev/src/workspacer/apps/native"
+            approval_context(&bash).as_deref(),
+            Some("Run the tests before committing")
         );
         let edit = json!({"toolName":"Edit","toolInput":{"file_path":"/home/dev/src/workspacer/apps/native/src/ui.rs"}});
         assert_eq!(
@@ -1981,6 +1967,6 @@ mod tests {
             approval_headline(&json!({"toolName":"Mystery"}), ""),
             [("Allow Mystery to run?".to_owned(), false)]
         );
-        assert_eq!(approval_context(&json!({}), ""), "");
+        assert_eq!(approval_context(&json!({})), None);
     }
 }

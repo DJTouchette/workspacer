@@ -68,6 +68,8 @@ mod palette;
 mod transcript_v2;
 // r3-fleet
 mod fleet;
+// r4-approvals
+mod decision;
 use chrome::ControlTextStyle;
 pub(crate) use chrome::custom_caption;
 use gpui::{
@@ -809,6 +811,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("1", fleet::FleetKey1, Some(fleet::KEY_CONTEXT)),
         KeyBinding::new("2", fleet::FleetKey2, Some(fleet::KEY_CONTEXT)),
         KeyBinding::new("3", fleet::FleetKey3, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("4", fleet::FleetKey4, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("5", fleet::FleetKey5, Some(fleet::KEY_CONTEXT)),
     ]);
 }
 

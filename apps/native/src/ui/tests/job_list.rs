@@ -62,8 +62,16 @@ fn reviews_a_proposed_change(cx: &mut TestAppContext, design: wks_native::appear
         );
     }
 
-    // The proposal sorts first and opens to the job it would change.
-    click(&mut visual, "job-row-0");
+    // The proposal sorts first and opens to the job it would change (v2:
+    // R4.3, the decision's Details).
+    if design.is_v2() {
+        // The whole command and where it runs, beside Approve.
+        assert!(visual.debug_bounds("job-action-0").is_some());
+        assert!(visual.debug_bounds("decision-where").is_some());
+        click(&mut visual, "job-details-0");
+    } else {
+        click(&mut visual, "job-row-0");
+    }
     assert!(visual.debug_bounds("job-detail").is_some());
     assert!(effects(&mut commands).iter().any(|c| matches!(
         c,

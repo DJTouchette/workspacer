@@ -1373,7 +1373,6 @@ mod tests {
     #[test]
     fn every_theme_meets_the_round_three_contrast_pairs() {
         let w = Tokens::V2.wash;
-        let sig = Tokens::V2.signals();
         for appearance in Appearance::ALL {
             let p = appearance.palette_v2();
             let r = p.roles;
@@ -1461,13 +1460,11 @@ mod tests {
                     4.5,
                 );
             }
-            // Keycap hint on a Primary fill: faint, but legible.
-            floor(
-                "keycap hint on primary",
-                blend(p.on_primary, sig.hint_alpha, p.primary),
-                p.primary,
-                3.,
-            );
+            // R4.3: the keycap inside the Primary button meets text contrast
+            // (it is drawn in the label colour, no box).
+            floor("keycap hint on primary", p.on_primary, p.primary, 4.5);
+            // Off the fill it is tertiary text, AA on the card.
+            floor("keycap hint on a card", r.text_tertiary, p.surface, 4.5);
             // Coloured count badges: the base colour on the status fill.
             floor("needs-you count", p.base, r.status.attention, 4.5);
             floor("failed count", p.base, r.status.fault, 4.5);

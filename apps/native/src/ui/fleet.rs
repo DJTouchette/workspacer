@@ -11,7 +11,10 @@
 //! a tile's event lines are what the session row itself reports: its last
 //! tool, plan step, subagents and background work. Design v2 only.
 use super::attention::{self, Bucket};
-use super::composer_v2::{StripKey, approval_headline, plan_text, strip_keys};
+use super::composer_v2::{
+    StripKey, approval_context, approval_facts, approval_headline, approval_request, plan_text,
+    strip_keys,
+};
 use super::primitives::{
     self, ButtonSize, ButtonVariant, CountTone, EventRow, StatusBadge, StatusKind,
 };
@@ -29,10 +32,12 @@ actions!(
         FleetDown,
         /// Open the focused tile's session.
         FleetOpen,
-        /// The focused tile's ask: its first, second and third action.
+        /// The focused tile's ask: its first, second, … fifth action.
         FleetKey1,
         FleetKey2,
-        FleetKey3
+        FleetKey3,
+        FleetKey4,
+        FleetKey5
     ]
 );
 
@@ -45,8 +50,10 @@ pub(super) struct FleetUi {
     /// The focused tile, by session id, so focus follows a session as the
     /// grid re-sorts. `None` (or a session no longer shown) is the first.
     pub(super) focus: Option<String>,
-    /// Show idle and ended sessions too.
-    pub(super) all: bool,
+    /// Which tiles show: Needs you only, Active (the default) or All.
+    pub(super) filter: Filter,
+    /// The tile whose request Details is open, by session id.
+    pub(super) details: Option<String>,
     /// Columns the grid was last drawn with, for Up and Down.
     pub(super) columns: usize,
 }
@@ -90,10 +97,24 @@ pub(crate) fn step(at: usize, count: usize, columns: usize, dir: Move) -> usize 
     }
 }
 
-/// Whether a group shows: the default view keeps what matters (Needs you
-/// and Working); "All" adds Idle and Ended.
-pub(crate) fn shown(bucket: Bucket, all: bool) -> bool {
-    all || matches!(bucket, Bucket::NeedsYou | Bucket::Working)
+/// The Fleet's filter (R4.7): Needs you only for a burst of asks, Active
+/// (Needs you and Working, the default) or All.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Filter {
+    NeedsYou,
+    #[default]
+    Active,
+    All,
+}
+
+/// Whether a group shows under `filter`: Needs you only; the default
+/// keeps what matters (Needs you and Working); All adds Idle and Ended.
+pub(crate) fn shown(bucket: Bucket, filter: Filter) -> bool {
+    match filter {
+        Filter::NeedsYou => bucket == Bucket::NeedsYou,
+        Filter::Active => matches!(bucket, Bucket::NeedsYou | Bucket::Working),
+        Filter::All => true,
+    }
 }
 
 /// The header's one-line count of the fleet: "2 need you · 3 working ·
@@ -161,14 +182,20 @@ pub(super) struct Line {
 /// What a tile waits on, and so what its keys do.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Ask {
-    /// A tool waits for permission: the request as a headline (words and
-    /// code spans), why, the first "Always allow" grant, and the keys in
-    /// button order (Allow, Always, Deny).
+    /// A tool waits for permission (R4.3, as in the conversation): the
+    /// request as a headline (words and code spans), why, a long command
+    /// whole, its folder and host, each "Always allow" grant as (option id,
+    /// the provider's label, the exact rule shown, tooltip), the keys in button order (Allow, each grant,
+    /// Deny) and the full request for Details.
     Approval {
         headline: Vec<(String, bool)>,
         context: Option<String>,
-        always: Option<(String, String, String)>,
+        request: Option<String>,
+        folder: String,
+        host: String,
+        always: Vec<(String, String, String, String)>,
         keys: Vec<StripKey>,
+        facts: Vec<(String, String, bool)>,
     },
     /// A plan or a question: its headline, answered in the session (1).
     Open {
@@ -224,7 +251,7 @@ impl Workspace {
         let now = timing::now_ms();
         self.fleet_sessions(cx)
             .into_iter()
-            .filter(|&(_, bucket)| shown(bucket, self.fleet.all))
+            .filter(|&(_, bucket)| shown(bucket, self.fleet.filter))
             .map(|(ix, bucket)| self.fleet_tile(ix, bucket, now))
             .collect()
     }
@@ -241,6 +268,7 @@ impl Workspace {
                 .map(|at| wks_native::format::age(at, now))
         };
         let reason = self.inbox_reason(session, now);
+        let host = self.decision_host();
         let ask = session
             .approval
             .as_ref()
@@ -252,25 +280,26 @@ impl Workspace {
                         verb: "Review plan",
                     };
                 }
-                let always = wks_native::session_controls::always_options(approval)
-                    .into_iter()
-                    .next()
-                    .map(|option| {
-                        let (label, tip) = super::composer_v2::always_copy(&option.label, approval);
-                        (option.id, label, tip)
-                    });
-                let context = approval
-                    .pointer("/toolInput/description")
-                    .or_else(|| approval.get("reason"))
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|r| !r.is_empty())
-                    .map(str::to_owned);
+                // Every grant, with the same exact rule the conversation
+                // shows (R4.3), never shortened to "Always allow".
+                let always: Vec<(String, String, String, String)> =
+                    wks_native::session_controls::always_options(approval)
+                        .into_iter()
+                        .map(|option| {
+                            let (label, tip) =
+                                super::composer_v2::always_copy(&option.label, approval);
+                            (option.id, option.label, label, tip)
+                        })
+                        .collect();
                 Ask::Approval {
                     headline: approval_headline(approval, &session.cwd),
-                    context,
-                    keys: strip_keys(usize::from(always.is_some()), false),
+                    context: approval_context(approval),
+                    request: approval_request(approval),
+                    folder: session.cwd.clone(),
+                    host: host.clone(),
+                    keys: strip_keys(always.len(), false),
                     always,
+                    facts: approval_facts(approval, &session.cwd, &host),
                 }
             })
             .or_else(|| {
@@ -311,7 +340,16 @@ impl Workspace {
             id: session.id.clone(),
             title: self.session_title(session),
             project: self.project_name(&session.cwd),
-            model: wks_native::format::model_name(&session.display_model()),
+            // R4.7: the catalog's casing ("GPT-5.6 Sol"), as the composer
+            // chip shows it; never a second pass over a display name.
+            model: {
+                let name = session.display_model();
+                if name.is_empty() {
+                    wks_native::format::model_name("")
+                } else {
+                    name
+                }
+            },
             kind,
             bucket,
             time,
@@ -514,8 +552,8 @@ impl Workspace {
                 let action = match key {
                     StripKey::Allow => Action::Approve(true, card),
                     StripKey::Deny => Action::Approve(false, card),
-                    StripKey::Always(_) => match (always, card) {
-                        (Some((option, label, _)), Some(card)) => Action::AlwaysAllow {
+                    StripKey::Always(ix) => match (always.get(*ix), card) {
+                        (Some((option, label, _, _)), Some(card)) => Action::AlwaysAllow {
                             option: option.clone(),
                             label: label.clone(),
                             card,
@@ -570,6 +608,8 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &FleetKey1, window, cx| this.fleet_key(1, window, cx)))
             .on_action(cx.listener(|this, _: &FleetKey2, window, cx| this.fleet_key(2, window, cx)))
             .on_action(cx.listener(|this, _: &FleetKey3, window, cx| this.fleet_key(3, window, cx)))
+            .on_action(cx.listener(|this, _: &FleetKey4, window, cx| this.fleet_key(4, window, cx)))
+            .on_action(cx.listener(|this, _: &FleetKey5, window, cx| this.fleet_key(5, window, cx)))
     }
 
     fn fleet_key(&mut self, n: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -607,9 +647,11 @@ impl Workspace {
         let quiet = groups.len() - active;
         let tiles = self.fleet_tiles(cx);
         let focus = self.fleet_focus(&tiles);
-        let all = self.fleet.all;
-        let filter = |id: &'static str, label: &'static str, on: bool, n: usize| {
-            primitives::segment(id, label, all == on, &p)
+        let current = self.fleet.filter;
+        let all = current == Filter::All;
+        let needs = counts[Bucket::NeedsYou.index()];
+        let filter = |id: &'static str, label: &'static str, on: Filter, n: usize| {
+            primitives::segment(id, label, current == on, &p)
                 .debug_selector(move || id.into())
                 .gap(px(t.space.sm))
                 .child(primitives::count_badge(
@@ -618,7 +660,7 @@ impl Workspace {
                     &p,
                 ))
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.fleet.all = on;
+                    this.fleet.filter = on;
                     window.focus(&this.focus);
                     cx.notify();
                 }))
@@ -629,18 +671,33 @@ impl Workspace {
             Some(summary(counts).into()),
             vec![
                 primitives::segmented(&p)
-                    .child(filter("fleet-filter-active", "Active", false, active))
-                    .child(filter("fleet-filter-all", "All", true, groups.len()))
+                    .child(filter(
+                        "fleet-filter-needs",
+                        "Needs you",
+                        Filter::NeedsYou,
+                        needs,
+                    ))
+                    .child(filter(
+                        "fleet-filter-active",
+                        "Active",
+                        Filter::Active,
+                        active,
+                    ))
+                    .child(filter("fleet-filter-all", "All", Filter::All, groups.len()))
                     .into_any_element(),
             ],
             &p,
         );
-        let needs = counts[Bucket::NeedsYou.index()];
         let body: AnyElement = if tiles.is_empty() {
             let (title, body) = if groups.is_empty() {
                 (
                     "No sessions yet",
                     "Start a session and it shows here, live, beside every other.".to_owned(),
+                )
+            } else if current == Filter::NeedsYou {
+                (
+                    "All clear",
+                    format!("Nothing is waiting on you. {}.", summary(counts)),
                 )
             } else {
                 (
@@ -651,13 +708,20 @@ impl Workspace {
                     ),
                 )
             };
+            // The way out of an empty filter: the next wider one.
+            let (wider, label) = if current == Filter::NeedsYou && active > 0 {
+                (Filter::Active, format!("Show active {active}"))
+            } else {
+                (Filter::All, format!("Show all {}", groups.len()))
+            };
+            let offer = !all && (quiet > 0 || wider == Filter::Active);
             primitives::empty_state(IconName::CircleCheck, title, Some(body.into()), &p)
                 .debug_selector(|| "fleet-empty".into())
-                .when(!all && quiet > 0, |d| {
+                .when(offer, |d| {
                     d.child(
                         primitives::button(
                             "fleet-show-all",
-                            format!("Show all {}", groups.len()),
+                            label,
                             None,
                             ButtonVariant::Secondary,
                             ButtonSize::Small,
@@ -665,11 +729,13 @@ impl Workspace {
                             &p,
                         )
                         .debug_selector(|| "fleet-show-all".into())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.fleet.all = true;
-                            window.focus(&this.focus);
-                            cx.notify();
-                        })),
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.fleet.filter = wider;
+                                window.focus(&this.focus);
+                                cx.notify();
+                            },
+                        )),
                     )
                 })
                 .into_any_element()
@@ -701,10 +767,9 @@ impl Workspace {
                         .w_full()
                         .grid()
                         .grid_cols(cols as u16)
-                        // Each tile is as tall as what it says (at least
-                        // `tile_height`), so a short tile beside an approval
-                        // is not padded out with an empty middle.
-                        .items_start()
+                        // R4.7: tiles in one row share its height (the
+                        // tallest, at least `tile_height`); a tile's ask
+                        // sits at its foot, so asks line up across a row.
                         .gap(px(t.space.lg))
                         .children(
                             tiles
@@ -890,7 +955,7 @@ impl Workspace {
         let ask = tile
             .ask
             .as_ref()
-            .map(|ask| self.render_fleet_ask(n, ask, focused, cx));
+            .map(|ask| self.render_fleet_ask(n, tile, ask, focused, cx));
         let group: SharedString = format!("fleet-tile-{n}").into();
         let surface = if waiting {
             primitives::attention_frame(t.radius.panel, &p)
@@ -961,133 +1026,123 @@ impl Workspace {
         .into_any_element()
     }
 
-    /// A tile's ask, under a hairline: the request as a headline and its
-    /// actions with their keys. Only the focused tile's first action is
-    /// Primary, so the one filled button is where 1 goes.
+    /// A tile's ask, under a hairline, drawn by the one decision component
+    /// (R4.3): the request as a headline, why, a long command whole, its
+    /// folder and host, then Allow (always the Primary), each "Always allow"
+    /// with its exact rule and Deny (Secondary). Details expands the full
+    /// request in place. Keycaps show only on the focused tile, where the
+    /// number keys go.
     fn render_fleet_ask(
         &self,
         n: usize,
+        tile: &Tile,
         ask: &Ask,
         focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        use super::decision::{Choice, Decision, Details, Frame};
         let p = self.palette();
         let t = p.tokens;
         let enabled = self.view.connected && !self.view.busy;
-        let lead = if focused {
-            ButtonVariant::Primary
-        } else {
-            ButtonVariant::Secondary
-        };
-        let action = |id: String, key: usize, label: SharedString, variant: ButtonVariant| {
-            primitives::keyed_button(
-                SharedString::from(id.clone()),
-                key.to_string(),
-                label,
-                variant,
-                ButtonSize::Small,
-                enabled,
-                &p,
-            )
-            .debug_selector(move || id.clone())
-            .when(enabled, |d| {
-                d.on_click(cx.listener(move |this, _, window, cx| {
+        let choice = |id: String, key: usize, label: SharedString| {
+            Choice::new(id, label)
+                .key(Some(key))
+                .enabled(enabled)
+                .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     this.fleet_answer(n, key, window, cx);
                 }))
-            })
         };
-        let (headline, context, buttons): (Div, Option<String>, Vec<AnyElement>) = match ask {
+        let decision = match ask {
             Ask::Approval {
                 headline,
                 context,
+                request,
+                folder,
+                host,
                 always,
                 keys,
+                facts,
             } => {
-                let parts = headline
-                    .iter()
-                    .map(|(text, code)| {
-                        if *code {
-                            primitives::Headline::Code(text.clone().into())
-                        } else {
-                            primitives::Headline::Text(text.clone().into())
-                        }
-                    })
-                    .collect();
-                let buttons = keys
+                let number = |key: &StripKey| keys.iter().position(|k| k == key).map(|ix| ix + 1);
+                let allow = choice(
+                    format!("fleet-allow-{n}"),
+                    number(&StripKey::Allow).unwrap_or(1),
+                    "Allow".into(),
+                )
+                .tooltip("Allow this once");
+                let mut decision =
+                    Decision::new(format!("fleet-decision-{n}"), allow, Frame::Inline);
+                decision.headline = headline.clone();
+                decision.headline_selector = Some(format!("fleet-headline-{n}").into());
+                decision.reason = context.clone();
+                decision.request = request.clone();
+                decision.request_selector = format!("fleet-request-{n}").into();
+                decision.folder = Some(folder.clone());
+                decision.host = Some(host.clone());
+                decision.alternates = always
                     .iter()
                     .enumerate()
-                    .filter_map(|(ix, key)| {
-                        let n_key = ix + 1;
-                        let el = match key {
-                            StripKey::Allow => {
-                                action(format!("fleet-allow-{n}"), n_key, "Allow".into(), lead)
-                            }
-                            StripKey::Always(_) => {
-                                let (_, label, tip) = always.clone()?;
-                                action(
-                                    format!("fleet-always-{n}"),
-                                    n_key,
-                                    "Always allow".into(),
-                                    ButtonVariant::Secondary,
-                                )
-                                .tooltip(primitives::tooltip_view(
-                                    format!("{label}\n{tip}"),
-                                    None,
-                                    &p,
-                                ))
-                            }
-                            StripKey::Deny => action(
-                                format!("fleet-deny-{n}"),
-                                n_key,
-                                "Deny".into(),
-                                ButtonVariant::Secondary,
-                            ),
-                            StripKey::DenyWithNote => return None,
+                    .filter_map(|(ix, (_, _, rule, tip))| {
+                        let key = number(&StripKey::Always(ix))?;
+                        // The first grant keeps its selector.
+                        let id = if ix == 0 {
+                            format!("fleet-always-{n}")
+                        } else {
+                            format!("fleet-always-{n}-{ix}")
                         };
-                        Some(el.into_any_element())
+                        Some(choice(id, key, rule.clone().into()).tooltip(tip.clone()))
                     })
                     .collect();
-                (primitives::headline(parts, &p), context.clone(), buttons)
+                decision.deny = number(&StripKey::Deny).map(|key| {
+                    choice(format!("fleet-deny-{n}"), key, "Deny".into())
+                        .tooltip("Deny this request")
+                });
+                let open = self.fleet.details.as_deref() == Some(tile.id.as_str());
+                let id = tile.id.clone();
+                decision.details = Some(Details {
+                    toggle: Choice::new(format!("fleet-details-{n}"), "Details").on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.fleet.focus = Some(id.clone());
+                            this.fleet.details = if this.fleet.details.as_ref() == Some(&id) {
+                                None
+                            } else {
+                                Some(id.clone())
+                            };
+                            cx.notify();
+                        }),
+                    ),
+                    open,
+                    content: open.then(|| {
+                        super::decision::facts("fleet-details", "fleet-fact", facts.clone(), &p)
+                            .into_any_element()
+                    }),
+                });
+                decision.keys = focused;
+                decision
             }
-            Ask::Open { headline, verb } => (
-                div()
-                    .min_w_0()
-                    .line_clamp(2)
-                    .text_size(px(t.text.lead))
-                    .line_height(gpui::relative(t.text.line_height))
-                    .font_weight(FontWeight(t.weight.semibold))
-                    .text_color(rgb(p.text))
-                    .child(headline.clone()),
-                None,
-                vec![action(format!("fleet-open-{n}"), 1, (*verb).into(), lead).into_any_element()],
-            ),
+            Ask::Open { headline, verb } => {
+                let mut decision = Decision::new(
+                    format!("fleet-decision-{n}"),
+                    choice(format!("fleet-open-{n}"), 1, (*verb).into()),
+                    Frame::Inline,
+                );
+                decision.headline = vec![(headline.clone(), false)];
+                decision.headline_selector = Some(format!("fleet-headline-{n}").into());
+                decision.keys = focused;
+                decision
+            }
         };
         div()
             .debug_selector(move || format!("fleet-ask-{n}"))
+            .w_full()
             .flex()
             .flex_col()
-            .gap(px(t.space.md))
             .pt(px(t.space.lg))
             .border_t(px(t.stroke.hairline))
             .border_color(rgb(p.roles.card_border))
-            .child(
-                div()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.xxs))
-                    .child(headline.debug_selector(move || format!("fleet-headline-{n}")))
-                    .children(context.map(|context| {
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .child(context)
-                    })),
-            )
-            .child(primitives::waiting_actions(&p).children(buttons))
+            .child(decision.render(&p))
             .into_any_element()
     }
 }
@@ -1123,11 +1178,14 @@ mod tests {
 
     #[test]
     fn the_default_view_keeps_what_matters() {
-        assert!(shown(Bucket::NeedsYou, false));
-        assert!(shown(Bucket::Working, false));
-        assert!(!shown(Bucket::Idle, false));
-        assert!(!shown(Bucket::Ended, false));
-        assert!(shown(Bucket::Ended, true));
+        assert!(shown(Bucket::NeedsYou, Filter::Active));
+        assert!(shown(Bucket::Working, Filter::Active));
+        assert!(!shown(Bucket::Idle, Filter::Active));
+        assert!(!shown(Bucket::Ended, Filter::Active));
+        assert!(shown(Bucket::Ended, Filter::All));
+        // R4.7: Needs you only, for a burst of asks.
+        assert!(shown(Bucket::NeedsYou, Filter::NeedsYou));
+        assert!(!shown(Bucket::Working, Filter::NeedsYou));
     }
 
     #[test]

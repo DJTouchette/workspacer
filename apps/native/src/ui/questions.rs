@@ -1070,7 +1070,12 @@ impl Workspace {
                     (false, _) => d.child(format!("{}", option_ix + 1)),
                 })
         };
-        let key_hint = (v2 && option_ix < 9).then(|| {
+        // R4.3: keycaps only while the number keys answer this question
+        // (no approval or plan above it takes them).
+        let keyed = self.selected_session().is_some_and(|s| {
+            self.keyed_decision(s) == Some(super::composer_v2::Decision::Questions)
+        });
+        let key_hint = (v2 && keyed && option_ix < 9).then(|| {
             div()
                 .flex_shrink_0()
                 .mt(px((t.text.body * 1.4 - t.text.overline * 1.25) / 2.))

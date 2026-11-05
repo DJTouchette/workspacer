@@ -1996,16 +1996,21 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
 
 /// The one keycap hint (R3.2): the key that also triggers a control, faint
 /// and trailing ("Allow  1"), never tinted with a status or danger colour.
-/// `on_fill` is true on a Primary fill, where the hint is the label colour
-/// at `signals().hint_alpha`; elsewhere it is tertiary text. A hairline
-/// keycap edge in the same colour, no fill.
+/// `on_fill` is true on a Primary fill (R4.3: it must read there): the
+/// numeral is the label colour itself, so it keeps the label's ≥ 4.5:1, and
+/// no keycap box is drawn on the fill. Elsewhere it is tertiary text with a
+/// hairline keycap edge in the same colour, no fill.
 pub(crate) fn keycap_hint(key: impl Into<SharedString>, on_fill: bool, p: &Palette) -> Div {
     let t = p.tokens;
-    let sig = t.signals();
     let fg = if on_fill {
-        wash(p.on_primary, sig.hint_alpha)
+        Hsla::from(rgb(p.on_primary))
     } else {
         Hsla::from(rgb(p.roles.text_tertiary))
+    };
+    let edge = if on_fill {
+        gpui::transparent_black()
+    } else {
+        fg.opacity(fg.a * t.wash.attention_edge)
     };
     div()
         .flex_shrink_0()
@@ -2016,7 +2021,7 @@ pub(crate) fn keycap_hint(key: impl Into<SharedString>, on_fill: bool, p: &Palet
         .items_center()
         .justify_center()
         .border(px(t.stroke.hairline))
-        .border_color(fg.opacity(fg.a * t.wash.attention_edge))
+        .border_color(edge)
         .text_size(px(t.text.overline))
         .line_height(relative(1.25))
         .font_family(mono_font())

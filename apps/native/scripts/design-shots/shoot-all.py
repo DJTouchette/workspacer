@@ -243,6 +243,15 @@ def shots():
     add("fleet-focused-approval", "Fleet: the approval tile focused, Allow 1 / Always allow 2 / Deny 3", fleet)
     add("fleet-all-clear", "Fleet: nothing waits on the user, only working tiles", fleet, fixture="clear")
     add("fleet-light", "Fleet, Light theme", fleet, theme="light")
+    # r4-approvals (R4.3, R4.7): the one decision component. Details expands
+    # the full request in place (conversation and a Fleet tile); the Fleet's
+    # "Needs you" filter for a burst of asks. Design v2 only.
+    add("approvals-details-open", "Approval: Details expanded to the full request (tool, command, folder, host)",
+        [("design", [], [("click", 1144, 921), ("sleep", 0.5)])])
+    add("approvals-fleet-needs-you", "Fleet: the Needs you filter, only the tiles that wait on the user",
+        fleet + [("click", 1350, 78), ("sleep", 0.5)])
+    add("approvals-fleet-details", "Fleet: the approval tile's Details open in place",
+        fleet + [("click", 494, 489), ("sleep", 0.5)])
     return s
 
 

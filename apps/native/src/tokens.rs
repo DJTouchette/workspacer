@@ -848,7 +848,8 @@ pub struct SignalTokens {
     /// the fault colour at `fault_at` (R3.5: 80%, 100%).
     pub warn_at: f32,
     pub fault_at: f32,
-    /// A keycap hint's text, as an alpha of the label colour it trails.
+    /// Unused since R4.3 (a keycap on a Primary fill is the label colour):
+    /// kept for compatibility. Was the hint's alpha of that colour.
     pub hint_alpha: f32,
 }
 

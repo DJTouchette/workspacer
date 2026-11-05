@@ -447,3 +447,24 @@ Supersedes the Approval and Composer rows above.
 | Acting | The hub acts on the selected session only, so a tile's decision sends `Select(id)` then `Act { id, … }` with the tile's card; the Fleet stays on screen |
 | Empty | No Needs you: a quiet "All clear · nothing is waiting on you" line over the working tiles (`fleet-all-clear`); nothing active: `empty_state` "All clear" with "Show all n" (`fleet-empty`) |
 | Shots | `fleet-grid`, `fleet-focused-approval`, `fleet-all-clear`, `fleet-light` |
+
+## Round 4: one decision (r4-approvals, R4.3 / R4.7)
+
+`ui/decision.rs` is the one approval / decision component. A tool approval
+(`render_approval_strip`), a plan review (`render_plan_card_v2`), a Fleet
+tile's ask (`render_fleet_ask`) and a job proposal (`job_proposal_v2`) all
+build a `decision::Decision` and call `.render(&p)`.
+
+| | |
+|---|---|
+| Shape | `Decision::new(selector, allow: Choice, Frame::{Card { compact }, Inline})`; fill `headline` (runs of words and code), `reason`, `request` (the full command, wrapped mono, when `needs_request_line`: several lines or > 60 chars; the headline then says "Run this command in …?"), `folder`, `host`, `pager`, `body` (a plan), `details`, `note`, `alternates`, `deny`, `deny_note`, `keys` |
+| Choices | `Choice::new(id, label).key(Some(n)).tooltip(..).enabled(..).on_click(cx.listener(..))`: the id is the element id and the debug selector |
+| Roles | Allow is the Primary (demoted only while a note being written owns it); every alternative ("Always allow …" with `always_copy`'s exact rule, "Approve · run with Codex") and Deny / Keep planning / Reject are Secondary; "Deny with note…" stays in Deny's split menu (`NoteMenu`). Labels wrap inside their button rather than truncate |
+| Where | `where_line(folder, host)`: "In /home/dev/app · on studio (this machine)"; `Workspace::decision_host()` names the hub's machine once the Machines snapshot did, else "this machine" |
+| Details | A tertiary toggle at the end of the actions that expands the full request in place: `decision::facts(..)` rows (tool, every input whole, folder, host). Conversation `approval-toggle` / `approval-details` / `approval-fact-n` (`extras.approval_details`); Fleet `fleet-details-n` / `fleet-details` (`FleetUi::details`); Jobs `job-details-n` (the spec, `job-detail`) |
+| Headline | One `StyledText` with code runs highlighted (`headline_text`): it wraps as prose and never truncates a command. (A flex-wrap row of pieces collapses under intrinsic sizing; don't.) |
+| Keys | Keycaps only on the decision the number keys answer: `Workspace::keyed_decision` (approval or plan, else questions) in the conversation, the focused tile in the Fleet. Plans are numbered too (`plan_keys`: Approve plan, Approve · run with Codex, Keep planning). On a Primary fill the keycap is the label colour with no box (≥ 4.5:1, `appearance` test) |
+| Reply | "Reply instead — the request stays pending" (`REPLY_INSTEAD`, tooltip `decision::REPLY_KEEPS_PENDING`) |
+| Fleet (R4.7) | `fleet::Filter::{NeedsYou, Active, All}` (`fleet-filter-needs` / `-active` / `-all`); tiles in a row share a height (grid stretch); every grant with its exact rule (keys 1–5); after a decision the focus moves to the next blocked tile; model names are `Session::display_model` (`model_display_name` maps a display name to itself) |
+| Jobs | Proposals are decision cards above the Scheduled table (`job-row-n`, `job-approve-n` Primary, `job-remove-n` "Reject" Secondary, the whole command at `job-action-n`) |
+| Shots | `approvals-details-open`, `approvals-fleet-needs-you`, `approvals-fleet-details` |

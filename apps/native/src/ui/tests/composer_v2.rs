@@ -207,9 +207,9 @@ fn reply_instead_opens_the_composer_under_a_decision(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("composer-model").is_some());
 }
 
-/// R3.2: what the request would run shows inline, with no Details toggle:
-/// a short command is the headline, the folder the context line, and what
-/// they cannot show whole sits in the inset as facts, not raw input.
+/// R4.3: a short command is the headline, the reason and where it runs
+/// (folder and host) are always shown, a long command shows whole under
+/// the headline, and Details expands the full request in place as facts.
 #[gpui::test]
 fn approval_details_read_as_facts(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
@@ -217,7 +217,9 @@ fn approval_details_read_as_facts(cx: &mut TestAppContext) {
     v2(&workspace, &mut visual);
     show(&workspace, &mut visual, bash_approval());
     effects(&mut commands);
-    assert!(visual.debug_bounds("approval-toggle").is_none());
+    assert!(inside(&mut visual, "decision-where", "approval-card"));
+    assert!(visual.debug_bounds("approval-request").is_none());
+    assert!(inside(&mut visual, "approval-toggle", "approval-card"));
     assert!(visual.debug_bounds("approval-details").is_none());
     show(
         &workspace,
@@ -228,11 +230,49 @@ fn approval_details_read_as_facts(cx: &mut TestAppContext) {
             "requestId":"req-2"}}),
         ),
     );
+    // The two-line command, whole, beside nothing cut.
+    assert!(inside(&mut visual, "approval-request", "approval-card"));
+    tap(&mut visual, "approval-toggle");
     assert!(inside(&mut visual, "approval-details", "approval-card"));
-    // Command (two lines), Timeout.
-    assert!(visual.debug_bounds("approval-fact-0").is_some());
-    assert!(visual.debug_bounds("approval-fact-1").is_some());
-    assert!(visual.debug_bounds("approval-fact-2").is_none());
+    // Tool, Command, Timeout, Folder, Host.
+    for fact in [
+        "approval-fact-0",
+        "approval-fact-1",
+        "approval-fact-2",
+        "approval-fact-3",
+        "approval-fact-4",
+    ] {
+        assert!(visual.debug_bounds(fact).is_some(), "{fact}");
+    }
+    assert!(visual.debug_bounds("approval-fact-5").is_none());
+    workspace.read_with(&visual, |this, _| assert!(this.extras.approval_details));
+}
+
+/// R4.3: number keys show as keycaps only on the decision they answer.
+/// An approval takes them; a plan takes them too (1 Approve plan, then
+/// Keep planning), and a question under an approval shows none.
+#[gpui::test]
+fn keycaps_show_only_on_the_keyed_decision(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(900.)));
+    v2(&workspace, &mut visual);
+    let view = with(json!({"pendingRequestId":"plan-1","pendingApproval":{
+            "toolName":"ExitPlanMode","toolInput":{"plan":"## Plan\n\n1. Do it"},"requestId":"plan-1"}}));
+    show(&workspace, &mut visual, view);
+    effects(&mut commands);
+    workspace.read_with(&visual, |this, _| {
+        let s = this.selected_session().unwrap();
+        assert_eq!(
+            this.keyed_decision(s),
+            Some(super::super::composer_v2::Decision::Plan)
+        );
+    });
+    focus_root(&workspace, &mut visual);
+    visual.simulate_keystrokes("1");
+    assert!(matches!(acts(&mut commands).as_slice(),
+        [Action::Approve(true, Some(card))] if card == "plan-1"));
+    visual.simulate_keystrokes("2");
+    workspace.read_with(&visual, |this, _| assert!(this.extras.deny_open));
 }
 
 /// R3.2: one primary in one place whose label changes. Send when idle;
