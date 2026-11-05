@@ -553,10 +553,11 @@ impl Workspace {
         self.review_stack_summary(cwd)
     }
 
-    // r4-calm (R4.4), r5-shell (R5.4)
-    /// One toolbar tool: an `IconButton` with a 16px icon (never a label:
-    /// the title keeps the room), an optional badge, and a tooltip naming
-    /// it with its shortcut.
+    // r4-calm (R4.4), r5-shell (R5.4), r6-surfaces (R6.5)
+    /// One toolbar tool: an `IconButton` with a 16px icon, an optional
+    /// badge, and a tooltip naming it with its shortcut. The caller adds a
+    /// short label (`.text`) while the toolbar is wide
+    /// ([`Self::toolbar_labelled`]).
     #[allow(clippy::too_many_arguments)]
     fn toolbar_tool(
         &self,
@@ -577,14 +578,24 @@ impl Workspace {
             .badge(badge)
     }
 
-    // r3-shell, r4-calm (R4.4)
-    /// The session toolbar on the header strip's right: icon buttons for
-    /// Changes (Branch +N −M), Files, Terminal (● while its shell runs),
-    /// Tasks (running count), then one "…" holding History, Details and
-    /// Model. Each tooltip names the tool and its shortcut.
+    // r6-surfaces (R6.5)
+    /// Whether the header's tools carry short labels: while the
+    /// conversation column is at least `shell().toolbar_labels_at` wide.
+    /// Below it they are icon-only (counts stay).
+    pub(super) fn toolbar_labelled(&self) -> bool {
+        f32::from(self.chat_width) >= self.tokens().shell().toolbar_labels_at
+    }
+
+    // r3-shell, r4-calm (R4.4), r6-surfaces (R6.5)
+    /// The session toolbar on the header strip's right: Changes (+N −M),
+    /// Files, Terminal (● while its shell runs), Tasks (running count),
+    /// labelled at wide widths ("Changes +17 −3", "Files", "Terminal",
+    /// "Tasks 3"), then one "…" holding History, Details and Model. Each
+    /// tooltip names the tool and its shortcut.
     pub(super) fn session_toolbar_v2(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
+        let labelled = self.toolbar_labelled();
         let session = self.selected_session();
         let selected = session.is_some();
         let vim = self.vim();
@@ -616,9 +627,10 @@ impl Workspace {
                 self.review_dock_showing(),
                 lines
                     .filter(|(_, added, removed)| added + removed > 0)
-                    .map(|(_, added, removed)| format!("Branch +{added} −{removed}"))
+                    .map(|(_, added, removed)| format!("+{added} −{removed}"))
                     .map(quiet),
             )
+            .text(labelled.then_some("Changes"))
             .render(&p)
             .when(selected, |d| {
                 d.on_click(
@@ -637,6 +649,7 @@ impl Workspace {
                 false,
                 None,
             )
+            .text(labelled.then_some("Files"))
             .render(&p)
             .when(selected, |d| {
                 d.on_click(cx.listener(|this, _, window, cx| this.open_selected_editor(window, cx)))
@@ -666,6 +679,7 @@ impl Workspace {
                 shell_running.then_some("terminal-running-dot"),
                 p.roles.status.working,
             )
+            .text(labelled.then_some("Terminal"))
             .render(&p)
             .when(selected, |d| {
                 d.on_click(cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx)))
@@ -699,6 +713,7 @@ impl Workspace {
                     .into_any_element()
                 }),
             )
+            .text(labelled.then_some("Tasks"))
             .render(&p)
             .when(selected, |d| {
                 d.on_click(cx.listener(|this, _, window, cx| this.toggle_tasks(window, cx)))

@@ -670,6 +670,10 @@ impl Workspace {
                         }),
                     ),
             );
+        // r6-surfaces (R6.1): the popover takes the keyboard, so its layer
+        // is a scrim over the whole window (sidebar included), mounted at
+        // the window root like every overlay; the card still hangs from the
+        // control that opened it.
         Some(
             deferred(
                 div()
@@ -677,6 +681,7 @@ impl Workspace {
                     .debug_selector(|| "model-popover-layer".into())
                     .absolute()
                     .inset_0()
+                    .bg(system::scrim_color(&p))
                     .occlude()
                     .on_mouse_down(
                         gpui::MouseButton::Left,

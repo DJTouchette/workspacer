@@ -201,3 +201,9 @@ Reapply these interaction changes explicitly when upgrading the component.
   deserializes to) keeps upstream behaviour; Workspacer's design v2 sets it
   so an off switch is a quiet track with a darker knob, never a heavy filled
   pill that reads as "on" (`apps/native/src/ui.rs`, `configure_theme_v2`).
+- `ThemeColor::switch_on` and `ThemeColor::switch_border` (r6-surfaces): an
+  optional on-track colour (otherwise `primary`) and an optional hairline
+  drawn around an unchecked `Switch`'s track and thumb (a 1px edge plus 1px
+  padding, so the thumb keeps its 2px inset). `None` keeps upstream
+  behaviour. Design v2 sets both: on is the accent track with a white
+  thumb; off is a light track, a white thumb and a hairline.

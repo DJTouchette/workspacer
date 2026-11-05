@@ -2385,6 +2385,9 @@ impl Workspace {
         let pin_path = path.clone();
         let forget = project.clone();
         // Quiet facts; the project card carries the working dot.
+        // r6-surfaces (R6.5): inside a group, what the group's header
+        // already totals (ended sessions, scratch files to run) is not
+        // repeated on every folder row; a row keeps only what is live.
         let mut facts = Vec::new();
         if needs > 0 {
             facts.push(format!("{needs} needs you"));
@@ -2392,7 +2395,7 @@ impl Workspace {
         if live > 0 {
             facts.push(format!("{live} working"));
         }
-        if ended > 0 {
+        if ended > 0 && !nested {
             facts.push(format!("{ended} ended"));
         }
         let activity = if facts.is_empty() && project.sessions == 0 {
@@ -2504,7 +2507,7 @@ impl Workspace {
                         )
                     }),
             )
-            .when(pending > 0, |d| {
+            .when(pending > 0 && !nested, |d| {
                 d.child(self.needs_you_link(
                     SharedString::from(format!("project-pending-{ix}")),
                     pending,

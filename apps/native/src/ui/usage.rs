@@ -390,8 +390,9 @@ impl Workspace {
     }
 
     /// Design v2's footer usage: each installed, measured account's most
-    /// pressing window, one line each (r4-calm, R4.6): its mark, "Claude ·
-    /// 42% of 5-hour limit used" and a thin meter. Neutral as it fills,
+    /// pressing window, one line each (r4-calm, R4.6; r6-surfaces, R6.5):
+    /// its mark, "Claude", a meter and "42%"; the full sentence ("42% of
+    /// 5-hour limit used") is in the tooltip. Neutral as it fills,
     /// red only at the limit (`format::level`, amber is for "needs you").
     /// The tooltip adds when each resets (`format::usage_line`); a click
     /// opens the detail modal.
@@ -453,11 +454,12 @@ impl Workspace {
                     )
                 })
                 .children(shown.iter().map(|(a, w)| {
+                    // r6-surfaces (R6.5): a bar plus a number ("Claude ▬ 42%"),
+                    // never truncated; the sentence is in the tooltip.
                     let selector = format!("sidebar-usage-row-{}", a.provider);
                     let level = wks_native::format::level(w.pct);
                     let tone = super::primitives::level_color(level, &p);
                     let pct = w.pct.max(0.).round() as u64;
-                    let share = format!("{pct}% of {} limit used", long_label(w).to_lowercase());
                     div()
                         .debug_selector(move || selector.clone())
                         .w_full()
@@ -468,30 +470,10 @@ impl Workspace {
                         .child(super::shell::neutral_glyph(&a.provider, t.icon.sm, p))
                         .child(
                             div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .gap(px(t.space.xs))
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .text_color(rgb(p.roles.text_secondary))
-                                        .font_weight(FontWeight(t.weight.medium))
-                                        .child(a.title.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .text_color(rgb(p.roles.text_tertiary))
-                                        .child("·"),
-                                )
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_color(rgb(tone.unwrap_or(p.roles.text_tertiary)))
-                                        .child(share),
-                                ),
+                                .flex_shrink_0()
+                                .text_color(rgb(p.roles.text_secondary))
+                                .font_weight(FontWeight(t.weight.medium))
+                                .child(a.title.clone()),
                         )
                         .child(
                             super::primitives::meter(
@@ -499,9 +481,16 @@ impl Workspace {
                                 super::primitives::level_intent(level),
                                 &p,
                             )
-                            .flex_shrink_0()
-                            .w(px(t.shell().meter_width)),
+                            .flex_1()
+                            .min_w(px(t.shell().meter_width)),
                         )
+                        .child(super::primitives::tabular(
+                            div()
+                                .flex_shrink_0()
+                                .text_color(rgb(tone.unwrap_or(p.roles.text_secondary)))
+                                .font_weight(FontWeight(t.weight.medium))
+                                .child(format!("{pct}%")),
+                        ))
                 }))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.usage_open = true;

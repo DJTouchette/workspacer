@@ -67,13 +67,13 @@ impl Status {
         }
     }
 
-    /// As the shared v2 badge.
+    /// As the shared v2 badge. r6-surfaces (R6.2): an ended session takes
+    /// Ended's own glyph from the status table.
     pub(crate) fn badge(self) -> StatusBadge {
-        let badge = StatusBadge::new(self.kind);
         if self.ended && self.kind == StatusKind::Idle {
-            badge.label("Ended")
+            StatusBadge::new(StatusKind::Ended)
         } else {
-            badge
+            StatusBadge::new(self.kind)
         }
     }
 }

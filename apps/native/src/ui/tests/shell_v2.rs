@@ -281,8 +281,8 @@ fn rows_take_the_chosen_density(cx: &mut TestAppContext) {
     visual.simulate_resize(size(px(1200.), px(900.)));
     open_v2(&workspace, &mut visual, attention_state(), Design::V2);
     // Rows: needs-you header, e, a, working header, d, idle header, b.
-    // r4-calm (R4.4): one line by default; a second, faint line only says
-    // what the agent asks (in compact too) or what a working one is doing.
+    // r4-calm (R4.4), r6-surfaces (R6.5): one line by default; a second,
+    // faint line only says what the agent asks (in compact too).
     let height = |visual: &mut VisualTestContext, row: &'static str| {
         f32::from(visual.debug_bounds(row).unwrap().size.height) + 2. * Tokens::V2.stroke.hairline
     };
@@ -438,12 +438,25 @@ fn the_header_is_a_strip_with_icon_tools_and_one_overflow(cx: &mut TestAppContex
         );
         assert!(bounds.left() > bar.left(), "{tool} right of the title");
     }
-    // Icons only: an unbadged tool is a square.
+    // r6-surfaces (R6.5): labelled at this width ("Files"), so wider than
+    // it is tall.
+    let files = visual.debug_bounds("open-editor").unwrap();
+    assert!(
+        f32::from(files.size.width) > f32::from(files.size.height),
+        "{files:?}"
+    );
+    // Below `shell().toolbar_labels_at` the tools are icon-only squares.
+    visual.simulate_resize(size(px(1000.), px(900.)));
+    visual.run_until_parked();
+    visual.simulate_resize(size(px(1000.), px(900.)));
+    visual.run_until_parked();
     let files = visual.debug_bounds("open-editor").unwrap();
     assert!(
         f32::from(files.size.width) <= f32::from(files.size.height) + 0.5,
         "{files:?}"
     );
+    visual.simulate_resize(size(px(1600.), px(900.)));
+    visual.run_until_parked();
     // History, Details and Model wait in the menu.
     workspace.read_with(&visual, |this, _| assert!(!this.shell.session_menu));
     click(&mut visual, "session-more");

@@ -1,8 +1,16 @@
-//! R5.1 PageShell: one template for every page. The page scroller
-//! (`Workspace::page_view`) gives every page the same top offset and side
-//! gutter; [`page_shell`] stacks the shared header over the body and caps
-//! *both* at the page's width rule, so a narrow page's header actions sit
-//! on its content edge (never 470px away at the window edge).
+//! R5.1 PageShell. r6-surfaces (R6.5): exactly two page templates.
+//!
+//! - **Centred form** ([`PageWidth::Form`]): Settings, Agent setup, New
+//!   session and every drill-in form (Session details, Model, Handoff,
+//!   Pull request), one `pages().form` column centred in the page.
+//! - **Full-width table** ([`PageWidth::Wide`]): Projects, Jobs, History,
+//!   Machines, Scratch and Changes, at `pages().wide`. Fleet's tile grid is
+//!   the same template with the grid's wider cap ([`PageWidth::Grid`]).
+//!
+//! The page scroller (`Workspace::page_view`) gives every page the same
+//! top offset and side gutter; [`page_shell`] stacks the shared header over
+//! the body and caps *both* at the template's width, so header actions sit
+//! on the content edge.
 use super::*;
 
 /// The width rule of a page.
@@ -10,11 +18,11 @@ use super::*;
 pub(crate) enum PageWidth {
     /// Tables, grids and lists: `pages().wide` (1240).
     Wide,
-    /// Forms (New session, Agent setup, Session details, Model, Handoff,
-    /// Pull request): `pages().form` (760), left-aligned.
+    /// The centred form: Settings, New session, Agent setup, Session
+    /// details, Model, Handoff, Pull request. `pages().form` (880), centred.
     Form,
-    /// Fleet's tile grid: `fleet().grid_max` (1440), so its header sits
-    /// on the grid's edge (r5-shell).
+    /// The table template at Fleet's tile-grid cap, `fleet().grid_max`
+    /// (1440), so its header sits on the grid's edge (r5-shell).
     Grid,
 }
 
@@ -40,7 +48,7 @@ pub(crate) fn page_shell(
     p: &Palette,
 ) -> Div {
     let t = p.tokens;
-    div()
+    let column = div()
         .debug_selector(|| "page-shell".into())
         .w_full()
         .max_w(px(width.max(p)))
@@ -49,5 +57,11 @@ pub(crate) fn page_shell(
         .gap(px(t.space.xxl))
         .child(header)
         .children(notice)
-        .child(body)
+        .child(body);
+    // The form template is centred in the page; tables fill it.
+    if width == PageWidth::Form {
+        div().w_full().flex().justify_center().child(column)
+    } else {
+        column
+    }
 }

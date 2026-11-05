@@ -2178,8 +2178,8 @@ impl Workspace {
             &p,
         )
         .debug_selector(|| "page-header".into());
-        // r2-pages: R2.2 shared page grid; Settings shares every page's
-        // width and left edge (r3-pages: the wide page measure).
+        // r6-surfaces (R6.5): Settings is a form, on the centred form
+        // template.
         self.page_view(
             "settings-view",
             t.pages().wide,
@@ -2197,7 +2197,7 @@ impl Workspace {
                     .gap(px(if tight { t.space.lg } else { t.space.xxl }))
                     .child(rail)
                     .child(content),
-                super::system::PageWidth::Wide,
+                super::system::PageWidth::Form,
                 &p,
             ),
         )
@@ -2289,7 +2289,7 @@ impl Workspace {
         } else if check_error.is_some() {
             // The raw error stays in the tooltip.
             (
-                StatusBadge::new(StatusKind::Idle).label("Couldn't check for updates"),
+                StatusBadge::new(StatusKind::Unknown).label("Couldn't check for updates"),
                 Some(
                     "Workspacer couldn't reach GitHub, so it can't tell whether a newer version exists. Check your connection and try again."
                         .to_owned(),
@@ -2315,7 +2315,7 @@ impl Workspace {
                     None,
                 ),
                 (None, _) => (
-                    StatusBadge::new(StatusKind::Idle).label("Not checked yet"),
+                    StatusBadge::new(StatusKind::Unknown).label("Not checked yet"),
                     None,
                 ),
             }

@@ -1445,7 +1445,7 @@ impl Workspace {
                             None => cell,
                         }
                     } else {
-                        StatusCell::new(primitives::StatusKind::Idle).label("Ended")
+                        StatusCell::new(primitives::StatusKind::Ended)
                     }
                     .render(&p),
                 ),

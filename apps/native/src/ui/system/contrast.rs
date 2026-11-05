@@ -8,10 +8,18 @@
 //! - **A light Primary fill must stand out (≥ 4.5:1 on its surfaces).**
 //!   A Primary that carries a dark label is a light fill; at 3–4.5:1 off a
 //!   dark surface it reads as a disabled chip (Nord's frost Allow, R4).
-//! - **Off is unmistakably off.** An off toggle's track is a quiet well
-//!   (≤ 2:1 on its surface), the on track a strong fill (≥ 3:1), and the
-//!   knob carries the state (≥ 3:1 on both). Light's off switches were
-//!   dark filled pills under a white knob (6:1), heavier than "on" (R4).
+//! - **Off is unmistakably off** (r6-surfaces, R6.1). An off toggle is a
+//!   light, quiet track (≤ 2:1 on its surface) outlined by a hairline
+//!   (≥ 3:1 on every surface) with a white knob that carries the same
+//!   hairline (≥ 3:1 against it). On is a strong accent track (≥ 3:1 on
+//!   every surface) under a white knob (≥ 3:1). Light's off switches were
+//!   dark filled pills (R4), then a dark knob that read as on (R5).
+//!
+//! And three colour rules (r6-surfaces, R6.2), as perceptual distances
+//! (OKLab ΔE) and hue angles, so they hold for colour-blind-ish eyes too:
+//! - **Needs-you amber and fault red stay apart** in every theme.
+//! - **The capacity warning hue** sits apart from both.
+//! - **The scrim** dims the window 45–55% in every theme.
 use super::super::primitives::{ButtonVariant, ControlState, CountTone, StatusKind, button_paint};
 use super::*;
 use wks_native::appearance::{contrast, luminance};
@@ -22,6 +30,12 @@ const NON_TEXT: f64 = 3.0;
 const LIGHT_FILL: f64 = 4.5;
 /// The most an off toggle's track may stand off its surface.
 const QUIET_TRACK: f64 = 2.0;
+/// Amber vs red: the least OKLab distance and hue angle (degrees).
+const STATUS_APART: (f64, f64) = (0.10, 30.);
+/// The warning hue vs amber and vs red.
+const WARNING_APART: (f64, f64) = (0.06, 15.);
+/// The scrim's band, as a share of the shadow colour.
+const SCRIM: (f32, f32) = (0.45, 0.55);
 
 fn hex(c: u32) -> String {
     format!("#{c:06x}")
@@ -93,14 +107,64 @@ fn switch_colors(p: &Palette, dark: bool) -> (ToggleColors, ToggleColors) {
     let off_thumb = c.switch_thumb_off.map(hsla_hex).unwrap_or(thumb);
     (
         ToggleColors {
-            track: p.primary,
+            track: c.switch_on.map(hsla_hex).unwrap_or(p.primary),
             knob: thumb,
+            edge: None,
         },
         ToggleColors {
             track: hsla_hex(c.switch),
             knob: off_thumb,
+            edge: c.switch_border.map(hsla_hex),
         },
     )
+}
+
+/// OKLab (L, a, b) of an sRGB colour.
+fn oklab(c: u32) -> (f64, f64, f64) {
+    let lin = |v: u32| {
+        let v = v as f64 / 255.;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let (r, g, b) = (lin((c >> 16) & 0xff), lin((c >> 8) & 0xff), lin(c & 0xff));
+    let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
+    let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
+    let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
+    (
+        0.210_454_255_3 * l + 0.793_617_785 * m - 0.004_072_046_8 * s,
+        1.977_998_495_1 * l - 2.428_592_205 * m + 0.450_593_709_9 * s,
+        0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766 * s,
+    )
+}
+
+/// The perceptual distance (OKLab ΔE) and hue angle (degrees) between two
+/// colours.
+fn apart(x: u32, y: u32) -> (f64, f64) {
+    let (a, b) = (oklab(x), oklab(y));
+    let distance = ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2) + (a.2 - b.2).powi(2)).sqrt();
+    let hue = |c: (f64, f64, f64)| c.2.atan2(c.1).to_degrees();
+    let mut angle = (hue(a) - hue(b)).abs() % 360.;
+    if angle > 180. {
+        angle = 360. - angle;
+    }
+    (distance, angle)
+}
+
+/// Failures where `x` and `y` are closer than `(distance, angle)`.
+fn separation(theme: Appearance, what: &str, x: u32, y: u32, min: (f64, f64)) -> Option<String> {
+    let (distance, angle) = apart(x, y);
+    (distance < min.0 || angle < min.1).then(|| {
+        format!(
+            "{theme:?}: {what}: ΔE {distance:.3} (≥ {}), hue {angle:.0}° (≥ {}) ({} vs {})",
+            min.0,
+            min.1,
+            hex(x),
+            hex(y)
+        )
+    })
 }
 
 fn check(theme: Appearance) -> Vec<String> {
@@ -138,6 +202,10 @@ fn check(theme: Appearance) -> Vec<String> {
                 NON_TEXT,
             );
         }
+    }
+    // The capacity warning hue is read as text (a meter's number).
+    for (name, bg) in rows(&p) {
+        g.at_least(&format!("warning (caution) on {name}"), r.caution, bg, TEXT);
     }
     // The label of a pressed row still reads.
     g.at_least("text on pressed", p.text, r.pressed, TEXT);
@@ -237,10 +305,20 @@ fn check(theme: Appearance) -> Vec<String> {
             on.track,
             NON_TEXT,
         );
+        if on.knob != 0xffffff || off.knob != 0xffffff {
+            g.failures
+                .push(format!("{theme:?}: {who}: the knob is white, on and off"));
+        }
+        let Some(edge) = off.edge else {
+            g.failures
+                .push(format!("{theme:?}: {who} off: no hairline"));
+            continue;
+        };
+        // The white knob stands off its light track by its hairline.
         g.at_least(
-            &format!("{who} off: knob on track"),
+            &format!("{who} off: hairline on knob"),
+            edge,
             off.knob,
-            off.track,
             NON_TEXT,
         );
         for (name, bg) in surfaces(&p) {
@@ -251,8 +329,8 @@ fn check(theme: Appearance) -> Vec<String> {
                 NON_TEXT,
             );
             g.at_least(
-                &format!("{who} off: knob on {name}"),
-                off.knob,
+                &format!("{who} off: hairline on {name}"),
+                edge,
                 bg,
                 NON_TEXT,
             );
@@ -308,6 +386,53 @@ fn every_component_state_meets_contrast_in_every_theme() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+// r6-surfaces (R6.2)
+#[test]
+fn needs_you_fault_and_warning_stay_apart_in_every_theme() {
+    let failures: Vec<String> = Appearance::ALL
+        .into_iter()
+        .flat_map(|theme| {
+            let p = theme.palette_for(Design::V2);
+            let s = p.roles.status;
+            [
+                separation(
+                    theme,
+                    "needs-you amber vs fault red",
+                    s.attention,
+                    s.fault,
+                    STATUS_APART,
+                ),
+                separation(
+                    theme,
+                    "warning vs needs-you amber",
+                    p.roles.caution,
+                    s.attention,
+                    WARNING_APART,
+                ),
+                separation(
+                    theme,
+                    "warning vs fault red",
+                    p.roles.caution,
+                    s.fault,
+                    WARNING_APART,
+                ),
+            ]
+            .into_iter()
+            .flatten()
+        })
+        .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+// r6-surfaces (R6.1)
+#[test]
+fn the_scrim_dims_45_to_55_percent_in_every_theme() {
+    for theme in Appearance::ALL {
+        let a = theme.palette_for(Design::V2).roles.scrim_alpha;
+        assert!((SCRIM.0..=SCRIM.1).contains(&a), "{theme:?}: scrim {a}");
+    }
 }
 
 #[test]

@@ -505,7 +505,8 @@ LANDMARKS = {
     # (r4-calm: one-line rows and a two-row nav; re-measured.)
     # (r5-integration: the nav rows (New session … Scratch) sit above the
     # groups; v2 re-measured.)
-    "SIDEBAR_ROW_BUS": lambda shot: (110, 739 if shot.get("v2") else 468),
+    # (r6-surfaces: working rows are one line; v2 re-measured.)
+    "SIDEBAR_ROW_BUS": lambda shot: (110, 707 if shot.get("v2") else 468),
     # The fixture's question (Release checklist for 0.9): v2 groups it under
     # Needs you; v1 lists it after Bus fan-out.
     "SIDEBAR_ROW_QUESTION": lambda shot: (110, 477 if shot.get("v2") else 532),  # r5-integration re-measured

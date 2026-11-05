@@ -160,6 +160,14 @@ pub struct ThemeColor {
     /// quiet track). `None` keeps upstream behaviour: `switch_thumb` always.
     #[serde(default)]
     pub switch_thumb_off: Option<Hsla>,
+    /// Workspacer patch: the on track, when it should differ from
+    /// `primary`. `None` keeps upstream behaviour.
+    #[serde(default)]
+    pub switch_on: Option<Hsla>,
+    /// Workspacer patch: a hairline around the off track and its thumb.
+    /// `None` keeps upstream behaviour (no edge).
+    #[serde(default)]
+    pub switch_border: Option<Hsla>,
     /// Tab background color.
     pub tab: Hsla,
     /// Tab active background color.

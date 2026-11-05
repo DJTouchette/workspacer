@@ -1848,11 +1848,11 @@ fn host_cards(targets: &hosts::Targets) -> Vec<HostCard> {
                         (Some(free), Some(_)) => format!("{free} free"),
                         _ => "Accepting work".to_owned(),
                     };
-                    (StatusBadge::new(StatusKind::Idle).label(label), false)
+                    (StatusBadge::new(StatusKind::Ready).label(label), false)
                 }
             },
             None => (
-                StatusBadge::new(StatusKind::Idle).label("No sample yet"),
+                StatusBadge::new(StatusKind::Unknown).label("No sample yet"),
                 false,
             ),
         }
@@ -1871,7 +1871,7 @@ fn host_cards(targets: &hosts::Targets) -> Vec<HostCard> {
         cards.push(HostCard {
             choice: HostChoice::Local,
             name: "This machine".into(),
-            status: StatusBadge::new(StatusKind::Idle).label("Accepting work"),
+            status: StatusBadge::new(StatusKind::Ready).label("Accepting work"),
             enabled: true,
             muted: false,
         });

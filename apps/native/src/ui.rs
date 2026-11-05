@@ -256,8 +256,11 @@ pub fn configure_theme(
         p.surface
     })
     .into();
-    // r5-system: v2 gives an off switch its own knob; v1 keeps one thumb.
+    // r5-system: v2 gives an off switch its own knob; v1 keeps one thumb
+    // (r6-surfaces: and the primary track, with no hairline).
     theme.colors.switch_thumb_off = None;
+    theme.colors.switch_on = None;
+    theme.colors.switch_border = None;
     theme.colors.popover = rgb(p.surface).into();
     theme.colors.popover_foreground = rgb(p.text).into();
     // Text selection is translucent and painted beneath the glyphs (see the
@@ -289,18 +292,20 @@ fn configure_theme_v2(c: &mut gpui_component::ThemeColor, p: &Palette, dark: boo
     c.secondary_active = tone(p.text, w.pressed);
     c.secondary_foreground = solid(p.text);
     c.primary_active = solid(p.primary_pressed);
-    // r5-system (R5.1 Toggle): the one toggle's colours, so gpui-component's
-    // Switch and `system::toggle` agree. On: the primary track with an
-    // `on_primary` knob. Off: a quiet track with a secondary-grey knob, so
-    // an off switch never reads as a heavy filled "on" pill (Light used a
-    // dark tertiary track under a white knob).
+    // r5-system (R5.1 Toggle), r6-surfaces (R6.1): the one toggle's
+    // colours, so gpui-component's Switch and `system::toggle` agree. On:
+    // the accent track with a white knob. Off: a light track, a white knob
+    // and a hairline around both, so an off switch never reads as a heavy
+    // filled "on" pill.
     let (on, off) = (
         system::toggle_colors(true, true, p),
         system::toggle_colors(false, true, p),
     );
     c.switch = solid(off.track);
+    c.switch_on = Some(solid(on.track));
     c.switch_thumb = solid(on.knob);
     c.switch_thumb_off = Some(solid(off.knob));
+    c.switch_border = off.edge.map(solid);
     c.muted = solid(p.surface);
     c.muted_foreground = solid(r.text_secondary);
     c.border = solid(p.border);

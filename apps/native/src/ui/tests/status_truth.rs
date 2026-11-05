@@ -181,11 +181,14 @@ fn every_surface_agrees_for_each_state(cx: &mut TestAppContext) {
     open(&workspace, &mut visual, view);
     workspace.read_with(&visual, |this, cx| {
         for (id, kind) in &expected {
-            assert_eq!(
-                surfaces(this, id, cx),
-                agreed(*kind, group_of(*kind, id)),
-                "{id}"
-            );
+            let mut want = agreed(*kind, group_of(*kind, id));
+            // r6-surfaces (R6.2): History's badge for an ended session is
+            // Ended's own glyph (the status table); the rest keep Idle in
+            // the Ended group.
+            if *id == "end" {
+                want.history = StatusKind::Ended;
+            }
+            assert_eq!(surfaces(this, id, cx), want, "{id}");
         }
         // The counts the sidebar's headers show are the Fleet's.
         let headers: Vec<(Bucket, usize)> = this

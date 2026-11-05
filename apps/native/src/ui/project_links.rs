@@ -136,6 +136,36 @@ impl Workspace {
             for (row, project) in matrix.projects.iter().enumerate() {
                 table = table.child(self.render_link_row(row, project, snapshot.saved(), cx));
             }
+            // r6-surfaces (R6.5): an offline machine is said once, here,
+            // not as a muted row under every project.
+            let mut offline: Vec<&str> = Vec::new();
+            for project in &matrix.projects {
+                for cell in &project.peers {
+                    let view = CellView::new(project, cell, snapshot.saved());
+                    if view.offline
+                        && cell.choices.is_empty()
+                        && !offline.contains(&cell.peer.as_str())
+                    {
+                        offline.push(&cell.peer);
+                    }
+                }
+            }
+            if !offline.is_empty() {
+                let names = offline.join(", ");
+                let verb = if offline.len() == 1 { "is" } else { "are" };
+                section = section.child(
+                    caption(&format!(
+                        "{names} {verb} offline: {} folders show here once {} back.",
+                        if offline.len() == 1 { "its" } else { "their" },
+                        if offline.len() == 1 {
+                            "it is"
+                        } else {
+                            "they are"
+                        },
+                    ))
+                    .debug_selector(|| "project-links-offline".into()),
+                );
+            }
             return section.child(table);
         }
         for (row, project) in matrix.projects.iter().enumerate() {
@@ -520,9 +550,16 @@ impl Workspace {
             .w_full()
             .flex()
             .flex_col();
+        // r6-surfaces (R6.5): an offline machine with nothing to offer is
+        // named once above the table, not repeated under every project.
+        let mut first = true;
         for (col, cell) in project.peers.iter().enumerate() {
             let view = CellView::new(project, cell, links);
-            rows = rows.child(self.render_link_cell_v2(row, col, project, cell, &view, cx));
+            if view.offline && cell.choices.is_empty() {
+                continue;
+            }
+            rows = rows.child(self.render_link_cell_v2(row, col, first, project, cell, &view, cx));
+            first = false;
         }
         rows
     }
@@ -530,10 +567,12 @@ impl Workspace {
     /// One project × machine row: the folder used there and how it was
     /// found, then its actions (Accept, Choose…, Unlink). An offline
     /// machine is one muted line.
+    #[allow(clippy::too_many_arguments)]
     fn render_link_cell_v2(
         &self,
         row: usize,
         col: usize,
+        first: bool,
         project: &Project,
         cell: &PeerCell,
         view: &CellView,
@@ -731,7 +770,7 @@ impl Workspace {
                 vec![slot(accept_slot), slot(choose_slot), slot(unlink_slot)],
                 &p,
             ));
-        let project_cell = ui::page_cell(Col::Fixed(pg.when)).when(col == 0, |d| {
+        let project_cell = ui::page_cell(Col::Fixed(pg.when)).when(first, |d| {
             d.flex_col()
                 .items_start()
                 .child(
@@ -759,7 +798,7 @@ impl Workspace {
             .group(group)
             .py(px(t.space.xs))
             // Rows of one project join under a fainter rule.
-            .when(col > 0, |d| d.border_color(rgb(p.roles.card_border)))
+            .when(!first, |d| d.border_color(rgb(p.roles.card_border)))
             .child(project_cell)
             .child(
                 ui::page_cell(Col::Fixed(pg.machine)).child(

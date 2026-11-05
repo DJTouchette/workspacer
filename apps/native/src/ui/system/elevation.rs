@@ -43,7 +43,13 @@ impl Level {
         match self {
             Self::Flat => Vec::new(),
             Self::Raised => elevation(p, e.raised),
-            Self::Overlay => elevation(p, e.modal),
+            // r6-surfaces (R6.1): the wide modal shadow plus a tight
+            // contact shadow, so a menu's edge stays visible on a dark page.
+            Self::Overlay => {
+                let mut shadow = elevation(p, e.modal);
+                shadow.extend(elevation(p, e.contact));
+                shadow
+            }
         }
     }
 }

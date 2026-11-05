@@ -1846,7 +1846,6 @@ impl Workspace {
     ) -> AnyElement {
         let p = self.palette();
         let t = p.tokens;
-        let compact = self.settings.sidebar_compact;
         let now = timing::now_ms();
         let session = &self.view.sessions[index];
         let id = session.id.clone();
@@ -1859,9 +1858,7 @@ impl Workspace {
             .then(|| self.inbox_reason(session, now))
             .flatten();
         let working = kind == StatusKind::Working;
-        // r4-calm (R4.4): one line by default. A second, faint line only
-        // says what the agent is asking (kept in compact too) or, roomy,
-        // what a working session is doing.
+        // What a working session is doing: the row's tooltip says it.
         let activity = working
             .then(|| {
                 [
@@ -1874,7 +1871,10 @@ impl Workspace {
                 .join(" ")
             })
             .filter(|a| !a.is_empty());
-        let two_lines = depth == 0 && (reason.is_some() || (!compact && activity.is_some()));
+        // r6-surfaces (R6.5): one line (title and time); a second only for
+        // a Needs-you ask. Where a working one is and what it does are in
+        // the row's tooltip and the conversation's header.
+        let two_lines = depth == 0 && reason.is_some();
         let job = !session.job_id.is_empty();
         let cold =
             super::cache::cold(session, now).map(|cold| super::cache::marker_tooltip(cold, now));
@@ -1890,6 +1890,9 @@ impl Workspace {
             let mut lines = vec![title.clone(), session.cwd.clone()];
             if let Some(reason) = &reason {
                 lines.push(reason.text.clone());
+            }
+            if let Some(activity) = &activity {
+                lines.push(activity.clone());
             }
             let provider = match session.provider_id() {
                 "claude" => "Claude",

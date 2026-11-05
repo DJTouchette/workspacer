@@ -94,14 +94,21 @@ pub struct Roles {
     pub avatar: [u32; AVATAR_TONES],
     /// The monogram's colour on every avatar fill.
     pub avatar_text: u32,
-    /// Neutral-strong (r5-shell, R5.4): a capacity past its warn share
-    /// (usage and context at 80% and over). Heavier than secondary, never
-    /// a hue: amber is for "needs you", red for the hard limit.
+    /// The warning hue (r6-surfaces, R6.2): a capacity at or past its warn
+    /// share (usage and context meters from 80%). An orange kept apart
+    /// from amber ("needs you") and red (a fault, the hard limit) in every
+    /// theme, and readable as text (≥ 4.5:1). v1: the text colour.
     pub caution: u32,
-    /// How much a centred overlay's scrim dims the window (0–1, of
-    /// `shadow`). Light themes dim less, so the page stays legible as
-    /// context without reading muddy.
+    /// How much a centred overlay's scrim dims the whole window (0–1, of
+    /// `shadow`). r6-surfaces (R6.1): 45–55% in every theme.
     pub scrim_alpha: f32,
+    /// The on toggle's track (r6-surfaces, R6.1): the accent, deepened
+    /// just enough that the white knob stands off it (≥ 3:1).
+    pub toggle_on: u32,
+    /// The off toggle's hairline (track and knob), ≥ 3:1 on every surface.
+    pub toggle_edge: u32,
+    /// The toggle's knob, on and off: white.
+    pub toggle_knob: u32,
     /// The five status roles. Colour AND shape encode status; nothing else
     /// may borrow these hues (blue/accent means "interactive" only).
     pub status: StatusRoles,
@@ -128,9 +135,35 @@ pub struct StatusRoles {
     pub idle: u32,
 }
 
-/// The scrim's share in light themes (r5-shell): the dark themes' 50%
-/// over a white page reads as a grey wash, so light dims a third.
-const LIGHT_SCRIM_ALPHA: f32 = 0.32;
+/// The scrim's share in light themes. r6-surfaces (R6.1): within the
+/// 45–55% band every theme keeps, at its light end, so the page behind
+/// still reads as context.
+const LIGHT_SCRIM_ALPHA: f32 = 0.45;
+
+/// The toggle knob (r6-surfaces, R6.1): white in every theme, on and off.
+const KNOB: u32 = 0xffffff;
+
+/// The least `knob` must stand off the on track, and the off hairline off
+/// every surface (WCAG 1.4.11).
+const NON_TEXT: f64 = 3.0;
+
+/// `accent` deepened (toward black) in 2% steps until the white knob
+/// stands ≥ 3:1 off it: the on toggle's track.
+fn toggle_on(accent: u32) -> u32 {
+    (0..=50)
+        .map(|step| mix(accent, 0x000000, step as f32 * 0.02))
+        .find(|&track| contrast(KNOB, track) >= NON_TEXT + 0.05)
+        .unwrap_or(accent)
+}
+
+/// `border_strong` moved toward `text` in 5% steps until it stands ≥ 3:1
+/// off every surface in `on`: the off toggle's hairline.
+fn toggle_edge(border_strong: u32, text: u32, on: &[u32]) -> u32 {
+    (0..=20)
+        .map(|step| mix(border_strong, text, step as f32 * 0.05))
+        .find(|&edge| on.iter().all(|&bg| contrast(edge, bg) >= NON_TEXT + 0.05))
+        .unwrap_or(text)
+}
 
 /// How many avatar fills a palette carries (R3.6; r4-calm: six, tuned).
 pub const AVATAR_TONES: usize = 6;
@@ -190,6 +223,9 @@ impl Roles {
         avatar_text: 0,
         caution: 0,
         scrim_alpha: 0.,
+        toggle_on: 0,
+        toggle_edge: 0,
+        toggle_knob: 0,
         status: StatusRoles {
             attention: 0,
             fault: 0,
@@ -216,6 +252,9 @@ impl Roles {
             avatar_text: p.text,
             caution: p.text,
             scrim_alpha: p.tokens.elevation.scrim_alpha,
+            toggle_on: p.primary,
+            toggle_edge: p.border,
+            toggle_knob: 0xffffff,
             status: StatusRoles {
                 attention: p.warning,
                 fault: p.error,
@@ -266,6 +305,10 @@ struct V2Colors {
     fault: u32,
     done: u32,
     working: u32,
+    /// r6-surfaces (R6.2): the capacity warning hue, an orange between
+    /// amber and red but perceptually apart from both
+    /// (`ui::system::contrast`'s separation test).
+    caution: u32,
     /// The user's message bubble and inline code.
     user: u32,
     code_inline: u32,
@@ -429,12 +472,19 @@ impl Appearance {
             provider: c.tertiary,
             avatar,
             avatar_text: c.text,
-            caution: c.text,
+            caution: c.caution,
             scrim_alpha: if dark {
                 p.tokens.elevation.scrim_alpha
             } else {
                 LIGHT_SCRIM_ALPHA
             },
+            toggle_on: toggle_on(c.accent),
+            toggle_edge: toggle_edge(
+                c.border_strong,
+                c.text,
+                &[c.chat, c.surface, c.base, c.raised],
+            ),
+            toggle_knob: KNOB,
             // r4-calm (R4.4): working is neutral (the turning arc says it
             // is moving), so amber and red are the only hues a status adds.
             status: StatusRoles {
@@ -475,6 +525,7 @@ impl Appearance {
                 fault: 0xf27a7a,
                 done: 0x72b48c,
                 working: 0x45c4c8,
+                caution: 0xf08a3c,
                 user: 0x1d1e22,
                 code_inline: 0x202125,
             },
@@ -500,10 +551,11 @@ impl Appearance {
                 accent: 0x1f5fd6,
                 primary: 0x2563eb,
                 on_primary: 0xffffff,
-                attention: 0xa64c08,
+                attention: 0x7a5a18,
                 fault: 0xc81e1e,
                 done: 0x2c734a,
                 working: 0x0d7a80,
+                caution: 0xa44200,
                 user: 0xf1f1f3,
                 code_inline: 0xefeff1,
             },
@@ -533,6 +585,7 @@ impl Appearance {
                 fault: 0xe8a4aa,
                 done: 0xa3be8c,
                 working: 0x8fbcbb,
+                caution: 0xf2a65a,
                 user: 0x3b4252,
                 code_inline: 0x3b4252,
             },
@@ -558,6 +611,7 @@ impl Appearance {
                 fault: 0xf7768e,
                 done: 0x9ece6a,
                 working: 0x73daca,
+                caution: 0xec7700,
                 user: 0x24283b,
                 code_inline: 0x24283b,
             },
@@ -583,6 +637,7 @@ impl Appearance {
                 fault: 0xf38ba8,
                 done: 0x8fc48b,
                 working: 0x94e2d5,
+                caution: 0xfab387,
                 user: 0x2a2b3d,
                 code_inline: 0x313244,
             },
@@ -608,6 +663,7 @@ impl Appearance {
                 fault: 0xf88070,
                 done: 0xa9b665,
                 working: 0x89b482,
+                caution: 0xfe8019,
                 user: 0x32302f,
                 code_inline: 0x3a3735,
             },
@@ -634,6 +690,7 @@ impl Appearance {
                 fault: 0xf39fa4,
                 done: 0xa7c080,
                 working: 0x83c092,
+                caution: 0xf7a35c,
                 user: 0x374145,
                 code_inline: 0x3d484d,
             },
@@ -655,10 +712,11 @@ impl Appearance {
                 accent: 0x1955cb,
                 primary: 0x1a5fe8,
                 on_primary: 0xffffff,
-                attention: 0x8e4d00,
+                attention: 0x7c5800,
                 fault: 0xba0f2c,
                 done: 0x346932,
                 working: 0x157f86,
+                caution: 0xa33a00,
                 user: 0xe4e7ed,
                 code_inline: 0xe4e7ed,
             },
@@ -1392,8 +1450,10 @@ mod tests {
         assert!(contrast(light.roles.card_border, light.surface) >= 1.25);
         assert!(contrast(light.warning, light.surface) >= 4.5);
         // R2.2: Light amber text sits near amber-700; r5-system darkened it
-        // a step (#A64C08) so a "Needs you" word reads on a selected row.
-        assert_eq!(light.roles.status.attention, 0xa64c08);
+        // a step so a "Needs you" word reads on a selected row; r6-surfaces
+        // (R6.2) moved it toward yellow (#7A5A18), away from fault red and
+        // the warning orange.
+        assert_eq!(light.roles.status.attention, 0x7a5a18);
         // Nord: a primary that never reads as disabled, with a ≥ 4.5:1 label.
         let nord = Appearance::Nord.palette_v2();
         let (_, saturation) = hue_saturation(nord.primary);

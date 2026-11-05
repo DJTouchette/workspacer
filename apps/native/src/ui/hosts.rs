@@ -1326,7 +1326,7 @@ fn host_status(card: &Card) -> StatusCell {
     match card.resources.as_ref().and_then(|r| r.gate.as_ref()) {
         Some(gate) if gate.open => StatusCell::new(StatusKind::Ready).label("Accepting work"),
         Some(gate) => StatusCell::new(StatusKind::Paused).label(paused_label(&gate.reasons)),
-        None => StatusCell::new(StatusKind::Idle).label("No sample yet"),
+        None => StatusCell::new(StatusKind::Unknown).label("No sample yet"),
     }
 }
 
@@ -1508,12 +1508,12 @@ fn metric_v2(
 /// A queue item's state as a `StatusCell` (r5-shell, R5.4).
 fn queue_status(state: &State) -> StatusCell {
     match state {
-        State::Queued => StatusCell::new(StatusKind::Idle).label("Waiting to start"),
+        State::Queued => StatusCell::new(StatusKind::Waiting),
         State::Running => StatusCell::new(StatusKind::Working),
         State::Done => StatusCell::new(StatusKind::Done),
         State::Failed => StatusCell::new(StatusKind::Failed),
-        State::Cancelled => StatusCell::new(StatusKind::Idle).label("Cancelled"),
-        State::Unknown => StatusCell::new(StatusKind::Idle).label("Result unknown"),
+        State::Cancelled => StatusCell::new(StatusKind::Ended).label("Cancelled"),
+        State::Unknown => StatusCell::new(StatusKind::Unknown).label("Result unknown"),
         State::Other(other) => StatusCell::new(StatusKind::Idle).label(other.clone()),
     }
 }

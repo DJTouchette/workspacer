@@ -74,3 +74,32 @@ impl StatusCell {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::primitives::{STATUS_TABLE, StatusKind};
+
+    // r6-surfaces (R6.2)
+    #[test]
+    fn the_status_table_has_one_row_per_state_each_with_its_own_glyph() {
+        assert_eq!(STATUS_TABLE.len(), StatusKind::ALL.len());
+        for (row, kind) in STATUS_TABLE.iter().zip(StatusKind::ALL) {
+            assert_eq!(row.kind, kind, "the table is in StatusKind::ALL order");
+            assert_eq!(kind.row().kind, kind);
+        }
+        for (i, a) in STATUS_TABLE.iter().enumerate() {
+            for b in &STATUS_TABLE[i + 1..] {
+                assert_ne!(
+                    a.shape, b.shape,
+                    "{:?} and {:?} share a glyph",
+                    a.kind, b.kind
+                );
+                assert_ne!(
+                    a.label, b.label,
+                    "{:?} and {:?} share a word",
+                    a.kind, b.kind
+                );
+            }
+        }
+    }
+}

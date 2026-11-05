@@ -46,12 +46,18 @@ fn reviews_a_proposed_change(cx: &mut TestAppContext, design: wks_native::appear
         "opening the page reads the jobs"
     );
     request_state(&workspace, &mut visual, Request::Jobs, 1, listed());
-    for selector in ["page-header", "page-title", "feature-back"] {
+    for selector in ["page-header", "page-title"] {
         assert!(
             visual.debug_bounds(selector).is_some(),
             "{design:?} {selector}"
         );
     }
+    // r6-surfaces (R6.5): Jobs is a sidebar destination; v2 has no back link.
+    assert_eq!(
+        visual.debug_bounds("feature-back").is_some(),
+        !design.is_v2(),
+        "{design:?} back link"
+    );
     if design.is_v2() {
         assert!(visual.debug_bounds("jobs-refresh").is_some());
         // Small controls at the v2 height.

@@ -2533,33 +2533,59 @@ impl Workspace {
         }
     }
 
-    /// R4.5: the back link every v2 page header carries ("Back to chat", or
+    /// R4.5: the back link a v2 page header carries ("Back to chat", or
     /// "Back to new session" when the page was opened from that form). One
-    /// id on every page: only one page shows at a time.
-    pub(super) fn page_back_v2(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// id on every page: only one page shows at a time. r6-surfaces (R6.5):
+    /// top-level pages (the sidebar's destinations) have none, since the
+    /// sidebar is the navigation; drill-in pages keep it.
+    pub(super) fn page_back_v2(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         self.page_back_v2_enabled(true, cx)
+    }
+
+    /// Whether the page showing is one of the sidebar's destinations.
+    pub(super) fn top_level_page(&self) -> bool {
+        self.new_session
+            || matches!(
+                self.screen,
+                Screen::Projects
+                    | Screen::Settings
+                    | Screen::Recent
+                    | Screen::Jobs
+                    | Screen::Hosts
+                    | Screen::Scratch
+                    | Screen::Fleet
+            )
     }
 
     /// [`Self::page_back_v2`], disabled while the page cannot be left (New
     /// session while it starts).
-    pub(super) fn page_back_v2_enabled(&self, enabled: bool, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn page_back_v2_enabled(
+        &self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.top_level_page() && !self.extras.return_launch {
+            return None;
+        }
         let p = self.palette();
-        primitives::back_link_enabled(
-            "feature-back",
-            if self.extras.return_launch {
-                "Back to new session"
-            } else {
-                "Back to chat"
-            },
-            enabled,
-            &p,
+        Some(
+            primitives::back_link_enabled(
+                "feature-back",
+                if self.extras.return_launch {
+                    "Back to new session"
+                } else {
+                    "Back to chat"
+                },
+                enabled,
+                &p,
+            )
+            .debug_selector(|| "feature-back".into())
+            .tooltip(primitives::tooltip_view("Go back", Some("Esc"), &p))
+            .when(enabled, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)))
+            })
+            .into_any_element(),
         )
-        .debug_selector(|| "feature-back".into())
-        .tooltip(primitives::tooltip_view("Go back", Some("Esc"), &p))
-        .when(enabled, |d| {
-            d.on_click(cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)))
-        })
-        .into_any_element()
     }
 
     /// Every feature page under v2: back link, title, one-line description
@@ -2766,11 +2792,11 @@ impl SetupState {
 
     pub(super) fn badge(self) -> StatusBadge {
         match self {
-            Self::Ready => StatusBadge::new(StatusKind::Done).label("Ready"),
+            Self::Ready => StatusBadge::new(StatusKind::Ready),
             Self::NeedsSignIn => StatusBadge::new(StatusKind::NeedsYou).label("Needs sign-in"),
-            Self::NotInstalled => StatusBadge::new(StatusKind::Idle).label("Not installed"),
+            Self::NotInstalled => StatusBadge::new(StatusKind::Offline).label("Not installed"),
             Self::Problem(_) => StatusBadge::new(StatusKind::Failed).label("Check failed"),
-            Self::Unknown => StatusBadge::new(StatusKind::Idle).label("Not checked"),
+            Self::Unknown => StatusBadge::new(StatusKind::Unknown).label("Not checked"),
         }
     }
 }

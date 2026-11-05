@@ -538,11 +538,13 @@ pub(crate) fn split_button(main: Stateful<Div>, menu: Stateful<Div>, p: &Palette
         .child(menu)
 }
 
-/// A split button with its menu (R3.2): Deny with "Deny with note…", Send
-/// with its other send modes. `menu` is `Some` while open: a [`menu`] of
-/// [`menu_item`]s that hangs under the control's right edge, above
-/// everything else. The caller owns the open flag, toggles it from the
-/// chevron's `.on_click`, and closes it on choice or Esc.
+/// A split button with its menu (R3.2): Deny with "Deny with note…".
+/// `menu` is `Some` while open: a [`menu`] of [`menu_item`]s beside the
+/// control on its right, top edges aligned (r6-surfaces, R6.1: inside the
+/// card, never over the "Always allow" row below), above everything else.
+/// The caller owns the open flag, toggles it from the chevron's
+/// `.on_click`, and closes it on choice or Esc. [`split_button_with_menu_at`]
+/// picks another anchor.
 ///
 /// ```ignore
 /// let (deny, more) = split_button_parts("approval-deny", "Deny", None,
@@ -557,12 +559,19 @@ pub(crate) fn split_button_with_menu(
     menu: Option<Div>,
     p: &Palette,
 ) -> Div {
-    super::system::anchored_menu(
-        split_button(main, chevron, p),
-        menu,
-        super::system::MenuAnchor::BelowEnd,
-        p,
-    )
+    split_button_with_menu_at(main, chevron, menu, super::system::MenuAnchor::BesideEnd, p)
+}
+
+/// [`split_button_with_menu`] with its menu at `anchor` (Queue's send
+/// menu: above, right edges aligned).
+pub(crate) fn split_button_with_menu_at(
+    main: Stateful<Div>,
+    chevron: Stateful<Div>,
+    menu: Option<Div>,
+    anchor: super::system::MenuAnchor,
+    p: &Palette,
+) -> Div {
+    super::system::anchored_menu(split_button(main, chevron, p), menu, anchor, p)
 }
 
 /// The "…" trigger for a row's or card's overflow menu: where Remove,
@@ -1107,7 +1116,7 @@ pub(crate) fn dialog(p: &Palette) -> Div {
         .bg(rgb(p.roles.raised))
         .border(px(t.stroke.hairline))
         .border_color(rgb(p.roles.border_strong))
-        .shadow(elevation(p, t.elevation.modal))
+        .shadow(super::system::Level::Overlay.shadow(p))
 }
 
 /// A dialog's title and optional description.
@@ -1174,24 +1183,16 @@ pub(crate) fn status_dot(intent: Intent, p: &Palette) -> Div {
         .bg(rgb(intent.color(p)))
 }
 
-/// The status language (R3.1): every state a session, subagent, job,
-/// machine, task or card can show, with one word, one colour AND one 8px
-/// shape everywhere (sidebar, rail, capsule, palette, history, machines,
-/// children, fleet):
-///
-/// | Kind | Word | Role | Glyph |
-/// |---|---|---|---|
-/// | Working | Working | working (teal) | ring with a rotating arc (static under reduced motion) |
-/// | NeedsYou | Needs you | attention (amber) | filled dot |
-/// | NotResponding | Not responding | fault (red) | hollow clock |
-/// | Failed | Failed | fault (red) | ✕ |
-/// | Idle | Idle | — | **no glyph** (show the age instead) |
-/// | Done | Done | done (muted green) | check |
-/// | Paused | Paused | idle (grey) | pause bars (machines, jobs) |
-/// | Offline | Offline | idle (grey) | dash (machines, the hub) |
+/// The status language (R3.1; one table since r6-surfaces, R6.2): every
+/// state a session, subagent, job, machine, task or card can show, with
+/// one word, one colour AND one distinct 8px shape everywhere (sidebar,
+/// rail, capsule, palette, history, machines, children, fleet). The rows
+/// live in [`STATUS_TABLE`], which `docs/design-system.md` publishes as
+/// "The status table"; every function here reads it.
 ///
 /// Retired as state words: "running" (for agents), "stalled", "Lost
-/// heartbeat", "Queued", "Unknown" as amber. Blue is never a status.
+/// heartbeat", "Queued" (it is Waiting to start), "Unknown" as amber.
+/// Blue is never a status.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum StatusKind {
     /// An agent or run in progress.
@@ -1203,80 +1204,251 @@ pub(crate) enum StatusKind {
     NotResponding,
     /// Broke; name what, and offer the way out.
     Failed,
-    /// Ready and waiting for work, not started yet, or ended.
+    /// Live and waiting for its next message.
     Idle,
+    /// Stopped on purpose (a session, a terminal, a cancelled run).
+    Ended,
+    /// Queued: accepted, not started yet ("Waiting to start").
+    Waiting,
+    /// Not known yet, or could not be checked ("Not checked", "No sample
+    /// yet", "Result unknown").
+    Unknown,
+    /// Healthy and accepting work: a machine online, an agent set up, a
+    /// service reachable. The positive state a table's most common row
+    /// shows, so it has a glyph like every other state.
+    Ready,
     /// Finished successfully.
     Done,
     /// Switched off or held (a machine's gate, a job).
     Paused,
     /// Not reachable (a machine, the hub).
     Offline,
-    // r5-system (R5.1 StatusCell)
-    /// Healthy and accepting work: a machine online, an agent set up, a
-    /// service reachable. The positive state a table's most common row
-    /// shows, so it has a glyph like every other state.
-    Ready,
 }
 
+/// A status glyph's shape. Each state has its own (a test keeps them
+/// distinct).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StatusShape {
+    /// A faint ring with a turning arc.
+    Arc,
+    /// A filled dot.
+    Dot,
+    /// A ring with clock hands.
+    Clock,
+    /// ✕.
+    Cross,
+    /// A hollow ring.
+    Ring,
+    /// A small filled square (stop).
+    Square,
+    /// A ring of four dashes (in line, not started).
+    DashedRing,
+    /// Three dots in a row (not known).
+    Ellipsis,
+    /// A ring around a dot (a target).
+    Target,
+    /// A check.
+    Check,
+    /// Two pause bars.
+    Bars,
+    /// A level dash.
+    Dash,
+}
+
+/// Which status role colours a glyph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StatusTone {
+    Attention,
+    Fault,
+    Working,
+    Done,
+    Idle,
+}
+
+/// The tier a state's word is set in: only states that ask for something
+/// carry their hue (amber blocked on you, red broke).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StatusWords {
+    Hue,
+    Secondary,
+    Tertiary,
+}
+
+/// One row of [`STATUS_TABLE`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StatusRow {
+    pub(crate) kind: StatusKind,
+    /// The canonical word.
+    pub(crate) label: &'static str,
+    pub(crate) shape: StatusShape,
+    pub(crate) tone: StatusTone,
+    pub(crate) words: StatusWords,
+    /// More specific words a surface may show for this state (its glyph
+    /// and colour stay the row's).
+    pub(crate) also: &'static str,
+}
+
+/// The one status table: state → glyph → colour → word. In
+/// [`StatusKind::ALL`] order.
+pub(crate) const STATUS_TABLE: [StatusRow; 12] = [
+    StatusRow {
+        kind: StatusKind::Working,
+        label: "Working",
+        shape: StatusShape::Arc,
+        tone: StatusTone::Working,
+        words: StatusWords::Secondary,
+        also: "Running, Sending…",
+    },
+    StatusRow {
+        kind: StatusKind::NeedsYou,
+        label: "Needs you",
+        shape: StatusShape::Dot,
+        tone: StatusTone::Attention,
+        words: StatusWords::Hue,
+        also: "Proposed change",
+    },
+    StatusRow {
+        kind: StatusKind::NotResponding,
+        label: wks_native::format::NOT_RESPONDING,
+        shape: StatusShape::Clock,
+        tone: StatusTone::Fault,
+        words: StatusWords::Hue,
+        also: "",
+    },
+    StatusRow {
+        kind: StatusKind::Failed,
+        label: "Failed",
+        shape: StatusShape::Cross,
+        tone: StatusTone::Fault,
+        words: StatusWords::Hue,
+        also: "Exit code 1",
+    },
+    StatusRow {
+        kind: StatusKind::Idle,
+        label: "Idle",
+        shape: StatusShape::Ring,
+        tone: StatusTone::Idle,
+        words: StatusWords::Tertiary,
+        also: "In the background",
+    },
+    StatusRow {
+        kind: StatusKind::Ended,
+        label: "Ended",
+        shape: StatusShape::Square,
+        tone: StatusTone::Idle,
+        words: StatusWords::Tertiary,
+        also: "Exited, Cancelled",
+    },
+    StatusRow {
+        kind: StatusKind::Waiting,
+        label: "Waiting to start",
+        shape: StatusShape::DashedRing,
+        tone: StatusTone::Idle,
+        words: StatusWords::Tertiary,
+        also: "Queued, Not run yet",
+    },
+    StatusRow {
+        kind: StatusKind::Unknown,
+        label: "Unknown",
+        shape: StatusShape::Ellipsis,
+        tone: StatusTone::Idle,
+        words: StatusWords::Tertiary,
+        also: "Not checked, No sample yet, Result unknown, Couldn't check",
+    },
+    StatusRow {
+        kind: StatusKind::Ready,
+        label: "Ready",
+        shape: StatusShape::Target,
+        tone: StatusTone::Done,
+        words: StatusWords::Secondary,
+        also: "Accepting work, Online, Set up",
+    },
+    StatusRow {
+        kind: StatusKind::Done,
+        label: "Done",
+        shape: StatusShape::Check,
+        tone: StatusTone::Done,
+        words: StatusWords::Secondary,
+        also: "Succeeded, Passed",
+    },
+    StatusRow {
+        kind: StatusKind::Paused,
+        label: "Paused",
+        shape: StatusShape::Bars,
+        tone: StatusTone::Idle,
+        words: StatusWords::Tertiary,
+        also: "Not accepting work",
+    },
+    StatusRow {
+        kind: StatusKind::Offline,
+        label: "Offline",
+        shape: StatusShape::Dash,
+        tone: StatusTone::Idle,
+        words: StatusWords::Tertiary,
+        also: "Not installed",
+    },
+];
+
 impl StatusKind {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 12] = [
         Self::Working,
         Self::NeedsYou,
         Self::NotResponding,
         Self::Failed,
         Self::Idle,
+        Self::Ended,
+        Self::Waiting,
+        Self::Unknown,
+        Self::Ready,
         Self::Done,
         Self::Paused,
         Self::Offline,
-        Self::Ready,
     ];
+
+    /// This state's row of [`STATUS_TABLE`].
+    pub(crate) fn row(self) -> &'static StatusRow {
+        let ix = Self::ALL
+            .iter()
+            .position(|&k| k == self)
+            .unwrap_or_default();
+        &STATUS_TABLE[ix]
+    }
 
     /// The canonical word for this state: the only one any surface uses.
     pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Working => "Working",
-            Self::NeedsYou => "Needs you",
-            Self::NotResponding => wks_native::format::NOT_RESPONDING,
-            Self::Failed => "Failed",
-            Self::Idle => "Idle",
-            Self::Done => "Done",
-            Self::Paused => "Paused",
-            Self::Offline => "Offline",
-            Self::Ready => "Ready",
-        }
+        self.row().label
     }
 
     /// The glyph's colour: one of the palette's five status roles.
     pub(crate) fn color(self, p: &Palette) -> u32 {
         let r = p.roles.status;
-        match self {
-            Self::NeedsYou => r.attention,
-            Self::Working => r.working,
-            Self::Done | Self::Ready => r.done,
-            Self::Failed | Self::NotResponding => r.fault,
-            Self::Idle | Self::Paused | Self::Offline => r.idle,
+        match self.row().tone {
+            StatusTone::Attention => r.attention,
+            StatusTone::Fault => r.fault,
+            StatusTone::Working => r.working,
+            StatusTone::Done => r.done,
+            StatusTone::Idle => r.idle,
         }
     }
 
     /// The label's colour: only states that ask for something carry their
     /// hue (amber blocked on you, red broke); the rest are neutral text.
     pub(crate) fn text_color(self, p: &Palette) -> u32 {
-        let r = p.roles.status;
-        match self {
-            Self::NeedsYou => r.attention,
-            Self::Failed | Self::NotResponding => r.fault,
-            Self::Working | Self::Done | Self::Ready => p.roles.text_secondary,
-            Self::Idle | Self::Paused | Self::Offline => p.roles.text_tertiary,
+        match self.row().words {
+            StatusWords::Hue => self.color(p),
+            StatusWords::Secondary => p.roles.text_secondary,
+            StatusWords::Tertiary => p.roles.text_tertiary,
         }
     }
 
     /// Whether the user has to act (attention or fault): these belong in
     /// Needs you.
     pub(crate) fn needs_attention(self) -> bool {
-        matches!(self, Self::NeedsYou | Self::Failed | Self::NotResponding)
+        matches!(self.row().tone, StatusTone::Attention | StatusTone::Fault)
     }
 
-    /// Whether this state draws a glyph at all (Idle does not).
+    /// Whether this state draws a glyph in a sidebar row (Idle shows the
+    /// row's age instead). Status cells always draw one ([`status_mark`]).
     pub(crate) fn has_glyph(self) -> bool {
         self != Self::Idle
     }
@@ -1394,17 +1566,27 @@ fn glyph_paths(
         b
     };
     let mut out: Vec<(PathBuilder, Paint)> = Vec::new();
-    match kind {
+    // r6-surfaces (R6.2): the shape comes from the status table.
+    let dot_at = |cx: f32, cy: f32, d: f32| {
+        let mut dot = PathBuilder::fill();
+        let radii = point(px_raw(d * s), px_raw(d * s));
+        dot.move_to(at(cx, cy - d));
+        dot.arc_to(radii, px_raw(0.), false, true, at(cx, cy + d));
+        dot.arc_to(radii, px_raw(0.), false, true, at(cx, cy - d));
+        dot.close();
+        dot
+    };
+    match kind.row().shape {
         // r5-system: Idle draws a hollow ring where a glyph is always shown
         // ([`status_mark`]: status cells); `status_glyph` still gives none.
-        StatusKind::Idle => {
+        StatusShape::Ring => {
             let mut b = PathBuilder::stroke(px_raw(stroke));
             ring(&mut b);
             out.push((b, Paint::Ink));
         }
         // Healthy: a ring around a dot (a "target"), so it never shares the
         // amber filled dot's shape.
-        StatusKind::Ready => {
+        StatusShape::Target => {
             let mut b = PathBuilder::stroke(px_raw(stroke));
             ring(&mut b);
             out.push((b, Paint::Ink));
@@ -1417,7 +1599,7 @@ fn glyph_paths(
             dot.close();
             out.push((dot, Paint::Ink));
         }
-        StatusKind::NeedsYou => {
+        StatusShape::Dot => {
             let mut b = PathBuilder::fill();
             let full = point(px_raw(s / 2.), px_raw(s / 2.));
             b.move_to(at(c, 0.));
@@ -1426,7 +1608,7 @@ fn glyph_paths(
             b.close();
             out.push((b, Paint::Ink));
         }
-        StatusKind::Working => {
+        StatusShape::Arc => {
             let mut track = PathBuilder::stroke(px_raw(stroke));
             ring(&mut track);
             out.push((track, Paint::Track));
@@ -1442,7 +1624,7 @@ fn glyph_paths(
             );
             out.push((arc, Paint::Ink));
         }
-        StatusKind::NotResponding => {
+        StatusShape::Clock => {
             let mut b = PathBuilder::stroke(px_raw(stroke));
             ring(&mut b);
             out.push((b, Paint::Ink));
@@ -1452,20 +1634,48 @@ fn glyph_paths(
                 Paint::Ink,
             ));
         }
-        StatusKind::Failed => {
+        StatusShape::Cross => {
             let (a, z) = (stroke / s / 2. + 0.08, 0.92 - stroke / s / 2.);
             out.push((line(&[(a, a), (z, z)]), Paint::Ink));
             out.push((line(&[(z, a), (a, z)]), Paint::Ink));
         }
-        StatusKind::Done => {
+        StatusShape::Check => {
             out.push((line(&[(0.1, 0.55), (0.4, 0.82), (0.92, 0.22)]), Paint::Ink));
         }
-        StatusKind::Paused => {
+        StatusShape::Bars => {
             out.push((line(&[(0.3, 0.12), (0.3, 0.88)]), Paint::Ink));
             out.push((line(&[(0.7, 0.12), (0.7, 0.88)]), Paint::Ink));
         }
-        StatusKind::Offline => {
+        StatusShape::Dash => {
             out.push((line(&[(0.12, 0.5), (0.88, 0.5)]), Paint::Ink));
+        }
+        // Stopped on purpose: a small filled square (the stop mark).
+        StatusShape::Square => {
+            let (a, z) = (0.2, 0.8);
+            let mut b = PathBuilder::fill();
+            b.move_to(at(a, a));
+            b.line_to(at(z, a));
+            b.line_to(at(z, z));
+            b.line_to(at(a, z));
+            b.close();
+            out.push((b, Paint::Ink));
+        }
+        // In line, not started: the ring broken into four dashes.
+        StatusShape::DashedRing => {
+            for quarter in 0..4 {
+                let from = quarter as f32 * 90. + 15.;
+                let mut b = PathBuilder::stroke(px_raw(stroke));
+                b.move_to(on(from, r));
+                b.arc_to(radii, px_raw(0.), false, true, on(from + 60., r));
+                out.push((b, Paint::Ink));
+            }
+        }
+        // Not known: three dots in a row.
+        StatusShape::Ellipsis => {
+            let d = 0.11;
+            for x in [0.16, 0.5, 0.84] {
+                out.push((dot_at(x, c, d), Paint::Ink));
+            }
         }
     }
     out.into_iter()
@@ -1538,14 +1748,15 @@ pub(crate) fn status(kind: StatusKind, p: &Palette) -> Div {
 /// A page's header (R4.5, the one page template): the back link, the title
 /// (22/600), a one-line intro and the right-aligned actions in one slot.
 ///
-/// Every page has the back link. Pages replace the conversation in the main
-/// area, and the sidebar that would otherwise lead back can be collapsed to
-/// the rail or hidden by a narrow window, so one visible way back (the
-/// clickable twin of Esc) is the only rule that holds on every page. The
-/// link's ghost padding hangs outside the column, so the back label, title
-/// and intro share the page's left edge.
+/// r6-surfaces (R6.5): only drill-in pages (Session details, Model,
+/// Changes…) carry the back link, the clickable twin of Esc. The sidebar's
+/// own destinations (Projects, Jobs, History, Machines, Scratch, Settings,
+/// Fleet, New session) pass `None`: the sidebar (or its rail) is how you
+/// move between them, and Esc still returns to the conversation. The link's
+/// ghost padding hangs outside the column, so the back label, title and
+/// intro share the page's left edge.
 pub(crate) fn page_header(
-    back: AnyElement,
+    back: impl Into<Option<AnyElement>>,
     title: impl Into<SharedString>,
     description: Option<SharedString>,
     actions: Vec<AnyElement>,
@@ -1557,16 +1768,20 @@ pub(crate) fn page_header(
         .flex()
         .flex_col()
         .gap(px(t.space.sm))
-        .child(
-            div()
-                .h(px(t.layout.control_height_sm))
-                .flex()
-                .items_center()
-                // Ghost padding hangs outside the column so the back label
-                // lines up with the title.
-                .ml(px(-(t.space.md + t.space.xxs)))
-                .child(back),
-        )
+        // r6-surfaces (R6.5): top-level pages pass no back link (the
+        // sidebar is the navigation) and their title leads.
+        .when_some(back.into(), |d, back| {
+            d.child(
+                div()
+                    .h(px(t.layout.control_height_sm))
+                    .flex()
+                    .items_center()
+                    // Ghost padding hangs outside the column so the back
+                    // label lines up with the title.
+                    .ml(px(-(t.space.md + t.space.xxs)))
+                    .child(back),
+            )
+        })
         .child(
             div()
                 .flex()

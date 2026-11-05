@@ -148,6 +148,10 @@ pub struct Elevation {
     pub floating: Shadow,
     /// Dialogs over a scrim.
     pub modal: Shadow,
+    /// r6-surfaces (R6.1): the tight shadow under an Overlay (menus,
+    /// popovers, dialogs) that keeps its edge visible where the wide
+    /// `modal` shadow fades into a dark page. V1 draws none.
+    pub contact: Shadow,
     /// The tone glow around the title island (`chrome::tone_glow`).
     pub glow_blur: f32,
     pub glow_spread: f32,
@@ -385,6 +389,12 @@ impl Tokens {
                 spread: -4.,
                 opacity: 1.,
             },
+            contact: Shadow {
+                offset_y: 0.,
+                blur: 0.,
+                spread: 0.,
+                opacity: 0.,
+            },
             glow_blur: 22.,
             glow_spread: 2.,
             glow_alpha: 0.45,
@@ -536,6 +546,12 @@ impl Tokens {
                 blur: 48.,
                 spread: -12.,
                 opacity: 1.25,
+            },
+            contact: Shadow {
+                offset_y: 2.,
+                blur: 8.,
+                spread: 0.,
+                opacity: 1.6,
             },
             glow_blur: 16.,
             glow_spread: 0.,
@@ -882,8 +898,9 @@ pub struct PageTokens {
     /// Every v2 feature page's max width: at 1600px the column fills the
     /// space beside the sidebar instead of leaving dead gutters.
     pub wide: f32,
-    /// A forms column inside the wide page (session details, model picker):
-    /// left-aligned, so its edge is the page header's.
+    /// The centred form template's column (Settings, Agent setup, New
+    /// session, Session details, Model…). r6-surfaces (R6.5): 880, the
+    /// Comfortable reading width, centred in the page.
     pub form: f32,
     /// One dense table row.
     pub row: f32,
@@ -913,7 +930,7 @@ impl Tokens {
     pub const fn pages(&self) -> PageTokens {
         PageTokens {
             wide: 1240.,
-            form: 760.,
+            form: 880.,
             row: 40.,
             status: 152.,
             when: 208.,

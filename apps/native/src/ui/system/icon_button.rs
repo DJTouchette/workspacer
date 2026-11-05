@@ -17,6 +17,7 @@ pub(crate) struct IconButton {
     dot: Option<(&'static str, Option<u32>)>,
     badge: Option<AnyElement>,
     icon_size: Option<f32>,
+    text: Option<SharedString>,
 }
 
 impl IconButton {
@@ -38,7 +39,16 @@ impl IconButton {
             dot: None,
             badge: None,
             icon_size: None,
+            text: None,
         }
+    }
+
+    /// r6-surfaces (R6.5): a short visible label after the icon ("Files",
+    /// "Changes"), for a toolbar wide enough to carry words; the tooltip
+    /// keeps the full name and shortcut. `None` stays icon-only.
+    pub(crate) fn text(mut self, text: Option<impl Into<SharedString>>) -> Self {
+        self.text = text.map(Into::into);
+        self
     }
 
     /// Its keys ("Ctrl K", "g n"; spaces separate keycaps).
@@ -101,7 +111,7 @@ impl IconButton {
     pub(crate) fn render(self, p: &Palette) -> Stateful<Div> {
         let t = p.tokens;
         let id = self.id.clone();
-        let badged = self.badge.is_some();
+        let badged = self.badge.is_some() || self.text.is_some();
         let control = interactive_control(div().id(self.id), *p, self.enabled)
             .debug_selector(move || id.to_string())
             .h(px(t.layout.icon_button))
@@ -116,6 +126,9 @@ impl IconButton {
             .font_weight(FontWeight(t.weight.medium))
             .tooltip(tooltip_view_keys(self.label, self.shortcut, p))
             .child(self.icon.size(px(self.icon_size.unwrap_or(t.icon.sm))))
+            .when_some(self.text, |d, text| {
+                d.child(div().flex_shrink_0().text_size(px(t.text.body)).child(text))
+            })
             .children(self.badge)
             .when_some(self.dot, |d, (dot, color)| {
                 d.relative().child(

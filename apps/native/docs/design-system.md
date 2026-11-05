@@ -42,14 +42,16 @@ The code lives in:
 | Row fills | `p.selected` (always neutral), `roles.hover`, `roles.pressed` | List, nav and menu rows |
 | Edges | `p.border` (dividers), `roles.card_border` (Raised edge), `roles.border_strong` (Overlay edge, inputs, Secondary buttons, off toggle track) | |
 | Accent | `p.accent` = `roles.focus` | Links and the focus ring. **Blue means interactive.** It is never a status |
-| Primary | `p.primary`, `primary_hover`, `primary_pressed`, `on_primary` | The Primary button fill, the on toggle |
+| Primary | `p.primary`, `primary_hover`, `primary_pressed`, `on_primary` | The Primary button fill |
+| Toggle | `roles.toggle_on` (the accent, deepened until white stands ≥ 3:1 on it), `roles.toggle_edge` (≥ 3:1 on every surface), `roles.toggle_knob` (white) | The toggle and the Settings switch |
 | Status | `roles.status.{attention, fault, working, done, idle}` | Status glyphs and words only (see StatusCell) |
 | Identity | `roles.avatar[6]`, `roles.avatar_text`, `roles.provider` | Monogram tiles, provider marks |
-| Caution | `roles.caution` (`Intent::Caution`) | Neutral-strong: a capacity at or past its warn share (usage and context from 80%). Never a hue |
-| Scrim | `roles.scrim_alpha` | How much a centred overlay dims the window, per theme (dark 0.5, light 0.32) |
+| Warning | `roles.caution` (`Intent::Caution`) | The capacity warning hue (R6.2): an orange, kept apart from amber and red in every theme (the separation test), readable as text. Meters at 80% and over, and their number |
+| Scrim | `roles.scrim_alpha` | How much an overlay dims the whole window, sidebar included: 45–55% in every theme (dark 0.5, light 0.45) |
 
 - **Amber** means blocked on you.
 - **Red** means a named failure.
+- **Orange** (the warning hue) means a capacity running out: a meter at 80% or more.
 - **Green** means done or healthy.
 - Nothing else borrows these hues. No purple.
 
@@ -104,14 +106,15 @@ All three are at least 4.5:1 on chat, surface, base and raised, and on selected 
 |---|---|---|---|---|
 | `Flat` | `chat` | `border` | none | no |
 | `Raised` | `surface` | `card_border` | `elevation.raised` | no |
-| `Overlay` | `roles.raised` | `border_strong` | `elevation.modal` | yes, when centred (`roles.scrim_alpha` of `p.shadow`; light themes dim less) |
+| `Overlay` | `roles.raised` | `border_strong` | `elevation.modal` plus `elevation.contact` (a tight shadow that keeps the edge visible on a dark page) | yes, when centred or when it takes the keyboard (`roles.scrim_alpha` of `p.shadow`) |
 
 - `elevated(level, &p) -> Div` gives you the fill, edge, shadow and panel radius.
 - `Level::{fill, edge, shadow}(&p)` give the parts separately.
 - `scrim_color(&p)` gives the scrim colour.
 - `edge(el, Side::{All, Top, Bottom, Left, Right}, level, &p)` draws a hairline in `level`'s edge colour: `Flat` for dividers (a header strip's underline, a footer's rule, the sidebar's frame), `Raised` for a card's edge, `Overlay` for an input or keyboard-highlighted row. It is the one way a surface draws a rule; never call `.border_color` in a surface.
 - An overlay always has a shadow. A centred overlay also always has a scrim.
-- Menus and popovers are Overlay but anchored, so they have no scrim.
+- **Overlays mount at the window root** (`Workspace::shell`, as deferred children), so the scrim covers the whole window, sidebar and header included. Never mount one inside a pane.
+- Menus are Overlay but anchored, so they have no scrim. A popover that takes the keyboard (the model popover) hangs from its control but sits over a window scrim, so it never floats over undimmed text it does not own.
 - `floating(el, &p)` adds the floating shadow (the composer, Jump to latest: above the transcript, under an Overlay); `lifted(el, level, &p)` adds a level's shadow to a surface that draws its own fill and edge (`src/ui/system/edge.rs`).
 
 ### Edges (`system::edge`, `src/ui/system/edge.rs`)
@@ -220,6 +223,7 @@ Each entry gives:
   - `.badge(Some(el))`: a trailing fact beside the icon (the Tasks count, "Branch +3 −1"); the button widens and keeps its height.
   - `.dot(Some(selector))`: an accent dot on the corner (Settings: an update is ready); `.dot_color(Some(selector), role)` in a status role (a running shell). Absolute, so the icon never moves.
   - `.icon_size(t.icon.md)`: the header strip's tools draw a 16 icon.
+  - `.text(Some("Files"))`: a short visible label after the icon (R6.5). The header's tools carry one while the conversation column is at least `shell().toolbar_labels_at` (1100) wide ("Changes +17 −3", "Files", "Terminal", "Tasks 3"), and are icon-only below it (counts stay).
   - The older `primitives::icon_button` and `icon_button_with_shortcut` remain for existing call sites and are the same look.
   - `overflow_trigger(id, &p)` is the "…" button.
 - **Do:**
@@ -254,20 +258,26 @@ Each entry gives:
 
 - **Purpose:** a state in a table, list or card.
 - **Anatomy:** the glyph slot (16, glyph 8), the word (12/500, the kind's text colour), then an optional tertiary detail.
-- **States:** every `StatusKind`. **Every state has a glyph:**
+- **States:** every `StatusKind`. **The status table** (R6.2) is the one source: `primitives::STATUS_TABLE`, read by `StatusKind::{label, color, text_color}`, `StatusCell`, `status_mark`, `status_glyph` and `StatusBadge`. **Every state has its own glyph** (a test keeps the shapes and words distinct):
 
-| Kind | Word | Glyph | Colour |
-|---|---|---|---|
-| Working | Working | Ring with a turning arc | `status.working` |
-| NeedsYou | Needs you | Filled dot | `attention` |
-| NotResponding | Not responding | Hollow clock | `fault` |
-| Failed | Failed | ✕ | `fault` |
-| Idle | Idle (Waiting to start, Unknown, Ended) | Hollow ring | `idle` |
-| Done | Done | Check | `done` |
-| Paused | Paused | Pause bars | `idle` |
-| Offline | Offline | Dash | `idle` |
-| Ready | Ready (Accepting work, Online, Set up) | Ring with a dot | `done` |
+| State | Glyph | Colour | Word | Also shown as (same glyph) |
+|---|---|---|---|---|
+| Working | Faint ring with a turning arc | `status.working` (secondary) | Working | Running, Sending… |
+| NeedsYou | Filled dot | `attention` (amber), word in amber | Needs you | Proposed change |
+| NotResponding | Ring with clock hands | `fault` (red), word in red | Not responding | |
+| Failed | ✕ | `fault`, word in red | Failed | Exit code 1 |
+| Idle | Hollow ring | `idle` | Idle | In the background |
+| Ended | Small filled square (stop) | `idle` | Ended | Exited, Cancelled |
+| Waiting | Ring of four dashes | `idle` | Waiting to start | Queued, Not run yet |
+| Unknown | Three dots | `idle` | Unknown | Not checked, No sample yet, Result unknown, Couldn't check |
+| Ready | Ring around a dot | `done` (green) | Ready | Accepting work, Online, Set up |
+| Done | Check | `done` | Done | Succeeded, Passed |
+| Paused | Two bars | `idle` | Paused | Not accepting work |
+| Offline | Dash | `idle` | Offline | Not installed |
 
+- Words: amber and red states carry their hue; Working, Ready and Done are secondary; the rest tertiary.
+- Sidebar rows show an Idle session's age instead of its ring (`has_glyph`); everywhere else every state draws its glyph.
+- An ended session (`status::derive` keeps it Idle in the Ended group) shows Ended's glyph on its badge (`Status::badge`).
 - **Tokens:** `system().glyph_slot`, `signals().glyph`, `glyph_stroke`, `text.meta`.
 - **API:**
   - `system::StatusCell::new(kind).label("Accepting work").detail("· 3 agents").render(&p) -> Div` (`system/status_cell.rs`). Selector: `status-cell-<Kind>`.
@@ -286,18 +296,19 @@ Each entry gives:
 
 - **Purpose:** an on/off setting.
 - **Anatomy:** a 32×20 track with a 16 knob, inset by the 2px focus border.
-- **States:**
-  - On: `primary` track, `on_primary` knob at the end.
-  - Off: `border_strong` track (a quiet well, at most 2:1 against its surface), `text_secondary` knob at the start.
+- **States (R6.1):**
+  - On: the accent track (`roles.toggle_on`) and a white knob at the end.
+  - Off: a light track (`roles.hover`, at most 2:1 against its surface), a white knob at the start, and a hairline (`roles.toggle_edge`) around the track and the knob.
   - Disabled: either state at `wash.yielded` opacity.
   - Focus: the ring.
+  - Checked visually in every theme in the gallery (`system-gallery-<theme>`) and in Settings (shot 39).
 - **Tokens:** `system().toggle_*`, `radius.full`.
 - **API:**
   - `system::toggle(id, on, enabled, &p) -> Stateful<Div>` (`system/toggle.rs`)
-  - `system::toggle_colors(on, enabled, &p) -> ToggleColors { track, knob }`
-  - gpui-component's `Switch` draws the same colours under v2, through `configure_theme_v2` and the vendored `ThemeColor::switch_thumb_off`. Existing Settings switches are therefore already correct.
+  - `system::toggle_colors(on, enabled, &p) -> ToggleColors { track, knob, edge }` (`edge` is `Some` when off)
+  - gpui-component's `Switch` draws the same colours under v2, through `configure_theme_v2` and the vendored `ThemeColor::{switch_on, switch_thumb_off, switch_border}`. Existing Settings switches are therefore already correct.
 - **Do:** put the label on the row and the tooltip on the toggle.
-- **Don't:** use a dark filled off track. It reads as "on" in light themes.
+- **Don't:** use a dark filled off track or a dark knob. Either reads as "on" in light themes.
 
 ### TextField / Composer
 
@@ -337,11 +348,12 @@ Each entry gives:
   - `menu_item_icon(…)`
   - `menu_separator(&p)`
   - `menu_shortcut("g h", &p)`: an item's trailing keys as keycaps (`.child` it onto the item).
-  - Anchor it with `system::anchored_menu(trigger, Option<menu>, MenuAnchor::{BelowStart, BelowEnd, AboveStart, AboveEnd}, &p) -> Div` (`system/menu.rs`). `split_button_with_menu` and the header's "…" use it. The model popover hangs from whichever control opened it (the composer's chip, left edges aligned, or the header's "…"), decision pending or not.
+  - Anchor it with `system::anchored_menu(trigger, Option<menu>, MenuAnchor::{BelowStart, BelowEnd, AboveStart, AboveEnd, BesideEnd}, &p) -> Div` (`system/menu.rs`). The header's "…" uses it. The model popover hangs from whichever control opened it (the composer's chip, left edges aligned, or the header's "…"), decision pending or not.
+  - **A card's menus open inside or below the card** and never cover a row they don't own (R6.1). `split_button_with_menu` (Deny's "Deny with note…") opens `BesideEnd`: to the right of the chevron, top edges aligned, so "Always allow" below stays visible. `split_button_with_menu_at(…, anchor, &p)` picks another anchor: Queue's send menu hangs `AboveEnd` from Queue itself, inside the composer's reach, clear of the last message and its timestamp.
   - The caller owns the open flag. Close the menu on a choice, on Esc and from `.on_mouse_down_out`.
 - **Don't:**
   - Hang a menu from a window corner.
-  - Let a menu cover its own trigger.
+  - Let a menu cover its own trigger, or text it doesn't own.
 
 ### Overlay / Dialog
 
@@ -433,17 +445,20 @@ Each entry gives:
 
 ### PageShell
 
-- **Purpose:** one template for every page.
+- **Purpose:** the page templates. **There are exactly two (R6.5):**
+  - **Centred form** (`PageWidth::Form`, `pages().form` 880, centred): Settings, Agent setup, New session, Session details, Model, Handoff, Pull request.
+  - **Full-width table** (`PageWidth::Wide`, `pages().wide` 1240): Projects, Jobs, History, Machines, Scratch, Changes. Fleet's tile grid is the same template at the grid's cap (`PageWidth::Grid`, 1440).
 - **Anatomy:** the page scroller (`Workspace::page_view`) gives every page the same top offset and gutter. `page_header` contains:
-  - the back link
+  - the back link, **only on drill-in pages** (Session details, Model, Changes…). The sidebar's destinations (Projects, Jobs, History, Machines, Scratch, Settings, Fleet, New session) have none: the sidebar is the navigation, and Esc still returns to the conversation. `page_back_v2` returns `None` for them.
   - the 24/600 title
   - a one-line description
   - the actions in **one** right slot
 
   The body follows, `space.xxl` below. The header and the body share one width rule.
-- **Widths:** `PageWidth::Wide` (`pages().wide`, 1240) for tables and grids; `PageWidth::Form` (`pages().form`, 760, left-aligned) for New session, Agent setup, Session details, Model, Handoff and Pull request; `PageWidth::Grid` (`fleet().grid_max`, 1440) for Fleet's tile grid.
+- **Widths:** see the two templates above. `page_shell` centres a Form column; New session's centred composer sits in that template (the composer owns how it looks).
 - **Header actions:** one right slot. Refresh (Tertiary, `Concept::Refresh`) comes first; the page's main action (Add…, New job) is last and **Secondary on every page**, so a pending decision on the page can own the one Primary.
 - **Pages on it (r5-shell):** every feature page (`feature_page_v2`), Projects, Settings, New session, the Changes page (stretched to the window: `.flex_1().min_h_0()` on the shell) and Fleet. Session history keeps its rows as the scroller's own children (`page_list`) for the keyboard cursor, under the same header width and spacing.
+- **Repeated facts go to the group header (R6.5).** A folder row inside a Projects group shows only what is live there (needs you, working); the group's head carries the totals (scratch files to run, sessions). On Machines, an offline machine with nothing to offer is named once above the links table, not as a muted row under every project.
 - **API:**
   - `system::page_shell(header, Option<notice>, body, PageWidth, &p) -> Div` (`system/page.rs`), passed to `page_view(id, pages().wide, false, …)`.
   - `primitives::page_header(back, title, description, actions, &p)`, `back_link`.
@@ -462,7 +477,8 @@ Each entry gives:
 ### Meter
 
 - **Purpose:** a share of a limit (usage windows, context).
-- **Tiers:** below 80% `Intent::Neutral` (secondary); from 80% `Intent::Caution` (`roles.caution`, neutral-strong); at 100% `Intent::Danger` (red). `level_intent(format::level(pct))` and `level_color` pick them. Never amber: amber means "needs you".
+- **Tiers:** below 80% `Intent::Neutral` (secondary); from 80% `Intent::Caution` (`roles.caution`, the warning hue, R6.2); at 100% `Intent::Danger` (red). `level_intent(format::level(pct))` and `level_color` pick them. Never amber: amber means "needs you".
+- **Usage in the sidebar footer (R6.5):** one line per account, a bar plus a number ("Claude ▬ 42%"), the number in the meter's tier colour. The name and number never truncate (the bar gives way); the full sentence ("42% of 5-hour limit used", and when it resets) is in the tooltip.
 - **API:** `primitives::meter(fraction, intent, &p)`.
 - **Don't:** use `badge(…)`, the old solid flag, for counts.
 
@@ -531,12 +547,15 @@ See Page anatomy. The same rules apply inside cards and panels: one line, tertia
 - **NavItem** rest, hover and selected: 4.5.
 - **Menu items and destructive items** on raised and hover: 4.5.
 - **Avatars:** 4.5.
-- **Toggle and Switch:**
+- **Toggle and Switch (R6.1):**
+  - the knob is white, on and off
   - on knob vs track: 3
-  - off knob vs track: 3
   - on track vs surface: 3
-  - off knob vs surface: 3
+  - off hairline vs surface: 3, and vs the white knob: 3
   - off track vs surface: **at most** 2 (Light's dark off pills were 6:1)
+- **The warning hue** as text on every surface and row: 4.5.
+- **Separation (R6.2,** `needs_you_fault_and_warning_stay_apart_in_every_theme`**):** in every theme, Needs-you amber and fault red are at least 0.10 apart in OKLab and 30° apart in hue; the warning hue is at least 0.06 and 15° from each.
+- **Scrim (R6.1):** 45–55% in every theme.
 
 ## Design lint
 

@@ -261,13 +261,16 @@ fn about_says_an_offline_check_plainly(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("check-updates").is_some());
 }
 
-/// R4.5: one page template. Every page, New session included, carries the
-/// back link, and its title starts at one left edge.
+/// R4.5: one page header, and its title starts at one left edge (at this
+/// width the centred form fills the column too). r6-surfaces (R6.5): only
+/// drill-in pages carry the back link; the sidebar's destinations have
+/// none.
 #[gpui::test]
 fn every_page_shares_one_header_and_left_edge(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     open_v2(&workspace, &mut visual, 900., |_, _, _| {});
     let mut edge = None;
+    let mut forms = Vec::new();
     for (screen, new_session) in [
         (Screen::Projects, false),
         (Screen::Settings, false),
@@ -289,20 +292,44 @@ fn every_page_shares_one_header_and_left_edge(cx: &mut TestAppContext) {
         });
         visual.run_until_parked();
         let title = visual.debug_bounds("page-title").unwrap();
-        let back = visual
-            .debug_bounds("feature-back")
-            .unwrap_or_else(|| panic!("{screen:?} has the back link"));
-        assert!(back.bottom() <= title.top(), "{screen:?}: back sits above");
+        let drill_in = matches!(screen, Screen::Setup | Screen::Changes) && !new_session;
+        match visual.debug_bounds("feature-back") {
+            Some(back) => {
+                assert!(drill_in, "{screen:?} is top-level: no back link");
+                assert!(back.bottom() <= title.top(), "{screen:?}: back sits above");
+            }
+            None => assert!(!drill_in, "{screen:?} has the back link"),
+        }
+        // r6-surfaces (R6.5): two templates. Tables share the page's left
+        // edge; a form is one centred column, never wider than the token.
+        let form = new_session || matches!(screen, Screen::Settings | Screen::Setup);
         let left = f32::from(title.left());
         // r6-decisions (R6.7): the Fleet collapses the sidebar to its rail,
         // so its page starts further left by design.
         if screen == Screen::Fleet {
             continue;
         }
+        if form {
+            let shell = visual.debug_bounds("page-shell").unwrap();
+            assert!(
+                f32::from(shell.size.width) <= wks_native::tokens::Tokens::V2.pages().form + 0.5,
+                "{screen:?} (new session {new_session}) is a form column"
+            );
+            forms.push((screen, f32::from(shell.left()), f32::from(shell.right())));
+            continue;
+        }
         let edge = *edge.get_or_insert(left);
         assert!(
             (left - edge).abs() <= 1.,
             "{screen:?} (new session {new_session}) title at {left}, others at {edge}"
+        );
+    }
+    // Every form sits at the same place: one centred column.
+    for pair in forms.windows(2) {
+        let ((a, al, ar), (b, bl, br)) = (pair[0], pair[1]);
+        assert!(
+            (al - bl).abs() <= 1. && (ar - br).abs() <= 1.,
+            "{a:?} and {b:?} forms differ"
         );
     }
 }

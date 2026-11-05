@@ -773,8 +773,6 @@ impl Workspace {
             )
             .occlude()
             .child(body);
-        let menu = (self.composer_ui.send_menu && slot == SendSlot::Queue)
-            .then(|| self.render_send_menu(can_send, cx));
         let (pushed, anchored) = if deciding {
             (slash, None)
         } else {
@@ -791,7 +789,7 @@ impl Workspace {
             .children(pushed)
             .child(
                 system::anchored_menu(
-                    div().relative().w_full().child(composer).children(menu),
+                    div().relative().w_full().child(composer),
                     anchored,
                     system::MenuAnchor::AboveStart,
                     &p,
@@ -1008,7 +1006,22 @@ impl Workspace {
                                 cx.notify();
                             }))
                         });
-                primitives::split_button(main, chevron, &p).into_any_element()
+                // r6-surfaces (R6.1): the menu hangs from Queue itself
+                // (above it, right edges aligned), not from the composer's
+                // top, so it stays clear of the transcript's last message
+                // and its timestamp.
+                let menu = self
+                    .composer_ui
+                    .send_menu
+                    .then(|| self.render_send_menu(can_send, cx));
+                primitives::split_button_with_menu_at(
+                    main,
+                    chevron,
+                    menu,
+                    system::MenuAnchor::AboveEnd,
+                    &p,
+                )
+                .into_any_element()
             }
         }
     }
@@ -1086,53 +1099,48 @@ impl Workspace {
                         ),
                 )
         };
-        div()
-            .absolute()
-            .right_0()
-            .bottom(relative(1.))
-            .pb(px(t.space.sm))
-            .child(
-                primitives::menu(&p)
-                    .id("composer-send-menu-list")
-                    .debug_selector(|| "composer-send-menu-list".into())
-                    .w(px(t.layout.dialog_width - t.space.huge * 2.))
-                    .occlude()
-                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                        this.composer_ui.send_menu = false;
-                        cx.notify();
-                    }))
-                    .child(
-                        item(
-                            "composer-send-now",
-                            IconName::ArrowUp,
-                            "Send now",
-                            SEND_NOW_COPY,
-                            Some(self.send_now_key()),
-                        )
-                        .when(can_send, |d| {
-                            d.on_click(cx.listener(|this, _, window, cx| {
-                                this.composer_ui.send_menu = false;
-                                this.submit(Submit::Now, window, cx)
-                            }))
-                        }),
+        div().child(
+            primitives::menu(&p)
+                .id("composer-send-menu-list")
+                .debug_selector(|| "composer-send-menu-list".into())
+                .w(px(t.layout.dialog_width - t.space.huge * 2.))
+                .occlude()
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    this.composer_ui.send_menu = false;
+                    cx.notify();
+                }))
+                .child(
+                    item(
+                        "composer-send-now",
+                        IconName::ArrowUp,
+                        "Send now",
+                        SEND_NOW_COPY,
+                        Some(self.send_now_key()),
                     )
-                    .child(
-                        // (v2 leaves Tab to the text: no key here.)
-                        item(
-                            "composer-queue",
-                            IconName::Inbox,
-                            "After this turn",
-                            AFTER_TURN_COPY,
-                            None,
-                        )
-                        .when(can_send, |d| {
-                            d.on_click(cx.listener(|this, _, window, cx| {
-                                this.composer_ui.send_menu = false;
-                                this.submit(Submit::Queue, window, cx)
-                            }))
-                        }),
-                    ),
-            )
+                    .when(can_send, |d| {
+                        d.on_click(cx.listener(|this, _, window, cx| {
+                            this.composer_ui.send_menu = false;
+                            this.submit(Submit::Now, window, cx)
+                        }))
+                    }),
+                )
+                .child(
+                    // (v2 leaves Tab to the text: no key here.)
+                    item(
+                        "composer-queue",
+                        IconName::Inbox,
+                        "After this turn",
+                        AFTER_TURN_COPY,
+                        None,
+                    )
+                    .when(can_send, |d| {
+                        d.on_click(cx.listener(|this, _, window, cx| {
+                            this.composer_ui.send_menu = false;
+                            this.submit(Submit::Queue, window, cx)
+                        }))
+                    }),
+                ),
+        )
     }
 
     /// The host sessions run on, for a decision's where line: the hub's

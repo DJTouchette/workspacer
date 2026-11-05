@@ -164,7 +164,7 @@ fn swatch(name: &'static str, color: u32, p: &Palette) -> Div {
 fn foundations(p: &Palette) -> Div {
     let t = p.tokens;
     let r = p.roles;
-    let swatches: [(&'static str, u32); 18] = [
+    let swatches: [(&'static str, u32); 19] = [
         ("base", p.base),
         ("chat", p.chat),
         ("surface", p.surface),
@@ -181,6 +181,7 @@ fn foundations(p: &Palette) -> Div {
         ("on primary", p.on_primary),
         ("attention", r.status.attention),
         ("fault", r.status.fault),
+        ("warning", r.caution),
         ("done", r.status.done),
         ("idle", r.status.idle),
     ];
@@ -499,7 +500,7 @@ fn meters(p: &Palette) -> Div {
         .child(
             row(p)
                 .child(specimen(0.42, prim::Intent::Neutral, "42% · neutral"))
-                .child(specimen(0.93, prim::Intent::Caution, "93% · caution"))
+                .child(specimen(0.93, prim::Intent::Caution, "93% · warning"))
                 .child(specimen(1., prim::Intent::Danger, "100% · at the limit")),
         )
 }
@@ -632,20 +633,10 @@ fn navigation(p: &Palette) -> Div {
         )
 }
 
+// r6-surfaces (R6.2): the one status table, every row in its cell.
 fn statuses(p: &Palette) -> Div {
     let t = p.tokens;
-    let details = [
-        ("Working", "· 2m"),
-        ("Needs you", "· Allow cargo test?"),
-        ("Not responding", "· 7m"),
-        ("Failed", "· exit code 101"),
-        ("Idle", "· 3h ago"),
-        ("Done", "· 42s"),
-        ("Paused", "· by you"),
-        ("Offline", "· since 09:12"),
-        ("Accepting work", "· 3 agents"),
-    ];
-    section("StatusCell", p)
+    section("StatusCell · the status table", p)
         .debug_selector(|| "gallery-status".into())
         .child(
             div()
@@ -653,16 +644,23 @@ fn statuses(p: &Palette) -> Div {
                 .grid()
                 .grid_cols(3)
                 .gap(px(t.space.sm))
-                .children(StatusKind::ALL.into_iter().zip(details).map(
-                    |(kind, (label, detail))| {
-                        let cell = StatusCell::new(kind).detail(detail);
-                        if label == kind.label() {
-                            cell.render(p)
-                        } else {
-                            cell.label(label).render(p)
-                        }
-                    },
-                )),
+                .children(prim::STATUS_TABLE.iter().map(|row| {
+                    // The state's word and glyph, then the other words that
+                    // take its glyph.
+                    div()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(t.space.xxs))
+                        .child(StatusCell::new(row.kind).render(p))
+                        .when(!row.also.is_empty(), |d| {
+                            d.child(
+                                caption(row.also, p)
+                                    .pl(px(t.system().glyph_slot + t.space.xs))
+                                    .truncate(),
+                            )
+                        })
+                })),
         )
 }
 
