@@ -164,7 +164,8 @@ fn primitives_render_in_every_theme_and_design(cx: &mut TestAppContext) {
             let working = visual.debug_bounds("primitive-status-Working").unwrap();
             let idle = visual.debug_bounds("primitive-status-Idle").unwrap();
             assert_eq!(working.size.height, idle.size.height);
-            // r3-foundation: one 8px glyph per state, and none for Idle.
+            // r3-foundation: one 8px glyph per state; r7-status (R7.3):
+            // Idle too (its ring).
             let glyph = palette.tokens.signals().glyph;
             for selector in [
                 "status-glyph-Working",
@@ -174,13 +175,13 @@ fn primitives_render_in_every_theme_and_design(cx: &mut TestAppContext) {
                 "status-glyph-Done",
                 "status-glyph-Paused",
                 "status-glyph-Offline",
+                "status-glyph-Idle",
             ] {
                 let bounds = visual
                     .debug_bounds(selector)
                     .unwrap_or_else(|| panic!("{design:?} {appearance:?} {selector}"));
                 assert_eq!(f32::from(bounds.size.width), glyph, "{selector}");
             }
-            assert!(visual.debug_bounds("status-glyph-Idle").is_none());
         }
     }
 }
