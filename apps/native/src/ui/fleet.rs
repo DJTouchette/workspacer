@@ -210,21 +210,31 @@ pub(crate) fn shown(bucket: Bucket, filter: Filter) -> bool {
     }
 }
 
-/// The header's one-line count of the fleet: "2 need you · 1 to review ·
+/// The header's one-line count of the fleet: "3 need you (1 to review) ·
 /// 3 working · 5 idle · 20 ended" (empty groups left out). Each number is
-/// the count of a group of top-level sessions, job proposals in Needs you:
-/// the filters' counts are sums of these ([`filter_tip`]).
+/// the count of a group of top-level sessions, job proposals in Needs you.
+/// r7-qa (R7.4): Ready for review is a Needs-you state, so its sessions
+/// count in the first number, as they do in the Needs you filter: the
+/// filters' counts are sums of these numbers ([`filter_tip`]).
 pub(crate) fn summary(counts: [usize; 5]) -> String {
-    let parts: Vec<String> = Bucket::ALL
-        .iter()
-        .zip(counts)
-        .filter(|(_, n)| *n > 0)
-        .map(|(bucket, n)| match bucket {
-            Bucket::NeedsYou if n == 1 => "1 needs you".to_owned(),
-            Bucket::NeedsYou => format!("{n} need you"),
-            Bucket::Review => format!("{n} to review"),
-            other => format!("{n} {}", other.label().to_lowercase()),
-        })
+    let [asks, review, rest @ ..] = counts;
+    let wants = asks + review;
+    let needs = match (wants, review) {
+        (0, _) => None,
+        (1, 0) => Some("1 needs you".to_owned()),
+        (1, _) => Some("1 needs you (to review)".to_owned()),
+        (n, 0) => Some(format!("{n} need you")),
+        (n, r) => Some(format!("{n} need you ({r} to review)")),
+    };
+    let parts: Vec<String> = needs
+        .into_iter()
+        .chain(
+            Bucket::ALL[2..]
+                .iter()
+                .zip(rest)
+                .filter(|(_, n)| *n > 0)
+                .map(|(bucket, n)| format!("{n} {}", bucket.label().to_lowercase())),
+        )
         .collect();
     if parts.is_empty() {
         "No sessions yet".into()
@@ -2170,19 +2180,31 @@ impl Workspace {
                 )
                 .child(
                     // Its risk ("Deletes branches") and the ask.
+                    // r7-qa: the ask stays whole beside the chip ("Allow…"
+                    // read as nothing); who proposed it is in the tooltip.
                     primitives::page_cell(cols[5].1)
+                        .id(SharedString::from(format!("fleet-job-need-{ix}")))
                         .debug_selector(move || format!("fleet-job-need-{ix}"))
                         .flex()
                         .items_center()
                         .gap(px(t.space.sm))
                         .children(risk.map(|r| super::decision::risk_chip(r, &p)))
-                        .child(text(
-                            Some(job.proposed_by.trim())
-                                .filter(|b| !b.is_empty())
-                                .map(|b| format!("Allow this job? {b} proposed it"))
-                                .unwrap_or_else(|| "Allow this job?".into()),
-                            p.text,
-                        )),
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_color(rgb(p.text))
+                                .child("Allow this job?"),
+                        )
+                        .when_some(
+                            Some(job.proposed_by.trim().to_owned()).filter(|b| !b.is_empty()),
+                            |d, by| {
+                                d.tooltip(primitives::tooltip_view(
+                                    format!("Proposed by {by}"),
+                                    None,
+                                    &p,
+                                ))
+                            },
+                        ),
                 )
                 .child(primitives::page_cell(cols[6].1).child(decision.render(&p)))
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -2566,11 +2588,16 @@ mod tests {
 
     #[test]
     fn the_summary_counts_in_the_lexicon() {
+        // r7-qa: the first number is the Needs you filter's count.
         assert_eq!(
             summary([2, 1, 3, 5, 20]),
-            "2 need you · 1 to review · 3 working · 5 idle · 20 ended"
+            "3 need you (1 to review) · 3 working · 5 idle · 20 ended"
         );
         assert_eq!(summary([1, 0, 0, 0, 0]), "1 needs you");
+        assert_eq!(
+            summary([0, 1, 2, 0, 0]),
+            "1 needs you (to review) · 2 working"
+        );
         assert_eq!(summary([0, 0, 0, 0, 0]), "No sessions yet");
         assert!(shown(Bucket::Review, Filter::NeedsYou));
         assert!(shown(Bucket::Review, Filter::Active));

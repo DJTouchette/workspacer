@@ -1119,11 +1119,12 @@ impl Workspace {
                     .gap_1()
                     .min_w_0()
                     .child(Icon::new(IconName::Folder).size(px(12.)))
-                    .child(
-                        div()
-                            .truncate()
-                            .child(chrome::project_label(&s.cwd).to_owned()),
-                    ),
+                    .child(div().truncate().child(if self.design().is_v2() {
+                        // r7-qa (R7.4): one name per project.
+                        self.project_name(&s.cwd)
+                    } else {
+                        chrome::project_label(&s.cwd).to_owned()
+                    })),
             )
     }
 

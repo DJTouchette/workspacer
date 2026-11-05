@@ -794,10 +794,8 @@ impl Workspace {
             .map(|s| s.cwd.clone())
             .filter(|cwd| !cwd.is_empty() && !narrow)
             .map(|cwd| {
-                let name = std::path::Path::new(&cwd)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| cwd.clone());
+                // r7-qa (R7.4): one name per project, the breadcrumb's.
+                let name = self.project_name(&cwd);
                 primitives::toolbar_chip(
                     "composer-folder",
                     Some(
@@ -1924,7 +1922,7 @@ impl Workspace {
                 }))
                 .overflow_y_scroll()
                 .px(px(t.space.xl))
-                .child(self.render_markdown("approval-plan", plan, window, cx))
+                .child(self.render_markdown_nested("approval-plan", plan, window, cx))
                 .into_any_element(),
         );
         decision.note = deny_open.then(|| {

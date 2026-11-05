@@ -789,7 +789,9 @@ impl Workspace {
                         .truncate()
                         .font_weight(FontWeight(t.weight.semibold))
                         .text_color(rgb(p.text))
-                        .child(project.name.clone()),
+                        // r7-qa (R7.4): the project's one display name, as
+                        // in the sidebar and breadcrumb, not the folder's.
+                        .child(self.project_name(&project.path)),
                 )
                 .child(
                     ui::truncated(

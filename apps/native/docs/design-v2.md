@@ -147,6 +147,7 @@ the 2px border, Enter/Space activation, pointer cursor when enabled).
 | Card anatomy | `CardHead::new(title).icon(IconName)` or `.avatar(name)`, `.status(StatusBadge)`, `.meta(text)`, `.action(el)`…, `.render(&p) -> Div`; put it in `card(&p)` |
 | Avatar | `avatar_tile(name, &p)`, `avatar_tile_sized(name, size, &p)`: the one avatar (projects, rail, cards): rounded-square monogram in `p.avatar_text()` on `p.avatar_fill(name)` (one of the theme's 8 curated fills), no emoji, no ring. `avatar_with_status(name, size, Option<StatusKind>, under, &p)` adds the status glyph as a corner badge |
 | Fade mask | `fade_mask(FadeEdge::{Top, Bottom}, color, &p) -> Div`: absolute, full width, `layout.fade` tall, colour → clear. Put it behind floating chrome |
+| Edge scrim | `edge_scrim(edge, color, solid, fade) -> Div`: a fade mask that stays solid for `solid` px at its edge, then clears over `fade`. For chrome whose content is clipped short of it (Jump to latest), so the clipped row dissolves instead of showing sliced (R7.8) |
 | Tooltip | `tooltip_view(label, shortcut: Option<&'static str>, &p)` for `.tooltip(…)`; `with_tooltip(control, label, shortcut, &p)` for a control without one (GPUI allows one tooltip per element). Spaces in the shortcut separate keycaps ("g n") |
 | Truncation | `truncated(id, text, &p) -> Stateful<Div>`: one line, ellipsis, full value in a tooltip |
 | Pill (static label) | `pill(label, Intent, &p) -> Div` (prefer `status` for states) |

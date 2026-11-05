@@ -13,8 +13,38 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let style = self.markdown_style(self.link_handler(cx), false, cx);
+        self.render_markdown_styled(key, source, style, window, cx)
+    }
+
+    /// r7-qa: Markdown nested in a card (a plan in its decision card). No
+    /// line of it outranks the card's own headline: headings are the
+    /// headline's size (`text.lead`), the body a step under it
+    /// (`text.subheading`). v2 only; v1 draws `render_markdown`.
+    pub(super) fn render_markdown_nested(
+        &self,
+        key: &str,
+        source: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let t = self.tokens();
         let mut style = self.markdown_style(self.link_handler(cx), false, cx);
+        style.heading_base_font_size = px(t.text.lead);
+        style.heading_font_size = Some(std::sync::Arc::new(|_, base| base));
+        self.render_markdown_styled(key, source, style, window, cx)
+            .text_size(px(t.text.subheading))
+    }
+
+    fn render_markdown_styled(
+        &self,
+        key: &str,
+        source: &str,
+        mut style: TextViewStyle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = self.palette();
         let (hover, menu) = super::link_menu::link_events(cx.entity().downgrade(), None);
         style.on_link_hover = Some(hover);
         style.on_link_menu = Some(menu);

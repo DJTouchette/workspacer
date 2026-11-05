@@ -1830,9 +1830,19 @@ impl Workspace {
             .justify_center()
             .pb(px(sh.jump_gap))
             .child(
-                primitives::fade_mask(FadeEdge::Bottom, p.chat, &p)
-                    .debug_selector(|| "jump-latest-scrim".into())
-                    .h_full(),
+                // r7-qa (R7.8): the transcript's rows are clipped a little
+                // above this band (its bottom padding, `transcript_inset_v2`;
+                // measured 25px in the shots), so a scrim over the band alone
+                // left the line at that edge sliced mid-height. Solid a gap
+                // past that edge, then fading over `jump_scrim`: the edge
+                // line dissolves, never cut.
+                primitives::edge_scrim(
+                    FadeEdge::Bottom,
+                    p.chat,
+                    t.layout.control_height_sm + 3. * sh.jump_gap + t.space.lg + t.space.xs,
+                    sh.jump_scrim,
+                )
+                .debug_selector(|| "jump-latest-scrim".into()),
             )
             .child(
                 primitives::button(
@@ -1994,6 +2004,18 @@ impl Workspace {
         let worst = [StatusKind::NeedsYou, StatusKind::Failed]
             .into_iter()
             .find(|kind| glances.iter().any(|g| g.worst == Some(*kind)));
+        // r7-qa (R7.3): the worst child's state reaches the header named
+        // ("2 updates from other sessions · Queue priority ordering
+        // failed"), so its glyph is never a bare red cross. A Needs-you
+        // child is already named by the header's "Go to …".
+        let worst_line = worst.filter(|k| *k == StatusKind::Failed).and_then(|kind| {
+            glances.iter().rev().find_map(|g| {
+                g.words
+                    .iter()
+                    .find(|(_, k)| *k == kind)
+                    .map(|(line, _)| line.split(": ").next().unwrap_or(line).to_owned())
+            })
+        });
         // The one button: the newest wake whose session waits on you, else
         // the newest that can be opened at all.
         let go = (0..wakes.len())
@@ -2045,6 +2067,16 @@ impl Workspace {
                     .font_weight(FontWeight(t.weight.medium))
                     .child(wake_strip_label(wakes.len())),
             )
+            .when_some(worst.zip(worst_line), |d, (kind, line)| {
+                d.child(div().flex_shrink_0().child("·")).child(
+                    div()
+                        .debug_selector(|| "wake-strip-worst".into())
+                        .min_w_0()
+                        .truncate()
+                        .text_color(rgb(kind.color(&p)))
+                        .child(line),
+                )
+            })
             .child(
                 div().flex_shrink_0().child(
                     Icon::new(if open {

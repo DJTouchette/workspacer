@@ -2051,6 +2051,29 @@ pub(crate) fn fade_mask(edge: FadeEdge, color: u32, p: &Palette) -> Div {
         ))
 }
 
+/// r7-qa (R7.8): a [`fade_mask`] that is solid for `solid` px at its edge,
+/// then fades to clear over `fade` px. For floating chrome whose content
+/// stops short of it (Jump to latest over the transcript's bottom
+/// padding): the solid part covers the gap, so the row at the content's
+/// edge dissolves instead of showing sliced.
+pub(crate) fn edge_scrim(edge: FadeEdge, color: u32, solid: f32, fade: f32) -> Div {
+    let opaque = Hsla::from(rgb(color));
+    let (angle, mask) = match edge {
+        FadeEdge::Top => (180., div().top_0()),
+        FadeEdge::Bottom => (0., div().bottom_0()),
+    };
+    let height = solid + fade;
+    mask.absolute()
+        .left_0()
+        .w_full()
+        .h(px(height))
+        .bg(gpui::linear_gradient(
+            angle,
+            gpui::linear_color_stop(opaque, solid / height),
+            gpui::linear_color_stop(opaque.opacity(0.), 1.),
+        ))
+}
+
 /// Every primitive once, for tests and design review.
 pub(crate) fn gallery(p: &Palette) -> AnyElement {
     use ButtonVariant as B;
