@@ -3823,6 +3823,11 @@ async fn scratch_lists_watches_its_topic_and_marks_then_relists() {
     // sees is the probe, not a re-list.
     read.event("scratch.changed", json!({"key":"other-2"}))
         .await;
+    // The probe repeats the first read, so "not loading" alone can match the
+    // first read's view before the probe registers; wait for a newer number,
+    // or the shop-1 change below lands while the probe is still loading and
+    // (correctly) skips the re-read.
+    let before = controller.views.borrow().requests["scratch-read"].number;
     request(Request::ScratchRead {
         cwd: "/w/shop/wt".into(),
         path: "a.sql".into(),
@@ -3838,7 +3843,9 @@ async fn scratch_lists_watches_its_topic_and_marks_then_relists() {
         .result(json!({"path":"a.sql","content":"SELECT 1;"}))
         .await;
     view(&controller, |v| {
-        v.requests.get("scratch-read").is_some_and(|s| !s.loading)
+        v.requests
+            .get("scratch-read")
+            .is_some_and(|s| !s.loading && s.number > before)
     })
     .await;
 

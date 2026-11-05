@@ -62,12 +62,26 @@ async fn hosts_view_reads_and_owner_writes_round_trip_through_the_hub() {
     .await
     .unwrap();
 
-    let read = run(&controller, Request::Hosts).await;
-    assert_eq!(read.error, None);
-    let snapshot = Snapshot::parse(&read.value);
-    assert_eq!(snapshot.support(), Support::Supported, "{}", read.value);
-    let resources = snapshot.resources.clone().expect("host.resources");
-    assert!(resources.sampled_at.is_some(), "{}", read.value);
+    // The work queue takes its first sample only after the hub is ready and
+    // its own client has connected; on Windows the first sysinfo refresh is
+    // slow enough that an immediate read can still carry `sampledAt: 0`.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let (read, snapshot, resources) = loop {
+        let read = run(&controller, Request::Hosts).await;
+        assert_eq!(read.error, None);
+        let snapshot = Snapshot::parse(&read.value);
+        assert_eq!(snapshot.support(), Support::Supported, "{}", read.value);
+        let resources = snapshot.resources.clone().expect("host.resources");
+        if resources.sampled_at.is_some() {
+            break (read, snapshot, resources);
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "never sampled: {}",
+            read.value
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
     assert_eq!(resources.agent_slots, Some(4), "the default maxAgents");
     let list = snapshot.list.clone().expect("queue.list");
     assert!(list.local.items.is_empty());
