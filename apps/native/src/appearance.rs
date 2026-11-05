@@ -465,7 +465,7 @@ impl Appearance {
     /// [`Self::v2_colors`], and derives the rest so the rules hold in every
     /// theme: `muted` is secondary text and `disabled` tertiary (v1 code
     /// drawn under v2 inherits the hierarchy), `busy` is the running blue
-    /// (no purple), code blocks sit on the card surface, providers are
+    /// (violet only for To review), code blocks sit on the card surface, providers are
     /// tertiary grey. Radii follow [`Tokens::V2`] so the palette's radius
     /// fields and the token set never disagree.
     pub fn palette_v2(self) -> Palette {

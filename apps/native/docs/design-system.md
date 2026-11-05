@@ -45,15 +45,18 @@ The code lives in:
 | Primary | `p.primary`, `primary_hover`, `primary_pressed`, `on_primary` | The Primary button fill |
 | Toggle | `roles.toggle_on` (the accent, deepened until white stands ≥ 3:1 on it), `roles.toggle_edge` (≥ 3:1 on every surface), `roles.toggle_knob` (white) | The toggle and the Settings switch |
 | Status | `roles.status.{attention, fault, working, done, idle}` | Status glyphs and words only (see StatusCell) |
+| Needs-you mark | `roles.status.attention_fill`, `roles.status.on_attention` | R8.7: amber as a *mark* (the Needs-you dot, the attention bar, the amber count badge) and the label on that badge. Dark themes: the text amber. Light themes: a brighter amber at ≥ 3:1, because text amber at 4.5:1 reads as muddy brown in a dot |
+| To review | `roles.review` | R8.1: the second want-you state's own hue, a violet per theme. Glyph (the half ring), word and count badge fill. Never amber |
 | Identity | `roles.avatar[6]`, `roles.avatar_text`, `roles.provider` | Monogram tiles, provider marks |
 | Warning | `roles.caution` (`Intent::Caution`) | The capacity warning hue (R6.2): an orange, kept apart from amber and red in every theme (the separation test), readable as text. Meters at 80% and over, and their number |
 | Scrim | `roles.scrim_alpha` | How much an overlay dims the whole window, sidebar included: 45–55% in every theme (dark 0.5, light 0.45) |
 
-- **Amber** means blocked on you.
+- **Amber** means blocked on you (Needs you). Nothing else is amber: warnings, meters, Full access and links use the warning hue or neutral.
+- **Violet** (`roles.review`) means finished with changes to look at (To review).
 - **Red** means a named failure.
 - **Orange** (the warning hue) means a capacity running out: a meter at 80% or more.
 - **Green** means done or healthy.
-- Nothing else borrows these hues. No purple.
+- Nothing else borrows these hues. Avatar tiles leave out amber, red and violet.
 
 ### Text: three levels
 
@@ -466,8 +469,9 @@ The table itself, its seven glyphs and the words, are in [Status and vocabulary 
 
 - **Purpose:** a count ("3", "99+").
 - **Anatomy:** a fully rounded chip, 12/600 tabular figures.
-- **States:** `CountTone::Neutral` (a wash with secondary text), `NeedsYou` (amber fill, only for what blocks the user now), `Failed` (red fill, a named failure).
-- **Tokens (R7.8):** `system().badge_height` 16, `badge_min` 18, `badge_pad` 4, `text.overline` / `weight.semibold`, `radius.full`. Section counts in the sidebar stay bare tertiary numerals; only Needs you's count is a badge.
+- **States:** `CountTone::Neutral` (a wash with secondary text), `NeedsYou` (`attention_fill` under `on_attention`, only for what blocks the user now), `Review` (r8: `roles.review` under `p.base`, a To-review count), `Failed` (red fill, a named failure).
+- **Tokens (R7.8):** `system().badge_height` 16, `badge_min` 18, `badge_pad` 4, `text.overline` / `weight.semibold`, `radius.full`.
+- **One style everywhere (R8.2).** Every count is this badge: sidebar group headers (right after the label, a quiet Neutral badge for Working, Idle and Ended), nav items, segments. Its amber fill is Needs you's alone.
 - **API:** `primitives::count_badge(label, CountTone, &p)`, `count_text(n)`.
 
 ### Meter
@@ -582,8 +586,8 @@ Seven glyphs (`MAX_STATUS_GLYPHS`), 13 states. A glyph is shared only by states 
 | Glyph | Shape | Colour | States (word) |
 |---|---|---|---|
 | Arc | Faint ring with a turning arc | `status.working` | Working ("Running", "Sending…") |
-| Dot | Filled dot | `attention` (amber) | Needs you |
-| Half | Ring, left half filled | `attention` (amber) | Ready for review |
+| Dot | Filled dot | `attention_fill` (amber) | Needs you |
+| Half | Ring, left half filled | `roles.review` (violet) | To review |
 | Cross | ✕ | `fault` (red) | Failed ("Exit code 1"), Not responding |
 | Ring | Hollow ring | `idle` | Idle, Waiting to start, Unknown |
 | Check | Check | `done` (green) | Done ("Passed"), Ready ("Online", "Set up") |
@@ -592,7 +596,7 @@ Seven glyphs (`MAX_STATUS_GLYPHS`), 13 states. A glyph is shared only by states 
 ### One status per element (R7.3)
 
 - `status::derive` gives each session one status, in this order: Offline, Paused/Ended (stopped), Failed, Needs you, Not responding, Needs you (stalled subagent), Working, **Ready for review**, Idle.
-- **Ready for review** (`StatusKind::Review`, `Bucket::Review`): the turn is over, the session is live, and the hub reports uncommitted changes (`Session::uncommitted`, row field `uncommittedChanges: {files, added, removed}`; design v2 only). It has its own group under Needs you in the sidebar ("Ready for review", its row's line "3 files changed · +48 −12", verb Review) and in the Fleet. `Bucket::wants_you()` is true for Needs you and Ready for review: "All clear" is false while either has a member, Alt+N stops on both, and the Fleet's Needs you filter shows both.
+- **To review** (`StatusKind::Review`, `Bucket::Review`): the turn is over, the session is live, and the hub reports uncommitted changes (`Session::uncommitted`, row field `uncommittedChanges: {files, added, removed}`; design v2 only). It has its own group under Needs you in the sidebar ("To review", its row's line "3 files changed · +48 −12", verb Open) and its own Fleet filter. `Bucket::wants_you()` is true for Needs you and To review: "All clear" is false while either has a member, and Alt+N stops on both. See [The attention model (R8)](#the-attention-model-r8).
 - A parent rolls up its worst child: a run whose delegated subagent is still working shows the child's glyph, never a check beside a spinner.
 - A failed transcript row is red (`EventRow::failed`), even in a run that later recovered; the turn's summary says "1 failed, then passed".
 - The toolbar's failed count is the open failures only (`Workspace::open_failures`): a failure since passed or dismissed does not stay red.
@@ -603,7 +607,8 @@ The latest test run of a session, for decision cards and Fleet tiles (rendered b
 
 - **Data:** `Workspace::session_verification(&Session) -> Option<status::Verification>`. Pure form: `status::verification(&session.tasks, claim: Option<&str>)`. It reads the session's background tasks, keeps the test commands (`status::is_test_command`: cargo test, npm test, pytest, go test, vitest, jest…), and takes the newest by end time. `None` when the session ran no tests (or the last one was killed).
 - **`Verification`:** `outcome` (`TestOutcome::{Running, Passed, Failed}`), `command` ("cargo test", cut before its first flag), `at` (epoch ms), `contradicted` (the latest reply claims a pass after this failure: `status::claims_pass`; checked for the open conversation only).
-- **Words:** `v.text(now)` = "Tests failed 4m ago · cargo test", plus "· the reply says they pass" when contradicted. `v.headline(now)` is the part before the command; `v.kind()` is Failed / Done / Working.
+- **Newest run wins (R8.1).** The headline is always the newest run. `Verification::earlier` is the outcome of the run before it when that one ended the other way.
+- **Words:** `v.text(now)` = "Tests failed 4m ago · cargo test", plus `v.disagreement()`: "the reply says they pass" when the transcript claims a pass after the failure, else "earlier run passed" / "earlier run failed" when an older run disagrees. Never both, so the line keeps three parts. `v.headline(now)` is the part before the command; `v.kind()` is Failed / Done / Working.
 - **Render:** `system::verification_line(&v, now, &p) -> Div` (selector `verification-line`): a StatusCell, red ✕ and red word when it failed, the command and any contradiction as its tertiary detail. The sidebar row's tooltip carries `v.text(now)`.
 
 ### Words (R7.4)
@@ -617,14 +622,21 @@ One word per concept, everywhere:
 | A shell or agent running beside the turn | Background task (toolbar label "Background tasks", `format::BACKGROUND_TASKS`, the panel's title) | Tasks, job |
 | Scheduled work | Job | Task, cron |
 | All sessions at once | Fleet | Dashboard |
-| Finished with changes to look at | Ready for review | Done, idle |
+| Finished with changes to look at | To review | Ready for review, Done, idle |
+| A subagent's count | "1 subagent", "3 subagents this turn" | "1 delegated" |
+| A subagent's built-in role | Its plain verb (`format::subagent_role`): "Reading code", "Planning" | "Explore", "Plan", "general-purpose" |
+| News from other sessions | "2 updates" (the wake strip) | "2 updates from other sessions" |
+| An agent | "Claude Code", "Codex CLI" (`format::agent_name`) | "Claude", "Codex", "OpenAI Codex" (an account's usage keeps the account name: "Codex · 93% …") |
+| What a want-you row offers | Open (`InboxAction::label`, every row) | Review, Answer, Allow |
 | Asking a quiet agent to carry on | Nudge (ask to continue) (`format::NUDGE`) | Nudge, ping |
 | A machine's capacity | "1 of 4 agent slots in use", "0 of 2 command slots in use" (`hosts::Resources::{agent_words, shell_words}`) | "1/4 agents", "0/2 shell" |
 | A queue item that cannot start | "every agent slot is busy" (`hosts::plain_wait`) | "no free agent slot" |
 | Context in the composer | "Context 42% used" (`format::context_label`) | "Context 42% full", "ctx" |
-| A usage meter | "Claude · 5h limit 42%" | "Claude 42%" |
+| A usage meter | "Codex · 93% of 5h limit used", then the meter and "resets in 2h" (`format::usage_words`, `format::resets_in`) | "Claude · 5h limit 42%", "Claude 42%" |
 
-- **Fleet counts:** the summary line ("2 need you · 1 to review · 3 working · 5 idle · 20 ended", `fleet::summary`) counts top-level sessions per group, job proposals in Needs you. Each filter's count is a sum of those numbers, and its tooltip says which (`fleet::filter_tip`).
+- **Fleet counts:** the subtitle says what the page is for, then the summary ("Every live session at once · 2 need you · 1 to review · 3 working · 5 idle · 20 ended", `fleet::FLEET_DESCRIPTION`, `fleet::summary`). It counts top-level sessions per group, job proposals in Needs you. Filters: Needs you, To review, Active, All. Each filter's count is one of those numbers or a sum of them, and its tooltip says which (`fleet::filter_tip`).
+- **Page subtitles and nav tooltips say the same thing (R8.6):** Fleet `fleet::FLEET_DESCRIPTION`, Machines `hosts::HOSTS_DESCRIPTION`, Scratch `scratch::SCRATCH_DESCRIPTION_V2`; the nav item's tooltip is "Fleet · " plus the subtitle.
+- **Welcome (R8.6):** three starter tasks (`states::STARTERS`) under the composer; the placeholder (`states::PROMPT_PLACEHOLDER_V2`, "Describe a task, or leave this empty to start a blank session") says what the box takes and never repeats the hero's question. Usage is hidden until a session exists.
 
 ### Meta text (R7.8)
 
@@ -635,11 +647,59 @@ One word per concept, everywhere:
 
 ### A calm sidebar (R7.5)
 
-- Rows that want the user (Needs you, Ready for review, a fault) are semibold in the primary text colour. The selected row is primary, regular. Every other row is regular in `text_secondary`.
+- Rows that want the user (Needs you, To review, a fault) are semibold in the primary text colour. The selected row is primary, regular. Every other row is regular in `text_secondary`.
 - Only those rows carry a second line (the ask, or the review's change counts).
-- Group labels are 12/500 tertiary. Needs you's count is the one badge (amber); other groups show a bare tertiary numeral.
+- Group labels are 12/500 tertiary, each followed by its count badge (R8.2): amber for Needs you (it is also the "next that needs you" button, Alt+N), violet for To review, Neutral for the rest.
+- **Rows are one height (R8.2):** `shell().row_single` for every session, subagent and summary row; a want-you row adds exactly one line for its ask (`row_double`). Subagent rows are indented and lighter (secondary text unless open); a stalled one says "Not responding" and keeps how long in its tooltip, so the title keeps its room.
 - Usage is one footer line (see Meter).
-- The collapsed rail lists Needs you, Ready for review and Working sessions; every tile and icon has a hover label (a session's title and project in its hover card, each destination's name in its tooltip).
+- The collapsed rail lists Needs you, To review and Working sessions; every tile and icon has a hover label (a session's title and project in its hover card, each destination's name in its tooltip).
+- **Rail tiles (R8.6):** the project's colour (`primitives::avatar_with_status_keyed(title, project, …)`), the session's two letters and the status glyph at the corner. The hover card names the session, its ask, its project and "Last active 23m ago".
+
+## The attention model (R8)
+
+Exactly two states want the user. Every surface (sidebar groups, the Fleet summary and filters, the rail, Projects, row tooltips) shows them the same way, from one source, and never folds one into the other.
+
+| State | Means | Hue | Glyph | Count words | Row verb |
+|---|---|---|---|---|---|
+| Needs you (`Bucket::NeedsYou`) | Blocked on you: an approval, a question, a plan, a stalled subagent, a job proposal | Amber (`attention_fill` for marks, `attention` for words) | Dot | "1 needs you", "3 need you" | Open |
+| To review (`Bucket::Review`) | Finished with uncommitted changes | Violet (`roles.review`) | Half ring | "1 to review" | Open |
+
+- **One count source.** `Workspace::attention_counts` (top-level trees per group, job proposals in Needs you) → `attention::Wants { needs_you, to_review }`. Words: `attention::needs_you_words`, `review_words`, `Wants::words()` ("3 need you · 1 to review").
+- **One row verb.** Every want-you row's chip says "Open" (`InboxAction::label`). The card it opens says what to do; "Review" is the state's name, never a button on a row.
+- **Amber is reserved** for Needs you: warnings, the usage meter, Full access and links such as "+1 more" use `roles.caution` or neutral.
+
+### The hue table (per theme)
+
+| Theme | Needs-you text (`attention`) | Needs-you mark (`attention_fill`) | Badge label (`on_attention`) | To review (`review`) |
+|---|---|---|---|---|
+| Dark | `#e9b464` | `#e9b464` | base | `#be9df7` |
+| Light | `#8a5800` | `#b97200` | text, deepened to ≥ 4.5:1 | `#6e3ead` |
+| Nord | `#eec46e` (was the pale `#ebcb8b`) | `#eec46e` | base | `#c2adf3` |
+| Tokyo Night | `#e0af68` | `#e0af68` | base | `#be9df7` |
+| Catppuccin | `#f8c970` (was the pale `#f9e2af`) | `#f8c970` | base | `#d0aafc` |
+| Gruvbox | `#d8a657` | `#d8a657` | base | `#c4a2ed` |
+| Everforest | `#dbbc7f` | `#dbbc7f` | base | `#c4acf2` |
+| Catppuccin Latte | `#7c5800` | `#ac6b00` | text, deepened to ≥ 4.5:1 | `#6b3baa` |
+
+Tested in `system/contrast.rs`: the review word ≥ 4.5:1 and its glyph ≥ 3:1 on every surface and row; both count badges ≥ 4.5:1; the amber mark ≥ 3:1; and `needs_you_fault_and_warning_stay_apart_in_every_theme` keeps To review ≥ 0.10 OKLab and 30° from amber (text and mark), red, green and the warning, and ≥ 0.06 and 30° from the accent blue. The Nord primary keeps its ≥ 4.5:1 dark label (`v2_meets_the_direction_floors`).
+
+### Time formats (R8.1)
+
+One format per meaning, everywhere:
+
+| Meaning | Format | Helper |
+|---|---|---|
+| Recency, in a sentence | "Last active 23m ago" | `format::last_active(at, now)` |
+| Recency, in a cell or a verification line | "23m ago", "just now" (under 10s) | `format::ago(at, now)` |
+| Recency, in a tight row (sidebar, rail) | "23m" (its tooltip says "Last active 23m ago") | `format::age(at, now)` |
+| Duration | "Ran 3m 31s" | `format::ran(ms)`, `format::duration(ms)` |
+| Until something happens | "resets in 2h 13m" | `format::resets_in(ms)`, `format::countdown(ms)` |
+
+`ago` and `age` share thresholds, so a row's "23m" and History's "23m ago" are the same fact. History's Last active column reads a live session's last activity, as the sidebar does.
+
+### Brand moment (R8.7)
+
+`shell::brand_moment(p)` (selector `brand-moment`): the brace-and-cursor mark at title size, alone, centred. It sits above the welcome question and replaces the icon in empty states that have nothing of their own to show (the generic Inbox case). Error, ended and subagent empty states keep their meaning-bearing icons.
 
 ## Patterns
 
