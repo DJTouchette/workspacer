@@ -340,3 +340,63 @@ This is the single source of truth, and it supersedes the token notes in `design
   - Fleet cards at natural height, questions answerable on the card, job proposals as cards so the counts match
   - a dense row-per-session Fleet table view
 - **Overlays:** the palette, shortcuts and menus get elevation + scrim, and menus anchor to their trigger.
+
+---
+
+# Round 6 addendum: close the gaps between the system and the screen
+
+Round 5 averaged 7.3 (7.7, 7.4, 7.4, 7.2, 7.0). The system exists, but the screens don't fully use it yet, and some of its own rules are wrong on screen. These were verified by the manager in r5-final shots 39 and 75:
+- The palette's scrim covers only the conversation pane; the sidebar stays bright.
+- The light-theme off toggle has a dark knob, so it reads as on.
+- Usage meters truncate mid-word.
+
+**Process change:** a QA gate agent now reviews every shot against this addendum and the r5 reviews *before* the council, and fixes what it finds.
+
+## R6.1 Overlays and surfaces
+- **Overlays mount at the window root.** The scrim covers the whole window, sidebar included, at 45–55%.
+- **Elevation.** Popovers and menus use the raised surface plus a visible shadow, and never sit on top of text they don't own.
+- **Anchoring.** A card's menus open inside or below the card; the Deny menu must not cover "Always allow". The queue menu must not cover the timestamp.
+- **Toggle.** Off is a light track, a white knob and a hairline. On is an accent track and a white knob. The off state is the system default and is checked visually in every theme.
+- **Nord.** Verify the Allow button in shot 42 at 4.5:1. If any surface still draws its own Allow, route it through the button tier.
+
+## R6.2 One status table
+- Publish one table in `design-system.md`: state → glyph → colour → label. It covers Working, Needs you, Not responding, Failed, Idle, Ended, Queued/Waiting to start, Unknown, Ready, Done, Paused and Offline.
+- **Every state has a distinct glyph.** Idle, Ended, Waiting and Unknown must differ.
+- **Separation test.** A test checks that Needs-you amber and fault red stay perceptually distinct in every theme (light theme included).
+- **Warning hue.** Add a warning hue for capacity (meters at 80% or more), distinct from both amber and red.
+- **Recovered failures.** A recovered failure shows its count in words at the turn level ("1 failed, then passed"), not a green check, and not red.
+- **Stalled subagents.** A stalled subagent is a Needs-you item, with Nudge, Stop and View output wherever it appears (Fleet tile, Fleet table, subagent view).
+
+## R6.3 One decision bar
+- **One component.** `DecisionCard` is the only approve/deny UI: conversation, Jobs, Fleet tiles and Fleet table. The wording is consistent (approve/deny for proposals follows the same component and tiers). The Primary button is always filled, and keys show on every keyed decision.
+- **Deny with note** replaces the buttons. It never stacks a second Allow/Deny row.
+- **One accent per card.** Either the amber edge or the focus ring, never both stacked.
+- **Destructive commands.** The risk chip is visible, and Allow needs a second confirm (press again, or a held key).
+- **Where keys go.** A visible indicator shows where digit keys go: the focused decision, or the composer.
+- **Composer while pending.** While a decision is pending, the composer is a single-line bordered field ("Reply instead…") that expands on focus.
+
+## R6.4 Composer and access
+- **Access chip.** It sits next to the model chip ("Sonnet · Ask first"). Full access is shown in the warning hue. It applies immediately, with no Apply button.
+- **One term.** "Ask first" everywhere (not "Ask to approve").
+- **One New-session layout.** It is the welcome screen's centred composer; New session *is* that screen.
+
+## R6.5 Shell density and labels
+- **Labelled toolbar.** At wide widths, header tools carry short labels: "Changes +17 −3", "Files", "Terminal", "Tasks 3". They become icon-only below the width token.
+- **Sidebar rows.** One line (title + time). The second line appears only for a Needs-you ask.
+- **Usage.** A bar plus a number ("Claude 42%"), with the full sentence in the tooltip.
+- **Repeated facts.** Facts repeated on every row of Projects and Machines move to group headers.
+- **Page templates.** Two only: centred form, and full-width table. "Back to chat" goes from top-level pages.
+
+## R6.6 Conversation
+- **Cross-session notices** leave the transcript. They become a slim strip above it, or the sidebar only.
+- **Spacing rhythm.** A fixed 8/16/32 rhythm, enforced through tokens.
+- **Meta rows.** "Used skill", "Worked" and "delegated" collapse into one inline meta line per turn.
+- **Reading width.** The default column widens to use the pane (Comfortable 880, Wide 1100).
+- **Change counts.** The turn card, the Changes panel and the dock agree on files, insertions and deletions, or are labelled with different scopes.
+
+## R6.7 Fleet at scale
+- The sidebar collapses to the rail on the Fleet page.
+- Cards in a row share their height. The decision row comes first.
+- Sort by "waiting longest".
+- Batch-approve identical requests.
+- The selected filter is clearly selected.
