@@ -96,8 +96,23 @@ impl LineWrapper {
                     }
                 };
 
+                // Workspacer patch: update `prev_c` before a boundary can be
+                // returned below. Upstream updated it only on the no-wrap path,
+                // so after a wrap it still held the character before the one
+                // that overflowed: a space there made the next letter a break
+                // candidate mid-word, and a letter there kept the word after
+                // the overflowing space from ever being one.
+                prev_c = new_prev_c;
+                // A space after the line's first word hangs past the edge (as
+                // in CSS) instead of starting the next line: the word after it
+                // becomes the break candidate, so a word that fits on a line
+                // is never broken by character.
+                let hanging_space =
+                    matches!(candidate, WrapBoundaryCandidate::Char { character: ' ' })
+                        && first_non_whitespace_ix.is_some();
+
                 width += item_width;
-                if width > wrap_width && ix > last_wrap_ix {
+                if width > wrap_width && ix > last_wrap_ix && !hanging_space {
                     if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
                     {
                         indent = Some(
@@ -120,8 +135,6 @@ impl LineWrapper {
 
                     return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
                 }
-
-                prev_c = new_prev_c;
             }
 
             None
@@ -486,6 +499,37 @@ mod tests {
                 Boundary::new(12, 0),
                 Boundary::new(18, 0)
             ],
+        );
+    }
+
+    // Workspacer patch: the word after a space the line overflowed on is a
+    // break candidate, and a wrap never leaves a stale `prev_c`. The test
+    // font is 10px per character, so 72px holds 7.
+    #[test]
+    fn test_wrap_line_after_overflowing_space() {
+        let mut wrapper = build_wrapper();
+        let wrap = |wrapper: &mut LineWrapper, text: &str| {
+            wrapper
+                .wrap_line(&[LineFragment::text(text)], px(72.))
+                .collect::<Vec<_>>()
+        };
+        // The space after "aaaaaaa" overflows: it hangs, and "bbbbbbb" (which
+        // fits a line on its own) starts the next line whole. Upstream broke
+        // at the space and then mid-word at 14.
+        assert_eq!(
+            wrap(&mut wrapper, "aaaaaaa bbbbbbb"),
+            &[Boundary::new(8, 0)]
+        );
+        assert_eq!(
+            wrap(&mut wrapper, "aaaaaaa   bbbbbbb cc"),
+            &[Boundary::new(10, 0), Boundary::new(18, 0)]
+        );
+        // A word too long for any line still breaks by character, but only
+        // where it overflows: upstream's stale `prev_c` (a space) made its
+        // second letter a candidate, leaving a lone "b" line.
+        assert_eq!(
+            wrap(&mut wrapper, "aaaaaa bbbbbbbbbbbbb"),
+            &[Boundary::new(7, 0), Boundary::new(14, 0)]
         );
     }
 

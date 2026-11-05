@@ -68,7 +68,25 @@ wrapping only in lines with a ’ at a wrap point. Pinned by `test_is_word_char`
 (this crate) and `a_contraction_never_wraps_at_its_apostrophe` (apps/native UI
 tests; fails against upstream 0.2.2).
 
-Not patched: `wrap_line` returns a boundary before it updates `prev_c`, so the
-word right after the space a line overflowed on is never a break candidate.
-That word is force-broken by character if it does not fit, wherever it
-overflows, apostrophe or not. Upstream 0.2.2 behaviour; left as is.
+`src/text_system/line_wrapper.rs`, `LineWrapper::wrap_line`: a word that fits
+on a line is never broken by character (2026-11-05). Upstream returned a
+boundary before it updated `prev_c`, so after every wrap `prev_c` still held
+the character before the one that overflowed:
+
+- When a space overflowed, upstream wrapped at the space itself, and the word
+  after it (with `prev_c` still its predecessor's last letter) was never a
+  break candidate. If space plus word did not fit the new line, the word was
+  force-broken by character, apostrophe or not. A run of spaces could also
+  become a line of its own.
+- When the first letter after a space overflowed, `prev_c` stayed a space,
+  so the second letter became a candidate: a long word left a one-letter line.
+
+The patch updates `prev_c` before the overflow check, and a space after the
+line's first word no longer triggers a wrap: it hangs past the edge, as in
+CSS, and the next word starts the next line. Leading indentation and lines of
+only spaces wrap as before. This changes wrapping only where a space or the
+letter right after one overflowed. Pinned by
+`test_wrap_line_after_overflowing_space` (this crate; the existing
+`test_wrap_line` cases are unchanged) and
+`a_word_that_fits_a_line_never_breaks_mid_word` (apps/native UI tests; fails
+against upstream 0.2.2).

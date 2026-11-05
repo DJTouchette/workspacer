@@ -479,9 +479,70 @@ fn theme_picker_offers_all_eight_palettes_within_a_narrow_window(cx: &mut TestAp
 /// as "you" / "’re". The test text system gives every character one
 /// advance, so sweeping the width finds every candidate break. Widths too
 /// narrow for a whole word break it by character (between two letters);
-/// those are skipped. The contraction leads the line: upstream's wrapper
-/// skips the word right after a space it overflowed on (`prev_c` is not
-/// updated on that path), which force-breaks that word anywhere.
+/// those are skipped. The contraction leads the line, so no other word's
+/// overflow decides where it breaks.
+/// Workspacer's GPUI patch (`vendor/gpui/WORKSPACER-PATCHES.md`): a word
+/// that fits on a line is never broken by character. Upstream's `wrap_line`
+/// returned a boundary before updating `prev_c`, so the word after a space
+/// the line overflowed on was never a break candidate: at the widths where
+/// that space overflowed, the next word was force-broken mid-word. The test
+/// text system gives every character one advance, so sweeping the width
+/// hits every overflow position.
+#[gpui::test]
+fn a_word_that_fits_a_line_never_breaks_mid_word(cx: &mut TestAppContext) {
+    let text = "the release checklist restarted every session restore path";
+    let longest = text.split(' ').map(str::len).max().unwrap();
+    let letter = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    cx.update(|cx| {
+        let mut wrapper = cx.text_system().line_wrapper(gpui::font("Inter"), px(10.));
+        let mut breaks = |text: &str, width: f32| -> Vec<usize> {
+            let fragments = [gpui::LineFragment::text(text)];
+            wrapper
+                .wrap_line(&fragments, px(width))
+                .map(|b| b.ix)
+                .collect()
+        };
+        let mut checked = 0;
+        for width in 1..800 {
+            let width = width as f32;
+            // Only widths where the longest word fits a line on its own.
+            if !breaks(&"m".repeat(longest), width).is_empty() {
+                continue;
+            }
+            checked += 1;
+            let starts = breaks(text, width);
+            for &ix in &starts {
+                assert!(
+                    !(letter(text[..ix].chars().next_back()) && letter(text[ix..].chars().next())),
+                    "a word that fits breaks mid-word at {ix}, width {width}: {starts:?}"
+                );
+            }
+        }
+        assert!(checked > 0, "some width fits every word");
+        // A word too long for any line breaks only where it overflows, so
+        // every line of it but the last is full. Upstream's stale `prev_c`
+        // (the space before the word) made its second letter a candidate,
+        // leaving a one-letter line.
+        for width in 1..400 {
+            let width = width as f32;
+            let per_line = match breaks(&"m".repeat(64), width).first() {
+                Some(&n) if n > 1 => n,
+                _ => continue,
+            };
+            // The word starts right where the line overflows.
+            let long = format!("{} {}", "a".repeat(per_line - 1), "m".repeat(per_line * 3));
+            let starts = breaks(&long, width);
+            for pair in starts.windows(2) {
+                assert_eq!(
+                    pair[1] - pair[0],
+                    per_line,
+                    "a short line inside a long word at width {width}: {starts:?}"
+                );
+            }
+        }
+    });
+}
+
 #[gpui::test]
 fn a_contraction_never_wraps_at_its_apostrophe(cx: &mut TestAppContext) {
     let text = "you\u{2019}re done";
