@@ -45,8 +45,27 @@ FunctionEnd
 Section "${PRODUCT}" Main
   SetOutPath "$INSTDIR"
   SetOverwrite on
+  ; The updater starts this the moment the app exits, and Windows (or an AV
+  ; scan of the just-closed image) can hold wks-native.exe a few seconds
+  ; longer. A silent NSIS File skips a locked target, so retry the whole
+  ; payload for ~15s instead of failing on the first sharing violation.
+  StrCpy $R0 0
+  payload:
   ClearErrors
-  File /r "${STAGE}\*"
+  File /r /x build-stamp.json "${STAGE}\*"
+  ${If} ${Errors}
+    IntOp $R0 $R0 + 1
+    ${If} $R0 < 30
+      Sleep 500
+      Goto payload
+    ${EndIf}
+    SetErrorLevel 1
+    Abort "Could not install all files. Close ${PRODUCT} and retry."
+  ${EndIf}
+  ; The stamp goes last: the app and updater read it as the installed
+  ; version, so a partial payload must leave the previous stamp in place.
+  ClearErrors
+  File "${STAGE}\build-stamp.json"
   ${If} ${Errors}
     SetErrorLevel 1
     Abort "Could not install all files. Close ${PRODUCT} and retry."

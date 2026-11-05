@@ -68,6 +68,34 @@ try {
     } finally {
         $locked.Dispose()
     }
+    # A locked main binary must fail the install AND leave the previous stamp,
+    # or the app reports itself current while still running the old build.
+    $stampPath = Join-Path $installDir 'build-stamp.json'
+    Set-Content $stampPath '{"version":"previous"}'
+    $locked = [System.IO.File]::Open((Join-Path $installDir 'wks-native.exe'), 'Open', 'Read', 'None')
+    try {
+        $process = Start-Process $installerPath -ArgumentList "/S /D=$installDir" -Wait -PassThru
+        if ($process.ExitCode -eq 0) { throw 'Silent install reported success over a locked wks-native.exe' }
+    } finally {
+        $locked.Dispose()
+    }
+    if ((Get-Content $stampPath -Raw).Trim() -ne '{"version":"previous"}') {
+        throw 'A failed install must not advance build-stamp.json'
+    }
+    # A lock that clears shortly after the app exits (the updater's case) must
+    # be retried, not failed.
+    $locked = [System.IO.File]::Open((Join-Path $installDir 'wks-native.exe'), 'Open', 'Read', 'None')
+    $process = Start-Process $installerPath -ArgumentList "/S /D=$installDir" -PassThru
+    # Without a cached handle, ExitCode reads null after a non -Wait start.
+    $null = $process.Handle
+    try {
+        Start-Sleep -Seconds 3
+    } finally {
+        $locked.Dispose()
+    }
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) { throw "Install did not retry a transiently locked wks-native.exe: $($process.ExitCode)" }
+    if ((Get-Content $stampPath | ConvertFrom-Json).version -ne $version) { throw 'Retried install did not write the new stamp' }
     Invoke-Installer
     # Isolate backend state without changing the actual user's home directory.
     $env:APPDATA = Join-Path $testRoot 'config'
