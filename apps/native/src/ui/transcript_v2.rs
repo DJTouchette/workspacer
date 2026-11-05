@@ -352,7 +352,20 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
     let p = *p;
     let t = p.tokens;
     let tt = t.transcript();
-    let glyph_color = if row.failed {
+    // r4-calm (R4.4): one red signal per failure. A red status already on
+    // the row (its glyph or its badge) carries it; otherwise the glyph
+    // does. The verb stays neutral and a fault's reason is named in
+    // secondary text unless nothing else on the row is red.
+    let red = |kind: StatusKind| matches!(kind, StatusKind::Failed | StatusKind::NotResponding);
+    let signalled = matches!(&row.end, EventEnd::Badge(badge) if red(badge.kind))
+        || matches!(row.glyph, Glyph::Status(kind) if red(kind));
+    let glyph_red = row.failed && !signalled;
+    let fault_color = if signalled || glyph_red {
+        p.roles.text_secondary
+    } else {
+        p.error
+    };
+    let glyph_color = if glyph_red {
         p.error
     } else {
         p.roles.text_tertiary
@@ -389,7 +402,7 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
                 } else {
                     t.weight.medium
                 }))
-                .text_color(rgb(if row.failed { p.error } else { p.text }))
+                .text_color(rgb(p.text))
                 .child(row.verb),
         )
         .when_some(row.target, |d, target| {
@@ -425,7 +438,8 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
         })
         .when_some(row.fault, |d, fault| {
             d.child(
-                meta(format!("· {fault}").into(), p.error).debug_selector(|| "event-fault".into()),
+                meta(format!("· {fault}").into(), fault_color)
+                    .debug_selector(|| "event-fault".into()),
             )
         })
         .when_some(row.disclosure, |d, open| {
@@ -724,13 +738,22 @@ impl Workspace {
                     plural(before, "earlier line", "earlier lines")
                 )))
             })
+            // r4-calm: a failure's output is a faintly tinted block in
+            // secondary text; the row's status is its one red signal.
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .font_family(mono)
+                    .when(failed, |d| {
+                        d.mr(px(t.space.sm))
+                            .px(px(t.space.sm))
+                            .py(px(t.space.xxs))
+                            .rounded(px(t.radius.xs))
+                            .bg(primitives::wash(p.roles.status.fault, t.wash.rest))
+                    })
                     .text_color(rgb(if failed {
-                        p.error
+                        p.roles.text_secondary
                     } else {
                         p.roles.text_tertiary
                     }))
@@ -1596,7 +1619,9 @@ impl Workspace {
                 self.composer_dock_bounds.size.height
                     - px(super::conversation::dock_first_surface(compact)),
             )
-            .h(px(sh.jump_scrim + t.layout.control_height_sm + sh.jump_gap))
+            // r4-calm: the transcript stops above this band
+            // (`transcript_inset_v2`), so the pill floats over canvas only.
+            .h(px(t.layout.control_height_sm + 2. * sh.jump_gap))
             .flex()
             .items_end()
             .justify_center()
@@ -2236,8 +2261,13 @@ impl Workspace {
                     None => Nudge::Parent(nudge_parent_prompt(&title, &view.word)),
                 };
                 let nudge_tip = match &nudge {
-                    Nudge::Session(_) => "Send it “Still there? Reply with where you are.” now",
-                    Nudge::Parent(_) => "Draft a note asking the agent that runs it to check on it",
+                    // r4-calm (R4.6): what a nudge is, in one line.
+                    Nudge::Session(_) => {
+                        "Nudge · ask it to report back: sends “Still there? Reply with where you are.” now"
+                    }
+                    Nudge::Parent(_) => {
+                        "Nudge · ask it to report back: drafts a note asking the agent that runs it to check on it"
+                    }
                 };
                 div()
                     .flex()

@@ -67,7 +67,7 @@ impl Workspace {
             actions.push(
                 primitives::icon_button(
                     "changes-refresh",
-                    IconName::Redo,
+                    primitives::Concept::Refresh,
                     "Refresh",
                     ButtonVariant::Tertiary,
                     connected,

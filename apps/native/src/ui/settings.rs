@@ -74,6 +74,17 @@ impl SettingsSection {
             Self::Labs => IconName::Star,
         }
     }
+
+    // r4-calm (R4.6)
+    /// Design v2's icon: Agents is a plug (the robot is a subagent) and
+    /// Keyboard a keyboard (a terminal is a terminal).
+    fn icon_v2(self) -> Icon {
+        match self {
+            Self::Agents => Icon::new(super::primitives::Concept::Agents),
+            Self::Keyboard => Icon::new(super::primitives::Concept::Shortcuts),
+            other => Icon::new(other.icon()),
+        }
+    }
 }
 
 /// Every whitespace-separated term must appear in one of the haystacks,
@@ -2011,69 +2022,68 @@ impl Workspace {
             })
             .collect();
         let current = self.settings_section.v2_home();
-        let rail =
-            div()
-                .debug_selector(|| "settings-rail".into())
-                .w(px(if tight {
-                    t.layout.control_height
-                } else {
-                    t.layout.settings_rail
-                }))
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .gap(px(t.space.xxs))
-                .children(
-                    SettingsSection::V2
-                        .into_iter()
-                        .zip(counts.iter().copied())
-                        .map(|(section, count)| {
-                            let active = !searching && current == section;
-                            let dimmed = searching && count == 0;
-                            let label = section.label();
-                            primitives::list_row(section.label(), active, true, &p)
-                                .debug_selector(move || format!("settings-nav-{}", section.label()))
-                                .h(px(t.layout.control_height_sm + t.space.xs))
-                                .when(tight, |d| {
-                                    d.justify_center()
-                                        .tooltip(primitives::tooltip_view(label, None, &p))
-                                })
-                                .font_weight(FontWeight(if active {
-                                    t.weight.semibold
-                                } else {
-                                    t.weight.medium
-                                }))
-                                .text_color(rgb(if active {
+        let rail = div()
+            .debug_selector(|| "settings-rail".into())
+            .w(px(if tight {
+                t.layout.control_height
+            } else {
+                t.layout.settings_rail
+            }))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xxs))
+            .children(
+                SettingsSection::V2
+                    .into_iter()
+                    .zip(counts.iter().copied())
+                    .map(|(section, count)| {
+                        let active = !searching && current == section;
+                        let dimmed = searching && count == 0;
+                        let label = section.label();
+                        primitives::list_row(section.label(), active, true, &p)
+                            .debug_selector(move || format!("settings-nav-{}", section.label()))
+                            .h(px(t.layout.control_height_sm + t.space.xs))
+                            .when(tight, |d| {
+                                d.justify_center()
+                                    .tooltip(primitives::tooltip_view(label, None, &p))
+                            })
+                            .font_weight(FontWeight(if active {
+                                t.weight.semibold
+                            } else {
+                                t.weight.medium
+                            }))
+                            .text_color(rgb(if active {
+                                p.text
+                            } else if dimmed {
+                                p.roles.text_tertiary
+                            } else {
+                                p.roles.text_secondary
+                            }))
+                            .child(section.icon_v2().size(px(t.icon.md)).text_color(rgb(
+                                if active {
                                     p.text
-                                } else if dimmed {
-                                    p.roles.text_tertiary
                                 } else {
-                                    p.roles.text_secondary
-                                }))
-                                .child(Icon::new(section.icon()).size(px(t.icon.md)).text_color(
-                                    rgb(if active {
-                                        p.text
-                                    } else {
-                                        p.roles.text_tertiary
-                                    }),
+                                    p.roles.text_tertiary
+                                },
+                            )))
+                            .when(!tight, |d| d.child(div().flex_1().child(section.label())))
+                            .when(!tight && searching && count > 0, |d| {
+                                d.child(primitives::badge(
+                                    count.to_string(),
+                                    primitives::Intent::Accent,
+                                    &p,
                                 ))
-                                .when(!tight, |d| d.child(div().flex_1().child(section.label())))
-                                .when(!tight && searching && count > 0, |d| {
-                                    d.child(primitives::badge(
-                                        count.to_string(),
-                                        primitives::Intent::Accent,
-                                        &p,
-                                    ))
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.enter_settings_section(section, cx);
-                                    this.settings_search
-                                        .update(cx, |input, cx| input.set_value("", window, cx));
-                                    window.focus(&this.focus);
-                                    cx.notify();
-                                }))
-                        }),
-                );
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.enter_settings_section(section, cx);
+                                this.settings_search
+                                    .update(cx, |input, cx| input.set_value("", window, cx));
+                                window.focus(&this.focus);
+                                cx.notify();
+                            }))
+                    }),
+            );
         let search = div()
             .debug_selector(|| "settings-search".into())
             .w(px(t.layout.settings_rail + t.layout.status_column))

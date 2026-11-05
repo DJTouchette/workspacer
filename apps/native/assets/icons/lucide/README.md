@@ -17,3 +17,10 @@ Pull request page) comes from the same `icons/` directory.
 `file-text.svg`, `pencil.svg`, `sparkles.svg` and `wrench.svg` (the v2
 transcript tool event rows: read, edit, skill and other tools) come from the
 same `icons/` directory.
+
+`layout-grid.svg` (Fleet), `server.svg` (Machines), `plug.svg` (Settings →
+Agents), `keyboard.svg` (keyboard shortcuts), `clipboard-list.svg` (session
+details), `history.svg` (conversation history), `list-checks.svg` (background
+tasks, a static mark: the spinner means running), `rotate-ccw.svg` (Retry) and
+`refresh-cw.svg` (Refresh) give each concept its own glyph under design v2
+(r4-calm, R4.6). They are written from the Lucide icon nodes of the same names.

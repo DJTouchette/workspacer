@@ -756,8 +756,8 @@ pub struct ShellTokens {
     /// The conversation's header strip (R3.3: 36–40): title on the left,
     /// the session toolbar on the right, the transcript scrolling beneath.
     pub header: f32,
-    /// The toolbar shows its labels from this conversation width; below
-    /// it, icons with tooltips.
+    /// r4-calm: the header keeps the project crumb beside the title from
+    /// this conversation width (the toolbar is icons only at every width).
     pub toolbar_labels_at: f32,
     /// "Jump to latest": its gap above the composer/decision stack and the
     /// scrim behind it (R3.3: 12, ≥ 32).

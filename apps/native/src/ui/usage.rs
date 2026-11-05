@@ -390,10 +390,11 @@ impl Workspace {
     }
 
     /// Design v2's footer usage: each installed, measured account's most
-    /// pressing window as a mark and a share, neutral below 80%, amber from
-    /// 80% and red at 100% (`format::level`). The tooltip reads each as a
-    /// sentence ("Claude 42% of 5-hour limit used · resets in 2h 13m",
-    /// `format::usage_line`); a click opens the detail modal.
+    /// pressing window, one line each (r4-calm, R4.6): its mark, "Claude ·
+    /// 42% of 5-hour limit used" and a thin meter. Neutral as it fills,
+    /// red only at the limit (`format::level`, amber is for "needs you").
+    /// The tooltip adds when each resets (`format::usage_line`); a click
+    /// opens the detail modal.
     pub(super) fn render_usage_compact(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let p = self.palette();
         let t = p.tokens;
@@ -427,16 +428,19 @@ impl Workspace {
         }
         lines.push("How much of each account's usage limit is used. Click for details.".into());
         let tip = lines.join("\n");
-        let solo = shown.len() == 1;
         Some(
             chrome::interactive_control(div().id("sidebar-usage"), p, true)
                 .debug_selector(|| "sidebar-usage".into())
-                .h(px(t.layout.control_height))
+                .w_full()
+                .min_w_0()
+                .min_h(px(t.layout.control_height))
                 .px(px(t.space.sm))
+                .py(px(t.space.xs))
                 .rounded(px(t.radius.control))
                 .flex()
-                .items_center()
-                .gap(px(t.space.md))
+                .flex_col()
+                .justify_center()
+                .gap(px(t.space.xs))
                 .flex_shrink_0()
                 .text_size(px(t.text.meta))
                 .hover(move |s| s.bg(rgb(p.roles.hover)))
@@ -448,20 +452,15 @@ impl Workspace {
                             .text_color(rgb(p.roles.text_tertiary)),
                     )
                 })
-                // r3-foundation: "Claude 42%" and a thin meter per account;
-                // one account has the room to say what the number is.
                 .children(shown.iter().map(|(a, w)| {
                     let selector = format!("sidebar-usage-row-{}", a.provider);
                     let level = wks_native::format::level(w.pct);
                     let tone = super::primitives::level_color(level, &p);
                     let pct = w.pct.max(0.).round() as u64;
-                    let share = if solo {
-                        format!("{pct}% of {} limit used", long_label(w).to_lowercase())
-                    } else {
-                        format!("{pct}%")
-                    };
+                    let share = format!("{pct}% of {} limit used", long_label(w).to_lowercase());
                     div()
                         .debug_selector(move || selector.clone())
+                        .w_full()
                         .min_w_0()
                         .flex()
                         .items_center()
@@ -469,41 +468,39 @@ impl Workspace {
                         .child(super::shell::neutral_glyph(&a.provider, t.icon.sm, p))
                         .child(
                             div()
+                                .flex_1()
                                 .min_w_0()
                                 .flex()
-                                .flex_col()
-                                .gap(px(t.space.xxs))
+                                .gap(px(t.space.xs))
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_color(rgb(p.roles.text_secondary))
+                                        .font_weight(FontWeight(t.weight.medium))
+                                        .child(a.title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_color(rgb(p.roles.text_tertiary))
+                                        .child("·"),
+                                )
                                 .child(
                                     div()
                                         .min_w_0()
-                                        .flex()
-                                        .gap(px(t.space.xs))
-                                        .map(super::shell::tabular)
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .text_color(rgb(p.roles.text_secondary))
-                                                .font_weight(FontWeight(t.weight.medium))
-                                                .child(a.title.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .truncate()
-                                                .text_color(rgb(
-                                                    tone.unwrap_or(p.roles.text_tertiary)
-                                                ))
-                                                .child(share),
-                                        ),
-                                )
-                                .child(
-                                    super::primitives::meter(
-                                        (w.pct / 100.) as f32,
-                                        super::primitives::level_intent(level),
-                                        &p,
-                                    )
-                                    .w(px(t.shell().meter_width)),
+                                        .truncate()
+                                        .text_color(rgb(tone.unwrap_or(p.roles.text_tertiary)))
+                                        .child(share),
                                 ),
+                        )
+                        .child(
+                            super::primitives::meter(
+                                (w.pct / 100.) as f32,
+                                super::primitives::level_intent(level),
+                                &p,
+                            )
+                            .flex_shrink_0()
+                            .w(px(t.shell().meter_width)),
                         )
                 }))
                 .on_click(cx.listener(|this, _, _, cx| {

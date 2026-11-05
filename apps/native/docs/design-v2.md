@@ -80,8 +80,8 @@ everywhere:
 | Edges | `border` (dividers), `roles.border_strong` (inputs, secondary buttons, popovers), `roles.card_border` (the 1px card edge; visible in Light) |
 | Text tiers | `text`, `prose` (chat copy), `roles.text_secondary` (= `muted`), `roles.text_tertiary` (= `disabled`, so v1 code under v2 inherits the hierarchy) |
 | One accent | `accent` (links, focus = `roles.focus`), `primary` / `primary_hover` / `primary_pressed` (hover and press move away from the label colour), `on_primary` |
-| Status (R2.1) | `roles.status: StatusRoles { attention, fault, working, done, idle }`, aliased by `warning` / `error` / `busy` / `success` / `text_tertiary`: attention amber (Light #B45309), fault red, working **cyan/teal, never the accent hue** (Gruvbox and Everforest take their aqua), done muted green, idle grey. Status colours are only for status; **accent blue means interactive**. No purple |
-| Identity | `roles.provider` (= tertiary: provider glyphs and model names); avatars: `Palette::avatar_fill(name)` picks one of `roles.avatar[8]` (a curated ramp at one OKLCH lightness per theme) by `format::avatar_index`; monograms in `roles.avatar_text` |
+| Status (R2.1) | `roles.status: StatusRoles { attention, fault, working, done, idle }`, aliased by `warning` / `error` / `busy` / `success` / `text_tertiary`: attention amber (Light #B45309), fault red, working neutral secondary grey (r4-calm; it was cyan/teal, which `busy` keeps), done muted green, idle grey. Status colours are only for status; **accent blue means interactive**. No purple |
+| Identity | `roles.provider` (= tertiary: provider glyphs and model names); avatars: `Palette::avatar_fill(name)` picks one of `roles.avatar[6]` (a curated ramp at one OKLCH lightness per theme) by `format::avatar_index`; monograms in `roles.avatar_text` |
 | Code | `code_block` = `surface` (with a `border` edge), `code_header` = raised, `code_inline` |
 
 Per-theme notes: Light has off-white canvas, white cards with a 1px
@@ -178,10 +178,10 @@ Pure and unit-tested; use these instead of ad-hoc `format!`s.
 | `model_name(id)` | the one human model name ("Sonnet 4.6", "GPT-5.6 Luna"); the raw id goes in a tooltip |
 | `not_responding(last_beat, now)` | "Not responding · 2m" for a `NotResponding` agent |
 | `worked_summary(ms, tools)` | "Worked 2m 14s · 18 tools" |
-| `level(pct) -> Level::{Normal, Warn, Fault}` | a share of a limit: Warn from 80%, Fault at 100% (`signals().warn_at` / `fault_at`) |
+| `level(pct) -> Level::{Normal, Warn, Fault}` | a share of a limit: Warn from 80% (drawn as primary text, still neutral), Fault at 100% (red) (`signals().warn_at` / `fault_at`) |
 | `countdown(ms)` | time left: `"45s"`, `"13m"`, `"2h 13m"`, `"3d 4h"`, `"now"` |
-| `usage_line(account, limit, pct, resets_in_ms)` | "Claude 42% of 5-hour limit used · resets in 2h 13m" |
-| `context_label(Option<pct>)` | "Context 42%" (never "ctx"); colour it only from `level(pct)` Warn |
+| `usage_line(account, limit, pct, resets_in_ms)` | "Claude · 42% of 5-hour limit used · resets in 2h 13m" |
+| `context_label(Option<pct>)` | "Context 42% full" (never "ctx"); colour it only from `level(pct)` |
 | `failed_label(name, max)` | "cargo test failed" (a command keeps the words before its first flag) |
 
 ## Round 3 foundation (r3-foundation)
@@ -197,7 +197,7 @@ capsule, palette, history, machines, children, fleet):
 
 | `StatusKind` | `.label()` | Colour (`.color`) | Glyph (`status_glyph`) |
 |---|---|---|---|
-| `Working` | Working | `status.working` | faint ring + arc turning once per `signals().spin_ms`; static arc under reduce motion |
+| `Working` | Working | `status.working` (r4-calm: neutral secondary grey) | faint ring + arc turning once per `signals().spin_ms`; static arc under reduce motion |
 | `NeedsYou` | Needs you | `status.attention` (amber) | filled dot |
 | `NotResponding` | Not responding | `status.fault` | hollow clock |
 | `Failed` | Failed | `status.fault` (red) | ✕ |
@@ -256,19 +256,20 @@ capsule, palette, history, machines, children, fleet):
   its ✕ (`title-failed-ack`) acknowledges it: `ShellUi::acknowledged_failures`
   (in memory, keyed by task id). `capsule::unacknowledged_failures(tasks,
   acked)` is the pure selection.
-- Footer usage (`usage::render_usage_compact`): tooltip lines are
-  `format::usage_line`; one account shows "42% of 5-hour limit used" inline;
-  share text and meter are neutral below 80%, amber from 80%, red at 100%
-  (`level_color`, `level_intent`).
-- Composer context: use `format::context_label(pct)` and colour with
-  `level_color(format::level(pct), &p)` (call site: `ui/gauge.rs`, composer area).
+- Footer usage (`usage::render_usage_compact`): one line per account,
+  "Claude · 42% of 5-hour limit used" and a thin meter (r4-calm); tooltip
+  lines are `format::usage_line` (with the reset time). Neutral as it fills,
+  red at 100% (`level_color`, `level_intent`; amber is only "needs you").
+- Composer context: use `format::context_label(pct)` ("Context 42% full")
+  and colour with `level_color(format::level(pct), &p)` (call site:
+  `ui/gauge.rs`, composer area).
 
 ### Theme quality
 
 - Three text greys per theme (`text`, `roles.text_secondary`,
   `roles.text_tertiary`), all ≥ 4.5:1 on chat, surface, base, raised and a
   selected row.
-- Avatars: `roles.avatar` is a curated 8-hue ramp (blue, sky, teal, green,
+- Avatars (r4-calm: now six tones, see "Round 4: calm"): `roles.avatar` was a curated 8-hue ramp (blue, sky, teal, green,
   olive, sand, clay, rose; no purple) at one OKLCH lightness per theme, tuned
   so `roles.avatar_text` reads ≥ 4.6:1 on every fill (`appearance::avatar_ramp`).
 - Light is tuned on its own: neutral grey edges (no peach), darker tertiary.
@@ -327,8 +328,8 @@ The Jobs page is the worked example: `ui/jobs.rs` (`jobs_page_v2`,
 | Model popover | `ui/model_popover.rs`; the Model page stays on `g m` and "All model settings" |
 | Keys | `g n` / Alt+N next session that needs you (v1 keeps `g n` for Scratch), `g x` Scratch, `?` / Ctrl+/ cheat sheet |
 | Inbox (round 2) | `attention::reason` (why a session waits, and its one action: Allow / Answer / Open), `child_stalled` / `session_stalled` (no heartbeat past `HEARTBEAT_STALE_MS` = fault, lands in Needs you), `children_summary` ("4 subagents · 1 not responding"), `disambiguate` (repeated titles get their age or "#2"), `match_ranges` (search highlights). Idle/Ended sort most recent first; Idle shows `shell().idle_visible` (8) then "Show n more" |
-| Rows | `Tokens::shell()`: `row_single` 30 (Idle, Ended, children), `row_double` 46 (Needs you, Working). The list is a plain scrolled div (`ShellUi::scroll`, rows have two heights); `reveal_sidebar_row` scrolls whichever list the design draws |
-| Destinations, footer | One labelled list at the top (New session, Projects, Jobs, Machines, Scratch, Settings; selectors `new-session-button`, `nav-*`). Footer: account usage ("Claude 42%" + meter, `sidebar-usage`), the connection when not live, and the modal-key label (`sidebar-mode`) only while modal keys are on |
+| Rows | `Tokens::shell()`: `row_single` 30 (Idle, Ended, children), `row_double` 46 (a row whose second line says what it asks, or roomy, what it is doing: see "Round 4: calm"). The list is a plain scrolled div (`ShellUi::scroll`, rows have two heights); `reveal_sidebar_row` scrolls whichever list the design draws |
+| Destinations, footer | At the top: New session, then one row of icon tiles (r4-calm; selectors `new-session-button`, `nav-*`). Footer: account usage (one line per account, "Claude · 42% of 5-hour limit used" + meter, `sidebar-usage`), the connection when not live, and the modal-key label (`sidebar-mode`) only while modal keys are on |
 | Modal keys | `Settings::vim(design)`: v2 reads `vim_navigation_v2` (default **off**), v1 `vim_navigation`. Settings → Keyboard sets the current design's. `?` opens the cheat sheet either way. The rig turns them on for v2 shots that send `keys` |
 | Command palette | `ui/palette.rs`: Ctrl+K under v2 (v1 keeps the session search). Sessions (recents first), actions, settings pages; `>` actions, `@` sessions; `fuzzy` matching with highlights; Up/Down/Enter/Esc (`CommandPalette > Input`). Shots `command-palette`, `command-palette-actions` |
 | Header | Title primary, project crumb shrinks first (`title-crumb`), access chip only when known, no gauge hairline (the composer keeps the meter), background work chip turns red "3 running · 1 failed". The model is shown once, in the composer's chip, which opens the model popover (it hangs from that chip) |
@@ -468,3 +469,18 @@ build a `decision::Decision` and call `.render(&p)`.
 | Fleet (R4.7) | `fleet::Filter::{NeedsYou, Active, All}` (`fleet-filter-needs` / `-active` / `-all`); tiles in a row share a height (grid stretch); every grant with its exact rule (keys 1–5); after a decision the focus moves to the next blocked tile; model names are `Session::display_model` (`model_display_name` maps a display name to itself) |
 | Jobs | Proposals are decision cards above the Scheduled table (`job-row-n`, `job-approve-n` Primary, `job-remove-n` "Reject" Secondary, the whole command at `job-action-n`) |
 | Shots | `approvals-details-open`, `approvals-fleet-needs-you`, `approvals-fleet-details` |
+
+## Round 4: calm (r4-calm, R4.4 / R4.6 / R4.8)
+
+| | |
+|---|---|
+| Text levels | Three: `text`, `roles.text_secondary`, `roles.text_tertiary`. Row meta (sidebar second lines, a stalled child's note) is tertiary and one line |
+| Colour | Amber is "needs you" only: `level_color` gives capacity (usage, context, Fleet's "Context 92% full") tertiary → primary text from 80% → red at 100%, and `level_intent` keeps meters neutral until the limit. Working is `status.working` = secondary grey in every v2 theme (`p.busy` keeps the old teal for v1-era code under v2). Red is one signal per failure: `event_row` paints the glyph red only when no red badge or status glyph is on the row, keeps the verb neutral and names the fault ("exit code 101") in secondary; a failure's inline output is a faint fault-washed block in secondary text. The sidebar's "Not responding · 7m" note and a listed tree's "1 not responding" are secondary (the red clock is the signal); folded, the summary keeps its red |
+| Header | `session_toolbar_v2`: icon-only tools (`toolbar_tool`, tooltip with the shortcut): Changes (+ "Branch +N −M"), Files, Terminal, Tasks (`Concept::Tasks`, count badge), then `session-more` ("…") whose menu (`session-more-menu`, `ShellUi::session_menu`) holds `open-history`, `open-session`, `open-model` with their keys. The crumb is one run "project /" (never an orphan "/") shown only while `title_crumb_fits()` (conversation ≥ `shell().toolbar_labels_at`); the red failure chip shrinks (flex 100) before the title (flex 1) |
+| Sidebar | Destinations: New session row, then one row of icon tiles (`nav_tile`: Fleet, Projects, Jobs, Machines, Scratch, Settings; counts inline, name and shortcut in the tooltip; `sidebar-nav-icons`). Rows are one line; a second faint line only for what the agent asks (also in compact) or, roomy, what a working session is doing. One selection style (`selected` fill) and one needs-you style (the amber glyph): no attention frame on rows; the group header's amber is its count only |
+| Avatars | `AVATAR_TONES` = 6: blue, sky, teal, green, rose and a slate (`AVATAR_HUES` carries a chroma share), chroma .07 dark / .06 light: no olive, sand or clay on dark rails |
+| Overlays | `transcript_inset_v2`: the v2 transcript is a viewport ending `jump_gap` above the dock's first card, plus the pill's band while not following, so no text runs under "Jump to latest" or a pinned decision |
+| Units | "Claude · 42% of 5-hour limit used", "Context 42% full". Nudge's tooltip says "Nudge · ask it to report back: …"; Scratch's and Fleet's nav tooltips say what they are |
+| Icons | `primitives::Concept` (`IconNamed`, Lucide SVGs bundled in `ui.rs`): Fleet layout-grid, Machines server, Agents plug, Shortcuts keyboard, Details clipboard-list, History history, Tasks list-checks, Retry rotate-ccw, Refresh refresh-cw. `button_with_icon`, `menu_item_icon`, and `icon_button` / `icon_button_with_shortcut` take any `impl Into<Icon>` |
+| Light (R4.8) | Light's sidebar (`base` #F3F3F2) sits a tint below the warm off-white canvas (`chat` #F9F9F8), cards white with `card_border` #DADADE; tertiary #606169 keeps AA on the selected row |
+| Palette | `palette::fuzzy` matches a non-substring query only in runs that start words, so highlights are whole pieces (">the" no longer finds "Scratch files") |

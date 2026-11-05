@@ -212,13 +212,13 @@ pub fn countdown(milliseconds: i64) -> String {
     }
 }
 
-/// The usage meter's sentence (R3.5): "Claude 42% of 5-hour limit used ·
-/// resets 2h 13m". `limit` is the window's long name ("5-hour", "Weekly"),
+/// The usage meter's sentence (R3.5, r4-calm R4.6): "Claude · 42% of
+/// 5-hour limit used · resets in 2h 13m". `limit` is the window's long name ("5-hour", "Weekly"),
 /// `resets_in` the milliseconds until it resets, when known.
 pub fn usage_line(account: &str, limit: &str, pct: f64, resets_in: Option<i64>) -> String {
     let pct = pct.max(0.).round() as u64;
     let limit = limit.to_lowercase();
-    let mut line = format!("{account} {pct}% of {limit} limit used");
+    let mut line = format!("{account} · {pct}% of {limit} limit used");
     if let Some(ms) = resets_in {
         line.push_str(" · resets ");
         if ms <= 0 {
@@ -231,11 +231,12 @@ pub fn usage_line(account: &str, limit: &str, pct: f64, resets_in: Option<i64>) 
     line
 }
 
-/// The composer's context gauge label (R3.2/R3.5): "Context 42%", never
-/// "ctx". Colour it only from [`Level::Warn`] (`level(pct)`).
+/// The composer's context gauge label (R3.2/R3.5, r4-calm R4.6): "Context
+/// 42% full", never "ctx" or a bare share. Colour it only from
+/// [`Level`] (`level(pct)`).
 pub fn context_label(pct: Option<f64>) -> String {
     match pct {
-        Some(pct) => format!("Context {}%", pct.max(0.).round() as u64),
+        Some(pct) => format!("Context {}% full", pct.max(0.).round() as u64),
         None => "Context —".into(),
     }
 }
@@ -281,13 +282,13 @@ mod tests {
         assert_eq!(countdown((76 * 3600) * 1000), "3d 4h");
         assert_eq!(
             usage_line("Claude", "5-hour", 42.2, Some((2 * 3600 + 13 * 60) * 1000)),
-            "Claude 42% of 5-hour limit used · resets in 2h 13m"
+            "Claude · 42% of 5-hour limit used · resets in 2h 13m"
         );
         assert_eq!(
             usage_line("Codex", "Weekly", 93., None),
-            "Codex 93% of weekly limit used"
+            "Codex · 93% of weekly limit used"
         );
-        assert_eq!(context_label(Some(41.6)), "Context 42%");
+        assert_eq!(context_label(Some(41.6)), "Context 42% full");
         assert_eq!(context_label(None), "Context —");
         assert_eq!(failed_label("cargo test", 32), "cargo test failed");
         assert_eq!(

@@ -182,6 +182,16 @@ bundled_icons!(
     "lucide/sparkles.svg",
     "lucide/wrench.svg",
     "lucide/git-pull-request.svg",
+    // r4-calm (R4.6): one glyph per concept.
+    "lucide/layout-grid.svg",
+    "lucide/server.svg",
+    "lucide/plug.svg",
+    "lucide/keyboard.svg",
+    "lucide/clipboard-list.svg",
+    "lucide/history.svg",
+    "lucide/list-checks.svg",
+    "lucide/rotate-ccw.svg",
+    "lucide/refresh-cw.svg",
 );
 
 impl gpui::AssetSource for Assets {

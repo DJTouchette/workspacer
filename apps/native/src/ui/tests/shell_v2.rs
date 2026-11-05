@@ -126,10 +126,9 @@ fn needs_you_is_an_inbox_with_reasons_and_an_all_clear(cx: &mut TestAppContext) 
     }
     open_v2(&workspace, &mut visual, view, Design::V2);
     // Rows 1 (e: a question) and 2 (a: an approval) give their reason and
-    // one action each, in the attention frame.
+    // one action each; r4-calm: the amber glyph is their one treatment.
     assert!(visual.debug_bounds("sidebar-reason-1").is_some());
     assert!(visual.debug_bounds("sidebar-reason-2").is_some());
-    assert!(visual.debug_bounds("attention-bar").is_some());
     // r3-shell: the sidebar never allows an unseen command blind; its verb
     // is Review, which opens the session at the request.
     effects(&mut commands);
@@ -278,20 +277,18 @@ fn rows_take_the_chosen_density(cx: &mut TestAppContext) {
     visual.simulate_resize(size(px(1200.), px(900.)));
     open_v2(&workspace, &mut visual, attention_state(), Design::V2);
     // Rows: needs-you header, e, a, working header, d, idle header, b.
-    // r3-shell: one template in every group; two lines (title and time,
-    // then the reason or the project), compact drops line two everywhere.
+    // r4-calm (R4.4): one line by default; a second, faint line only says
+    // what the agent asks (in compact too) or what a working one is doing.
     let height = |visual: &mut VisualTestContext, row: &'static str| {
         f32::from(visual.debug_bounds(row).unwrap().size.height) + 2. * Tokens::V2.stroke.hairline
     };
     let shell = Tokens::V2.shell();
-    // A waiting row's control sits inside its attention frame's hairline.
-    let framed = |visual: &mut VisualTestContext, row: &'static str| {
-        height(visual, row) + 2. * Tokens::V2.stroke.hairline
-    };
-    assert_eq!(framed(&mut visual, "sidebar-session-1"), shell.row_double);
-    assert_eq!(height(&mut visual, "sidebar-session-4"), shell.row_double);
-    assert_eq!(height(&mut visual, "sidebar-session-6"), shell.row_double);
-    assert!(visual.debug_bounds("sidebar-project-6").is_some());
+    assert_eq!(height(&mut visual, "sidebar-session-1"), shell.row_double);
+    assert!(visual.debug_bounds("sidebar-reason-1").is_some());
+    assert_eq!(height(&mut visual, "sidebar-session-6"), shell.row_single);
+    assert!(visual.debug_bounds("sidebar-project-6").is_none());
+    // One needs-you style: no attention frame around the waiting rows.
+    assert!(visual.debug_bounds("attention-bar").is_none());
     visual.update(|_, cx| {
         workspace.update(cx, |this, cx| {
             this.settings.sidebar_compact = true;
@@ -299,11 +296,9 @@ fn rows_take_the_chosen_density(cx: &mut TestAppContext) {
         })
     });
     visual.run_until_parked();
-    // Every row, waiting ones included, takes one compact line.
-    assert_eq!(
-        framed(&mut visual, "sidebar-session-1"),
-        Tokens::V2.layout.sidebar_row_compact
-    );
+    // Compact keeps what the agent asks; everything else is one line.
+    assert_eq!(height(&mut visual, "sidebar-session-1"), shell.row_double);
+    assert!(visual.debug_bounds("sidebar-reason-1").is_some());
     assert_eq!(
         height(&mut visual, "sidebar-session-6"),
         Tokens::V2.layout.sidebar_row_compact
@@ -402,10 +397,11 @@ fn the_model_chip_opens_a_popover_not_a_page(cx: &mut TestAppContext) {
     });
 }
 
-/// r3-shell: the title is a header strip with the transcript beneath it,
-/// and the session's tools are a labelled toolbar on its right.
+/// r3-shell: the title is a header strip with the transcript beneath it.
+/// r4-calm (R4.4): the session's tools are icon buttons on its right, and
+/// History, Details and Model share one "…" menu.
 #[gpui::test]
-fn the_header_is_a_strip_with_a_labelled_toolbar(cx: &mut TestAppContext) {
+fn the_header_is_a_strip_with_icon_tools_and_one_overflow(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     visual.simulate_resize(size(px(1600.), px(900.)));
     let mut view = attention_state();
@@ -421,9 +417,7 @@ fn the_header_is_a_strip_with_a_labelled_toolbar(cx: &mut TestAppContext) {
         "open-editor",
         "open-terminal",
         "title-tasks",
-        "open-history",
-        "open-session",
-        "open-model",
+        "session-more",
     ] {
         let bounds = visual
             .debug_bounds(tool)
@@ -435,21 +429,42 @@ fn the_header_is_a_strip_with_a_labelled_toolbar(cx: &mut TestAppContext) {
         );
         assert!(bounds.left() > bar.left(), "{tool} right of the title");
     }
+    // Icons only: an unbadged tool is a square.
+    let files = visual.debug_bounds("open-editor").unwrap();
+    assert!(
+        f32::from(files.size.width) <= f32::from(files.size.height) + 0.5,
+        "{files:?}"
+    );
+    // History, Details and Model wait in the menu.
+    workspace.read_with(&visual, |this, _| assert!(!this.shell.session_menu));
+    click(&mut visual, "session-more");
+    let menu = visual.debug_bounds("session-more-menu").unwrap();
+    for item in ["open-history", "open-session", "open-model"] {
+        let bounds = visual
+            .debug_bounds(item)
+            .unwrap_or_else(|| panic!("{item}"));
+        assert!(menu.contains(&bounds.center()), "{item} in the menu");
+    }
+    click(&mut visual, "open-model");
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.shell.model_popover);
+        assert!(!this.shell.session_menu);
+    });
     // No rail; the transcript starts below the header.
     assert!(visual.debug_bounds("tool-rail").is_none());
     workspace.read_with(&visual, |this, _| {
         assert!(this.header_bounds.size.height >= strip.size.height);
-        assert!(this.toolbar_labels());
+        assert!(this.title_crumb_fits());
     });
-    // Narrow: the labels give way to icons, the tools stay.
+    // Narrow: the crumb steps aside so the title keeps its room.
     visual.simulate_resize(size(px(900.), px(700.)));
     visual.run_until_parked();
-    workspace.read_with(&visual, |this, _| assert!(!this.toolbar_labels()));
-    assert!(visual.debug_bounds("open-model").is_some());
+    workspace.read_with(&visual, |this, _| assert!(!this.title_crumb_fits()));
+    assert!(visual.debug_bounds("session-more").is_some());
 }
 
-/// r3-shell: the destinations stay labelled in a short block, and the
-/// footer carries no modal-key label. r3-fleet: Fleet makes it four rows.
+/// r3-shell: the destinations are a short block, and the footer carries no
+/// modal-key label. r4-calm: New session and one row of icon tiles.
 #[gpui::test]
 fn the_destinations_are_a_short_labelled_block(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);

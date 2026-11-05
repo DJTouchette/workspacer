@@ -172,12 +172,25 @@ impl Workspace {
         .flex_1()
         .min_h_0()
         .pt(self.header_bounds.size.height + px(16.))
-        // This is scrollable tail space, not a smaller viewport: history still
-        // paints behind the floating dock, while the last message can clear it.
-        .pb(if selected.is_some() {
-            self.composer_dock_bounds.size.height + px(12.)
-        } else {
-            px(0.)
+        .map(|d| {
+            if self.design().is_v2() && selected.is_some() {
+                // r4-calm (R4.4): a smaller viewport, not tail space: the
+                // transcript ends a gap above the first card of the dock
+                // (a pinned decision or the composer), and while reading
+                // history also above "Jump to latest", so no text ever runs
+                // under either.
+                d.mb(self.transcript_inset_v2(compact))
+                    .pb(px(self.tokens().space.lg))
+            } else {
+                // This is scrollable tail space, not a smaller viewport:
+                // history still paints behind the floating dock, while the
+                // last message can clear it.
+                d.pb(if selected.is_some() {
+                    self.composer_dock_bounds.size.height + px(12.)
+                } else {
+                    px(0.)
+                })
+            }
         });
         let terminal_panel = self.render_terminal_panel(window, cx);
         let header = self.render_chat_header(layout, selected.as_ref(), window, cx);
@@ -233,6 +246,22 @@ impl Workspace {
             .bg(rgb(p.chat))
             .child(chat)
             .children(terminal_panel)
+    }
+
+    // r4-calm (R4.4)
+    /// How far above the window's bottom the v2 transcript stops: the dock's
+    /// first card, the jump gap, and the pill's band while not following.
+    pub(super) fn transcript_inset_v2(&self, compact: bool) -> gpui::Pixels {
+        let t = self.tokens();
+        let sh = t.shell();
+        let card =
+            (self.composer_dock_bounds.size.height - px(dock_first_surface(compact))).max(px(0.));
+        let pill = if self.follow {
+            0.
+        } else {
+            t.layout.control_height_sm + sh.jump_gap
+        };
+        card + px(sh.jump_gap + pill)
     }
 
     /// Whether the session's tools float in the rail rather than the title.

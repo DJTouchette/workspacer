@@ -111,7 +111,8 @@ pub struct StatusRoles {
     pub attention: u32,
     /// Failed, stalled ("Not responding"), offline, error. Red.
     pub fault: u32,
-    /// Actively running. Cyan/teal, never the accent hue.
+    /// Actively running. v2 (r4-calm): neutral secondary grey, the turning
+    /// arc says it moves; v1 keeps its running blue.
     pub working: u32,
     /// Finished successfully. Muted green.
     pub done: u32,
@@ -119,16 +120,25 @@ pub struct StatusRoles {
     pub idle: u32,
 }
 
-/// How many avatar fills a palette carries (R3.6: a curated 8-hue ramp).
-pub const AVATAR_TONES: usize = 8;
+/// How many avatar fills a palette carries (R3.6; r4-calm: six, tuned).
+pub const AVATAR_TONES: usize = 6;
 
-/// The avatar hues in OKLCH degrees: blue, sky, teal, green, olive, sand,
-/// clay, rose. No purple (280–335°), which v2 retires.
-const AVATAR_HUES: [f32; AVATAR_TONES] = [255., 225., 190., 150., 115., 80., 45., 15.];
+/// The avatar hues in OKLCH degrees, each with its share of the mode's
+/// chroma: blue, sky, teal, green, rose and a blue-grey slate. r4-calm
+/// (R4.4): the olive, sand and clay that read as mud on dark rails are
+/// gone. No purple (280–335°), which v2 retires.
+const AVATAR_HUES: [(f32, f32); AVATAR_TONES] = [
+    (258., 1.),
+    (226., 1.),
+    (192., 1.),
+    (152., 1.),
+    (20., 1.),
+    (250., 0.3),
+];
 
 /// The avatar ramp's chroma per mode: muted, so tiles never shout.
-const AVATAR_CHROMA_DARK: f32 = 0.06;
-const AVATAR_CHROMA_LIGHT: f32 = 0.05;
+const AVATAR_CHROMA_DARK: f32 = 0.07;
+const AVATAR_CHROMA_LIGHT: f32 = 0.06;
 
 /// The eight avatar fills for a theme whose monogram colour is `text`: one
 /// OKLCH lightness for every hue, as close to `start` as AA allows (every
@@ -142,7 +152,7 @@ fn avatar_ramp(text: u32, dark: bool, start: f32) -> [u32; AVATAR_TONES] {
     let step = if dark { -0.01 } else { 0.01 };
     let mut lightness = start;
     loop {
-        let ramp = AVATAR_HUES.map(|hue| oklch(lightness, chroma, hue));
+        let ramp = AVATAR_HUES.map(|(hue, share)| oklch(lightness, chroma * share, hue));
         let fits = ramp.iter().all(|&fill| contrast(text, fill) >= 4.6);
         if fits || !(0.05..=0.98).contains(&lightness) {
             return ramp;
@@ -233,8 +243,9 @@ struct V2Colors {
     on_primary: u32,
     /// Status roles (design-v2-direction R2.1), used only for status:
     /// attention amber (blocked on the user), fault red (failed, stalled,
-    /// offline), working cyan/teal (distinct from the accent), done muted
-    /// green. Idle is `tertiary`.
+    /// offline), done muted green. Idle is `tertiary`; r4-calm: the
+    /// Working status is `secondary` (neutral), so `working` (cyan/teal,
+    /// distinct from the accent) is now only `busy` and the info tone.
     attention: u32,
     fault: u32,
     done: u32,
@@ -282,7 +293,7 @@ pub fn oklch(lightness: f32, chroma: f32, hue: f32) -> u32 {
 }
 
 impl Palette {
-    /// The avatar tile colour for `name`: one of the theme's eight curated
+    /// The avatar tile colour for `name`: one of the theme's six curated
     /// fills (`roles.avatar`), picked by a stable hash of the name, so a
     /// project keeps its colour across runs and machines.
     pub fn avatar_fill(&self, name: &str) -> u32 {
@@ -386,7 +397,7 @@ impl Appearance {
         p.code_block = c.surface;
         p.code_header = c.raised;
         let dark = self.is_dark();
-        // r3-foundation: a curated 8-hue ramp at one lightness per theme,
+        // r3-foundation: a curated 6-hue ramp at one lightness per theme,
         // as near the mode's tone as the theme's text allows at AA.
         let avatar = avatar_ramp(c.text, dark, if dark { 0.42 } else { 0.88 });
         p.roles = Roles {
@@ -402,10 +413,12 @@ impl Appearance {
             provider: c.tertiary,
             avatar,
             avatar_text: c.text,
+            // r4-calm (R4.4): working is neutral (the turning arc says it
+            // is moving), so amber and red are the only hues a status adds.
             status: StatusRoles {
                 attention: c.attention,
                 fault: c.fault,
-                working: c.working,
+                working: c.secondary,
                 done: c.done,
                 idle: c.tertiary,
             },
@@ -444,22 +457,24 @@ impl Appearance {
                 code_inline: 0x202125,
             },
             // Off-white canvas, white cards with a real 1px edge, amber-700
-            // attention text and a neutral grey selection.
+            // attention text and a neutral grey selection. r4-calm (R4.8):
+            // three layers by tint as well as hairlines: the sidebar a step
+            // below the warm off-white canvas, white cards above it.
             Self::Light => V2Colors {
-                base: 0xf6f6f7,
-                chat: 0xfcfcfc,
+                base: 0xf3f3f2,
+                chat: 0xf9f9f8,
                 surface: 0xffffff,
                 raised: 0xffffff,
-                selected: 0xebebee,
-                hover: 0xf1f1f3,
-                pressed: 0xe6e6e9,
-                border: 0xe7e7ea,
-                border_strong: 0xd9d9de,
-                card_border: 0xdedee3,
+                selected: 0xe6e6e8,
+                hover: 0xececed,
+                pressed: 0xe2e2e4,
+                border: 0xe3e3e6,
+                border_strong: 0xd6d6db,
+                card_border: 0xdadade,
                 text: 0x18181b,
                 prose: 0x2c2c31,
                 secondary: 0x54555c,
-                tertiary: 0x66676f,
+                tertiary: 0x606169,
                 accent: 0x1f5fd6,
                 primary: 0x2563eb,
                 on_primary: 0xffffff,
@@ -1314,27 +1329,27 @@ mod tests {
                     "{appearance:?} {name} saturation {saturation:.2}"
                 );
             }
-            // R2.1: the status roles are the palette's status colours, and
-            // working is cyan/teal, never the accent's hue.
+            // R2.1: the status roles are the palette's status colours.
+            // r4-calm (R4.4): working is neutral (secondary text), never a
+            // third hue beside amber and red, and never the accent.
             let st = r.status;
             assert_eq!(
                 (st.attention, st.fault, st.working, st.done, st.idle),
-                (p.warning, p.error, p.busy, p.success, r.text_tertiary),
+                (
+                    p.warning,
+                    p.error,
+                    r.text_secondary,
+                    p.success,
+                    r.text_tertiary
+                ),
                 "{appearance:?}"
             );
-            let (working_hue, _) = hue_saturation(st.working);
-            let gap = (working_hue - accent_hue).abs();
+            let (_, working_saturation) = hue_saturation(st.working);
             assert!(
-                gap.min(360. - gap) >= 25.,
-                "{appearance:?} working {working_hue:.0}° too close to accent {accent_hue:.0}°"
+                working_saturation < 0.15 || appearance != Appearance::Dark,
+                "{appearance:?} working is neutral ({working_saturation:.2})"
             );
-            // …and never reads as done: the themes whose only cyan is their
-            // accent (Gruvbox, Everforest) take their aqua instead.
-            let (done_hue, _) = hue_saturation(st.done);
-            assert!(
-                (working_hue - done_hue).abs() >= 25.,
-                "{appearance:?} working {working_hue:.0}° too close to done {done_hue:.0}°"
-            );
+            assert_ne!(st.working, p.accent, "{appearance:?}");
             // Five distinct roles.
             let all = [st.attention, st.fault, st.working, st.done, st.idle];
             for (i, a) in all.iter().enumerate() {
@@ -1468,7 +1483,7 @@ mod tests {
             // Coloured count badges: the base colour on the status fill.
             floor("needs-you count", p.base, r.status.attention, 4.5);
             floor("failed count", p.base, r.status.fault, 4.5);
-            // Avatars: eight distinct fills, AA monograms, one lightness.
+            // Avatars: six distinct fills, AA monograms, one lightness.
             let mut fills = r.avatar.to_vec();
             fills.sort();
             fills.dedup();

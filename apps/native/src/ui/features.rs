@@ -2609,10 +2609,10 @@ impl Workspace {
         let p = self.palette();
         let connected = self.view.connected;
         let refresh = |id: &'static str| {
-            primitives::button(
+            primitives::button_with_icon(
                 id,
                 "Refresh",
-                Some(IconName::Redo),
+                primitives::Concept::Refresh,
                 ButtonVariant::Tertiary,
                 ButtonSize::Small,
                 connected,
@@ -2662,10 +2662,10 @@ impl Workspace {
                     connected && !self.view.requests.get("setup").is_some_and(|s| s.loading);
                 vec![
                     // r2-pages: one style for every page's refresh.
-                    primitives::button(
+                    primitives::button_with_icon(
                         "setup-refresh",
                         "Check again",
-                        Some(IconName::Redo),
+                        primitives::Concept::Refresh,
                         ButtonVariant::Tertiary,
                         ButtonSize::Small,
                         can_check,

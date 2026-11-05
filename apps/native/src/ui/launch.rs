@@ -2459,7 +2459,7 @@ impl Workspace {
         };
         let refresh = primitives::icon_button(
             "reload-models",
-            IconName::Redo,
+            primitives::Concept::Refresh,
             if loading {
                 "Loading models…"
             } else {

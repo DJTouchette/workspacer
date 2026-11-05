@@ -265,14 +265,94 @@ pub(crate) fn button(
     enabled: bool,
     p: &Palette,
 ) -> Stateful<Div> {
-    button_shaped(id, label, icon, variant, size, enabled, Shape::Whole, p)
+    button_shaped(
+        id,
+        label,
+        icon.map(Icon::new),
+        variant,
+        size,
+        enabled,
+        Shape::Whole,
+        p,
+    )
+}
+
+// r4-calm (R4.6)
+/// One glyph per concept under design v2, where gpui-component's set would
+/// reuse one icon for several ideas (the robot for Fleet, subagents and
+/// Agents; ⓘ for Details, About and Shortcuts; one arrow for Retry and
+/// Refresh). `Icon::new(Concept::Fleet)`; Lucide paths bundled in `ui.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Concept {
+    /// Every session at a glance (the robot means a subagent).
+    Fleet,
+    /// The machines that run agents.
+    Machines,
+    /// Settings → Agents: which coding agents are set up.
+    Agents,
+    /// The keyboard cheat sheet.
+    Shortcuts,
+    /// A session's details page.
+    Details,
+    /// Conversation history.
+    History,
+    /// Background tasks (a static mark; the spinner means running).
+    Tasks,
+    /// Run a failed thing again.
+    Retry,
+    /// Read the current state again.
+    Refresh,
+}
+
+impl Concept {
+    pub(crate) fn path(self) -> &'static str {
+        match self {
+            Self::Fleet => "lucide/layout-grid.svg",
+            Self::Machines => "lucide/server.svg",
+            Self::Agents => "lucide/plug.svg",
+            Self::Shortcuts => "lucide/keyboard.svg",
+            Self::Details => "lucide/clipboard-list.svg",
+            Self::History => "lucide/history.svg",
+            Self::Tasks => "lucide/list-checks.svg",
+            Self::Retry => "lucide/rotate-ccw.svg",
+            Self::Refresh => "lucide/refresh-cw.svg",
+        }
+    }
+}
+
+impl gpui_component::IconNamed for Concept {
+    fn path(self) -> SharedString {
+        Concept::path(self).into()
+    }
+}
+
+/// [`button`] with any icon (a [`Concept`] glyph).
+pub(crate) fn button_with_icon(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: impl Into<Icon>,
+    variant: ButtonVariant,
+    size: ButtonSize,
+    enabled: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    button_shaped(
+        id,
+        label,
+        Some(icon.into()),
+        variant,
+        size,
+        enabled,
+        Shape::Whole,
+        p,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn button_shaped(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
-    icon: Option<IconName>,
+    icon: Option<Icon>,
     variant: ButtonVariant,
     size: ButtonSize,
     enabled: bool,
@@ -305,7 +385,7 @@ fn button_shaped(
 /// Add `.on_click`.
 pub(crate) fn icon_button(
     id: impl Into<ElementId>,
-    icon: IconName,
+    icon: impl Into<Icon>,
     tooltip: &'static str,
     variant: ButtonVariant,
     enabled: bool,
@@ -317,7 +397,7 @@ pub(crate) fn icon_button(
 /// [`icon_button`] whose tooltip also shows its shortcut ("Ctrl K", "g n").
 pub(crate) fn icon_button_with_shortcut(
     id: impl Into<ElementId>,
-    icon: IconName,
+    icon: impl Into<Icon>,
     tooltip: &'static str,
     shortcut: Option<&'static str>,
     variant: ButtonVariant,
@@ -351,7 +431,16 @@ pub(crate) fn split_button_parts(
 ) -> (Stateful<Div>, Stateful<Div>) {
     let t = p.tokens;
     let r = px(t.radius.control);
-    let main = button_shaped(id, label, icon, variant, size, enabled, Shape::Left, p);
+    let main = button_shaped(
+        id,
+        label,
+        icon.map(Icon::new),
+        variant,
+        size,
+        enabled,
+        Shape::Left,
+        p,
+    );
     let menu = interactive_control(div().id((id, 1usize)), *p, enabled)
         .h(px(size.height(p)))
         .w(px(size.height(p) - t.space.md))
@@ -615,23 +704,24 @@ pub(crate) fn count_text(n: usize) -> String {
     if n > 99 { "99+".into() } else { n.to_string() }
 }
 
-/// The colour a share of a limit takes (usage, context; `format::level`):
-/// none below 80% (draw it neutral), attention from 80%, fault at 100%.
+/// The colour a share of a limit takes (usage, context; `format::level`).
+/// r4-calm (R4.4): amber means "needs you" only, so capacity stays neutral
+/// as it fills: tertiary below 80% (`None`), primary text from 80% (a
+/// heavier neutral, never a hue), red only at the hard limit.
 pub(crate) fn level_color(level: wks_native::format::Level, p: &Palette) -> Option<u32> {
     use wks_native::format::Level;
     match level {
         Level::Normal => None,
-        Level::Warn => Some(p.roles.status.attention),
+        Level::Warn => Some(p.text),
         Level::Fault => Some(p.roles.status.fault),
     }
 }
 
-/// [`level_color`] as a meter [`Intent`] (Neutral below 80%).
+/// [`level_color`] as a meter [`Intent`]: neutral until the hard limit.
 pub(crate) fn level_intent(level: wks_native::format::Level) -> Intent {
     use wks_native::format::Level;
     match level {
-        Level::Normal => Intent::Neutral,
-        Level::Warn => Intent::Warning,
+        Level::Normal | Level::Warn => Intent::Neutral,
         Level::Fault => Intent::Danger,
     }
 }
@@ -858,6 +948,18 @@ pub(crate) fn menu_item(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     icon: Option<IconName>,
+    danger: bool,
+    enabled: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    menu_item_icon(id, label, icon.map(Icon::new), danger, enabled, p)
+}
+
+/// [`menu_item`] with any icon (a [`Concept`] glyph).
+pub(crate) fn menu_item_icon(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: Option<Icon>,
     danger: bool,
     enabled: bool,
     p: &Palette,
@@ -1515,7 +1617,7 @@ impl CardHead {
 }
 
 /// A monogram avatar tile at `layout.avatar`: two letters on one of the
-/// theme's eight curated fills (`Palette::avatar_fill`, picked by a stable
+/// theme's six curated fills (`Palette::avatar_fill`, picked by a stable
 /// hash of the name; equal lightness, AA text). No emoji, no ring.
 pub(crate) fn avatar_tile(name: &str, p: &Palette) -> Div {
     avatar_tile_sized(name, p.tokens.layout.avatar, p)
@@ -1560,7 +1662,7 @@ pub(crate) fn avatar_with_status(
 pub(crate) fn avatar_tile_sized(name: &str, size: f32, p: &Palette) -> Div {
     use wks_native::format::monogram;
     let t = p.tokens;
-    // r3-foundation: one of the theme's eight curated, equal-lightness fills.
+    // r3-foundation: one of the theme's six curated, equal-lightness fills.
     let fill = p.avatar_fill(name);
     div()
         .size(px(size))
@@ -2366,7 +2468,8 @@ impl EventRow {
 
     pub(crate) fn render(self, p: &Palette) -> Div {
         let t = p.tokens;
-        let failed = self.status.is_some_and(StatusKind::needs_attention);
+        // r4-calm (R4.4): the status glyph is the row's one coloured
+        // signal; the verb stays neutral.
         div()
             .w_full()
             .min_w_0()
@@ -2385,7 +2488,7 @@ impl EventRow {
                 div()
                     .flex_shrink_0()
                     .font_weight(FontWeight(t.weight.medium))
-                    .text_color(rgb(if failed { p.roles.status.fault } else { p.text }))
+                    .text_color(rgb(p.text))
                     .child(self.verb),
             )
             .when_some(self.argument, |d, argument| {

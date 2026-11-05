@@ -464,12 +464,13 @@ LANDMARKS = {
     # (r3-shell: one two-line row template in every group; re-measured.)
     # (r3-integration: re-measured after the header strip.)
     # (r4-truth: the job proposal row joins Needs you; re-measured.)
-    "SIDEBAR_ROW_BUS": lambda shot: (110, 640 if shot.get("v2") else 468),
+    # (r4-calm: one-line rows and a two-row nav; re-measured.)
+    "SIDEBAR_ROW_BUS": lambda shot: (110, 573 if shot.get("v2") else 468),
     # The fixture's question (Release checklist for 0.9): v2 groups it under
     # Needs you; v1 lists it after Bus fan-out.
-    "SIDEBAR_ROW_QUESTION": lambda shot: (110, 378 if shot.get("v2") else 532),
+    "SIDEBAR_ROW_QUESTION": lambda shot: (110, 318 if shot.get("v2") else 532),
     # v1 "Inspect transcript parsing"; v2 the child nested under Needs you.
-    "SIDEBAR_ROW_CHILD": lambda shot: (110, 313 if shot.get("v2") else 212),
+    "SIDEBAR_ROW_CHILD": lambda shot: (110, 253 if shot.get("v2") else 212),
     # The title pill grows when hovered (context meter appears), so hover it
     # first; these two are the chips' positions once it has grown.
     "TITLE_PILL": lambda shot: (900, 30),
@@ -477,8 +478,8 @@ LANDMARKS = {
     # (r3-integration: the reading column is centred; the chip once the composer is open.)
     "TITLE_MODEL": lambda shot: (705, 960) if shot.get("v2") else (1005, 30),
     # Background work: v1 the hovered pill's badge; v2 (r3-shell) the
-    # header toolbar's "Tasks 3".
-    "TITLE_TASKS_BADGE": lambda shot: (1304, 20) if shot.get("v2") else (1078, 30),
+    # header toolbar's "Tasks 3" (r4-calm: icon tools, re-measured).
+    "TITLE_TASKS_BADGE": lambda shot: (1532, 20) if shot.get("v2") else (1078, 30),
     # v1: the approval card above the composer; v2: the strip on the composer.
     "APPROVAL_DETAILS": lambda shot: (1289, 805) if shot["v2"] else (1361, 749),  # r2-systems: the approval is a card above the composer
     # r3-composer: v2's Deny with note is the first item of Deny's menu.

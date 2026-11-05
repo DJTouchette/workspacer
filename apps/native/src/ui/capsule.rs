@@ -4,7 +4,7 @@
 //! The shipped capsule is `chrome::render_title_bar`.
 use super::primitives::{self, StatusKind, tooltip_view};
 use super::*;
-use gpui::{AnyElement, ClickEvent};
+use gpui::AnyElement;
 use wks_native::background_tasks::{self as bg, Kind};
 
 /// "3 subagents", "1 shell task", "2 background tasks": the running work
@@ -259,7 +259,11 @@ impl Workspace {
                             .child("·"),
                     )
                 })
-                .when(!narrow, |d| {
+                // r4-calm (R4.4): the crumb is the first thing to go, and
+                // its "/" goes with it (one run of text, never an orphan);
+                // with a side panel narrowing the column it steps aside so
+                // the title keeps its room.
+                .when(!narrow && self.title_crumb_fits(), |d| {
                     let project = self.project_name(&session.cwd);
                     d.child(
                         div()
@@ -276,14 +280,7 @@ impl Workspace {
                             .text_size(px(t.text.body))
                             .text_color(rgb(p.roles.text_tertiary))
                             .tooltip(tooltip_view(project.clone(), None, &p))
-                            .child(project),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_size(px(t.text.body))
-                            .text_color(rgb(p.roles.text_tertiary))
-                            .child("/"),
+                            .child(format!("{project} /")),
                     )
                 })
             })
@@ -327,11 +324,9 @@ impl Workspace {
                             .gap(px(t.space.xs))
                             .text_size(px(t.text.meta))
                             .font_weight(FontWeight(t.weight.medium))
-                            .text_color(rgb(if full {
-                                p.warning
-                            } else {
-                                p.roles.text_secondary
-                            }))
+                            // r4-calm: amber is only "needs you"; full
+                            // access keeps its alert glyph, in neutral text.
+                            .text_color(rgb(p.roles.text_secondary))
                             .hover(move |s| s.bg(rgb(p.roles.hover)))
                             .tooltip(tooltip_view(
                                 format!(
@@ -399,7 +394,13 @@ impl Workspace {
         let ack_id = task.id.clone();
         chrome::interactive_control(div().id("title-failed"), p, true)
             .debug_selector(|| "title-failed".into())
-            .flex_shrink_0()
+            // r4-calm (R4.4): it gives way (its words truncate) before the
+            // title does, after the crumb; the glyph and ✕ stay.
+            .min_w(px(t.layout.control_height_sm * 2.))
+            .map(|mut d| {
+                d.style().flex_shrink = Some(100.);
+                d
+            })
             .h(px(t.layout.control_height_sm))
             .pl(px(t.space.md))
             .pr(px(t.space.xxs))
@@ -413,7 +414,7 @@ impl Workspace {
             .bg(primitives::wash(p.roles.status.fault, t.wash.tone_rest))
             .hover(move |s| s.bg(primitives::wash(p.roles.status.fault, t.wash.tone_hover)))
             .children(primitives::status_glyph(StatusKind::Failed, &p))
-            .child(label)
+            .child(div().min_w_0().truncate().child(label))
             .tooltip(tooltip_view(tip, None, &p))
             .on_click(
                 cx.listener(move |this, _, window, cx| this.open_task_by_id(&open_id, window, cx)),
@@ -422,6 +423,7 @@ impl Workspace {
                 chrome::interactive_control(div().id("title-failed-ack"), p, true)
                     .debug_selector(|| "title-failed-ack".into())
                     .size(px(t.layout.control_height_sm - t.space.sm))
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .justify_center()
@@ -475,7 +477,7 @@ impl Workspace {
                             enabled,
                             &p,
                         ),
-                        "Send it “Still there? Reply with where you are.” now",
+                        "Nudge · ask it to report back: sends “Still there? Reply with where you are.” now",
                         None,
                         &p,
                     )
@@ -528,8 +530,10 @@ impl Workspace {
         )
     }
 
-    /// Whether the toolbar has room for its labels.
-    pub(super) fn toolbar_labels(&self) -> bool {
+    // r4-calm (R4.4)
+    /// Whether the header has room for the project crumb beside the title:
+    /// not while a side panel or a narrow window squeezes the column.
+    pub(super) fn title_crumb_fits(&self) -> bool {
         f32::from(self.chat_width) >= self.tokens().shell().toolbar_labels_at
     }
 
@@ -543,15 +547,15 @@ impl Workspace {
         self.review_stack_summary(cwd)
     }
 
-    /// One toolbar tool: a 16px icon and its label (icons only when the
-    /// window is narrow), a 28px hit area, an optional badge, and a tooltip
-    /// with the shortcut.
+    // r4-calm (R4.4)
+    /// One toolbar tool: a 16px icon (never a label: the title keeps the
+    /// room), a 28px hit area, an optional badge, and a tooltip naming it
+    /// with its shortcut.
     #[allow(clippy::too_many_arguments)]
     fn toolbar_tool(
         &self,
         id: &'static str,
-        icon: IconName,
-        label: &'static str,
+        icon: impl Into<Icon>,
         tip: SharedString,
         keys: Option<&'static str>,
         enabled: bool,
@@ -560,17 +564,12 @@ impl Workspace {
     ) -> Stateful<Div> {
         let p = self.palette();
         let t = p.tokens;
-        let labels = self.toolbar_labels();
         chrome::interactive_control(div().id(id), p, enabled)
             .debug_selector(move || id.into())
             .flex_shrink_0()
             .h(px(t.layout.control_height_sm))
             .min_w(px(t.layout.control_height_sm))
-            .px(px(if labels || badge.is_some() {
-                t.space.sm
-            } else {
-                0.
-            }))
+            .px(px(if badge.is_some() { t.space.sm } else { 0. }))
             .rounded(px(t.radius.control))
             .flex()
             .items_center()
@@ -593,20 +592,19 @@ impl Workspace {
             })
             .tooltip(tooltip_view(tip, keys, &p))
             .child(Icon::new(icon).size(px(t.icon.md)))
-            .when(labels, |d| d.child(label))
             .children(badge)
     }
 
-    // r3-shell
-    /// The session toolbar on the header strip's right (R3.3): Changes
-    /// (+N −M), Files, Terminal (● while its shell runs), Tasks (running
-    /// count) · History, Details, Model. Labelled where there is room.
+    // r3-shell, r4-calm (R4.4)
+    /// The session toolbar on the header strip's right: icon buttons for
+    /// Changes (Branch +N −M), Files, Terminal (● while its shell runs),
+    /// Tasks (running count), then one "…" holding History, Details and
+    /// Model. Each tooltip names the tool and its shortcut.
     pub(super) fn session_toolbar_v2(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
         let session = self.selected_session();
         let selected = session.is_some();
-        let model_enabled = enabled && self.supported_session();
         let vim = self.vim();
         let mac = cfg!(target_os = "macos");
         let quiet = |text: String| {
@@ -615,11 +613,6 @@ impl Workspace {
                 .text_color(rgb(p.roles.text_tertiary))
                 .child(text)
                 .into_any_element()
-        };
-        let page = |screen: Screen| {
-            cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
-                this.open_feature(screen, window, cx)
-            })
         };
         // r4-truth: the Changes panel's scope and label, "Branch +17 −3".
         let lines = self.branch_line_changes();
@@ -635,7 +628,6 @@ impl Workspace {
             .toolbar_tool(
                 "open-changes",
                 IconName::Replace,
-                "Changes",
                 changes_tip,
                 vim.then_some("g d"),
                 selected,
@@ -645,12 +637,17 @@ impl Workspace {
                     .map(|(_, added, removed)| format!("Branch +{added} −{removed}"))
                     .map(quiet),
             )
-            .when(selected, |d| d.on_click(page(Screen::Changes)));
+            .when(selected, |d| {
+                d.on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.open_feature(Screen::Changes, window, cx)
+                    }),
+                )
+            });
         let files = self
             .toolbar_tool(
                 "open-editor",
                 IconName::FolderOpen,
-                "Files",
                 "Files and editor".into(),
                 Some(if mac { "⌘ Shift E" } else { "Ctrl Shift E" }),
                 selected,
@@ -669,7 +666,6 @@ impl Workspace {
             .toolbar_tool(
                 "open-terminal",
                 IconName::SquareTerminal,
-                "Terminal",
                 if self.terminal.open {
                     "Hide terminal".into()
                 } else if shell_running {
@@ -707,8 +703,7 @@ impl Workspace {
         let tasks = self
             .toolbar_tool(
                 "title-tasks",
-                IconName::LoaderCircle,
-                "Tasks",
+                primitives::Concept::Tasks,
                 tasks_tip,
                 None,
                 selected,
@@ -725,55 +720,6 @@ impl Workspace {
             .when(selected, |d| {
                 d.on_click(cx.listener(|this, _, window, cx| this.toggle_tasks(window, cx)))
             });
-        let history = self
-            .toolbar_tool(
-                "open-history",
-                IconName::BookOpen,
-                "History",
-                "Conversation history".into(),
-                vim.then_some("g h"),
-                selected,
-                false,
-                None,
-            )
-            .when(selected, |d| d.on_click(page(Screen::History)));
-        let details = self
-            .toolbar_tool(
-                "open-session",
-                IconName::Info,
-                "Details",
-                "Session details".into(),
-                vim.then_some("g e"),
-                selected,
-                false,
-                None,
-            )
-            .when(selected, |d| d.on_click(page(Screen::Session)));
-        let model = self
-            .toolbar_tool(
-                "open-model",
-                IconName::Settings2,
-                "Model",
-                "Model, effort and access".into(),
-                vim.then_some("g m"),
-                model_enabled,
-                self.shell.model_popover && self.shell.model_from_header,
-                None,
-            )
-            .when(model_enabled, |d| {
-                d.on_click(cx.listener(|this, _, window, cx| {
-                    this.open_model_popover(window, cx);
-                    this.shell.model_from_header = true;
-                }))
-            });
-        let separator = || {
-            div()
-                .flex_shrink_0()
-                .w(px(t.stroke.hairline))
-                .h(px(t.icon.md))
-                .mx(px(t.space.xs))
-                .bg(rgb(p.border))
-        };
         div()
             .debug_selector(|| "session-toolbar".into())
             .occlude()
@@ -785,10 +731,119 @@ impl Workspace {
             .child(files)
             .child(terminal)
             .child(tasks)
-            .child(separator())
-            .child(history)
-            .child(details)
-            .child(model)
+            .child(self.session_more_menu(enabled, cx))
+    }
+
+    // r4-calm (R4.4)
+    /// The toolbar's "…": History, Details and Model, each with its
+    /// shortcut, in one menu that hangs under the strip at its right.
+    fn session_more_menu(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let selected = self.selected_session().is_some();
+        let model_enabled = enabled && self.supported_session();
+        let vim = self.vim();
+        let open = self.shell.session_menu && selected;
+        let trigger = primitives::icon_button(
+            "session-more",
+            IconName::Ellipsis,
+            "History, details and model",
+            primitives::ButtonVariant::Tertiary,
+            selected,
+            &p,
+        )
+        .debug_selector(|| "session-more".into())
+        .when(open, |d| d.bg(rgb(p.selected)).text_color(rgb(p.text)))
+        .when(selected, |d| {
+            d.on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.shell.session_menu = !this.shell.session_menu;
+                cx.notify();
+            }))
+        });
+        let item = |id: &'static str,
+                    label: &'static str,
+                    icon: Icon,
+                    keys: Option<&'static str>,
+                    enabled: bool| {
+            primitives::menu_item_icon(id, label, Some(icon), false, enabled, &p)
+                .debug_selector(move || id.into())
+                .when_some(keys, |d, keys| {
+                    d.child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_tertiary))
+                            .child(keys),
+                    )
+                })
+        };
+        let close = |this: &mut Self| this.shell.session_menu = false;
+        let menu = primitives::menu(&p)
+            .debug_selector(|| "session-more-menu".into())
+            .occlude()
+            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                close(this);
+                cx.notify();
+            }))
+            .child(
+                item(
+                    "open-history",
+                    "Conversation history",
+                    Icon::new(primitives::Concept::History),
+                    vim.then_some("g h"),
+                    selected,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    close(this);
+                    this.open_feature(Screen::History, window, cx)
+                })),
+            )
+            .child(
+                item(
+                    "open-session",
+                    "Session details",
+                    Icon::new(primitives::Concept::Details),
+                    vim.then_some("g e"),
+                    selected,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    close(this);
+                    this.open_feature(Screen::Session, window, cx)
+                })),
+            )
+            .child(
+                item(
+                    "open-model",
+                    "Model, effort and access",
+                    Icon::new(IconName::Settings2),
+                    vim.then_some("g m"),
+                    model_enabled,
+                )
+                .when(model_enabled, |d| {
+                    d.on_click(cx.listener(move |this, _, window, cx| {
+                        close(this);
+                        this.open_model_popover(window, cx);
+                        this.shell.model_from_header = true;
+                    }))
+                }),
+            );
+        div()
+            .relative()
+            .flex_shrink_0()
+            .child(trigger)
+            .when(open, |d| {
+                d.child(
+                    gpui::deferred(
+                        div()
+                            .absolute()
+                            .top(px(t.layout.icon_button + t.space.xs))
+                            .right_0()
+                            .child(menu),
+                    )
+                    .with_priority(1),
+                )
+            })
     }
 
     /// The session's tools in labelled groups (review · session · agent),

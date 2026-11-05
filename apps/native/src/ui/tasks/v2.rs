@@ -184,10 +184,10 @@ impl Workspace {
                 })
                 .child(
                     primitives::with_tooltip(
-                        primitives::button(
+                        primitives::button_with_icon(
                             ("task-retry", ix),
                             "Retry",
-                            Some(IconName::Redo),
+                            primitives::Concept::Retry,
                             ButtonVariant::Tertiary,
                             ButtonSize::Small,
                             true,
@@ -479,13 +479,29 @@ impl Workspace {
                     ),
             )
             .when(!in_log && (running > 0 || failed > 0), |d| {
+                // r4-calm (R4.4): only the failure is red; the running
+                // count beside it stays neutral.
                 let badge = match (running, failed) {
-                    (0, f) => StatusBadge::new(StatusKind::Failed).label(format!("{f} failed")),
-                    (r, 0) => StatusBadge::new(StatusKind::Working).label(format!("{r} running")),
-                    (r, f) => StatusBadge::new(StatusKind::Failed)
-                        .label(format!("{r} running · {f} failed")),
+                    (0, f) => StatusBadge::new(StatusKind::Failed)
+                        .label(format!("{f} failed"))
+                        .render(&p),
+                    (r, 0) => StatusBadge::new(StatusKind::Working)
+                        .label(format!("{r} running"))
+                        .render(&p),
+                    (r, f) => div()
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.xs))
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary))
+                        .child(format!("{r} running ·"))
+                        .child(
+                            StatusBadge::new(StatusKind::Failed)
+                                .label(format!("{f} failed"))
+                                .render(&p),
+                        ),
                 };
-                d.child(badge.render(&p).debug_selector(|| "tasks-count".into()))
+                d.child(badge.debug_selector(|| "tasks-count".into()))
             })
             .child(
                 primitives::icon_button(
@@ -588,10 +604,10 @@ impl Workspace {
                 let retry = task.clone();
                 d.child(
                     primitives::with_tooltip(
-                        primitives::button(
+                        primitives::button_with_icon(
                             "task-log-retry-task",
                             "Retry",
-                            Some(IconName::Redo),
+                            primitives::Concept::Retry,
                             ButtonVariant::Secondary,
                             ButtonSize::Small,
                             true,

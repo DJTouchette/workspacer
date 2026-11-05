@@ -2,7 +2,7 @@
 //! pages in one fuzzy list. `>` narrows to actions, `@` to sessions; with no
 //! query, recent sessions come first. Up/Down move, Enter opens, Esc closes.
 //! v1 keeps Ctrl+K as the sidebar's session search.
-use super::primitives::{self, StatusKind, kbd, status_indicator};
+use super::primitives::{self, Concept, StatusKind, kbd, status_indicator};
 use super::settings::SettingsSection;
 use super::*;
 use gpui::{AnyElement, HighlightStyle, StyledText, deferred};
@@ -91,6 +91,10 @@ pub(super) fn fuzzy(query: &str, text: &str) -> Option<(i32, Vec<Range<usize>>)>
             1000 - at as i32 + if word_start { 200 } else { 0 } + if at == 0 { 300 } else { 0 };
         return Some((score, std::iter::once(at..at + lower_query.len()).collect()));
     }
+    // r4-calm (R4.9): otherwise the query must fall in runs that each
+    // start a word ("oc" → Open Changes, "scr" → Session CReation), so the
+    // highlight reads as whole pieces, never scattered single letters in
+    // the middle of words (">the" no longer finds "Scratch files").
     let mut ranges: Vec<Range<usize>> = Vec::new();
     let mut score = 0;
     let mut next = 0;
@@ -100,9 +104,9 @@ pub(super) fn fuzzy(query: &str, text: &str) -> Option<(i32, Vec<Range<usize>>)>
         if next == needle.len() {
             break;
         }
-        let matched = c.to_lowercase().eq(std::iter::once(needle[next]));
+        let start = prev_char.is_none_or(|p| !p.is_alphanumeric());
+        let matched = (prev_matched || start) && c.to_lowercase().eq(std::iter::once(needle[next]));
         if matched {
-            let start = prev_char.is_none_or(|p| !p.is_alphanumeric());
             score += 10 + if prev_matched { 15 } else { 0 } + if start { 20 } else { 0 };
             match ranges.last_mut() {
                 Some(last) if prev_matched && last.end == at => last.end = at + c.len_utf8(),
@@ -156,7 +160,7 @@ struct Entry {
     title: String,
     meta: String,
     keys: Option<&'static str>,
-    icon: Option<IconName>,
+    icon: Option<Icon>,
     status: Option<StatusKind>,
     target: Target,
     /// Words that also find it ("diff" finds Changes).
@@ -499,7 +503,17 @@ impl Workspace {
                 title: title.to_owned(),
                 meta: String::new(),
                 keys,
-                icon: Some(icon),
+                // r4-calm (R4.6): one glyph per concept.
+                icon: Some(match act {
+                    Act::Fleet => Icon::new(Concept::Fleet),
+                    Act::Tasks => Icon::new(Concept::Tasks),
+                    Act::Details => Icon::new(Concept::Details),
+                    Act::History => Icon::new(Concept::History),
+                    Act::Machines => Icon::new(Concept::Machines),
+                    Act::Shortcuts => Icon::new(Concept::Shortcuts),
+                    Act::Refresh => Icon::new(Concept::Refresh),
+                    _ => Icon::new(icon),
+                }),
                 status: None,
                 target: Target::Action(act),
                 aliases,
@@ -537,7 +551,7 @@ impl Workspace {
                 title: format!("Settings: {title}"),
                 meta: String::new(),
                 keys: (section == SettingsSection::Appearance).then_some(m("Ctrl ,", "⌘ ,")),
-                icon: Some(IconName::Settings),
+                icon: Some(Icon::new(IconName::Settings)),
                 status: None,
                 target: Target::Setting(section),
                 aliases,
@@ -928,8 +942,7 @@ impl Workspace {
                     .map(|d| match (entry.status, entry.icon) {
                         (Some(kind), _) => d.child(status_indicator(kind, &p)),
                         (None, Some(icon)) => d.child(
-                            Icon::new(icon)
-                                .size(px(t.icon.sm))
+                            icon.size(px(t.icon.sm))
                                 .text_color(rgb(p.roles.text_tertiary)),
                         ),
                         _ => d,
@@ -1010,6 +1023,10 @@ mod tests {
         assert!(whole > scattered);
         assert_eq!(ranges.len(), 2, "{ranges:?}");
         assert!(fuzzy("xyz", "Session").is_none());
+        // r4-calm: runs start words; no scattered mid-word letters.
+        assert_eq!(fuzzy("oc", "Open changes").unwrap().1, vec![0..1, 5..6]);
+        assert!(fuzzy("the", "Scratch files").is_none());
+        assert!(fuzzy("the", "Continue with Codex").is_none());
         let (prefix, _) = fuzzy("open", "Open changes").unwrap();
         let (inner, _) = fuzzy("open", "Reopen").unwrap();
         assert!(prefix > inner);
