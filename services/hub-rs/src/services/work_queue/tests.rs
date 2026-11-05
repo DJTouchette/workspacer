@@ -3,6 +3,9 @@ use super::spawn_watch::{self, Signal};
 use super::*;
 use serde_json::json;
 
+/// A cwd that is absolute on the host running the tests (`/abs` is not on Windows).
+const ABS: &str = if cfg!(windows) { "C:\\abs" } else { "/abs" };
+
 fn item(id: &str, kind: &str, priority: i64, enqueued_at: i64, state: &str) -> Item {
     Item {
         id: id.into(),
@@ -146,14 +149,14 @@ fn submissions_are_shape_checked() {
     assert_eq!(shell.shell.as_ref().unwrap().timeout_sec, 3600);
     assert_eq!(shell.source.kind, "prompt");
     assert_eq!(shell.state, QUEUED);
-    let spawn = model::parse_submit(&json!({"kind":"spawn","priority":3,"label":"triage","spawn":{"cwd":"/abs","prompt":"go","provider":"codex"},"source":{"kind":"job","jobId":"j1"}})).unwrap();
+    let spawn = model::parse_submit(&json!({"kind":"spawn","priority":3,"label":"triage","spawn":{"cwd":ABS,"prompt":"go","provider":"codex"},"source":{"kind":"job","jobId":"j1"}})).unwrap();
     assert_eq!(spawn.priority, 3);
     assert_eq!(spawn.spawn.as_ref().unwrap().provider, "codex");
     assert_eq!(spawn.source.job_id, "j1");
     for bad in [
         json!({"kind":"spawn","spawn":{"cwd":"relative","prompt":"go"}}),
-        json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"  "}}),
-        json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go"},"shell":{"command":"x"}}),
+        json!({"kind":"spawn","spawn":{"cwd":ABS,"prompt":"  "}}),
+        json!({"kind":"spawn","spawn":{"cwd":ABS,"prompt":"go"},"shell":{"command":"x"}}),
         json!({"kind":"shell","shell":{"command":"x","timeoutSec":0}}),
         json!({"kind":"shell","shell":{"command":"x","timeoutSec":86401}}),
         json!({"kind":"shell","shell":{"command":"x","skipPermissions":true}}),
@@ -517,29 +520,29 @@ async fn resources_report_slots_and_the_gate_from_the_latest_sample() {
 
 #[test]
 fn spawn_parameters_carry_only_ordinary_launch_fields() {
-    let mut item = model::parse_submit(&json!({"kind":"spawn","label":"nightly","spawn":{"cwd":"/abs","prompt":"go","model":"m","permissionMode":"plan"},"source":{"kind":"job","jobId":"j1"}})).unwrap();
+    let mut item = model::parse_submit(&json!({"kind":"spawn","label":"nightly","spawn":{"cwd":ABS,"prompt":"go","model":"m","permissionMode":"plan"},"source":{"kind":"job","jobId":"j1"}})).unwrap();
     assert_eq!(
         spawn_params(&item),
-        json!({"cwd":"/abs","label":"nightly","message":"go","model":"m","permissionMode":"plan","jobId":"j1"})
+        json!({"cwd":ABS,"label":"nightly","message":"go","model":"m","permissionMode":"plan","jobId":"j1"})
     );
     item.source.kind = "prompt".into();
     assert!(spawn_params(&item).get("jobId").is_none());
     // permissionMode passes through unchanged (bypass included), and the
     // context window rides along, so a queued launch matches a direct one.
-    let item = model::parse_submit(&json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go","permissionMode":"bypassPermissions","contextWindow":1000000}})).unwrap();
+    let item = model::parse_submit(&json!({"kind":"spawn","spawn":{"cwd":ABS,"prompt":"go","permissionMode":"bypassPermissions","contextWindow":1000000}})).unwrap();
     let params = spawn_params(&item);
     assert_eq!(params["permissionMode"], "bypassPermissions");
     assert_eq!(params["contextWindow"], 1_000_000);
     assert!(params.get("skipPermissions").is_none());
     // fullAccess maps like an inline job's agents.jobFullAccess.
-    let item = model::parse_submit(&json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go","permissionMode":"plan","fullAccess":true}})).unwrap();
+    let item = model::parse_submit(&json!({"kind":"spawn","spawn":{"cwd":ABS,"prompt":"go","permissionMode":"plan","fullAccess":true}})).unwrap();
     let params = spawn_params(&item);
     assert_eq!(params["skipPermissions"], true);
     assert!(params.get("permissionMode").is_none());
     for bad in [
-        json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go","contextWindow":0}}),
-        json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go","contextWindow":"big"}}),
-        json!({"kind":"spawn","spawn":{"cwd":"/abs","prompt":"go","fullAccess":"yes"}}),
+        json!({"kind":"spawn","spawn":{"cwd":ABS,"prompt":"go","contextWindow":0}}),
+        json!({"kind":"spawn","spawn":{"cwd":ABS,"prompt":"go","contextWindow":"big"}}),
+        json!({"kind":"spawn","spawn":{"cwd":ABS,"prompt":"go","fullAccess":"yes"}}),
     ] {
         assert!(model::parse_submit(&bad).is_err(), "{bad}");
     }

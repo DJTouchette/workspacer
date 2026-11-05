@@ -533,6 +533,13 @@ mod tests {
 
     #[test]
     fn links_persist_privately_replace_by_key_and_validate() {
+        // Absolute on this host but nonexistent, and sorting before the temp
+        // dir on both OSes so it stays links[0] (`/gone/app` is relative on Windows).
+        const GONE: &str = if cfg!(windows) {
+            "A:\\gone\\app"
+        } else {
+            "/gone/app"
+        };
         let temp = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(temp.path()).unwrap();
         let file = root.join("project-links.json");
@@ -566,12 +573,17 @@ mod tests {
             .unwrap();
         links
             .set(
-                &json!({"localPath": "/gone/app", "peer": "box", "peerPath": "/srv/app"}),
+                &json!({"localPath": GONE, "peer": "box", "peerPath": "/srv/app"}),
                 11,
             )
             .unwrap();
         assert_eq!(links.get(local_s, "mac").as_deref(), Some("C:\\dj\\app"));
-        assert_eq!(links.get("/gone/app/", "box").as_deref(), Some("/srv/app"));
+        assert_eq!(
+            links
+                .get(&format!("{GONE}{}", std::path::MAIN_SEPARATOR), "box")
+                .as_deref(),
+            Some("/srv/app")
+        );
         assert_eq!(links.get(local_s, "box"), None);
         #[cfg(unix)]
         {
@@ -585,16 +597,16 @@ mod tests {
         assert_eq!(reopened.list().len(), 2);
         assert_eq!(reopened.list()[1].peer_path, "C:\\dj\\app");
         let on_disk: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        assert_eq!(on_disk["links"][0]["localPath"], "/gone/app");
+        assert_eq!(on_disk["links"][0]["localPath"], GONE);
         assert_eq!(on_disk["links"][0]["peerPath"], "/srv/app");
         assert_eq!(on_disk["links"][0]["createdAt"], 11);
         let (removed, rows) = reopened
-            .remove(&json!({"localPath": "/gone/app", "peer": "box"}))
+            .remove(&json!({"localPath": GONE, "peer": "box"}))
             .unwrap();
         assert!(removed);
         assert_eq!(rows.len(), 1);
         let (removed, _) = reopened
-            .remove(&json!({"localPath": "/gone/app", "peer": "box"}))
+            .remove(&json!({"localPath": GONE, "peer": "box"}))
             .unwrap();
         assert!(!removed);
         for bad in [
