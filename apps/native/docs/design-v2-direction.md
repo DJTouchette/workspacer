@@ -480,3 +480,83 @@ Round 6 averaged 7.4. All five reviewers named the same top problems: number key
 - **Badge, meter and inline-code styles** come from tokens.
 
 Process: area agents, then integration, then a QA gate that checks every shot against R7.1–R7.8 and the round-6 reviews, then the council.
+
+# Round 8 addendum: one attention model, quiet by default
+
+Round 7 averaged 7.5 (power user 7.8, UX lead 7.5, systems critic 7.5, newcomer 7.4, visual designer 7.4). Four reviewers said the same state reads differently from screen to screen, and three said the screens carry too much. Round 8 has one attention model, shared by every surface, and makes everything else quieter until it is needed.
+
+## R8.1 One attention model
+- **Two states.** Exactly two want-you states:
+  - **Needs you:** blocked on you. Amber, the dot glyph.
+  - **To review:** finished, with changes. Its own non-amber hue, chosen and contrast-tested per theme, and the half-ring glyph.
+- **Amber is reserved for Needs you.** Warnings, the usage meter, Full access and links such as "+1 more" use the warning hue or neutral, never amber.
+- **One count source.** Sidebar groups, the Fleet summary, Fleet filters, the rail, the title bar and Projects all read the same two numbers, with the same labels: "3 need you", "1 to review". No surface folds one into the other.
+- **One time format** per meaning, everywhere:
+  - "Last active 23m ago" for recency.
+  - "Ran 3m 31s" for duration.
+  - Never "just now" on one surface and "23m" on another for the same fact.
+- **Verification.** The newest run wins. When the transcript or an older run disagrees, the line says so ("Tests failed 4m ago · earlier run passed").
+- **One row action verb** for a want-you row: "Open". The card itself says what to do.
+
+## R8.2 Quiet by default
+- **Keycaps.** They appear only on the focused decision, and only after keyboard use (the last input was a key). There is no repeated keycap row in the composer: the card is the only place they appear.
+- **Meta lines.** At most three items, one of them emphasised. The rest go into a hover or the Details view.
+- **One count badge style**, used everywhere. Its amber fill is reserved for Needs you.
+- **Buttons.** Three tiers plus Danger.
+  - Every container's one forward action (Send, Commit, Ask agent to fix, Start, Allow) is Filled when it is enabled. The only exception: when a decision is pending, the decision holds the single Filled button.
+  - Deny is a neutral Bordered button, not red.
+  - Danger is a filled red button and appears only on an armed destructive confirm.
+- **Sidebar rows** are one height, with subagent rows indented and lighter.
+
+## R8.3 Risk is the same everywhere
+- **Two-step confirm.** Every decision with a destructive warning uses the same two-step confirm:
+  - The first press arms it.
+  - The button becomes Danger and reads "Press again to delete".
+  - Esc cancels.
+  
+  This applies in chat, Jobs, Fleet tiles and Fleet table rows.
+- **Allow all.** Destructive items are never included.
+- **Limits.** When the agent's limit is hit, the action that can run now (for example "Run with Codex") is the primary action, and the action that would only wait is secondary.
+
+## R8.4 One decision-and-reply area
+- **One component, one input.**
+  - While a decision is pending, the decision card and the reply are one component.
+  - The card has a "Reply instead" text action that opens one input inside the card. Its send button says where the text goes.
+  - The composer is hidden, not folded.
+- **The card collapses** to a single line ("Needs you · Allow cargo test? · Open") when the user scrolls up through the transcript.
+- **Jump to latest never covers text.** It sits in the gutter or replaces the collapsed card line.
+- **Cross-session updates** move into the header as a chip ("2 updates"). The chip opens a popover with one row per event, failures first, each with its own jump link.
+- **Fixed slots on every surface**, including the Jobs page:
+  - the amber rail when the decision needs you
+  - the slots from R7.1
+  - Details at the right
+  
+  Focus changes only visual weight, never which parts are shown.
+
+## R8.5 Fleet composition
+- **Needs-you band.** Needs-you decisions are a full-width band at the top. Everything else is compact tiles below it in a column-flow (masonry) layout, so there are no holes.
+- **Details** open in a side sheet, not inline, so the grid does not reflow.
+- **Subagent actions** sit on the subagent's own row and name their target ("Stop Trace session").
+- **Fleet table.**
+  - A wider Needs column.
+  - Review rows show test status and an Open action.
+  - Text questions can be answered inline.
+- **Fleet header.** It has a one-line subtitle. The toolbar is reduced to view, filter and an overflow menu that holds sort.
+
+## R8.6 Words a newcomer can read
+- **Page subtitles.** Fleet, Scratch and Machines each get a one-line subtitle, and their nav items get tooltips that say the same.
+- **Jargon removed.**
+  - "1 delegated" becomes "1 subagent".
+  - "Explore" is replaced by its plain verb.
+  - "2 updates from other sessions" becomes "2 updates".
+- **Agent names.** One name per agent everywhere ("Claude Code", "Codex CLI"). One breadcrumb name per project.
+- **Usage.** It reads "Codex · 93% of 5h limit used · resets in 2h". It is hidden on the welcome screen until a session exists.
+- **Rail.** Tiles carry the project's colour and two letters, plus a status glyph. Every tile has a tooltip with its full name.
+- **Empty values.** One empty-value dash, "—".
+- **Welcome.** Three starter suggestions under the composer. The placeholder doesn't repeat the hero's question.
+
+## R8.7 Themes and brand
+- **Per-theme tuning.** The amber and the To review hue are tuned per theme so that neither turns muddy (light) or pale (Nord). The Nord primary keeps its contrast.
+- **One signature brand moment.** A wordmark or mark on the welcome screen and in the empty states, quiet and consistent.
+
+Process: area agents, then integration, then the QA gate, then the council. This is the last round.
