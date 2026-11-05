@@ -9,7 +9,6 @@ pub mod controller;
 pub mod diff;
 pub mod elicitation;
 pub mod features;
-pub mod format;
 pub mod handoff;
 pub mod harness;
 pub mod history;
@@ -39,7 +38,6 @@ pub mod terminal;
 pub mod transcript;
 
 pub mod timing;
-pub mod tokens;
 pub mod tool_preview;
 pub mod ui_requests;
 pub mod updates;

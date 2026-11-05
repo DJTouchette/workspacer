@@ -11,19 +11,6 @@ fn notch_height(compact: bool) -> f32 {
     if compact { 18. } else { 26. }
 }
 
-/// The gap above the dock's first card, inside the dock's measured bounds
-/// (so card shadows keep their room).
-pub(super) fn dock_cards_top(compact: bool) -> f32 {
-    if compact { 8. } else { 12. }
-}
-
-/// How far below the dock's measured top its first visible surface sits:
-/// the top padding, then either the card gap after the (usually empty)
-/// pending block or the padding above the composer, which are equal.
-pub(super) fn dock_first_surface(compact: bool) -> f32 {
-    dock_cards_top(compact) + if compact { 4. } else { 8. }
-}
-
 type Point = gpui::Point<gpui::Pixels>;
 
 /// The tab's sides and top as segments from its left foot to its right foot:
@@ -115,21 +102,21 @@ mod notch_tests {
     }
 }
 
-pub(super) struct ComposerActivity {
-    pub(super) label: String,
+struct ComposerActivity {
+    label: String,
     /// Something is running or pending: shown in the composer's notch.
-    pub(super) live: bool,
-    pub(super) animate: bool,
+    live: bool,
+    animate: bool,
 }
 
 /// What the conversation decided once per frame, for the pieces it builds.
 #[derive(Clone, Copy)]
-pub(super) struct ChatLayout {
-    pub(super) narrow: bool,
-    pub(super) compact: bool,
+struct ChatLayout {
+    narrow: bool,
+    compact: bool,
     /// The selected session can take a message or decision now.
-    pub(super) enabled: bool,
-    pub(super) working: bool,
+    enabled: bool,
+    working: bool,
 }
 
 /// The tool rail's width and its gap from the chat's right edge.
@@ -143,11 +130,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
-        self.note_seen_rows();
-        // r8-conversation (R8.4): a focused or drafted composer opens the
-        // waiting card's reply before anything below reads it.
-        self.settle_reply(window, cx);
+        let p = self.appearance.palette();
         let selected = self.selected_session().cloned();
         let enabled = self.view.connected
             && !self.view.loading
@@ -166,63 +149,21 @@ impl Workspace {
             enabled,
             working,
         };
-        // R6.6: other sessions' wakes never sit inside the transcript.
-        // r8-conversation (R8.4): they are the header's "2 updates" chip
-        // (`render_updates_chip`), not a strip above it.
         let entity = cx.entity().downgrade();
-        // r7-pages (R7.6): a short conversation reads from the top. The list
-        // is bottom-aligned (it follows the tail), so the room it would
-        // leave above the first row goes under the last one instead.
-        let short_pad = if self.design().is_v2() && selected.is_some() {
-            self.short_pad
-        } else {
-            gpui::Pixels::ZERO
-        };
-        let last_row = self.list.item_count().saturating_sub(1);
-        let list_top = self.header_bounds.size.height + px(16.);
-        // What of the pane is not the rows' room: the header, the list's
-        // own padding and the dock's inset below it.
-        self.list_insets =
-            list_top + px(self.tokens().space.lg) + self.transcript_inset_v2(compact);
         let transcript = list(self.list.clone(), move |ix, window, cx| {
             entity
-                .update(cx, |this, cx| {
-                    let row = this.render_chat_row(ix, window, cx);
-                    if ix == last_row && short_pad > gpui::Pixels::ZERO {
-                        div()
-                            .debug_selector(|| "transcript-short-pad".into())
-                            .w_full()
-                            .pb(short_pad)
-                            .child(row)
-                            .into_any_element()
-                    } else {
-                        row
-                    }
-                })
+                .update(cx, |this, cx| this.render_chat_row(ix, window, cx))
                 .unwrap_or_else(|_| div().into_any_element())
         })
         .flex_1()
         .min_h_0()
-        .pt(list_top)
-        .map(|d| {
-            if self.design().is_v2() && selected.is_some() {
-                // r4-calm (R4.4): a smaller viewport, not tail space: the
-                // transcript ends a gap above the first card of the dock
-                // (a pinned decision or the composer), and while reading
-                // history also above "Jump to latest", so no text ever runs
-                // under either.
-                d.mb(self.transcript_inset_v2(compact))
-                    .pb(px(self.tokens().space.lg))
-            } else {
-                // This is scrollable tail space, not a smaller viewport:
-                // history still paints behind the floating dock, while the
-                // last message can clear it.
-                d.pb(if selected.is_some() {
-                    self.composer_dock_bounds.size.height + px(12.)
-                } else {
-                    px(0.)
-                })
-            }
+        .pt(self.header_bounds.size.height + px(16.))
+        // This is scrollable tail space, not a smaller viewport: history still
+        // paints behind the floating dock, while the last message can clear it.
+        .pb(if selected.is_some() {
+            self.composer_dock_bounds.size.height + px(12.)
+        } else {
+            px(0.)
         });
         let terminal_panel = self.render_terminal_panel(window, cx);
         let header = self.render_chat_header(layout, selected.as_ref(), window, cx);
@@ -245,12 +186,6 @@ impl Workspace {
                     changed
                 },
             ))
-            .when(!empty && self.design().is_v2() && selected.is_some(), |d| {
-                d.child(chrome::measure(
-                    cx.entity().downgrade(),
-                    |this: &mut Self, bounds, _| this.settle_short_pad(bounds.size.height),
-                ))
-            })
             .when(empty && !only_children, |d| {
                 d.child(self.render_empty_state(compact, window, cx))
             })
@@ -260,52 +195,14 @@ impl Workspace {
             .when(!empty, |d| {
                 d.child(transcript).child(self.wheel_smoother(cx))
             })
-            // r4-integration (R4.4): while reading history the transcript's
-            // viewport ends above the dock and the pill; a short fade there
-            // (a line and a half tall) dissolves a half-cut line instead of slicing
-            // it at a hard edge.
-            .when(
-                !empty && !self.follow && selected.is_some() && self.design().is_v2(),
-                |d| {
-                    // r7-pages (R7.8): the fade never slices a line. Its
-                    // lower half is solid canvas one reading line tall, so
-                    // a line the viewport cuts at its edge is hidden
-                    // whole; the upper half fades over the next line up.
-                    let t = self.tokens();
-                    let line = t.text.lead * t.transcript().prose_line_height;
-                    let solid = gpui::Hsla::from(rgb(p.chat));
-                    d.child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .w_full()
-                            .bottom(self.transcript_inset_v2(compact))
-                            .h(px(line + line))
-                            .debug_selector(|| "transcript-fade".into())
-                            .bg(gpui::linear_gradient(
-                                0.,
-                                gpui::linear_color_stop(solid, 0.5),
-                                gpui::linear_color_stop(solid.opacity(0.), 1.),
-                            )),
-                    )
-                },
-            )
             .child(header)
             .when(
                 self.tools_float(narrow) && selected.is_some() && self.viewed_child().is_none(),
                 |d| d.child(self.render_tool_rail(enabled, cx)),
             )
-            .when(!self.follow && !self.design().is_v2(), |d| {
-                d.child(self.render_jump_latest(cx))
-            })
+            .when(!self.follow, |d| d.child(self.render_jump_latest(cx)))
             .children(self.render_link_status())
-            .child(self.render_dock(layout, selected.as_ref(), window, cx))
-            // r3-shell: v2's pill reaches into the dock's top padding, so it
-            // paints after the dock.
-            .when(
-                !self.follow && self.design().is_v2() && !self.decision_collapsed(),
-                |d| d.child(self.render_jump_latest_v2(compact, cx)),
-            );
+            .child(self.render_dock(layout, selected.as_ref(), window, cx));
         div()
             .flex_1()
             .min_w_0()
@@ -317,82 +214,17 @@ impl Workspace {
             .children(terminal_panel)
     }
 
-    /// r7-pages (R7.6): after a frame, the room a bottom-aligned short
-    /// transcript leaves above its first row moves under its last row
-    /// (`short_pad`), so the conversation is anchored to the top. Once the
-    /// rows outgrow the viewport the pad shrinks back to nothing. Returns
-    /// whether it changed (worth a re-render).
-    fn settle_short_pad(&mut self, pane: gpui::Pixels) -> bool {
-        let count = self.list.item_count();
-        if count == 0 {
-            return false;
-        }
-        // The rows' total height (the pad included). Following the tail,
-        // the bottom-aligned list has no logical scroll top and its scroll
-        // offset is exactly that. Otherwise (a row opened and scrolled
-        // itself into view, say) it is known only once the rows overflow;
-        // while they fit, the pad stays as it is.
-        let rows = if self.list.logical_scroll_top().item_ix >= count {
-            -self.list.scroll_px_offset_for_scrollbar().y
-        } else {
-            let over = self.list.max_offset_for_scrollbar().height;
-            if over <= gpui::Pixels::ZERO {
-                return false;
-            }
-            over + self.list.viewport_bounds().size.height
-        };
-        // The pane's height, not the list's: a list sized by its content
-        // would grow with the pad it is given.
-        let room = pane - self.list_insets;
-        if room <= gpui::Pixels::ZERO {
-            let changed = self.short_pad > gpui::Pixels::ZERO;
-            self.short_pad = gpui::Pixels::ZERO;
-            return changed;
-        }
-        // Capped at the room, so a frame whose rows are not measured yet
-        // can never grow the pad without end.
-        let want = (room - (rows - self.short_pad)).clamp(gpui::Pixels::ZERO, room);
-        let changed = (f32::from(want) - f32::from(self.short_pad)).abs() > 0.5;
-        if changed {
-            self.short_pad = want;
-        }
-        changed
-    }
-
-    // r4-calm (R4.4)
-    /// How far above the window's bottom the v2 transcript stops: the dock's
-    /// first card, the jump gap, and the pill's band while not following.
-    pub(super) fn transcript_inset_v2(&self, compact: bool) -> gpui::Pixels {
-        let t = self.tokens();
-        let sh = t.shell();
-        let card =
-            (self.composer_dock_bounds.size.height - px(dock_first_surface(compact))).max(px(0.));
-        let pill = if self.follow || self.decision_collapsed() {
-            0.
-        } else {
-            t.layout.control_height_sm + sh.jump_gap
-        };
-        card + px(sh.jump_gap + pill)
-    }
-
     /// Whether the session's tools float in the rail rather than the title.
     /// Only where the rail clears the centred chat column, so it never
     /// covers a card's own controls at the column's edge.
     fn tools_float(&self, narrow: bool) -> bool {
-        if self.design().is_v2() {
-            // r3-shell: the tools live on the header strip, not a rail.
-            return false;
-        }
         self.settings.tool_rail && !narrow && self.chat_width >= px(CHAT_WIDTH + 2. * RAIL_ROOM)
     }
 
     /// The session's tools in a floating pill at the chat's right edge,
     /// centred between the title and the composer.
     fn render_tool_rail(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
-        if self.design().is_v2() {
-            return self.render_tool_rail_v2(enabled, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .absolute()
             .top(self.header_bounds.size.height)
@@ -424,20 +256,11 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        if self.design().is_v2() {
-            return self.render_chat_header_v2(layout, selected, window, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let title = selected
             .map(|s| self.session_title(s))
             .unwrap_or_else(|| "Your sessions".into());
         let notice = self.title_notice();
-        // r2-systems: the welcome has its own question; no stray "Your
-        // sessions" capsule above it (a notice still shows).
-        let bare_welcome = self.design().is_v2()
-            && selected.is_none()
-            && notice.is_empty()
-            && self.view.child.is_none();
         let (title_bar, title_actions) = match self.render_child_title_bar(cx) {
             Some(bar) => (bar, None),
             None => (
@@ -499,7 +322,7 @@ impl Workspace {
             .justify_center()
             .bg(gpui::linear_gradient(
                 180.,
-                gpui::linear_color_stop(rgb(p.chat), self.title_fade_stop()),
+                gpui::linear_color_stop(rgb(p.chat), 0.6),
                 gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.),
             ))
             // Only the top chrome row drags, with later occluding title pills
@@ -543,7 +366,7 @@ impl Workspace {
                                     changed
                                 },
                             ))
-                            .when(!bare_welcome, |d| d.child(title_island)),
+                            .child(title_island),
                     )
                     // Centred under the capsule, so it takes the same nudge.
                     .children(plan.map(|plan| plan.relative().left(nudge))),
@@ -569,7 +392,7 @@ impl Workspace {
     }
 
     fn render_jump_latest(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .absolute()
             .left_0()
@@ -606,40 +429,19 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let compact = layout.compact;
-        // R6.3: digits answer the decision only while no text field has
-        // focus; the cards and the composer read this as they draw.
-        self.composer_ui.digits_to_card = self.digits_free(window, cx);
         let composer_docked = selected.is_some() && self.view.child.is_none();
-        let parent_line = self.render_parent_waiting(selected, cx);
-        let parent_waits = self.design().is_v2() && self.view.child.is_some();
-        // r8-conversation (R8.4): scrolled up through the transcript, the
-        // waiting card folds to one line ("Needs you · … · Open").
-        let collapsed = self.decision_collapsed();
-        let folded = selected
-            .filter(|_| collapsed)
-            .map(|s| self.render_decision_line(s, cx));
-        let composer_hidden = self.composer_hidden();
         // Gutters and the gap above the composer stay inside this clip, so
         // card shadows keep their room.
-        let cards = self
-            .reading_column()
+        let cards = chrome::chat_column()
             .id("conversation-dock-cards")
             .debug_selector(|| "conversation-dock-cards".into())
-            // r7-int: the cards keep the composer's width (and line up with
-            // it) whatever the reading width; under Comfortable the two are
-            // the same.
-            .when(self.design().is_v2(), |d| {
-                let gutter = px(2. * self.tokens().layout.chat_gutter);
-                let width = px(system::composer_width(&p)) + gutter;
-                d.max_w(self.reading_max().min(width))
-            })
             .flex_shrink_0()
             .max_h(self.dock_cards_budget(selected, compact, window))
             .overflow_y_scroll()
-            .pt(px(dock_cards_top(compact)))
-            .pb(px(match (composer_docked && !composer_hidden, compact) {
+            .pt(px(if compact { 8. } else { 12. }))
+            .pb(px(match (composer_docked, compact) {
                 (false, _) => 0.,
                 (true, true) => 4.,
                 (true, false) => 8.,
@@ -650,50 +452,24 @@ impl Workspace {
             .when(self.view.child.is_none(), |d| {
                 d.child(self.render_pending(window, cx))
             })
-            // r2-systems: under v2 every decision, the approval included, is
-            // a "waiting on you" card here, above the composer.
-            // r5-integration (v2): over a read-only subagent the parent's
-            // decision is one line that leads back, not its live card.
-            .children(folded)
-            .when_some(
-                selected
-                    .filter(|_| !parent_waits && !collapsed)
-                    .and_then(|s| s.approval.as_ref()),
-                |d, approval| d.child(self.render_approval_card(approval, layout, window, cx)),
-            )
-            .children(
-                selected
-                    .filter(|_| !collapsed)
-                    .and_then(|session| self.render_limit_card(session, compact, cx)),
-            )
-            .when_some(
-                selected.filter(|s| s.questions.is_some() && !parent_waits && !collapsed),
-                |d, session| {
-                    // R8.4: the question card holds the reply too.
-                    let reply = composer_hidden
-                        .then(|| self.render_card_reply(layout.enabled, cx))
-                        .flatten();
-                    d.child(
-                        self.render_questions(session, layout.enabled, compact, window, cx)
-                            .children(reply),
-                    )
-                },
-            )
-            .children(parent_line)
-            // r6-decisions (R6.2): a stalled subagent's Nudge / Stop / View output.
-            .children(self.render_stall_bar(cx))
+            .when_some(selected.and_then(|s| s.approval.as_ref()), |d, approval| {
+                d.child(self.render_approval_card(approval, layout, window, cx))
+            })
+            .children(selected.and_then(|session| self.render_limit_card(session, compact, cx)))
+            .when_some(selected.filter(|s| s.questions.is_some()), |d, session| {
+                d.child(self.render_questions(session, layout.enabled, compact, window, cx))
+            })
             .children(self.render_child_bar(cx))
             // Closest to the composer: what will be sent from it next.
             .children(selected.and_then(|session| {
                 self.render_queue_panel(session, layout.enabled, compact, window, cx)
             }));
-        let composer_layer = self
-            .reading_column()
+        let composer_layer = chrome::chat_column()
             .relative()
             .flex_shrink_0()
             // Room for the status tab on the composer's top edge, while it shows.
             .when(
-                composer_docked && !self.design().is_v2() && self.composer_activity(layout).live,
+                composer_docked && self.composer_activity(layout).live,
                 |d| d.pt(px(notch_height(compact) - if compact { 4. } else { 8. })),
             )
             .pb(px(if compact { 8. } else { 16. }))
@@ -705,21 +481,8 @@ impl Workspace {
                     changed
                 },
             ))
-            // r8-conversation (R8.4): hidden, not folded, while a decision
-            // holds the slot; only the cold-cache note stays.
-            .when(composer_docked && composer_hidden, |d| {
-                d.children(self.render_cold_note(cx))
-            })
-            .when(composer_docked && !composer_hidden, |d| {
-                let composer = self.render_composer(layout, window, cx);
-                if self.design().is_v2() {
-                    // r7-pages (R7.6): the one composer width, as on the
-                    // welcome and New session, whatever the reading width.
-                    let width = system::composer_width(&self.palette());
-                    d.child(div().w_full().max_w(px(width)).mx_auto().child(composer))
-                } else {
-                    d.child(composer)
-                }
+            .when(composer_docked, |d| {
+                d.child(self.render_composer(layout, window, cx))
             });
         let dock_height = f32::from(self.composer_dock_bounds.size.height);
         let opaque_until = 1. - DOCK_FADE / (dock_height + DOCK_FADE).max(DOCK_FADE * 2.);
@@ -742,7 +505,7 @@ impl Workspace {
             // clips. (Measuring inside a scroll container would count as
             // content: a phantom pt+pb scroll range.)
             .child(
-                self.reading_frame()
+                chrome::chat_frame()
                     .id("conversation-dock")
                     .debug_selector(|| "conversation-dock".into())
                     .relative()
@@ -800,19 +563,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         use serde_json::Value;
-        if self.design().is_v2() {
-            return match composer_v2::plan_text(approval) {
-                Some(plan) => self.render_plan_card_v2(plan, layout, window, cx),
-                None => {
-                    let decisions = self
-                        .selected_session()
-                        .map(|s| self.decisions(s))
-                        .unwrap_or_default();
-                    self.render_approval_strip(approval, layout, &decisions, cx)
-                }
-            };
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let (compact, enabled) = (layout.compact, layout.enabled);
         if let Some(plan) = approval
             .get("toolName")
@@ -1024,7 +775,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let (compact, enabled) = (layout.compact, layout.enabled);
         let card = self.selected_session().and_then(Session::card);
         let note_card = card.clone();
@@ -1108,10 +859,7 @@ impl Workspace {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        if self.design().is_v2() {
-            return self.render_limit_card_v2(session, compact, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let limits = &session.limits;
         let card = || {
             div()
@@ -1136,8 +884,8 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .text_color(rgb(p.warn()))
-                        .child(status_dot(p.warn()))
+                        .text_color(rgb(p.warning))
+                        .child(status_dot(p.warning))
                         .child(warning),
                 ),
             );
@@ -1172,8 +920,8 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .text_color(rgb(p.warn()))
-                        .child(status_dot(p.warn()))
+                        .text_color(rgb(p.warning))
+                        .child(status_dot(p.warning))
                         .child(format!("{provider}'s {window} usage limit is reached{when}")),
                 )
                 .child(
@@ -1207,12 +955,7 @@ impl Workspace {
     }
 
     /// The one-line note box under a Deny with note / Keep planning.
-    pub(super) fn render_deny_note(
-        &self,
-        enabled: bool,
-        send: &'static str,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn render_deny_note(&self, enabled: bool, send: &'static str, cx: &mut Context<Self>) -> Div {
         div()
             .flex()
             .items_center()
@@ -1285,17 +1028,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        if self.design().is_v2() {
-            return self.render_composer_v2(layout, window, cx);
-        }
-        // r2-systems: v2 may have named a pending decision in the
-        // placeholder; v1 keeps its own.
-        if self.composer_ui.placeholder.take().is_some() {
-            self.composer.update(cx, |input, cx| {
-                input.set_placeholder(composer_v2::DEFAULT_PLACEHOLDER, window, cx)
-            });
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let ChatLayout {
             narrow,
             compact,
@@ -1530,7 +1263,7 @@ impl Workspace {
 
     /// Draft attachments with their thumbnails (images only; PDFs keep the
     /// file chip). Loading and failure fall back to the name.
-    pub(super) fn draft_files(&mut self, cx: &mut Context<Self>) -> Vec<attachments::DraftFile> {
+    fn draft_files(&mut self, cx: &mut Context<Self>) -> Vec<attachments::DraftFile> {
         self.view
             .selected
             .as_ref()
@@ -1553,7 +1286,7 @@ impl Workspace {
     /// What the selected conversation is doing. Live states (connecting,
     /// loading, sending, working, waiting) ride in the composer's notch; the
     /// rest (a finished turn's summary, Ready) stay on the hint line.
-    pub(super) fn composer_activity(&self, layout: ChatLayout) -> ComposerActivity {
+    fn composer_activity(&self, layout: ChatLayout) -> ComposerActivity {
         let now = timing::now_ms();
         let clock = self
             .view
@@ -1610,7 +1343,7 @@ impl Workspace {
     /// sides with flared feet, its base covering the composer's border so
     /// the two read as one surface.
     fn render_notch(&self, label: &str, animate: bool, edge: gpui::Hsla, compact: bool) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let height = notch_height(compact);
         let fill = gpui::Hsla::from(rgb(p.surface));
         div()
@@ -1676,7 +1409,7 @@ impl Workspace {
         steering: bool,
         activity: ComposerActivity,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let enter_sends = self.settings.enter_sends;
         let send_key = if enter_sends {
             "Enter"

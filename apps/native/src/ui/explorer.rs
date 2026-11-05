@@ -510,9 +510,9 @@ pub(super) fn status_color(letter: char, p: Palette) -> u32 {
     match letter {
         'A' | '?' => p.success,
         'D' => p.error,
-        'U' => p.warn(),
+        'U' => p.warning,
         'R' | 'C' => p.accent,
-        _ => p.warn(),
+        _ => p.warning,
     }
 }
 

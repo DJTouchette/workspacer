@@ -77,15 +77,6 @@ tables and code, and its asynchronous parse cache:
   painting applies it, so in right/center-aligned text (table cells) the
   quads are shifted by the same per-line alignment offset.
 
-- `layout: Option<ProseLayout>`: the native v2 transcript's prose rhythm. A
-  reading `measure` caps the width of top-level paragraphs, headings, lists
-  and quotes while code blocks, tables and rules keep the full view width;
-  `heading_space` adds room above a heading that follows other blocks,
-  `heading_gap` below it, and `heading_rule: false` drops the level 1-2
-  underline; with a layout, bold headings render semibold. `None` keeps
-  upstream rendering (v1 passes `None`). Files: `src/text/style.rs`
-  (`ProseLayout`, `TextViewStyle::layout`) and `src/text/node.rs`.
-
 - `TextView::handle()` returns a `TextViewHandle` over the view's state:
   top-level heading text with block indices (`Node::heading` in `node.rs`),
   top-level block kinds (`Node::kind_name`, used by native UI tests), and
@@ -195,15 +186,3 @@ Native interaction polish also patches:
   costs a comparison per visible message instead of a channel send.
 
 Reapply these interaction changes explicitly when upgrading the component.
-
-- `ThemeColor::switch_thumb_off` (r5-system): an optional thumb colour for an
-  unchecked `Switch`. `None` (the default, and what every upstream theme
-  deserializes to) keeps upstream behaviour; Workspacer's design v2 sets it
-  so an off switch is a quiet track with a darker knob, never a heavy filled
-  pill that reads as "on" (`apps/native/src/ui.rs`, `configure_theme_v2`).
-- `ThemeColor::switch_on` and `ThemeColor::switch_border` (r6-surfaces): an
-  optional on-track colour (otherwise `primary`) and an optional hairline
-  drawn around an unchecked `Switch`'s track and thumb (a 1px edge plus 1px
-  padding, so the thumb keeps its 2px inset). `None` keeps upstream
-  behaviour. Design v2 sets both: on is the accent track with a white
-  thumb; off is a light track, a white thumb and a hairline.

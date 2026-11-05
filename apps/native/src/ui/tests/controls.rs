@@ -474,20 +474,10 @@ fn theme_picker_offers_all_eight_palettes_within_a_narrow_window(cx: &mut TestAp
     });
 }
 
-/// Workspacer's GPUI patch (`vendor/gpui/WORKSPACER-PATCHES.md`): a
-/// typographic apostrophe is a word character, so "you’re" never wraps
-/// as "you" / "’re". The test text system gives every character one
-/// advance, so sweeping the width finds every candidate break. Widths too
-/// narrow for a whole word break it by character (between two letters);
-/// those are skipped. The contraction leads the line, so no other word's
-/// overflow decides where it breaks.
 /// Workspacer's GPUI patch (`vendor/gpui/WORKSPACER-PATCHES.md`): a word
-/// that fits on a line is never broken by character. Upstream's `wrap_line`
-/// returned a boundary before updating `prev_c`, so the word after a space
-/// the line overflowed on was never a break candidate: at the widths where
-/// that space overflowed, the next word was force-broken mid-word. The test
-/// text system gives every character one advance, so sweeping the width
-/// hits every overflow position.
+/// that fits on a line is never broken by character. The test text system
+/// gives every character one advance, so sweeping the width hits every
+/// overflow position.
 #[gpui::test]
 fn a_word_that_fits_a_line_never_breaks_mid_word(cx: &mut TestAppContext) {
     let text = "the release checklist restarted every session restore path";
@@ -543,6 +533,8 @@ fn a_word_that_fits_a_line_never_breaks_mid_word(cx: &mut TestAppContext) {
     });
 }
 
+/// Workspacer's GPUI patch: the typographic apostrophe is a word character,
+/// so "you’re" never wraps as "you / ’re".
 #[gpui::test]
 fn a_contraction_never_wraps_at_its_apostrophe(cx: &mut TestAppContext) {
     let text = "you\u{2019}re done";

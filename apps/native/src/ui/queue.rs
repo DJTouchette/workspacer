@@ -310,35 +310,21 @@ impl Workspace {
         if !(queue.visible() || edit.is_some()) || self.view.child.is_some() {
             return None;
         }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let live = enabled && !session.stopped();
         let tidy = self.view.connected && !self.view.busy && !self.view.loading;
         let count = queue.entries.len();
-        let v2 = self.design().is_v2();
-        let t = p.tokens;
         let header = div()
             .flex()
             .items_center()
             .gap_2()
             .text_size(px(12.))
-            .when(v2, |d| d.gap(px(t.space.sm)).text_size(px(t.text.body)))
-            .child(if v2 {
-                primitives::status_indicator(
-                    if queue.paused {
-                        primitives::StatusKind::Paused
-                    } else {
-                        primitives::StatusKind::Idle
-                    },
-                    &p,
-                )
-            } else {
-                status_dot(if queue.paused { p.warn() } else { p.accent })
-            })
+            .child(status_dot(if queue.paused { p.warning } else { p.accent }))
             .child(
                 div()
                     .flex_shrink_0()
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(if queue.paused { p.warn() } else { p.text }))
+                    .text_color(rgb(if queue.paused { p.warning } else { p.text }))
                     .child(match (count, queue.paused) {
                         (0, true) => "Queue · paused".to_owned(),
                         (0, false) => "Queue".to_owned(),
@@ -353,10 +339,6 @@ impl Workspace {
                     .truncate()
                     .text_size(px(chrome::scale::CAPTION))
                     .text_color(rgb(p.muted))
-                    .when(v2, |d| {
-                        d.text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_tertiary))
-                    })
                     .when(count > 0 && !queue.paused && !compact, |d| {
                         d.child(if count == 1 {
                             "Sends when this turn ends"
@@ -367,7 +349,7 @@ impl Workspace {
             )
             .when(count > 0, |d| {
                 d.child(
-                    self.q_button("queue-clear", "Clear all", tidy)
+                    self.button("queue-clear", "Clear all", tidy)
                         .debug_selector(|| "queue-clear".into())
                         .when(tidy, |d| {
                             d.on_click(cx.listener(|this, _, _, cx| this.queue_op(Op::Clear, cx)))
@@ -387,15 +369,6 @@ impl Workspace {
             .flex_col()
             .gap(px(if compact { 4. } else { 6. }))
             .text_size(px(12.))
-            .when(v2, |d| {
-                d.p(px(if compact { t.space.md } else { t.space.lg }))
-                    .rounded(px(t.radius.panel))
-                    .border(px(t.stroke.hairline))
-                    .border_color(rgb(p.roles.card_border))
-                    .shadow(primitives::elevation(&p, t.elevation.floating))
-                    .gap(px(t.space.sm))
-                    .text_size(px(t.text.body))
-            })
             .child(header);
         if queue.paused {
             card = card.child(self.render_queue_paused(queue, tidy, cx));
@@ -417,7 +390,7 @@ impl Workspace {
     }
 
     fn render_queue_paused(&self, queue: &Queue, tidy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let reason = queue
             .error
             .clone()
@@ -434,7 +407,7 @@ impl Workspace {
             )))
             // Only an explicit resume (or a send now) lifts a pause.
             .child(
-                self.q_button("queue-resume", "Resume", tidy)
+                self.button("queue-resume", "Resume", tidy)
                     .debug_selector(|| "queue-resume".into())
                     .when(tidy, |d| {
                         d.on_click(cx.listener(|this, _, _, cx| this.queue_op(Op::Resume, cx)))
@@ -449,7 +422,7 @@ impl Workspace {
         live: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let id = uncertain.id.clone();
         let text = uncertain.text.clone();
         let complete = uncertain.complete();
@@ -462,7 +435,7 @@ impl Workspace {
             .debug_selector(|| "queue-uncertain".into())
             .p_2()
             .rounded(px(p.control_radius))
-            .bg(gpui::Hsla::from(rgb(p.warn())).opacity(0.08))
+            .bg(gpui::Hsla::from(rgb(p.warning)).opacity(0.08))
             .flex()
             .flex_col()
             .gap_1()
@@ -489,7 +462,7 @@ impl Workspace {
                         if complete {
                             let (id, text) = (id.clone(), text.clone());
                             d.child(
-                                self.q_button("queue-uncertain-resend", "Send again", live)
+                                self.button("queue-uncertain-resend", "Send again", live)
                                     .debug_selector(|| "queue-uncertain-resend".into())
                                     .when(live, |d| {
                                         d.on_click(cx.listener(move |this, _, _, cx| {
@@ -508,7 +481,7 @@ impl Workspace {
                             // resend a message that may have been cut.
                             let text = text.clone();
                             d.child(
-                                self.q_button("queue-uncertain-copy", "Copy to composer", tidy)
+                                self.button("queue-uncertain-copy", "Copy to composer", tidy)
                                     .debug_selector(|| "queue-uncertain-copy".into())
                                     .when(tidy, |d| {
                                         d.on_click(cx.listener(move |this, _, window, cx| {
@@ -519,7 +492,7 @@ impl Workspace {
                         }
                     })
                     .child(
-                        self.q_button("queue-uncertain-dismiss", "Dismiss", tidy)
+                        self.button("queue-uncertain-dismiss", "Dismiss", tidy)
                             .debug_selector(|| "queue-uncertain-dismiss".into())
                             .when(tidy, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
@@ -540,7 +513,7 @@ impl Workspace {
         tidy: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let id = confirmed.id.clone();
         div()
             .debug_selector(|| "queue-confirmed".into())
@@ -579,7 +552,7 @@ impl Workspace {
                         )
                     })
                     .child(
-                        self.q_button("queue-confirmed-dismiss", "Dismiss", tidy)
+                        self.button("queue-confirmed-dismiss", "Dismiss", tidy)
                             .debug_selector(|| "queue-confirmed-dismiss".into())
                             .when(tidy, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
@@ -592,13 +565,13 @@ impl Workspace {
 
     /// The inline editor with what stands in the way of saving, if anything.
     fn render_queue_editor(&self, edit: &Edit, live: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let saving = edit.pending.is_some();
         let action = |id: &'static str, label: &'static str, primary: bool, enabled: bool| {
             if primary {
                 self.primary_button(id, label, enabled)
             } else {
-                self.q_button(id, label, enabled)
+                self.button(id, label, enabled)
             }
             .debug_selector(move || id.into())
         };
@@ -732,7 +705,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let id = entry.id.clone();
         let open = self.queue.expanded.contains(&id);
         let foldable = long(&entry.text);
@@ -752,18 +725,6 @@ impl Workspace {
             .py_1()
             .rounded(px(p.control_radius))
             .bg(rgb(p.base))
-            .when(self.design().is_v2(), |d| {
-                let t = p.tokens;
-                d.items_center()
-                    .gap(px(t.space.md))
-                    .pl(px(t.space.md))
-                    .pr(px(t.space.xs))
-                    .py(px(t.space.xs))
-                    .rounded(px(t.radius.control))
-                    .bg(rgb(p.chat))
-                    .border(px(t.stroke.hairline))
-                    .border_color(rgb(p.roles.card_border))
-            })
             .child(number);
         if let Some(edit) = self.queue_edit().filter(|e| e.id == id) {
             return row.child(self.render_queue_editor(edit, live, cx));
@@ -819,7 +780,7 @@ impl Workspace {
             .when(foldable, |d| {
                 let toggle_id = id.clone();
                 d.child(
-                    self.q_button(
+                    self.button(
                         SharedString::from(format!("queue-expand-{id}")),
                         if open { "Less" } else { "More" },
                         true,
@@ -843,7 +804,7 @@ impl Workspace {
                     .items_center()
                     .gap_1()
                     .child(
-                        self.q_icon(
+                        self.icon_button(
                             SharedString::from(format!("queue-up-{id}")),
                             "Move up",
                             IconName::ChevronUp,
@@ -853,7 +814,7 @@ impl Workspace {
                         .when(up, |d| d.on_click(move_to(ix - 1))),
                     )
                     .child(
-                        self.q_icon(
+                        self.icon_button(
                             SharedString::from(format!("queue-down-{id}")),
                             "Move down",
                             IconName::ChevronDown,
@@ -863,7 +824,7 @@ impl Workspace {
                         .when(down, |d| d.on_click(move_to(ix + 1))),
                     )
                     .child(
-                        self.q_button(SharedString::from(format!("queue-edit-{id}")), "Edit", live)
+                        self.button(SharedString::from(format!("queue-edit-{id}")), "Edit", live)
                             .debug_selector(move || format!("queue-entry-{ix}-edit"))
                             .when(live, |d| {
                                 d.on_click(cx.listener(move |this, _, window, cx| {
@@ -872,7 +833,7 @@ impl Workspace {
                             }),
                     )
                     .child(
-                        self.q_button(
+                        self.button(
                             SharedString::from(format!("queue-send-{id}")),
                             "Send now",
                             live,
@@ -885,7 +846,7 @@ impl Workspace {
                         }),
                     )
                     .child(
-                        self.q_icon(
+                        self.icon_button(
                             SharedString::from(format!("queue-remove-{id}")),
                             "Remove from queue",
                             IconName::Close,
@@ -899,52 +860,5 @@ impl Workspace {
                         }),
                     ),
             )
-    }
-}
-
-// area-composer
-impl Workspace {
-    /// The queue's text buttons: ghost primitives under design v2.
-    fn q_button(
-        &self,
-        id: impl Into<SharedString>,
-        label: impl Into<SharedString>,
-        enabled: bool,
-    ) -> Stateful<Div> {
-        if !self.design().is_v2() {
-            return self.button(id, label, enabled);
-        }
-        let id: SharedString = id.into();
-        primitives::button(
-            id,
-            label,
-            None,
-            primitives::ButtonVariant::Tertiary,
-            primitives::ButtonSize::Small,
-            enabled,
-            &self.palette(),
-        )
-    }
-
-    /// The queue's icon buttons: ghost primitives under design v2.
-    fn q_icon(
-        &self,
-        id: impl Into<SharedString>,
-        label: &'static str,
-        icon: IconName,
-        enabled: bool,
-    ) -> Stateful<Div> {
-        if !self.design().is_v2() {
-            return self.icon_button(id, label, icon, enabled);
-        }
-        let id: SharedString = id.into();
-        primitives::icon_button(
-            id,
-            icon,
-            label,
-            primitives::ButtonVariant::Tertiary,
-            enabled,
-            &self.palette(),
-        )
     }
 }

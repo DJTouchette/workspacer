@@ -190,13 +190,6 @@ device. Floating composer and approval
 surfaces use palette-specific shadows. Native palettes are independent of the
 Electron client's custom-theme registry.
 
-**Settings → Appearance → New design (preview)** switches to the redesign in
-progress (the `design_v2` setting, off by default; every theme works with it).
-`wks-native --design-v2` forces it for one run without saving, and
-`scripts/smoke.py --setting design_v2=true` captures it. Off, the app draws
-exactly the shipped design. Tokens, primitives and the rules for v2 work are in
-[docs/design-v2.md](docs/design-v2.md).
-
 The transcript, conversation header and composer share a centered 900 px content
 column with matching gutters. Short, narrow windows use a slimmer sidebar and
 compact approval controls to retain more conversation space.

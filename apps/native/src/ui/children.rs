@@ -19,43 +19,6 @@ pub(super) struct ChildUi {
     pinned: HashMap<String, u64>,
 }
 
-/// R5.4 one subagent truth: a subagent's state through the one derivation
-/// ([`super::status::derive`]), from the same facts the sidebar's child row
-/// reads (failed, stalled past the heartbeat, running, settled, waiting on
-/// the user). Its own header shows this, so the two agree on "Not
-/// responding". A settled subagent is Done (the derivation's Idle).
-pub(super) fn child_status_v2(
-    child: &ChildAgent,
-    connected: bool,
-    now: i64,
-) -> super::primitives::StatusKind {
-    use super::primitives::StatusKind;
-    let failed = child.failed();
-    let running = child.running();
-    let needs_you = !running
-        && !failed
-        && !child.settled()
-        && wks_native::child_agents::provider_active(&child.status);
-    let status = super::status::derive(super::status::Facts {
-        connected,
-        stopped: !running && !failed && !needs_you,
-        paused: false,
-        needs_you,
-        failed,
-        stalled: super::attention::child_stalled(child, now),
-        child_stalled: false,
-        streaming: false,
-        working: running,
-        children_working: false,
-        review: false,
-    });
-    if status.kind == StatusKind::Idle && child.settled() {
-        StatusKind::Done
-    } else {
-        status.kind
-    }
-}
-
 pub(super) fn status(child: &ChildAgent, connected: bool) -> &'static str {
     if !connected {
         return "Offline";
@@ -110,7 +73,8 @@ impl Workspace {
                         rows.iter().position(|r| r.key == key)
                     })
                     .unwrap_or(rows.len() - 1);
-            let ix = self.work_span(rows, ix).map_or(ix, |span| span.end - 1);
+            let ix = wks_native::tool_preview::group_span(rows, ix, self.settings.merge_turn_tools)
+                .map_or(ix, |span| span.end - 1);
             groups.entry(ix).or_default().push(child.clone());
         }
         groups
@@ -190,10 +154,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        if self.design().is_v2() {
-            return self.render_children_v2(parent, key, children, None, window, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let mut body = div()
             .ml_3()
             .pl_3()
@@ -441,7 +402,7 @@ impl Workspace {
         }
         body
     }
-    pub(super) fn render_child_transcript(
+    fn render_child_transcript(
         &mut self,
         parent: &str,
         agent: &str,
@@ -450,7 +411,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let Some(state)=self.view.requests.get("subagent-history").filter(|s|matches!(&s.request,Request::SubagentHistory{session,agent:target} if session==parent && target==agent)).cloned() else{return div().into_any_element();};
         if self.child_ui.closed == Some(state.number) {
             return div()
@@ -536,7 +497,7 @@ impl Workspace {
             );
         if let Some(error) = &state.error {
             return body
-                .child(div().text_color(rgb(p.warn())).child(error.clone()))
+                .child(div().text_color(rgb(p.warning)).child(error.clone()))
                 .into_any_element();
         }
         if state.loading {
@@ -675,11 +636,8 @@ impl Workspace {
     /// Title pill while a subagent is the chat: back to the parent, the
     /// subagent's title and model, and refresh.
     pub(super) fn render_child_title_bar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if self.design().is_v2() {
-            return self.render_child_title_bar_v2(cx);
-        }
         let (parent, child) = self.viewed_child()?;
-        let p = self.palette();
+        let p = self.appearance.palette();
         let title = Self::child_title(child.as_ref());
         let status = child
             .as_ref()
@@ -775,153 +733,10 @@ impl Workspace {
         )
     }
 
-    /// v2's subagent header (R5.4): back, the parent, the subagent's title
-    /// and model, and its one status from [`child_status_v2`] (the
-    /// sidebar's: "Not responding · 7m" here too, never "Working"), then
-    /// Refresh. Every part is a system component.
-    fn render_child_title_bar_v2(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let (parent, child) = self.viewed_child()?;
-        let p = self.palette();
-        let t = p.tokens;
-        let now = timing::now_ms();
-        let connected = self.view.connected;
-        let title = Self::child_title(child.as_ref());
-        let model = child
-            .as_ref()
-            .map(|c| wks_native::model::model_display_name(&c.model))
-            .unwrap_or_default();
-        let status = child.as_ref().map(|c| {
-            let kind = child_status_v2(c, connected, now);
-            let label = if kind == super::primitives::StatusKind::NotResponding {
-                wks_native::format::not_responding(
-                    c.telemetry.last_activity_ms.or(c.telemetry.started_at_ms),
-                    now,
-                )
-            } else {
-                kind.label().to_owned()
-            };
-            system::StatusCell::new(kind)
-                .label(label)
-                .render(&p)
-                .debug_selector(|| "child-title-status".into())
-        });
-        let refresh = connected && !self.view.loading;
-        Some(
-            div()
-                .id("title-bar")
-                .debug_selector(|| "child-title-bar".into())
-                .occlude()
-                .max_w_full()
-                .min_w_0()
-                .h_full()
-                .flex()
-                .items_center()
-                .gap(px(t.space.sm))
-                // r7-pages (R7.6): no back arrow here; the one "Back to
-                // parent" is the read-only bar's, labelled.
-                .child(
-                    div()
-                        .flex_shrink()
-                        .min_w_0()
-                        .max_w(px(t.layout.menu_width))
-                        .truncate()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_tertiary))
-                        .child(self.session_title(&parent)),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_tertiary))
-                        .child("/"),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_shrink()
-                        .truncate()
-                        .text_size(px(t.text.body))
-                        .font_weight(FontWeight(t.weight.semibold))
-                        .text_color(rgb(p.text))
-                        .child(title),
-                )
-                .when(!model.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .flex_shrink_0()
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .child(model),
-                    )
-                })
-                .children(status)
-                // r7-pages (R7.6): no unlabelled icons in the subagent view.
-                .child(
-                    primitives::button_with_icon(
-                        "refresh",
-                        "Refresh",
-                        primitives::Concept::Refresh,
-                        primitives::ButtonVariant::Tertiary,
-                        primitives::ButtonSize::Small,
-                        refresh,
-                        &p,
-                    )
-                    .debug_selector(|| "child-refresh".into())
-                    .tooltip(primitives::tooltip_view("Refresh subagent", None, &p))
-                    .when(refresh, |d| {
-                        d.on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
-                    }),
-                ),
-        )
-    }
-
     /// Stands in for the composer: provider-native subagents take no input.
-    /// r5-integration (design v2): while a read-only subagent is shown and
-    /// its parent waits on a decision, the dock does not draw the parent's
-    /// card (its buttons would answer from the wrong conversation). One
-    /// line says so: "The parent session is waiting on you". r7-pages
-    /// (R7.6): the way back is the read-only bar's one "Back to parent".
-    pub(super) fn render_parent_waiting(
-        &self,
-        parent: Option<&Session>,
-        _cx: &mut Context<Self>,
-    ) -> Option<Div> {
-        if !self.design().is_v2() || self.view.child.is_none() {
-            return None;
-        }
-        parent.filter(|s| s.approval.is_some() || s.questions.is_some())?;
-        let p = self.palette();
-        let t = p.tokens;
-        Some(
-            div()
-                .debug_selector(|| "child-parent-waiting".into())
-                .occlude()
-                .w_full()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap(px(t.space.sm))
-                .px(px(t.space.md))
-                .child(primitives::status_mark(
-                    primitives::StatusKind::NeedsYou,
-                    t.layout.status_dot,
-                    &p,
-                ))
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_secondary))
-                        .child("The parent session is waiting on you"),
-                ),
-        )
-    }
-
     pub(super) fn render_child_bar(&self, cx: &mut Context<Self>) -> Option<Div> {
         let (_, child) = self.viewed_child()?;
-        let p = self.palette();
+        let p = self.appearance.palette();
         let running = child.as_ref().is_some_and(ChildAgent::running);
         Some(
             div()
@@ -989,10 +804,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        if self.design().is_v2() {
-            return self.render_overview_v2(session, children, window, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let total = children.len();
         let settled = children.iter().all(ChildAgent::settled);
         let working = children.iter().filter(|c| c.running()).count();
@@ -1116,313 +928,5 @@ impl Workspace {
                         .child(self.render_children(session, &key, children, window, cx)),
                 )
             })
-    }
-}
-
-/// r6-decisions (R6.2): a subagent that stopped answering, as a Needs-you
-/// item: what it is, how long it has been silent, and where its three
-/// actions go. Nudge, Stop and View output read the same (and take the
-/// same keys, 1 2) on its Fleet tile, its Fleet table row and its own
-/// view.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Stall {
-    /// The session that runs it.
-    pub parent: String,
-    /// The subagent's id among its parent's.
-    pub agent: String,
-    pub name: String,
-    /// Its last beat (ms), for "not responding · 7m".
-    pub since: Option<i64>,
-    /// Its own session, when it has one (else it lives in the parent's
-    /// tools).
-    pub session: Option<String>,
-}
-
-/// A stalled subagent's actions. R7.1: Nudge is the positive answer (1),
-/// Stop the "no" (2); View output is an extra and takes no number.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum StallKey {
-    Nudge,
-    Stop,
-    ViewOutput,
-}
-
-impl StallKey {
-    pub(super) const ALL: [StallKey; 3] = [Self::Nudge, Self::Stop, Self::ViewOutput];
-
-    /// Key `n` (1-based), from the one key map.
-    pub(super) fn nth(n: usize) -> Option<Self> {
-        Self::ALL.into_iter().find(|k| k.number() == Some(n))
-    }
-
-    /// Its number key, if it has one.
-    pub(super) fn number(self) -> Option<usize> {
-        use super::decision::Slot;
-        match self {
-            Self::Nudge => Some(Slot::Positive.key()),
-            Self::Stop => Some(Slot::Deny.key()),
-            Self::ViewOutput => None,
-        }
-    }
-}
-
-impl Stall {
-    /// "Trace session… not responding · 7m".
-    pub(super) fn reason(&self, now: i64) -> String {
-        super::status::stalled_child_reason(&self.name, self.since.map_or(0, |at| now - at))
-    }
-
-    /// r8-decisions (R8.5): the subagent as a button names it ("Stop Trace
-    /// session"): its first two words.
-    pub(super) fn target(&self) -> String {
-        let words: Vec<&str> = self.name.split_whitespace().take(2).collect();
-        if words.is_empty() {
-            "subagent".to_owned()
-        } else {
-            words.join(" ")
-        }
-    }
-
-    /// The decision's headline: "Trace session restore paths is not
-    /// responding".
-    pub(super) fn headline(&self) -> String {
-        format!("{} is not responding", self.name)
-    }
-}
-
-/// What a stall decision's keys run (the caller's routing).
-pub(super) type OnStallKey = std::rc::Rc<dyn Fn(&mut Workspace, StallKey, &mut Context<Workspace>)>;
-
-impl Workspace {
-    /// The quietest stalled subagent of `session`, if one is.
-    pub(super) fn stalled_child(&self, session: &Session, now: i64) -> Option<Stall> {
-        if !self.view.connected || session.stopped() {
-            return None;
-        }
-        self.native_children(session)
-            .iter()
-            .filter(|c| super::attention::child_stalled(c, now))
-            .min_by_key(|c| {
-                c.telemetry
-                    .last_activity_ms
-                    .or(c.telemetry.started_at_ms)
-                    .unwrap_or(i64::MIN)
-            })
-            .map(|c| Stall {
-                parent: session.id.clone(),
-                agent: c.id.clone(),
-                name: Self::child_title(Some(c)),
-                since: c.telemetry.last_activity_ms.or(c.telemetry.started_at_ms),
-                session: c.session_id.clone(),
-            })
-    }
-
-    /// Whether `session` itself (not a subagent of it) has gone quiet past
-    /// the heartbeat threshold mid-turn.
-    pub(super) fn own_stall(&self, session: &Session, now: i64) -> bool {
-        self.view.connected
-            && !session.stopped()
-            && session.working()
-            && self
-                .last_heard(session)
-                .is_some_and(|at| wks_native::format::is_stale(Some(at), now))
-    }
-
-    /// `reason`, with a stall that is a subagent's (not the session's own)
-    /// named after it: "Trace session… not responding · 7m".
-    pub(super) fn child_stall_reason(
-        &self,
-        session: &Session,
-        now: i64,
-        reason: Option<super::attention::Reason>,
-    ) -> Option<super::attention::Reason> {
-        let mut reason = reason?;
-        if reason.text.starts_with(wks_native::format::NOT_RESPONDING)
-            && !self.own_stall(session, now)
-            && let Some(stall) = self.stalled_child(session, now)
-        {
-            reason.text = stall.reason(now);
-        }
-        Some(reason)
-    }
-
-    /// The stalled subagent of the subagent view, when the one shown is.
-    pub(super) fn viewed_stall(&self, now: i64) -> Option<Stall> {
-        let (parent, child) = self.viewed_child()?;
-        let child = child?;
-        super::attention::child_stalled(&child, now)
-            .then(|| Stall {
-                parent: parent.id.clone(),
-                agent: child.id.clone(),
-                name: Self::child_title(Some(&child)),
-                since: child
-                    .telemetry
-                    .last_activity_ms
-                    .or(child.telemetry.started_at_ms),
-                session: child.session_id.clone(),
-            })
-            .filter(|_| self.view.connected && !parent.stopped())
-    }
-
-    /// Do `key` on `stall`. Nudge sends a line it reads at once (its own
-    /// session) or asks the agent that runs it to check on it; Stop stops
-    /// it (or, inside the parent's tools, the parent's turn that runs it);
-    /// View output opens what it did.
-    pub(super) fn stall_act(&mut self, stall: &Stall, key: StallKey, cx: &mut Context<Self>) {
-        if !self.view.connected || self.view.busy {
-            return;
-        }
-        match key {
-            StallKey::Nudge => {
-                let (session, text) = match &stall.session {
-                    Some(id) => (id.clone(), super::transcript_v2::NUDGE_TEXT.to_owned()),
-                    None => (
-                        stall.parent.clone(),
-                        super::transcript_v2::nudge_parent_prompt(
-                            &stall.name,
-                            wks_native::format::NOT_RESPONDING,
-                        ),
-                    ),
-                };
-                self.command(
-                    Command::Act {
-                        session,
-                        action: Action::SendNow(text),
-                    },
-                    cx,
-                );
-            }
-            StallKey::Stop => {
-                let session = stall
-                    .session
-                    .clone()
-                    .unwrap_or_else(|| stall.parent.clone());
-                self.command(
-                    Command::Act {
-                        session,
-                        action: Action::Stop,
-                    },
-                    cx,
-                );
-            }
-            StallKey::ViewOutput => match &stall.session {
-                Some(id) => {
-                    if let Some(ix) = self.view.sessions.iter().position(|s| &s.id == id) {
-                        self.open_listed_session(ix, cx);
-                    }
-                }
-                None => {
-                    let (parent, agent) = (stall.parent.clone(), stall.agent.clone());
-                    self.new_session = false;
-                    self.screen = Screen::Conversation;
-                    self.open_sidebar_child(&parent, &agent, cx);
-                }
-            },
-        }
-        cx.notify();
-    }
-
-    /// `stall` as the one decision component: Nudge (Primary) and Stop
-    /// (Destructive) side by side, View output (Text) in the quiet row,
-    /// keys 1 2 (R7.1). `on_key` runs a key (a Fleet tile focuses itself first; the
-    /// subagent view acts in place).
-    pub(super) fn stall_decision(
-        &self,
-        stall: &Stall,
-        prefix: &str,
-        frame: super::decision::Frame,
-        on_key: OnStallKey,
-        cx: &mut Context<Self>,
-    ) -> super::decision::Decision {
-        use super::decision::{Choice, Decision};
-        let now = timing::now_ms();
-        let enabled = self.view.connected && !self.view.busy;
-        let choice = |key: StallKey, label: &'static str, tip: &'static str| {
-            let id = match key {
-                StallKey::Nudge => format!("{prefix}-nudge"),
-                StallKey::Stop => format!("{prefix}-stop"),
-                StallKey::ViewOutput => format!("{prefix}-view"),
-            };
-            let on_key = on_key.clone();
-            Choice::new(id, label)
-                .key(key.number())
-                .tooltip(tip)
-                .enabled(enabled)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    on_key(this, key, cx);
-                }))
-        };
-        let nudge_tip = if stall.session.is_some() {
-            "Nudge · ask it to report back: sends “Still there? Reply with where you are.” now"
-        } else {
-            "Nudge · ask the agent that runs it to check on it and say where it stands"
-        };
-        let stop_tip = if stall.session.is_some() {
-            "Stop this subagent"
-        } else {
-            "Stop the turn that runs this subagent"
-        };
-        let mut decision = Decision::new(
-            format!("{prefix}-decision"),
-            choice(StallKey::Nudge, wks_native::format::NUDGE, nudge_tip),
-            frame,
-        );
-        decision.headline = vec![(stall.headline(), false)];
-        decision.headline_selector = Some(format!("{prefix}-headline").into());
-        decision.reason = Some(wks_native::format::not_responding(stall.since, now));
-        decision.deny = Some(choice(StallKey::Stop, "Stop", stop_tip));
-        // R7.1: View output is no variant of Nudge; it rides where Deny
-        // with note would (a Text button), with no key.
-        decision.deny_note = Some(choice(
-            StallKey::ViewOutput,
-            "View output",
-            "Open what it has done so far",
-        ));
-        decision.keys = self.keycaps(true);
-        decision
-    }
-
-    /// r6-decisions (R6.2): under the subagent view's header, while the
-    /// subagent shown has stopped answering: Nudge, Stop and View output
-    /// with their keys (1 2 while nothing else is focused). Design v2.
-    pub(super) fn render_stall_bar(&self, cx: &mut Context<Self>) -> Option<Div> {
-        if !self.design().is_v2() {
-            return None;
-        }
-        let stall = self.viewed_stall(timing::now_ms())?;
-        let p = self.palette();
-        let on_key: OnStallKey =
-            std::rc::Rc::new(|this: &mut Self, key, cx: &mut Context<Self>| {
-                if let Some(stall) = this.viewed_stall(timing::now_ms()) {
-                    this.stall_act(&stall, key, cx);
-                }
-            });
-        let decision = self.stall_decision(
-            &stall,
-            "child-stall",
-            super::decision::Frame::Card { compact: true },
-            on_key,
-            cx,
-        );
-        Some(
-            div()
-                .debug_selector(|| "child-stall-bar".into())
-                .w_full()
-                .child(decision.render(&p)),
-        )
-    }
-
-    /// Number keys on the subagent view while its subagent is stalled:
-    /// 1 Nudge, 2 Stop (View output has no key). Whether the key was taken.
-    pub(super) fn stall_key(&mut self, n: usize, cx: &mut Context<Self>) -> bool {
-        let Some(key) = StallKey::nth(n) else {
-            return false;
-        };
-        let Some(stall) = self.viewed_stall(timing::now_ms()) else {
-            return false;
-        };
-        self.stall_act(&stall, key, cx);
-        true
     }
 }

@@ -17,8 +17,6 @@ pub(super) enum SettingsSection {
     Chat,
     Keyboard,
     About,
-    // r2-pages: v2 only (previews and experiments); v1 never lists it.
-    Labs,
 }
 
 impl SettingsSection {
@@ -43,7 +41,6 @@ impl SettingsSection {
             Self::Chat => "Chat",
             Self::Keyboard => "Keyboard",
             Self::About => "About",
-            Self::Labs => "Labs",
         }
     }
 
@@ -57,7 +54,6 @@ impl SettingsSection {
             Self::Chat => "How conversations and tool calls read.",
             Self::Keyboard => "Move around your workspace at your own pace.",
             Self::About => "Version and updates.",
-            Self::Labs => "Early features you can try before they are finished.",
         }
     }
 
@@ -71,18 +67,6 @@ impl SettingsSection {
             Self::Chat => IconName::Inbox,
             Self::Keyboard => IconName::SquareTerminal,
             Self::About => IconName::Info,
-            Self::Labs => IconName::Star,
-        }
-    }
-
-    // r4-calm (R4.6)
-    /// Design v2's icon: Agents is a plug (the robot is a subagent) and
-    /// Keyboard a keyboard (a terminal is a terminal).
-    fn icon_v2(self) -> Icon {
-        match self {
-            Self::Agents => Icon::new(super::primitives::Concept::Agents),
-            Self::Keyboard => Icon::new(super::primitives::Concept::Shortcuts),
-            other => Icon::new(other.icon()),
         }
     }
 }
@@ -172,10 +156,7 @@ impl Workspace {
         on_pick: impl Fn(&mut Self, T, &mut Window, &mut Context<Self>) + Clone + 'static,
         cx: &mut Context<Self>,
     ) -> Div {
-        if self.design().is_v2() {
-            return self.segmented_v2(id, options, selected, enabled, on_pick, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .flex_shrink_0()
             .flex()
@@ -219,122 +200,110 @@ impl Workspace {
 
     fn settings_entries(&self, cx: &mut Context<Self>) -> Vec<Entry> {
         use SettingsSection as S;
-        let p = self.palette();
+        let p = self.appearance.palette();
         let mut entries = Vec::new();
 
-        let themes = if self.design().is_v2() {
-            self.theme_picker_v2(4, cx)
-        } else {
-            div()
-        };
         let themes = div()
             .flex()
             .flex_col()
             .gap_2()
-            .when(self.design().is_v2(), |d| d.child(themes))
-            .when(!self.design().is_v2(), |d| {
-                d.child(
-                    // Eight palettes: equal tiles that wrap rather than one row
-                    // squeezed to unreadable previews in a narrow window.
-                    div()
-                        .debug_selector(|| "theme-picker".into())
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .children(Appearance::ALL.into_iter().map(|appearance| {
-                            let colors = appearance.palette_for(self.design());
-                            let active = self.appearance == appearance;
-                            chrome::interactive_control(div().id(appearance.label()), p, true)
-                                .debug_selector(move || format!("theme-{}", appearance.label()))
-                                .w(px(148.))
-                                .flex_shrink_0()
-                                .rounded(px(p.panel_radius))
-                                .overflow_hidden()
-                                .cursor_pointer()
-                                .border_color(if active { rgb(p.accent) } else { gpui::rgba(0) })
-                                .bg(rgb(p.base))
-                                .hover(|style| style.bg(rgb(p.selected)))
-                                .child(
-                                    div()
-                                        .m_2()
-                                        .h(px(64.))
-                                        .rounded(px(p.control_radius))
-                                        .bg(rgb(colors.chat))
-                                        .flex()
-                                        .overflow_hidden()
-                                        .child(
-                                            div()
-                                                .w(px(24.))
-                                                .h_full()
-                                                .bg(rgb(colors.base))
-                                                .p_2()
-                                                .child(status_dot(colors.accent)),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .p_2()
-                                                .flex()
-                                                .flex_col()
-                                                .gap_2()
-                                                .child(
-                                                    div()
-                                                        .h(px(6.))
-                                                        .w(px(36.))
-                                                        .rounded_full()
-                                                        .bg(rgb(colors.text)),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .h(px(4.))
-                                                        .w_full()
-                                                        .rounded_full()
-                                                        .bg(rgb(colors.border)),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .h(px(14.))
-                                                        .w_full()
-                                                        .rounded(px(4.))
-                                                        .bg(rgb(colors.surface)),
-                                                ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .px_3()
-                                        .pb_3()
-                                        .flex()
-                                        .items_center()
-                                        .justify_between()
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .truncate()
-                                                .text_size(px(12.))
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .text_color(rgb(if active {
-                                                    p.accent
-                                                } else {
-                                                    p.text
-                                                }))
-                                                .child(appearance.label()),
-                                        )
-                                        .when(active, |d| {
-                                            d.child(
-                                                Icon::new(IconName::Check)
-                                                    .size(px(14.))
-                                                    .text_color(rgb(p.accent)),
+            .child(
+                // Eight palettes: equal tiles that wrap rather than one row
+                // squeezed to unreadable previews in a narrow window.
+                div()
+                    .debug_selector(|| "theme-picker".into())
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .children(Appearance::ALL.into_iter().map(|appearance| {
+                        let colors = appearance.palette();
+                        let active = self.appearance == appearance;
+                        chrome::interactive_control(div().id(appearance.label()), p, true)
+                            .debug_selector(move || format!("theme-{}", appearance.label()))
+                            .w(px(148.))
+                            .flex_shrink_0()
+                            .rounded(px(p.panel_radius))
+                            .overflow_hidden()
+                            .cursor_pointer()
+                            .border_color(if active { rgb(p.accent) } else { gpui::rgba(0) })
+                            .bg(rgb(p.base))
+                            .hover(|style| style.bg(rgb(p.selected)))
+                            .child(
+                                div()
+                                    .m_2()
+                                    .h(px(64.))
+                                    .rounded(px(p.control_radius))
+                                    .bg(rgb(colors.chat))
+                                    .flex()
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .w(px(24.))
+                                            .h_full()
+                                            .bg(rgb(colors.base))
+                                            .p_2()
+                                            .child(status_dot(colors.accent)),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .p_2()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .h(px(6.))
+                                                    .w(px(36.))
+                                                    .rounded_full()
+                                                    .bg(rgb(colors.text)),
                                             )
-                                        }),
-                                )
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.choose_theme(appearance, window, cx)
-                                }))
-                        })),
-                )
-            })
+                                            .child(
+                                                div()
+                                                    .h(px(4.))
+                                                    .w_full()
+                                                    .rounded_full()
+                                                    .bg(rgb(colors.border)),
+                                            )
+                                            .child(
+                                                div()
+                                                    .h(px(14.))
+                                                    .w_full()
+                                                    .rounded(px(4.))
+                                                    .bg(rgb(colors.surface)),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .px_3()
+                                    .pb_3()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(px(12.))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(rgb(if active { p.accent } else { p.text }))
+                                            .child(appearance.label()),
+                                    )
+                                    .when(active, |d| {
+                                        d.child(
+                                            Icon::new(IconName::Check)
+                                                .size(px(14.))
+                                                .text_color(rgb(p.accent)),
+                                        )
+                                    }),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.choose_theme(appearance, window, cx)
+                            }))
+                    })),
+            )
             .when(!self.theme_error.is_empty(), |d| {
                 d.child(
                     div()
@@ -347,20 +316,19 @@ impl Workspace {
             S::Appearance,
             "theme",
             "Theme",
-            if self.design().is_v2() {
-                // r2-pages: mouse first; keys live under Keyboard.
-                "The palette for the whole app. Each tile is a small preview of it."
-            } else {
-                "Dark, Light, Nord, or Omarchy's Tokyo Night, Catppuccin Mocha and Latte, Gruvbox and Everforest. Press t in Normal mode to cycle."
-            },
+            "Dark, Light, Nord, or Omarchy's Tokyo Night, Catppuccin Mocha and Latte, Gruvbox and Everforest. Press t in Normal mode to cycle.",
             "palette color colour dark light nord mode omarchy tokyo night catppuccin mocha latte gruvbox everforest",
             Layout::Block,
             themes,
         ));
 
-        let interface_size = if self.design().is_v2() {
-            self.interface_size_v2(cx).into_any_element()
-        } else {
+        entries.push(Entry::new(
+            S::Appearance,
+            "interface-size",
+            "Interface size",
+            "Scales the whole app on top of your display's scaling. Ctrl/Cmd + and − step it; Ctrl/Cmd 0 resets.",
+            "zoom scale dpi size bigger smaller tiny huge display resolution",
+            Layout::Block,
             self.segmented(
                 "interface-size",
                 wks_native::navigation::INTERFACE_SCALES
@@ -370,21 +338,7 @@ impl Workspace {
                 self.settings.interface_scale,
                 |this, pct, window, cx| this.set_interface_scale(pct, window, cx),
                 cx,
-            )
-            .into_any_element()
-        };
-        entries.push(Entry::new(
-            S::Appearance,
-            "interface-size",
-            "Interface size",
-            "Scales the whole app on top of your display's scaling. Ctrl/Cmd + and − step it; Ctrl/Cmd 0 resets.",
-            "zoom scale dpi size bigger smaller tiny huge display resolution",
-            if self.design().is_v2() {
-                Layout::Row
-            } else {
-                Layout::Block
-            },
-            interface_size,
+            ),
         ));
         entries.push(Entry::new(
             S::Appearance,
@@ -423,10 +377,7 @@ impl Workspace {
                     this.save_settings(cx);
                 })),
         ));
-        // r3-pages: v2's session tools are the header toolbar; the rail
-        // (and so this setting) is v1's.
-        if !self.design().is_v2() {
-            entries.push(Entry::new(
+        entries.push(Entry::new(
             S::Appearance,
             "tool-rail",
             "Floating tool rail",
@@ -441,48 +392,6 @@ impl Workspace {
                     this.save_settings(cx);
                 })),
         ));
-        }
-        entries.push(Entry::new(
-            // r2-pages: under v2 the preview lives in Labs.
-            if self.design().is_v2() {
-                S::Labs
-            } else {
-                S::Appearance
-            },
-            "design-v2",
-            "New design (preview)",
-            "Try the redesigned interface while it is being built. Every theme works with it; switch it off to return to the current look.",
-            "new design redesign preview v2 beta experimental look style tokens",
-            Layout::Row,
-            div().debug_selector(|| "design-v2-switch".into()).child(
-                Switch::new("settings-design-v2")
-                    .checked(self.design().is_v2())
-                    .tooltip("New design (preview)")
-                    .on_click(cx.listener(|this, checked, window, cx| {
-                        this.set_design_v2(*checked, window, cx);
-                    })),
-            ),
-        ));
-        // area-shell
-        if self.design().is_v2() {
-            entries.push(Entry::new(
-                S::Appearance,
-                "sidebar-density",
-                "Compact session list",
-                "One short line per session (status, title, project, age) so more fit on screen. Off shows two lines with the model when it differs.",
-                "sidebar density compact comfortable dense rows list sessions height",
-                Layout::Row,
-                div().debug_selector(|| "sidebar-density-switch".into()).child(
-                    Switch::new("settings-sidebar-density")
-                        .checked(self.settings.sidebar_compact)
-                        .tooltip("Compact session list")
-                        .on_click(cx.listener(|this, checked, _, cx| {
-                            this.settings.sidebar_compact = *checked;
-                            this.save_settings(cx);
-                        })),
-                ),
-            ));
-        }
 
         entries.push(Entry::new(
             S::Typography,
@@ -568,7 +477,7 @@ impl Workspace {
             "Inter, JetBrains Mono and 15 px.",
             "default restore fonts",
             Layout::Row,
-            self.pquiet("reset-fonts", "Reset", IconName::Undo2, true)
+            self.quiet_button("reset-fonts", "Reset", IconName::Undo2, true)
                 .on_click(cx.listener(|this, _, window, cx| {
                     let defaults = Settings::default();
                     this.settings.interface_font = defaults.interface_font;
@@ -628,7 +537,7 @@ impl Workspace {
             "Install and connect the agents on your workspace host.",
             "install claude codex providers login connect",
             Layout::Row,
-            self.pquiet("settings-setup", "Set up", IconName::ArrowRight, true)
+            self.quiet_button("settings-setup", "Set up", IconName::ArrowRight, true)
                 .on_click(
                     cx.listener(|this, _, window, cx| this.open_feature(Screen::Setup, window, cx)),
                 ),
@@ -666,11 +575,7 @@ impl Workspace {
             S::Agents,
             "default-agent",
             "Default agent",
-            if self.design().is_v2() {
-                "The agent new sessions start with. You can still pick another for each session."
-            } else {
-                "Provider for new sessions. Press a in Normal mode to switch."
-            },
+            "Provider for new sessions. Press a in Normal mode to switch.",
             "provider claude codex new session",
             Layout::Row,
             self.segmented(
@@ -820,18 +725,6 @@ impl Workspace {
                     this.save_settings(cx);
                 })),
         ));
-        // area-transcript
-        if self.design().is_v2() {
-            entries.push(Entry::new(
-                S::Chat,
-                "reading-width",
-                "Reading width",
-                "How wide the conversation reads: a comfortable measure, wide for tables and code, or the whole pane.",
-                "reading width column measure wide full comfortable narrow layout chat",
-                Layout::Row,
-                self.render_reading_width(cx),
-            ));
-        }
 
         entries.push(Entry::new(
             S::Keyboard,
@@ -841,10 +734,10 @@ impl Workspace {
             "vim keys modal normal insert hjkl",
             Layout::Row,
             Switch::new("toggle-vim")
-                .checked(self.vim()) // r2-shell
+                .checked(self.settings.vim_navigation)
                 .tooltip("Vim navigation")
                 .on_click(cx.listener(|this, checked, window, cx| {
-                    this.settings.set_vim(this.design(), *checked); // r2-shell
+                    this.settings.vim_navigation = *checked;
                     window.focus(&this.focus);
                     this.save_settings(cx);
                 })),
@@ -877,7 +770,6 @@ impl Workspace {
                 cx,
             ),
         ));
-        let v2_keys = self.design().is_v2();
         entries.push(Entry::new(
             S::Keyboard,
             "shortcuts",
@@ -906,17 +798,7 @@ impl Workspace {
                     ("g h / g d", "Session history / changes"),
                     ("g a / g e / g m", "Agent setup / session / model"),
                     ("g j", "Jobs"),
-                    // Design v2 moved Scratch to g x; g n jumps to the next
-                    // session that needs you (the shell's cheat sheet agrees).
-                    (
-                        "g n",
-                        if v2_keys {
-                            "Next session that needs you"
-                        } else {
-                            "Scratch"
-                        },
-                    ),
-                    ("g x", "Scratch"),
+                    ("g n", "Scratch"),
                     ("g s", "Settings"),
                     ("g c", "Conversation"),
                     ("n", "New session in the selected project"),
@@ -942,7 +824,6 @@ impl Workspace {
                     ),
                 ]
                 .into_iter()
-                .filter(|(keys, _)| v2_keys || *keys != "g x")
                 .map(|(keys, label)| {
                     div()
                         .flex()
@@ -966,109 +847,13 @@ impl Workspace {
             "Follows the channel this build came from: nightly builds track the rolling nightly, stable builds the latest release.",
             "version release upgrade check download changelog nightly stable install",
             Layout::Block,
-            if self.design().is_v2() {
-                self.render_update_card_v2(cx)
-            } else {
-                self.render_update_card(cx)
-            },
+            self.render_update_card(cx),
         ));
         entries
     }
 
-    // r3-pages
-    /// The notes under a shared setting (failed read, reading, offline);
-    /// v2 says nothing about a hub.
-    fn setting_notes(&self) -> (&'static str, &'static str, &'static str) {
-        if self.design().is_v2() {
-            (
-                "Couldn't read this setting",
-                "Reading this setting…",
-                "Connect to Workspacer to change this.",
-            )
-        } else {
-            (
-                "Couldn't reach the hub's setting",
-                "Reading the hub's setting…",
-                "Connect to a hub to change this.",
-            )
-        }
-    }
-
-    // r3-pages
-    /// Interface size as a stepper (R3.6: not nine stops): smaller, the
-    /// size, larger, and Reset away from 100%.
-    fn interface_size_v2(&self, cx: &mut Context<Self>) -> Div {
-        use wks_native::navigation::{INTERFACE_SCALES, step_interface_scale};
-        let p = self.palette();
-        let t = p.tokens;
-        let current = self.settings.interface_scale;
-        let (min, max) = (
-            INTERFACE_SCALES[0],
-            INTERFACE_SCALES[INTERFACE_SCALES.len() - 1],
-        );
-        let step = |id: &'static str, icon: IconName, tip: &'static str, by: i32, enabled: bool| {
-            primitives::icon_button(id, icon, tip, ButtonVariant::Secondary, enabled, &p)
-                .debug_selector(move || id.into())
-                .when(enabled, |d| {
-                    d.on_click(cx.listener(move |this, _, window, cx| {
-                        let next = step_interface_scale(this.settings.interface_scale, by);
-                        this.set_interface_scale(next, window, cx);
-                    }))
-                })
-        };
-        div()
-            .debug_selector(|| "interface-size".into())
-            .flex()
-            .items_center()
-            .gap(px(t.space.sm))
-            .when(current != 100, |d| {
-                d.child(
-                    primitives::button(
-                        "interface-size-reset",
-                        "Reset",
-                        None,
-                        ButtonVariant::Tertiary,
-                        ButtonSize::Small,
-                        true,
-                        &p,
-                    )
-                    .debug_selector(|| "interface-size-reset".into())
-                    .on_click(
-                        cx.listener(|this, _, window, cx| {
-                            this.set_interface_scale(100, window, cx)
-                        }),
-                    ),
-                )
-            })
-            .child(step(
-                "interface-size-smaller",
-                IconName::Minus,
-                "Smaller",
-                -1,
-                current > min,
-            ))
-            .child(primitives::tabular(
-                div()
-                    .debug_selector(|| "interface-size-value".into())
-                    .min_w(px(t.layout.control_height + t.space.lg))
-                    .flex()
-                    .justify_center()
-                    .text_size(px(t.text.body))
-                    .font_weight(FontWeight(t.weight.medium))
-                    .text_color(rgb(p.text))
-                    .child(format!("{current}%")),
-            ))
-            .child(step(
-                "interface-size-larger",
-                IconName::Plus,
-                "Larger",
-                1,
-                current < max,
-            ))
-    }
-
     fn render_child_access(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let state = self.view.requests.get("child-access");
         let pending = state.is_some_and(|s| s.loading);
         let can_write = self.view.connected && !self.demo && !pending;
@@ -1076,14 +861,14 @@ impl Workspace {
         let error = state.filter(|s| !s.loading).and_then(|s| s.error.clone());
         let (status, tone) = match (current, &error) {
             (_, Some(error)) => (
-                format!("{}: {error}", self.setting_notes().0),
+                format!("Couldn't reach the hub's setting: {error}"),
                 chrome::Tone::Error,
             ),
             (None, None) if pending || self.view.connected => {
-                (self.setting_notes().1.to_owned(), chrome::Tone::Loading)
+                ("Reading the hub's setting…".to_owned(), chrome::Tone::Loading)
             }
             (None, None) => (
-                self.setting_notes().2.to_owned(),
+                "Connect to a hub to change this.".to_owned(),
                 chrome::Tone::Info,
             ),
             (Some((true, _)), None) => (
@@ -1091,12 +876,7 @@ impl Workspace {
                 chrome::Tone::Warning,
             ),
             (Some((false, true)), None) => (
-                if self.design().is_v2() {
-                    "Off. Fleet Manager workers still start with full access (the Fleet setting)."
-                } else {
-                    "Off. Fleet Manager workers still start with full access (the hub's Fleet setting)."
-                }
-                .to_owned(),
+                "Off. Fleet Manager workers still start with full access (the hub's Fleet setting).".to_owned(),
                 chrome::Tone::Info,
             ),
             (Some((false, false)), None) => (
@@ -1133,7 +913,7 @@ impl Workspace {
     }
 
     fn render_job_access(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let state = self.view.requests.get("job-access");
         let pending = state.is_some_and(|s| s.loading);
         let can_write = self.view.connected && !self.demo && !pending;
@@ -1141,13 +921,17 @@ impl Workspace {
         let error = state.filter(|s| !s.loading).and_then(|s| s.error.clone());
         let (status, tone) = match (current, &error) {
             (_, Some(error)) => (
-                format!("{}: {error}", self.setting_notes().0),
+                format!("Couldn't reach the hub's setting: {error}"),
                 chrome::Tone::Error,
             ),
-            (None, None) if pending || self.view.connected => {
-                (self.setting_notes().1.to_owned(), chrome::Tone::Loading)
-            }
-            (None, None) => (self.setting_notes().2.to_owned(), chrome::Tone::Info),
+            (None, None) if pending || self.view.connected => (
+                "Reading the hub's setting…".to_owned(),
+                chrome::Tone::Loading,
+            ),
+            (None, None) => (
+                "Connect to a hub to change this.".to_owned(),
+                chrome::Tone::Info,
+            ),
             (Some(true), None) => (
                 "On: agents started by jobs skip provider approval prompts.".to_owned(),
                 chrome::Tone::Warning,
@@ -1189,7 +973,7 @@ impl Workspace {
     /// The `agents.ignoreExternalMcp` switch and its status line; also shown
     /// on the Session page's MCP card.
     pub(super) fn render_external_mcp(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let state = self.view.requests.get("external-mcp");
         let pending = state.is_some_and(|s| s.loading);
         let can_write = self.view.connected && !self.demo && !pending;
@@ -1197,13 +981,17 @@ impl Workspace {
         let error = state.filter(|s| !s.loading).and_then(|s| s.error.clone());
         let (status, tone) = match (current, &error) {
             (_, Some(error)) => (
-                format!("{}: {error}", self.setting_notes().0),
+                format!("Couldn't reach the hub's setting: {error}"),
                 chrome::Tone::Error,
             ),
-            (None, None) if pending || self.view.connected => {
-                (self.setting_notes().1.to_owned(), chrome::Tone::Loading)
-            }
-            (None, None) => (self.setting_notes().2.to_owned(), chrome::Tone::Info),
+            (None, None) if pending || self.view.connected => (
+                "Reading the hub's setting…".to_owned(),
+                chrome::Tone::Loading,
+            ),
+            (None, None) => (
+                "Connect to a hub to change this.".to_owned(),
+                chrome::Tone::Info,
+            ),
             (Some(true), None) => (
                 "On: new Claude sessions load only workspacer and MCP library servers.".to_owned(),
                 chrome::Tone::Warning,
@@ -1248,7 +1036,7 @@ impl Workspace {
     }
 
     fn render_entry(&self, entry: Entry, first: bool) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let id = entry.id;
         let text = div()
             .flex_1()
@@ -1285,7 +1073,7 @@ impl Workspace {
     }
 
     fn settings_card(&self, entries: Vec<Entry>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .rounded(px(p.panel_radius))
             .border_1()
@@ -1301,10 +1089,7 @@ impl Workspace {
     }
 
     pub(super) fn render_settings(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        if self.design().is_v2() {
-            return self.render_settings_v2(window, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let short = window.viewport_size().height < px(620.);
         // Beside a wide sidebar the category rail shrinks to icons, so the
         // preferences themselves keep a readable measure.
@@ -1561,17 +1346,11 @@ impl Workspace {
 
     /// j / k in Normal mode step through categories.
     pub(super) fn step_settings_section(&mut self, step: isize, cx: &mut Context<Self>) {
-        let all: &[SettingsSection] = if self.design().is_v2() {
-            &SettingsSection::V2
-        } else {
-            &SettingsSection::ALL
-        };
-        let current = if self.design().is_v2() {
-            self.settings_section.v2_home()
-        } else {
-            self.settings_section
-        };
-        let ix = all.iter().position(|s| *s == current).unwrap_or(0) as isize;
+        let all = SettingsSection::ALL;
+        let ix = all
+            .iter()
+            .position(|s| *s == self.settings_section)
+            .unwrap_or(0) as isize;
         self.enter_settings_section(all[(ix + step).rem_euclid(all.len() as isize) as usize], cx);
         cx.notify();
     }
@@ -1605,901 +1384,5 @@ mod tests {
         assert!(settings_match("mono font", &fields));
         assert!(!settings_match("mono theme", &fields));
         assert!(settings_match("  paths  ", &fields));
-    }
-}
-
-// area-pages: Settings under design v2. One page header (title, description
-// and the search field), a category rail and fluid cards. Chat's two
-// switches fold into Appearance as a "Conversation" card, so every rail
-// entry leads somewhere with substance. Entries stay one flat, append-only
-// list (`settings_entries`); only their presentation changes here.
-use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
-
-impl SettingsSection {
-    /// The rail under v2: Chat folds into Appearance.
-    pub(super) const V2: [Self; 8] = [
-        Self::Appearance,
-        Self::Typography,
-        Self::Workspace,
-        Self::Remote,
-        Self::Agents,
-        Self::Keyboard,
-        // r2-pages
-        Self::Labs,
-        Self::About,
-    ];
-
-    /// Where an entry of this section shows under v2.
-    pub(super) fn v2_home(self) -> Self {
-        match self {
-            Self::Chat => Self::Appearance,
-            other => other,
-        }
-    }
-
-    /// A folded section's card heading (v2).
-    fn v2_card_title(self) -> Option<&'static str> {
-        match self {
-            Self::Chat => Some("Conversation"),
-            _ => None,
-        }
-    }
-
-    fn v2_description(self) -> &'static str {
-        match self {
-            Self::Appearance => "Theme, size and how conversations read.",
-            other => other.description(),
-        }
-    }
-}
-
-// r3-pages (R3.5)
-/// A v2 setting's description as what it does for you, in two lines at
-/// most and without "hub". `None` keeps the entry's own (already short).
-fn outcome_v2(id: &str) -> Option<&'static str> {
-    Some(match id {
-        "interface-size" => {
-            "Make everything bigger or smaller. Ctrl/Cmd + and − change it; Ctrl/Cmd 0 resets it."
-        }
-        "window-layout" => {
-            "Tall puts panels below the conversation, for portrait monitors. Auto picks it when the window is taller than wide."
-        }
-        "reduce-motion" => "Turn off springy and spinning animations. Fades stay.",
-        "sidebar-density" => "Fit more sessions on screen: one short line each.",
-        "keep-running" => {
-            "Closing the window keeps your agents running from the taskbar or Dock. Quit stops them."
-        }
-        "notifications" => {
-            "Get an alert when a session finishes or needs you while this window is in the background."
-        }
-        "terminal-shell" => {
-            "The shell new terminals open with, from those on the machine that runs your agents. Only its owner can change it."
-        }
-        "agent-setup" => "Install and sign in to the agents on the machine that runs them.",
-        "auto-title" => {
-            "Name each session from what you asked, after its first answer. A name you type is never replaced."
-        }
-        "title-model" => "The model that writes those names. A cheap one is plenty.",
-        "child-access" => {
-            "Sessions your agents start skip Claude's and Codex's own approval prompts. Workspacer's approvals still apply."
-        }
-        "job-access" => {
-            "Agents that jobs start skip Claude's and Codex's own approval prompts, from the next run."
-        }
-        "external-mcp" => {
-            "New Claude sessions skip MCP servers from project and user settings, so a broken one can't stop them. Workspacer's tools still load."
-        }
-        "updates" => {
-            "Checks for new versions of the build you installed: nightly builds get nightlies, stable builds get releases."
-        }
-        _ => return None,
-    })
-}
-
-/// A hub that does not know a method answers with an error naming it
-/// ("Unknown method", "Method not found", a fixture's "Unknown fixture
-/// method"): the feature is unavailable there, not broken.
-pub(super) fn unknown_method(error: &str) -> bool {
-    let lower = error.to_ascii_lowercase();
-    lower.contains("unknown method")
-        || lower.contains("unknown fixture method")
-        || lower.contains("method not found")
-        || lower.contains("no such method")
-        || lower.contains("-32601")
-}
-
-impl Workspace {
-    /// Settings → Remote cannot work on this hub: it does not know the call.
-    pub(super) fn remote_unavailable(&self) -> bool {
-        ["remote", "remote-action"].into_iter().any(|key| {
-            self.view
-                .requests
-                .get(key)
-                .and_then(|s| s.error.as_deref())
-                .is_some_and(unknown_method)
-        })
-    }
-
-    /// The v2 segmented control: equal segments in one track. In a block
-    /// entry the track stretches to the card's width.
-    fn segmented_v2<T: Copy + PartialEq + 'static>(
-        &self,
-        id: &'static str,
-        options: Vec<(T, String)>,
-        selected: T,
-        enabled: bool,
-        on_pick: impl Fn(&mut Self, T, &mut Window, &mut Context<Self>) + Clone + 'static,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.palette();
-        primitives::segmented(&p)
-            .flex_shrink_0()
-            .children(options.into_iter().enumerate().map(|(ix, (value, label))| {
-                let on_pick = on_pick.clone();
-                primitives::segment((id, ix), label, value == selected, &p)
-                    .debug_selector(move || format!("{id}-{ix}"))
-                    .when(!enabled, |d| d.text_color(rgb(p.roles.text_tertiary)))
-                    .when(enabled, |d| {
-                        d.on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                on_pick(this, value, window, cx)
-                            }),
-                        )
-                    })
-            }))
-    }
-
-    /// The theme picker under v2: a fluid grid of tiles, each a miniature of
-    /// that theme's v2 palette (sidebar, a selected row, a card with an
-    /// accent button and an attention dot).
-    fn theme_picker_v2(&self, columns: u16, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let bar = |w: f32, color: u32| {
-            div()
-                .h(px(t.space.xs))
-                .w(px(w))
-                .rounded(px(t.radius.full))
-                .bg(rgb(color))
-        };
-        div()
-            .debug_selector(|| "theme-picker".into())
-            .w_full()
-            .grid()
-            .grid_cols(columns)
-            .gap(px(t.space.md))
-            .children(Appearance::ALL.into_iter().map(|appearance| {
-                let c = appearance.palette_for(Design::V2);
-                let active = self.appearance == appearance;
-                let preview = div()
-                    .h(px(t.layout.avatar_lg * 2.5))
-                    .rounded(px(t.radius.control))
-                    .overflow_hidden()
-                    .border(px(t.stroke.hairline))
-                    .border_color(rgb(c.border))
-                    .bg(rgb(c.chat))
-                    .flex()
-                    .child(
-                        // Sidebar: a selected row among quiet ones.
-                        div()
-                            .w(px(t.layout.avatar_lg + t.space.lg))
-                            .h_full()
-                            .bg(rgb(c.base))
-                            .p(px(t.space.sm))
-                            .flex()
-                            .flex_col()
-                            .gap(px(t.space.sm))
-                            .child(bar(t.space.xl, c.roles.text_tertiary))
-                            .child(
-                                div()
-                                    .rounded(px(t.radius.xs))
-                                    .bg(rgb(c.selected))
-                                    .p(px(t.space.xxs))
-                                    .child(bar(t.space.xl, c.text)),
-                            )
-                            .child(bar(t.space.xl, c.roles.text_tertiary)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .p(px(t.space.md))
-                            .flex()
-                            .flex_col()
-                            .gap(px(t.space.sm))
-                            .child(bar(t.space.xxxl, c.text))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .rounded(px(t.radius.xs))
-                                    .bg(rgb(c.surface))
-                                    .border(px(t.stroke.hairline))
-                                    .border_color(rgb(c.roles.card_border))
-                                    .p(px(t.space.sm))
-                                    .flex()
-                                    .flex_col()
-                                    .justify_between()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(t.space.xs))
-                                            .child(
-                                                div()
-                                                    .size(px(t.layout.status_dot))
-                                                    .rounded(px(t.radius.full))
-                                                    .bg(rgb(c.warning)),
-                                            )
-                                            .child(bar(t.space.xxl, c.roles.text_secondary)),
-                                    )
-                                    .child(
-                                        div().flex().justify_end().child(
-                                            div()
-                                                .h(px(t.space.md))
-                                                .w(px(t.space.xxl))
-                                                .rounded(px(t.radius.xs))
-                                                .bg(rgb(c.primary)),
-                                        ),
-                                    ),
-                            ),
-                    );
-                chrome::interactive_control(div().id(appearance.label()), p, true)
-                    .debug_selector(move || format!("theme-{}", appearance.label()))
-                    .min_w_0()
-                    .p(px(t.space.sm))
-                    .rounded(px(t.radius.panel))
-                    .border_color(rgb(if active { p.accent } else { p.border }))
-                    .bg(rgb(if active { p.selected } else { p.surface }))
-                    .when(!active, |d| d.hover(move |s| s.bg(rgb(p.roles.hover))))
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.sm))
-                    .child(preview)
-                    .child(
-                        div()
-                            .px(px(t.space.xxs))
-                            .flex()
-                            .items_center()
-                            .gap(px(t.space.xs))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(t.text.meta))
-                                    .font_weight(FontWeight(t.weight.medium))
-                                    .text_color(rgb(p.text))
-                                    .child(appearance.label()),
-                            )
-                            .when(active, |d| {
-                                d.child(
-                                    Icon::new(IconName::Check)
-                                        .size(px(t.icon.sm))
-                                        .text_color(rgb(p.accent)),
-                                )
-                            }),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.choose_theme(appearance, window, cx)
-                    }))
-            }))
-    }
-
-    fn render_entry_v2(&self, entry: Entry, first: bool) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let id = entry.id;
-        let text = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.xxs))
-            .child(
-                div()
-                    .text_size(px(t.text.subheading))
-                    .font_weight(FontWeight(t.weight.medium))
-                    .text_color(rgb(p.text))
-                    .child(entry.title),
-            )
-            .child(
-                div()
-                    .text_size(px(t.text.meta))
-                    .line_height(gpui::relative(t.text.line_height))
-                    .text_color(rgb(p.roles.text_secondary))
-                    .child(outcome_v2(id).unwrap_or(entry.description)),
-            );
-        div()
-            .debug_selector(move || format!("setting-{id}"))
-            .px(px(t.space.xl))
-            .py(px(t.space.lg + t.space.xxs))
-            .when(!first, |d| {
-                d.border_t(px(t.stroke.hairline))
-                    .border_color(rgb(p.border))
-            })
-            .map(|d| match entry.layout {
-                Layout::Row => d
-                    .flex()
-                    .items_center()
-                    .gap(px(t.space.xxl))
-                    .child(text)
-                    .child(div().flex_shrink_0().child(entry.control)),
-                Layout::Block => d
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.lg))
-                    .child(text)
-                    // A column stretches its children: segmented tracks and
-                    // grids fill the card, with no dead gutter.
-                    .child(div().w_full().flex().flex_col().child(entry.control)),
-            })
-    }
-
-    fn settings_card_v2(&self, title: Option<&'static str>, entries: Vec<Entry>) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.md))
-            .when_some(title, |d, title| {
-                d.child(
-                    div()
-                        .pt(px(t.space.md))
-                        .text_size(px(t.text.subheading))
-                        .font_weight(FontWeight(t.weight.semibold))
-                        .text_color(rgb(p.text))
-                        .child(title),
-                )
-            })
-            .child(
-                primitives::card(&p)
-                    .p(px(0.))
-                    .gap(px(0.))
-                    .overflow_hidden()
-                    .children(
-                        entries
-                            .into_iter()
-                            .enumerate()
-                            .map(|(ix, e)| self.render_entry_v2(e, ix == 0)),
-                    ),
-            )
-    }
-
-    /// One section's cards: its own entries, then each folded section's
-    /// under its heading.
-    fn settings_section_v2(&self, section: SettingsSection, entries: Vec<Entry>) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let mut column = div().flex().flex_col().gap(px(t.space.lg));
-        let mut entries = entries;
-        // r2-pages: Labs is v2's own section, outside `ALL`.
-        for source in SettingsSection::ALL
-            .into_iter()
-            .chain([SettingsSection::Labs])
-        {
-            if source.v2_home() != section {
-                continue;
-            }
-            let (hits, rest): (Vec<Entry>, Vec<Entry>) =
-                entries.into_iter().partition(|e| e.section == source);
-            entries = rest;
-            if hits.is_empty() {
-                continue;
-            }
-            column = column.child(self.settings_card_v2(source.v2_card_title(), hits));
-        }
-        column
-    }
-
-    pub(super) fn render_settings_v2(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let viewport = unzoom(window.viewport_size().width);
-        let sidebar = if self.sidebar_collapsed {
-            56.
-        } else {
-            wks_native::navigation::sidebar_width(self.settings.sidebar_width, viewport)
-        };
-        // Beside a wide sidebar the rail shrinks to icons.
-        let tight = viewport - sidebar < t.layout.page_width + t.layout.page_gutter * 2.;
-        let query = self.settings_search.read(cx).value().trim().to_owned();
-        let searching = !query.is_empty();
-        let remote_unavailable = self.remote_unavailable();
-        let entries: Vec<Entry> = self
-            .settings_entries(cx)
-            .into_iter()
-            // On a hub without remote sharing, pairing has nothing to show.
-            .filter(|e| !(remote_unavailable && matches!(e.id, "pair-phone" | "paired-devices")))
-            .collect();
-        let counts: Vec<usize> = SettingsSection::V2
-            .iter()
-            .map(|section| {
-                entries
-                    .iter()
-                    .filter(|e| e.section.v2_home() == *section && e.matches(&query))
-                    .count()
-            })
-            .collect();
-        let current = self.settings_section.v2_home();
-        let rail = div()
-            .debug_selector(|| "settings-rail".into())
-            .w(px(if tight {
-                t.layout.control_height
-            } else {
-                t.layout.settings_rail
-            }))
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.xxs))
-            .children(
-                SettingsSection::V2
-                    .into_iter()
-                    .zip(counts.iter().copied())
-                    .map(|(section, count)| {
-                        let active = !searching && current == section;
-                        let dimmed = searching && count == 0;
-                        let label = section.label();
-                        primitives::list_row(section.label(), active, true, &p)
-                            .debug_selector(move || format!("settings-nav-{}", section.label()))
-                            .h(px(t.layout.control_height_sm + t.space.xs))
-                            .when(tight, |d| {
-                                d.justify_center()
-                                    .tooltip(primitives::tooltip_view(label, None, &p))
-                            })
-                            .font_weight(FontWeight(if active {
-                                t.weight.semibold
-                            } else {
-                                t.weight.medium
-                            }))
-                            .text_color(rgb(if active {
-                                p.text
-                            } else if dimmed {
-                                p.roles.text_tertiary
-                            } else {
-                                p.roles.text_secondary
-                            }))
-                            .child(section.icon_v2().size(px(t.icon.md)).text_color(rgb(
-                                if active {
-                                    p.text
-                                } else {
-                                    p.roles.text_tertiary
-                                },
-                            )))
-                            .when(!tight, |d| d.child(div().flex_1().child(section.label())))
-                            .when(!tight && searching && count > 0, |d| {
-                                d.child(primitives::badge(
-                                    count.to_string(),
-                                    primitives::Intent::Accent,
-                                    &p,
-                                ))
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.enter_settings_section(section, cx);
-                                this.settings_search
-                                    .update(cx, |input, cx| input.set_value("", window, cx));
-                                window.focus(&this.focus);
-                                cx.notify();
-                            }))
-                    }),
-            );
-        let search = div()
-            .debug_selector(|| "settings-search".into())
-            .w(px(t.layout.settings_rail + t.layout.status_column))
-            .h(px(t.layout.control_height_sm + t.space.xs))
-            .px(px(t.space.md))
-            .rounded(px(t.radius.control))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.border_strong))
-            .bg(rgb(p.surface))
-            .flex()
-            .items_center()
-            .gap(px(t.space.sm))
-            .child(
-                Icon::new(IconName::Search)
-                    .size(px(t.icon.sm))
-                    .text_color(rgb(p.roles.text_tertiary)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(t.text.body))
-                    .child(Input::new(&self.settings_search).appearance(false)),
-            )
-            .child(primitives::kbd("/", &p));
-        let mut content = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.xl));
-        if searching {
-            let mut any = false;
-            let mut entries = entries;
-            for section in SettingsSection::V2 {
-                let (hits, rest): (Vec<Entry>, Vec<Entry>) = entries
-                    .into_iter()
-                    .partition(|e| e.section.v2_home() == section && e.matches(&query));
-                entries = rest;
-                if hits.is_empty() {
-                    continue;
-                }
-                any = true;
-                content = content.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(t.space.xs))
-                        .child(primitives::section_label(section.label(), &p))
-                        .child(self.settings_card_v2(None, hits)),
-                );
-            }
-            if !any {
-                content = content.child(
-                    primitives::empty_state(
-                        IconName::Search,
-                        format!("No settings match “{query}”"),
-                        Some("Try a broader word, like “font”, “theme” or “keys”.".into()),
-                        &p,
-                    )
-                    .debug_selector(|| "settings-no-results".into()),
-                );
-            }
-        } else {
-            content = content
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(t.space.xxs))
-                        .child(
-                            div()
-                                .text_size(px(t.text.heading))
-                                .font_weight(FontWeight(t.weight.semibold))
-                                .text_color(rgb(p.text))
-                                .child(current.label()),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(t.text.body))
-                                .text_color(rgb(p.roles.text_secondary))
-                                .child(current.v2_description()),
-                        ),
-                )
-                .child(self.settings_section_v2(current, entries));
-        }
-        let header = primitives::page_header(
-            self.page_back_v2(cx),
-            "Settings",
-            Some("Saved on this device, unless a setting says it is shared.".into()),
-            vec![search.into_any_element()],
-            &p,
-        )
-        .debug_selector(|| "page-header".into());
-        // r6-surfaces (R6.5): Settings is a form, on the centred form
-        // template.
-        self.page_view(
-            "settings-view",
-            t.pages().wide,
-            false,
-            // r5-shell (R5.4): the shared PageShell.
-            super::system::page_shell(
-                header,
-                (!self.settings_error.is_empty()).then(|| {
-                    chrome::notice_line(self.settings_error.clone(), chrome::Tone::Error, p)
-                        .into_any_element()
-                }),
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(if tight { t.space.lg } else { t.space.xxl }))
-                    .child(rail)
-                    .child(content),
-                super::system::PageWidth::Form,
-                &p,
-            ),
-        )
-    }
-
-    /// Settings → Remote on a hub that does not offer remote sharing.
-    pub(super) fn remote_unavailable_v2(&self) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        div()
-            .debug_selector(|| "remote-unavailable".into())
-            .flex()
-            .items_start()
-            .gap(px(t.space.lg))
-            .child(
-                div()
-                    .size(px(t.layout.avatar_lg))
-                    .flex_shrink_0()
-                    .rounded(px(t.radius.control))
-                    .bg(primitives::tonal(&p, t.wash.rest))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(rgb(p.roles.text_secondary))
-                    .child(Icon::new(IconName::Globe).size(px(t.icon.md))),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.xxs))
-                    .child(
-                        StatusBadge::new(StatusKind::Idle)
-                            .label("Not available here")
-                            .render(&p),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(t.text.meta))
-                            .line_height(gpui::relative(t.text.line_height))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .child("This version of Workspacer can't share over Tailscale. Update Workspacer on the machine that runs your agents to pair phones from here."),
-                    ),
-            )
-    }
-
-    /// Settings → About under v2: the app, its version and channel, and one
-    /// calm status line. A failed check (offline, GitHub unreachable) says
-    /// so in words, with the raw error in a tooltip.
-    pub(super) fn render_update_card_v2(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let installed = wks_native::features::installed_version();
-        let channel = wks_native::updates::Channel::of(&installed);
-        let checking = self.view.requests.get("updates").is_some_and(|s| s.loading);
-        let check_error = self
-            .view
-            .requests
-            .get("updates")
-            .filter(|s| !s.loading)
-            .and_then(|s| s.error.clone())
-            .filter(|e| !e.is_empty());
-        let downloading = self
-            .view
-            .requests
-            .get("update-download")
-            .is_some_and(|s| s.loading);
-        let handing_off = self.extras.update_handing_off;
-        let status = self.update_status().cloned();
-        let available = status
-            .as_ref()
-            .is_some_and(|s| s["update_available"] == true);
-        let installable = status.as_ref().is_some_and(|s| s["installable"] == true);
-        let latest = status
-            .as_ref()
-            .and_then(|s| s["latest"].as_str().map(str::to_owned));
-        let release_url = status
-            .as_ref()
-            .and_then(|s| s["release_url"].as_str().map(str::to_owned))
-            .unwrap_or_else(|| wks_native::features::RELEASES_URL.to_owned());
-        let asset = status.as_ref().map(|s| s["asset"].clone());
-        let (badge, detail): (StatusBadge, Option<String>) = if checking {
-            (
-                StatusBadge::new(StatusKind::Working).label("Checking for updates…"),
-                None,
-            )
-        } else if check_error.is_some() {
-            // The raw error stays in the tooltip.
-            (
-                StatusBadge::new(StatusKind::Unknown).label("Couldn't check for updates"),
-                Some(
-                    "Workspacer couldn't reach GitHub, so it can't tell whether a newer version exists. Check your connection and try again."
-                        .to_owned(),
-                ),
-            )
-        } else {
-            match (&status, latest.as_deref()) {
-                (Some(s), _) if s["update_available"].is_null() => (
-                    StatusBadge::new(StatusKind::Idle).label("Development build"),
-                    Some("Version comparison is unavailable for this build.".to_owned()),
-                ),
-                (Some(_), Some(latest)) if available => (
-                    StatusBadge::new(StatusKind::NeedsYou)
-                        .label(format!("Update available: {latest}")),
-                    None,
-                ),
-                (Some(_), Some(_)) => (
-                    StatusBadge::new(StatusKind::Done).label("You're up to date"),
-                    None,
-                ),
-                (Some(_), None) => (
-                    StatusBadge::new(StatusKind::Idle).label("No release on this channel yet"),
-                    None,
-                ),
-                (None, _) => (
-                    StatusBadge::new(StatusKind::Unknown).label("Not checked yet"),
-                    None,
-                ),
-            }
-        };
-        let can_check = !checking && !downloading;
-        let check = primitives::button(
-            "check-updates",
-            if checking {
-                "Checking…"
-            } else if check_error.is_some() {
-                "Try again"
-            } else {
-                "Check for updates"
-            },
-            Some(IconName::Redo),
-            ButtonVariant::Secondary,
-            ButtonSize::Small,
-            can_check,
-            &p,
-        )
-        .debug_selector(|| "check-updates".into())
-        .when(can_check, |d| {
-            d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Updates, cx)))
-        });
-        let notes = primitives::button(
-            "open-releases",
-            if available && !installable {
-                "Download"
-            } else {
-                "Release notes"
-            },
-            Some(IconName::ExternalLink),
-            ButtonVariant::Tertiary,
-            ButtonSize::Small,
-            true,
-            &p,
-        )
-        .on_click(move |_, _, cx| cx.open_url(&release_url));
-        let busy = downloading || handing_off;
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.lg))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(t.space.lg))
-                    .child(primitives::avatar_tile_sized(
-                        "Workspacer",
-                        t.layout.avatar_lg,
-                        &p,
-                    ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(t.space.xxs))
-                            .child(
-                                div()
-                                    .text_size(px(t.text.subheading))
-                                    .font_weight(FontWeight(t.weight.semibold))
-                                    .text_color(rgb(p.text))
-                                    .child("Workspacer"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(t.space.md))
-                                    .text_size(px(t.text.meta))
-                                    .text_color(rgb(p.roles.text_secondary))
-                                    .child(format!("Version {installed}"))
-                                    .child(primitives::pill(
-                                        channel.label(),
-                                        primitives::Intent::Neutral,
-                                        &p,
-                                    )),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .id("update-status")
-                    .debug_selector(|| "update-status".into())
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.xs))
-                    .when_some(check_error.clone(), |d, error| {
-                        d.tooltip(primitives::tooltip_view(error, None, &p))
-                    })
-                    .child(badge.render(&p))
-                    .when_some(detail, |d, detail| {
-                        d.child(
-                            div()
-                                .debug_selector(|| "update-offline".into())
-                                .text_size(px(t.text.meta))
-                                .line_height(gpui::relative(t.text.line_height))
-                                .text_color(rgb(p.roles.text_tertiary))
-                                .child(detail),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(t.space.md))
-                    .when(available && installable, |d| {
-                        d.child(
-                            primitives::button(
-                                "install-update",
-                                if downloading {
-                                    "Downloading…"
-                                } else if handing_off {
-                                    "Starting installer…"
-                                } else {
-                                    "Install and restart"
-                                },
-                                None,
-                                ButtonVariant::Primary,
-                                ButtonSize::Small,
-                                !busy,
-                                &p,
-                            )
-                            .debug_selector(|| "install-update".into())
-                            .when(!busy, |d| {
-                                d.on_click(cx.listener(move |this, _, window, cx| {
-                                    if this.extras.update_installer.is_some() {
-                                        this.install_update(window, cx);
-                                    } else if let Some(asset) = asset.clone() {
-                                        this.request(Request::DownloadUpdate { asset }, cx);
-                                    }
-                                }))
-                            }),
-                        )
-                    })
-                    .child(check)
-                    .child(notes),
-            )
-            .child(self.feature_message("update-download"))
-            .when(!self.extras.update_notice.is_empty(), |d| {
-                let notice = self.extras.update_notice.clone();
-                let tone = super::updater::update_tone(&notice);
-                d.child(
-                    chrome::notice_line(notice, tone, p).debug_selector(|| "update-notice".into()),
-                )
-            })
-            .when(available && installable, |d| {
-                d.child(
-                    div()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_tertiary))
-                        .child(
-                            "The app closes, the installer runs silently, and the app reopens. \
-                             Unsaved edits are saved or discarded first.",
-                        ),
-                )
-            })
-    }
-}
-
-#[cfg(test)]
-mod v2_tests {
-    use super::*;
-
-    #[test]
-    fn unknown_methods_read_as_unavailable() {
-        assert!(unknown_method("Unknown fixture method: tailscale.status"));
-        assert!(unknown_method("unknown method remote.status"));
-        assert!(unknown_method("JSON-RPC error -32601: Method not found"));
-        assert!(!unknown_method("connection refused"));
-    }
-
-    #[test]
-    fn chat_folds_into_appearance() {
-        assert_eq!(SettingsSection::Chat.v2_home(), SettingsSection::Appearance);
-        assert!(!SettingsSection::V2.contains(&SettingsSection::Chat));
-        // Every section still has a home on the v2 rail.
-        for section in SettingsSection::ALL {
-            assert!(SettingsSection::V2.contains(&section.v2_home()));
-        }
     }
 }

@@ -46,7 +46,7 @@ impl Workspace {
 
     /// The project list has been read (or there is nothing to read from), so
     /// an empty one means no projects rather than not yet or not at all.
-    pub(super) fn groups_loaded(&self) -> bool {
+    fn groups_loaded(&self) -> bool {
         self.view
             .requests
             .get("project-groups")
@@ -303,7 +303,7 @@ impl Workspace {
     // ---- rendering ------------------------------------------------------
 
     /// Session counts (all, running) per group id.
-    pub(super) fn group_sessions(&self, groups: &Groups) -> HashMap<String, (usize, usize)> {
+    fn group_sessions(&self, groups: &Groups) -> HashMap<String, (usize, usize)> {
         let root = self.worktree_root();
         let mut counts: HashMap<String, (usize, usize)> = HashMap::new();
         for ix in 0..self.view.sessions.len() {
@@ -321,7 +321,7 @@ impl Workspace {
     /// The Projects page's projects: a card per group, the New project
     /// action, and the editor when it is open.
     pub(super) fn render_project_groups(&self, compact: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let groups = self.project_groups();
         let can_write = self.view.connected
             && !self.demo
@@ -353,7 +353,7 @@ impl Workspace {
                     .child(super::projects::section_label("PROJECTS", p))
                     .child(
                         // One editor at a time: New project rests while one is open.
-                        self.pquiet(
+                        self.quiet_button(
                             "new-project-group",
                             "New project",
                             IconName::Plus,
@@ -429,7 +429,7 @@ impl Workspace {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let (all, live) = sessions.unwrap_or_default();
         let pending = self.pending_in(&group.folders);
         let folders = group.folders.len();
@@ -562,14 +562,14 @@ impl Workspace {
                             .gap_1()
                             .child(
                                 if compact {
-                                    self.picon(
+                                    self.icon_button(
                                         format!("project-group-new-agent-{ix}"),
                                         "New agent in this project",
                                         IconName::Plus,
                                         can_spawn,
                                     )
                                 } else {
-                                    self.pquiet(
+                                    self.quiet_button(
                                         format!("project-group-new-agent-{ix}"),
                                         "New agent",
                                         IconName::Plus,
@@ -590,7 +590,7 @@ impl Workspace {
                                 ),
                             )
                             .child(
-                                self.picon(
+                                self.icon_button(
                                     format!("project-group-edit-{ix}"),
                                     "Edit project: name, icon, colour and folders",
                                     IconName::Settings,
@@ -648,8 +648,8 @@ impl Workspace {
             )
     }
 
-    pub(super) fn render_group_editor(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+    fn render_group_editor(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
         let Some(draft) = self.extras.group_draft.clone() else {
             return div();
         };
@@ -720,7 +720,7 @@ impl Workspace {
                         .child(folder.clone()),
                 )
                 .child(
-                    self.picon(
+                    self.icon_button(
                         format!("group-folder-remove-{ix}"),
                         "Remove from this project (the folder itself is untouched)",
                         IconName::Close,
@@ -876,7 +876,7 @@ impl Workspace {
                             .child(Input::new(&self.extras.group_folder).disabled(!enabled)),
                     )
                     .child(
-                        self.pbutton("group-folder-add", "Add folder", enabled)
+                        self.button("group-folder-add", "Add folder", enabled)
                             .debug_selector(|| "group-folder-add".into())
                             .when(enabled, |d| {
                                 d.on_click(cx.listener(|this, _, window, cx| {
@@ -921,7 +921,7 @@ impl Workspace {
                     .gap_1()
                     .when(existing, |d| {
                         d.child(
-                            self.pdanger("project-group-delete", delete_label, enabled)
+                            self.danger_button("project-group-delete", delete_label, enabled)
                                 .debug_selector(|| "project-group-delete".into())
                                 .when(enabled, |d| {
                                     d.on_click(cx.listener(|this, _, _, cx| this.delete_group(cx)))
@@ -936,13 +936,13 @@ impl Workspace {
                                 .flex_1()
                                 .min_w_0()
                                 .text_size(px(chrome::scale::CAPTION))
-                                .text_color(rgb(p.warn()))
+                                .text_color(rgb(p.warning))
                                 .child("Press again to delete; folders stay."),
                         )
                     })
                     .child(div().flex_1())
                     .child(
-                        self.pbutton("project-group-cancel", "Cancel", !busy)
+                        self.button("project-group-cancel", "Cancel", !busy)
                             .debug_selector(|| "project-group-cancel".into())
                             .when(!busy, |d| {
                                 d.on_click(
@@ -951,7 +951,7 @@ impl Workspace {
                             }),
                     )
                     .child(
-                        self.pprimary("project-group-save", "Save project", enabled)
+                        self.primary_button("project-group-save", "Save project", enabled)
                             .debug_selector(|| "project-group-save".into())
                             .when(enabled, |d| {
                                 d.on_click(cx.listener(|this, _, _, cx| this.save_group(cx)))

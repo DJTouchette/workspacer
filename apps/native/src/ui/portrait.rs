@@ -22,8 +22,8 @@ const MIN_CHAT_ABOVE: f32 = 280.;
 /// fit both, the panel is a sheet as in narrow windows.
 const MIN_DOCK_BELOW: f32 = 220.;
 /// The rail, and the gap between it and the flyout.
-pub(super) const RAIL_WIDTH: f32 = Tokens::V1.layout.rail_width;
-const FLYOUT_GAP: f32 = Tokens::V1.layout.flyout_gap;
+pub(super) const RAIL_WIDTH: f32 = 56.;
+const FLYOUT_GAP: f32 = 6.;
 
 /// How the rail's flyout was opened, which decides how it closes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,8 +126,7 @@ impl Workspace {
 
     /// The height a docked-below panel takes from the conversation (unzoomed).
     pub(super) fn dock_below_height(&self, window: &Window) -> f32 {
-        // area-panels: the Changes dock takes the slot too.
-        let showing = self.viewer_in_slot() || self.tasks_showing() || self.review_dock_showing();
+        let showing = self.viewer_in_slot() || self.tasks_showing();
         match self.dock(window) {
             Some(Dock::Below { height, .. }) if showing => height,
             _ => 0.,
@@ -145,7 +144,7 @@ impl Workspace {
         panel: impl IntoElement,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .id(id)
             .debug_selector(move || id.into())
@@ -260,12 +259,6 @@ impl Workspace {
     /// Open a hover flyout once the pointer rests on the rail, and close it
     /// once the pointer has left both rail and flyout for a moment.
     fn arm_peek(&mut self, cx: &mut Context<Self>) {
-        // v2's rail shows a hover card per session instead; the full list
-        // opens on purpose (search, Ctrl+K, the toggle).
-        if self.design().is_v2() && self.layout.peek != Some(Peek::Hover) {
-            self.layout.hover_timer = None;
-            return;
-        }
         let over = self.layout.rail_hovered || self.layout.flyout_hovered;
         let wait = match (self.layout.peek, over) {
             (None, true) if self.layout.rail_hovered => PEEK_OPEN,
@@ -371,7 +364,7 @@ impl Workspace {
         if self.screen == Screen::Projects && !self.new_session {
             return;
         }
-        let rows = self.nav_sessions(cx);
+        let rows = self.visible_sessions(cx);
         let open = self
             .navigation_selected
             .as_ref()
@@ -403,13 +396,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let peek = self.layout.peek.filter(|_| self.sidebar_collapsed)?;
-        let p = self.palette();
-        // v2 hides the rail while the full list shows: the flyout covers it.
-        let left = if self.design().is_v2() {
-            px(p.tokens.space.md)
-        } else {
-            px(8. + RAIL_WIDTH + FLYOUT_GAP)
-        };
+        let p = self.appearance.palette();
+        let left = px(8. + RAIL_WIDTH + FLYOUT_GAP);
         let panel = self.render_sidebar_panel(window, cx);
         let flyout = div()
             .id("sidebar-flyout")
@@ -450,11 +438,7 @@ impl Workspace {
                         .top_0()
                         .bottom_0()
                         .right_0()
-                        .left(if self.design().is_v2() {
-                            px(0.)
-                        } else {
-                            px(8. + RAIL_WIDTH)
-                        })
+                        .left(px(8. + RAIL_WIDTH))
                         .occlude()
                         .bg(gpui::Hsla::from(rgb(p.shadow)).opacity(0.25))
                         .on_mouse_down(

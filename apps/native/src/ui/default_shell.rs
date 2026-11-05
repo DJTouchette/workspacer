@@ -95,7 +95,7 @@ impl Workspace {
     }
 
     pub(super) fn render_terminal_shell(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let writable = self.terminal_shell_writable();
         let value = self.extras.terminal_shell.as_ref();
         let choices = value

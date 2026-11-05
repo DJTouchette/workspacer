@@ -11,7 +11,7 @@ use gpui_component::highlighter::{
 };
 use std::ops::Range;
 use std::sync::Arc;
-use wks_native::appearance::{Appearance, Design};
+use wks_native::appearance::Appearance;
 use wks_native::diff::{self, Kind};
 use wks_native::links;
 
@@ -134,140 +134,6 @@ const CATPPUCCIN_LATTE: Syntax = Syntax {
     heading: "#1e66f5",
 };
 
-/// The syntax colours for a theme under a design: v1's published tables, or
-/// v2's calmer sets (area-transcript).
-fn syntax_for(appearance: Appearance, design: Design) -> &'static Syntax {
-    match design {
-        Design::V1 => syntax(appearance),
-        Design::V2 => syntax_v2(appearance),
-    }
-}
-
-// area-transcript
-/// V2 syntax: quieter, lower-chroma tokens drawn from each v2 palette, so
-/// code sits in the page instead of shouting over it, and nothing is purple
-/// (`docs/design-v2-direction.md` §1): keywords take the theme's warm red,
-/// functions its blue, types its teal, constants its sand.
-fn syntax_v2(appearance: Appearance) -> &'static Syntax {
-    match appearance {
-        Appearance::Dark => &V2_DARK,
-        Appearance::Light => &V2_LIGHT,
-        Appearance::Nord => &V2_NORD,
-        Appearance::TokyoNight => &V2_TOKYO_NIGHT,
-        Appearance::Catppuccin => &V2_CATPPUCCIN_MOCHA,
-        Appearance::Gruvbox => &V2_GRUVBOX,
-        Appearance::Everforest => &V2_EVERFOREST,
-        Appearance::CatppuccinLatte => &V2_CATPPUCCIN_LATTE,
-    }
-}
-
-const V2_DARK: Syntax = Syntax {
-    foreground: "#d2d3d7",
-    keyword: "#dd9a96",
-    string: "#a3c99a",
-    escape: "#d9b98a",
-    comment: "#868a93",
-    function: "#8bb4ee",
-    constant: "#d8a98f",
-    kind: "#86c0c8",
-    tag: "#dd9a96",
-    heading: "#8bb4ee",
-};
-
-const V2_LIGHT: Syntax = Syntax {
-    foreground: "#2c2c31",
-    keyword: "#a8402f",
-    string: "#3b6e1f",
-    escape: "#7a4a1a", // r6-integration: clear of the warmer Needs-you amber (#8A5800)
-    comment: "#6b6f78",
-    function: "#1f5fd6",
-    constant: "#8f5a2e",
-    kind: "#3a6f7f",
-    tag: "#a8402f",
-    heading: "#1f5fd6",
-};
-
-const V2_NORD: Syntax = Syntax {
-    foreground: "#d8dee9",
-    keyword: "#81a1c1",
-    string: "#bad19e",
-    escape: "#d8c4a0",
-    comment: "#8b95a8",
-    function: "#9fb8d8",
-    constant: "#d08770",
-    kind: "#a9c6d6",
-    tag: "#81a1c1",
-    heading: "#88c0d0",
-};
-
-const V2_TOKYO_NIGHT: Syntax = Syntax {
-    foreground: "#c0caf5",
-    keyword: "#e195b0",
-    string: "#b0d48a",
-    escape: "#89ddff",
-    comment: "#737ca8",
-    function: "#7aa2f7",
-    constant: "#ff9e64",
-    kind: "#2ac3de",
-    tag: "#e195b0",
-    heading: "#7aa2f7",
-};
-
-const V2_CATPPUCCIN_MOCHA: Syntax = Syntax {
-    foreground: "#cdd6f4",
-    keyword: "#e6a8c0",
-    string: "#a6e3a1",
-    escape: "#b4befe",
-    comment: "#9399b2",
-    function: "#89b4fa",
-    constant: "#fab387",
-    kind: "#d9c3a0",
-    tag: "#e6a8c0",
-    heading: "#89b4fa",
-};
-
-// r2-systems: syntax keeps clear of the status roles (red, amber, teal,
-// green read as fault, attention, working, done), so code never looks like
-// a state.
-const V2_GRUVBOX: Syntax = Syntax {
-    foreground: "#d4be98",
-    keyword: "#e3897f",
-    string: "#b8bf7a",
-    escape: "#e78a4e",
-    comment: "#928374",
-    function: "#7daea3",
-    constant: "#d3869b",
-    kind: "#c9a77a",
-    tag: "#e78a4e",
-    heading: "#7daea3",
-};
-
-const V2_EVERFOREST: Syntax = Syntax {
-    foreground: "#d3c6aa",
-    keyword: "#d99a8f",
-    string: "#b7c892",
-    escape: "#c8b48f",
-    comment: "#9da9a0",
-    function: "#7fbbb3",
-    constant: "#e69875",
-    kind: "#c6b9a0",
-    tag: "#e69875",
-    heading: "#7fbbb3",
-};
-
-const V2_CATPPUCCIN_LATTE: Syntax = Syntax {
-    foreground: "#4c4f69",
-    keyword: "#b63e5c",
-    string: "#4f7f1c",
-    escape: "#2a7a9a",
-    comment: "#6c6f85",
-    function: "#1e66f5",
-    constant: "#b8450a",
-    kind: "#7d6420",
-    tag: "#b63e5c",
-    heading: "#1e66f5",
-};
-
 fn syntax(appearance: Appearance) -> &'static Syntax {
     match appearance {
         Appearance::Dark => &GITHUB_DARK,
@@ -324,28 +190,17 @@ fn colors(s: &Syntax) -> SyntaxColors {
     .expect("static syntax palette is valid")
 }
 
-pub(super) fn highlight_theme(appearance: Appearance, design: Design) -> Arc<HighlightTheme> {
+pub(super) fn highlight_theme(appearance: Appearance) -> Arc<HighlightTheme> {
     let base = if appearance.is_dark() {
         HighlightTheme::default_dark()
     } else {
         HighlightTheme::default_light()
     };
-    let s = syntax_for(appearance, design);
+    let s = syntax(appearance);
     let mut theme = (*base).clone();
     theme.name = format!("Workspacer {}", appearance.label());
     theme.style.syntax = colors(s);
     theme.style.editor_foreground = serde_json::from_value(serde_json::json!(s.foreground)).ok();
-    // area-panels: v2's editor sits on the panel's own surface, with a
-    // quiet gutter, instead of the highlighter's stock background.
-    if design.is_v2() {
-        let p = appearance.palette_for(design);
-        let solid = |c: u32| Some(gpui::Hsla::from(gpui::rgb(c)));
-        theme.style.editor_background = solid(p.code_block);
-        theme.style.editor_line_number = solid(p.roles.text_tertiary);
-        theme.style.editor_active_line_number = solid(p.roles.text_secondary);
-        theme.style.editor_active_line =
-            Some(gpui::Hsla::from(gpui::rgb(p.text)).opacity(p.tokens.wash.disabled));
-    }
     Arc::new(theme)
 }
 
@@ -449,15 +304,15 @@ mod tests {
     #[test]
     fn every_appearance_colors_keywords_strings_and_comments_distinctly() {
         for appearance in Appearance::ALL {
-            let theme = highlight_theme(appearance, Design::V1);
+            let theme = highlight_theme(appearance);
             let color = |name| theme.style(name).and_then(|s| s.color).unwrap();
             assert_ne!(color("keyword"), color("string"), "{appearance:?}");
             assert_ne!(color("string"), color("comment"), "{appearance:?}");
             assert_ne!(color("function"), color("keyword"), "{appearance:?}");
         }
         assert_ne!(
-            highlight_theme(Appearance::Dark, Design::V1).style("keyword"),
-            highlight_theme(Appearance::Light, Design::V1).style("keyword")
+            highlight_theme(Appearance::Dark).style("keyword"),
+            highlight_theme(Appearance::Light).style("keyword")
         );
     }
 
@@ -479,7 +334,7 @@ diff --git a/notes.unknown b/notes.unknown
 +fn plain() {}
 ",
         );
-        let theme = highlight_theme(Appearance::Dark, Design::V1);
+        let theme = highlight_theme(Appearance::Dark);
         let highlights = highlight_diff(&parsed, &theme);
         let styled = |ix: usize, name: &str| {
             let want = theme.style(name).unwrap();
@@ -500,7 +355,7 @@ diff --git a/notes.unknown b/notes.unknown
                 .all(|(_, h)| h.is_empty())
         );
         // A dark theme and a light theme color the same keyword differently.
-        let light = highlight_diff(&parsed, &highlight_theme(Appearance::Light, Design::V1));
+        let light = highlight_diff(&parsed, &highlight_theme(Appearance::Light));
         let ix = row("fn old() {}");
         assert_ne!(highlights[ix], light[ix]);
     }
@@ -509,7 +364,7 @@ diff --git a/notes.unknown b/notes.unknown
     /// query upstream; files in them must still color.
     #[test]
     fn grammars_without_upstream_queries_still_highlight() {
-        let theme = highlight_theme(Appearance::Dark, Design::V1);
+        let theme = highlight_theme(Appearance::Dark);
         for (language, code) in [
             ("csharp", "public class Foo { // note\n string s = \"x\"; }"),
             ("swift", "let s = \"x\" // note"),
@@ -614,95 +469,6 @@ diff --git a/notes.unknown b/notes.unknown
                 let ratio = contrast(hex(color), over(p.selection, p.code_block));
                 assert!(ratio >= 1.8, "{appearance:?} selected {color}: {ratio:.2}");
             }
-        }
-    }
-
-    // area-transcript
-    /// V2 code reads on the v2 card surface in every theme and nothing in it
-    /// is purple.
-    // r2-systems
-    #[test]
-    fn v2_syntax_never_borrows_a_status_colour() {
-        let distance = |a: u32, b: u32| {
-            [16, 8, 0]
-                .map(|s| ((a >> s) & 0xff) as f64 - ((b >> s) & 0xff) as f64)
-                .iter()
-                .map(|d| d * d)
-                .sum::<f64>()
-                .sqrt()
-        };
-        for appearance in Appearance::ALL {
-            let r = appearance.palette_for(Design::V2).roles.status;
-            let s = syntax_for(appearance, Design::V2);
-            for color in [
-                s.keyword, s.string, s.escape, s.function, s.constant, s.kind, s.tag,
-            ] {
-                for (role, status) in [
-                    ("attention", r.attention),
-                    ("fault", r.fault),
-                    ("working", r.working),
-                    ("done", r.done),
-                ] {
-                    let d = distance(hex(color), status);
-                    assert!(d >= 24., "{appearance:?} {color} reads as {role} ({d:.0})");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn v2_syntax_reads_on_the_card_surface_and_is_never_purple() {
-        let hue_saturation = |color: u32| {
-            let [r, g, b] = [16, 8, 0].map(|s| ((color >> s) & 0xff) as f64 / 255.);
-            let (max, min) = (r.max(g).max(b), r.min(g).min(b));
-            let d = max - min;
-            if d == 0. {
-                return (0., 0.);
-            }
-            let l = (max + min) / 2.;
-            let s = d / (1. - (2. * l - 1.).abs());
-            let h = if max == r {
-                60. * ((g - b) / d).rem_euclid(6.)
-            } else if max == g {
-                60. * ((b - r) / d + 2.)
-            } else {
-                60. * ((r - g) / d + 4.)
-            };
-            (h, s)
-        };
-        for appearance in Appearance::ALL {
-            let p = appearance.palette_for(Design::V2);
-            let s = syntax_for(appearance, Design::V2);
-            for (name, color) in [
-                ("foreground", s.foreground),
-                ("keyword", s.keyword),
-                ("string", s.string),
-                ("escape", s.escape),
-                ("comment", s.comment),
-                ("function", s.function),
-                ("constant", s.constant),
-                ("type", s.kind),
-                ("tag", s.tag),
-                ("heading", s.heading),
-            ] {
-                let floor = match name {
-                    "foreground" => 4.5,
-                    _ => 3.,
-                };
-                for fill in [p.code_block, p.chat] {
-                    let ratio = contrast(hex(color), fill);
-                    assert!(ratio >= floor, "{appearance:?} {name} {color}: {ratio:.2}");
-                }
-                let (hue, saturation) = hue_saturation(hex(color));
-                assert!(
-                    saturation < 0.15 || !(255. ..=320.).contains(&hue),
-                    "{appearance:?} {name} {color} is purple ({hue:.0})"
-                );
-            }
-            let theme = highlight_theme(appearance, Design::V2);
-            let color = |name| theme.style(name).and_then(|s| s.color).unwrap();
-            assert_ne!(color("keyword"), color("string"), "{appearance:?}");
-            assert_ne!(color("function"), color("keyword"), "{appearance:?}");
         }
     }
 }

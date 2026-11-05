@@ -30,7 +30,7 @@ pub(super) fn spinner(size: f32) -> AnyElement {
 }
 
 impl Workspace {
-    pub(super) fn toggle_tool(&mut self, identity: String, expanded: bool, cx: &mut Context<Self>) {
+    fn toggle_tool(&mut self, identity: String, expanded: bool, cx: &mut Context<Self>) {
         if !self
             .view
             .transcript
@@ -72,7 +72,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let tool = row.tool.as_ref().expect("tool row");
         let session = self.chat_owner();
         let identity = tools::identity(row);
@@ -212,7 +212,7 @@ impl Workspace {
                         .px_3()
                         .pb_2()
                         .text_size(px(11.))
-                        .text_color(rgb(p.warn()))
+                        .text_color(rgb(p.warning))
                         .child("Tool content was clipped to the retained-history limit."),
                 );
             }
@@ -246,7 +246,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let key = row.key;
         div()
             .debug_selector(move || format!("work-note-{key}"))
@@ -265,31 +265,13 @@ impl Workspace {
             ))
     }
 
-    /// The work group row `ix` belongs to (r2-transcript: v2 groups hold
-    /// a whole burst; v1 keeps its card cap).
-    pub(super) fn work_span(
-        &self,
-        rows: &std::collections::VecDeque<Arc<wks_native::model::Row>>,
-        ix: usize,
-    ) -> Option<Range<usize>> {
-        let merge = self.settings.merge_turn_tools;
-        if self.design().is_v2() {
-            tool_preview::group_span_capped(rows, ix, merge, tool_preview::V2_GROUP_CAP)
-        } else {
-            tool_preview::group_span(rows, ix, merge)
-        }
-    }
-
     pub(super) fn render_work_card(
         &mut self,
         span: Range<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        if self.design().is_v2() {
-            return self.render_work_card_v2(span, window, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let view = self.view.clone();
         let rows = &view.transcript.rows;
         let session = self.chat_owner();

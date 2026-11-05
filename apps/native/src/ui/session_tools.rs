@@ -150,7 +150,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let open_key = format!("{key}-thinking");
         let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
         let rows = &self.view.transcript.rows;
@@ -180,9 +180,6 @@ impl Workspace {
             lines.next()
         }
         .unwrap_or_default();
-        if self.design().is_v2() {
-            return self.thinking_v2(row, key, (label, preview), open, live, window, cx);
-        }
         let toggle_key = open_key.clone();
         let title = div().flex_shrink_0().child(label);
         div()
@@ -455,7 +452,7 @@ impl Workspace {
         if action.row != row.key || self.view.selected.as_ref() != Some(&action.session) {
             return None;
         }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let enabled = self.view.connected && !self.view.busy;
         let cancel = |label: &'static str| {
             self.button("message-action-cancel", label, true)
@@ -693,7 +690,7 @@ impl Workspace {
 
     /// Session page: compaction and forking for a managed session.
     pub(super) fn render_context_card(&self, s: &Session, cx: &mut Context<Self>) -> Option<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let managed = matches!(s.provider_id(), "claude" | "codex");
         let compact = managed && self.view.may_call("claude.compact");
         let fork = managed && self.view.may_call("agents.fork");
@@ -722,7 +719,7 @@ impl Workspace {
             )),
         };
         Some(
-            self.page_card()
+            chrome::card(p)
                 .debug_selector(|| "context-card".into())
                 .px_4()
                 .pt_4()
@@ -770,7 +767,7 @@ impl Workspace {
                                             .child(Input::new(&self.tools.compact_note)),
                                     )
                                     .child(
-                                        self.pbutton("compact-context", "Compact", can_compact)
+                                        self.button("compact-context", "Compact", can_compact)
                                             .debug_selector(|| "compact-context".into())
                                             .flex_shrink_0()
                                             .py(px(6.))
@@ -799,7 +796,7 @@ impl Workspace {
                                     .to_owned(),
                             },
                             Some(
-                                self.pbutton("fork-session", "Fork", enabled)
+                                self.button("fork-session", "Fork", enabled)
                                     .debug_selector(|| "fork-session".into())
                                     .when(enabled, |d| {
                                         d.on_click(cx.listener(move |this, _, _, cx| {
@@ -835,7 +832,7 @@ impl Workspace {
     /// Reconnect for a failed one.
     pub(super) fn render_mcp_card(&self, s: &Session, cx: &mut Context<Self>) -> Option<Div> {
         let servers = s.status.mcp_servers.as_ref()?;
-        let p = self.palette();
+        let p = self.appearance.palette();
         let live = self.view.connected && !s.stopped() && !self.view.busy;
         let reconnect = live && self.view.may_call("claude.mcpReconnect");
         let refresh = live && self.view.may_call("sessions.mcpStatus");
@@ -846,7 +843,7 @@ impl Workspace {
             (n, f) => Some(format!("{f} of {n} failed to connect.")),
         };
         Some(
-            self.page_card()
+            chrome::card(p)
                 .debug_selector(|| "mcp-card".into())
                 .px_4()
                 .pt_4()
@@ -865,7 +862,7 @@ impl Workspace {
                             p,
                         )))
                         .child(
-                            self.pquiet("mcp-refresh", "Refresh", IconName::Redo, refresh)
+                            self.quiet_button("mcp-refresh", "Refresh", IconName::Redo, refresh)
                                 .debug_selector(|| "mcp-refresh".into())
                                 .my(px(-6.))
                                 .when(refresh, |d| {
@@ -902,7 +899,7 @@ impl Workspace {
                     let color = match server.status.as_str() {
                         "connected" => p.success,
                         "failed" => p.error,
-                        "needs-auth" | "pending" => p.warn(),
+                        "needs-auth" | "pending" => p.warning,
                         _ => p.muted,
                     };
                     let name = server.name.clone();
@@ -939,7 +936,7 @@ impl Workspace {
                         )
                         .when(server.failed(), |d| {
                             d.child(
-                                self.pbutton(
+                                self.button(
                                     SharedString::from(format!("mcp-reconnect-{ix}")),
                                     "Reconnect",
                                     reconnect,
@@ -972,7 +969,7 @@ impl Workspace {
         if s.provider_id() != "codex" {
             return None;
         }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let live = self.view.connected && !s.stopped() && !self.view.busy;
         let goals = self.view.may_call("agents.setGoal");
         let review = self.view.may_call("agents.review");
@@ -1001,8 +998,7 @@ impl Workspace {
                         .child(title),
                 )
         };
-        let card = self
-            .page_card()
+        let card = chrome::card(p)
             .debug_selector(|| "codex-card".into())
             .px_4()
             .pt_4()
@@ -1045,7 +1041,7 @@ impl Workspace {
                                 } else {
                                     ("Pause goal", "paused")
                                 };
-                                self.pbutton("goal-pause", label, live)
+                                self.button("goal-pause", label, live)
                                     .debug_selector(|| "goal-pause".into())
                                     .when(live, |d| {
                                         d.on_click(cx.listener(move |this, _, _, cx| {
@@ -1058,7 +1054,7 @@ impl Workspace {
                             })
                             .when(status != "complete", |d| {
                                 d.child(
-                                    self.pbutton("goal-complete", "Mark complete", live)
+                                    self.button("goal-complete", "Mark complete", live)
                                         .debug_selector(|| "goal-complete".into())
                                         .when(live, |d| {
                                             d.on_click(cx.listener(|this, _, _, cx| {
@@ -1073,7 +1069,7 @@ impl Workspace {
                                 )
                             })
                             .child(
-                                self.pdanger("goal-clear", "Clear goal", live)
+                                self.danger_button("goal-clear", "Clear goal", live)
                                     .debug_selector(|| "goal-clear".into())
                                     .when(live, |d| {
                                         d.on_click(cx.listener(|this, _, _, cx| {
@@ -1097,7 +1093,7 @@ impl Workspace {
                     )
                     .child(div().w(px(180.)).child(Input::new(&self.tools.goal_budget)))
                     .child(
-                        self.pbutton(
+                        self.button(
                             "goal-save",
                             if goal.is_some() {
                                 "Update goal"
@@ -1160,7 +1156,7 @@ impl Workspace {
                                 )
                             })
                             .child(
-                                self.pbutton("review-start", "Start review", live)
+                                self.button("review-start", "Start review", live)
                                     .debug_selector(|| "review-start".into())
                                     .when(live, |d| {
                                         d.on_click(
@@ -1197,7 +1193,7 @@ impl Workspace {
                         )
                         .when(!sandbox.ready, |d| {
                             d.child(
-                                self.pbutton("sandbox-setup", "Set up sandbox", enabled)
+                                self.button("sandbox-setup", "Set up sandbox", enabled)
                                     .debug_selector(|| "sandbox-setup".into())
                                     .when(enabled, |d| {
                                         d.on_click(cx.listener(|this, _, _, cx| {
@@ -1260,7 +1256,7 @@ impl Workspace {
         narrow: bool,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let chip = |id: &'static str, text: String, color: u32| {
             div()
                 .id(id)

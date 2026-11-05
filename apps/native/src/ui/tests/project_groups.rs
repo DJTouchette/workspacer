@@ -255,35 +255,3 @@ fn the_collapsed_rail_shows_the_filtered_project_and_clears_it(cx: &mut TestAppC
     click(&mut visual, "rail-project-filter");
     workspace.read_with(&visual, |this, _| assert_eq!(this.project_filter, None));
 }
-
-// area-pages
-#[gpui::test]
-fn projects_v2_nest_folders_under_their_project_and_link_pending_to_scratch(
-    cx: &mut TestAppContext,
-) {
-    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
-    visual.update(|_, cx| {
-        workspace.update(cx, |this, _| {
-            this.force_design(Some(wks_native::appearance::Design::V2))
-        })
-    });
-    open_projects(&workspace, &mut visual, &mut commands);
-    let rows = workspace.read_with(&visual, |this, cx| this.project_rows(cx));
-    let ix = |path: &str| {
-        rows.iter()
-            .position(|r| wks_native::projects::same_dir(&r.path, path))
-            .unwrap_or_else(|| panic!("{path} is listed"))
-    };
-    let selector = |ix: usize| -> &'static str { format!("project-row-{ix}").leak() };
-    let group = visual.debug_bounds("project-group-0").unwrap();
-    // Acme's folder sits inside Acme's card; the other folder is ungrouped.
-    let api = visual.debug_bounds(selector(ix("/w/acme-api"))).unwrap();
-    assert!(group.contains(&api.center()), "acme-api nests under Acme");
-    let other = visual.debug_bounds(selector(ix("/w/other"))).unwrap();
-    assert!(!group.contains(&other.center()));
-    let ungrouped = visual.debug_bounds("project-ungrouped").unwrap();
-    assert!(ungrouped.contains(&other.center()), "one Ungrouped section");
-    // "n in scratch" is a link to the project's scratch.
-    click(&mut visual, "project-group-pending-0");
-    workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Scratch));
-}

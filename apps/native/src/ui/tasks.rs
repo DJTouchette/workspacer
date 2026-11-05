@@ -19,8 +19,6 @@ use gpui_component::tooltip::Tooltip;
 use wks_native::background_tasks::{self as bg, Kind, Log, Source};
 use wks_native::features::Request;
 
-mod v2;
-
 /// Same slide as the file viewer.
 const SLIDE: std::time::Duration = std::time::Duration::from_millis(240);
 /// Characters of one log line drawn (the rest stays in the copy).
@@ -133,9 +131,6 @@ impl Workspace {
                 return;
             }
         }
-        if self.review_dock_showing() {
-            self.close_review_dock(cx);
-        }
         self.tasks.open = true;
         self.tasks.session = id;
         self.tasks.log = None;
@@ -171,29 +166,6 @@ impl Workspace {
             self.open_sidebar_child(&parent, &agent, cx);
         }
         cx.notify();
-    }
-
-    /// r3-foundation: open the panel on one of the selected session's tasks
-    /// (the title's red "… failed" chip): its log, or an agent's conversation.
-    pub(super) fn open_task_by_id(
-        &mut self,
-        id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.tasks.open {
-            self.toggle_tasks(window, cx);
-        }
-        if !self.tasks.open {
-            return;
-        }
-        let task = self
-            .task_session()
-            .and_then(|s| s.tasks.iter().find(|t| t.id == id))
-            .cloned();
-        if let Some(task) = task {
-            self.open_task(&task, cx);
-        }
     }
 
     /// Start reading one of a task's logs from its tail.
@@ -387,9 +359,8 @@ impl Workspace {
 
     // ── Rendering ──────────────────────────────────────────────────────
 
-    /// The v1 title-bar chip: running count, or nothing when the session has
-    /// no background work to show. Design v2 uses the capsule's words chip
-    /// (`capsule::render_tasks_words`).
+    /// The title-bar chip: running count, or nothing when the session has no
+    /// background work to show.
     pub(super) fn render_tasks_chip(
         &self,
         session: &Session,
@@ -398,7 +369,7 @@ impl Workspace {
         if session.tasks.is_empty() && session.background_tasks == 0 {
             return None;
         }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let running = if session.tasks.is_empty() {
             session.background_tasks as usize
         } else {
@@ -440,10 +411,7 @@ impl Workspace {
         now: i64,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.design().is_v2() {
-            return self.render_task_row_v2(ix, task, now, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let opens = task.shows_log() || task.subagent_id.is_some();
         let confirming = self.tasks.confirm_stop.as_deref() == Some(task.id.as_str());
         let id = task.id.clone();
@@ -527,7 +495,7 @@ impl Workspace {
         ix: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let small = |id: gpui::ElementId, label: &'static str, color: u32| {
             interactive_control(div().id(id), p, true)
                 .px_2()
@@ -586,10 +554,7 @@ impl Workspace {
     }
 
     fn render_tasks_header(&self, cx: &mut Context<Self>) -> Div {
-        if self.design().is_v2() {
-            return self.render_tasks_header_v2(cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let log_title = self.tasks.log.as_ref().map(|log| {
             self.task_session()
                 .and_then(|s| s.tasks.iter().find(|t| t.id == log.task))
@@ -635,7 +600,7 @@ impl Workspace {
     }
 
     fn render_task_list(&self, cx: &mut Context<Self>) -> AnyElement {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let Some(session) = self.task_session() else {
             return div().into_any_element();
         };
@@ -688,7 +653,7 @@ impl Workspace {
     }
 
     fn render_task_log(&self, log: &Log, cx: &mut Context<Self>) -> AnyElement {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let now = timing::now_ms();
         let task = self
             .task_session()
@@ -704,64 +669,58 @@ impl Workspace {
             .requests
             .get("task-output")
             .is_some_and(|s| s.loading);
-        let v2 = self.design().is_v2();
-        let t = p.tokens;
-        let meta_v2 = v2.then(|| self.render_task_log_meta_v2(log, task.as_ref(), cx));
         div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .children(meta_v2)
-            .when(!v2, |d| {
-                d.child(
-                    div()
-                        .px_3()
-                        .py_2()
-                        .flex()
-                        .items_start()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap(px(2.))
-                                .text_size(px(chrome::scale::CAPTION))
-                                .text_color(rgb(p.muted))
-                                .when_some(task.as_ref(), |d, task| {
-                                    d.child(
-                                        div()
-                                            .debug_selector(|| "task-log-meta".into())
-                                            .truncate()
-                                            .child(meta_line_with(
-                                                task,
-                                                now,
-                                                log.process.is_none() || !running,
-                                            )),
-                                    )
-                                })
-                                .when_some(log.process.filter(|_| running), |d, process| {
-                                    d.child(
-                                        div()
-                                            .debug_selector(|| "task-log-process".into())
-                                            .truncate()
-                                            .child(process_line(&process)),
-                                    )
-                                }),
-                        )
-                        .when(running, |d| {
-                            d.child(self.render_stop_control(
-                                &log.task,
-                                confirming,
-                                "task-log-stop",
-                                0,
-                                cx,
-                            ))
-                        }),
-                )
-            })
+            .child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .when_some(task.as_ref(), |d, task| {
+                                d.child(
+                                    div()
+                                        .debug_selector(|| "task-log-meta".into())
+                                        .truncate()
+                                        .child(meta_line_with(
+                                            task,
+                                            now,
+                                            log.process.is_none() || !running,
+                                        )),
+                                )
+                            })
+                            .when_some(log.process.filter(|_| running), |d, process| {
+                                d.child(
+                                    div()
+                                        .debug_selector(|| "task-log-process".into())
+                                        .truncate()
+                                        .child(process_line(&process)),
+                                )
+                            }),
+                    )
+                    .when(running, |d| {
+                        d.child(self.render_stop_control(
+                            &log.task,
+                            confirming,
+                            "task-log-stop",
+                            0,
+                            cx,
+                        ))
+                    }),
+            )
             .when_some(
                 task.as_ref()
                     .and_then(|t| Some((t.redirect_file.clone()?, t.has_output))),
@@ -788,14 +747,6 @@ impl Workspace {
                     .mb_2()
                     .rounded(px(p.control_radius))
                     .bg(rgb(p.code_block))
-                    .when(v2, |d| {
-                        d.mx(px(t.space.lg))
-                            .mb(px(t.space.lg))
-                            .rounded(px(t.radius.control))
-                            .map(|d| {
-                                system::edge(d, system::Side::All, system::EdgeTone::Divider, &p)
-                            })
-                    })
                     .overflow_hidden()
                     .child(if count == 0 {
                         div()
@@ -812,27 +763,17 @@ impl Workspace {
                             })
                             .into_any_element()
                     } else {
-                        // r3-transcript: a failed task's failing lines stand
-                        // out (red on a faint wash), v2 only.
-                        let highlight = v2 && task.as_ref().is_some_and(bg::Task::failed);
                         uniform_list(
                             "task-log-lines",
                             count,
                             cx.processor(move |_this, range: std::ops::Range<usize>, _, _| {
                                 range
                                     .map(|ix| {
-                                        let failing =
-                                            highlight && v2::failing_line(lines[ix].as_ref());
                                         div()
                                             .id(ix)
                                             .px_3()
                                             .whitespace_nowrap()
                                             .text_color(rgb(p.prose))
-                                            .when(failing, |d| {
-                                                d.debug_selector(|| "task-log-failing".into())
-                                                    .text_color(rgb(p.error))
-                                                    .bg(primitives::wash(p.error, t.wash.rest))
-                                            })
                                             .child(lines[ix].clone())
                                     })
                                     .collect::<Vec<_>>()
@@ -909,7 +850,7 @@ impl Workspace {
         has_task_file: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let (caption, other): (SharedString, Option<(&'static str, IconName, Source)>) =
             match source {
                 Source::Redirect => (
@@ -955,13 +896,11 @@ impl Workspace {
     }
 
     fn render_tasks_panel(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let body = match &self.tasks.log {
             Some(log) => self.render_task_log(log, cx),
             None => self.render_task_list(cx),
         };
-        let t = p.tokens;
-        let v2 = self.design().is_v2();
         div()
             .id("tasks-panel-card")
             .size_full()
@@ -971,10 +910,6 @@ impl Workspace {
             .bg(rgb(p.surface))
             .border_1()
             .border_color(rgb(p.border))
-            .when(v2, |d| {
-                d.rounded(px(t.radius.panel))
-                    .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
-            })
             .overflow_hidden()
             .child(self.render_tasks_header(cx))
             .when_some(self.tasks.notice.clone(), |d, (text, tone)| {
@@ -991,10 +926,7 @@ impl Workspace {
 
     /// Whether the panel takes the slot this frame (the file viewer wins it).
     pub(super) fn tasks_showing(&self) -> bool {
-        self.tasks.open
-            && !self.viewer_in_slot()
-            && !self.review_dock_showing()
-            && self.task_session().is_some()
+        self.tasks.open && !self.viewer_in_slot() && self.task_session().is_some()
     }
 
     /// Wide windows: the panel docks beside the conversation; tall ones,
@@ -1077,7 +1009,7 @@ impl Workspace {
         if !self.tasks_showing() || self.dock(window).is_some() {
             return None;
         }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let width = (window.viewport_size().width - px(24.))
             .min(px(640.))
             .max(px(280.));

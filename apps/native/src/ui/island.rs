@@ -493,7 +493,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> (Stateful<Div>, gpui::Pixels) {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let motion = !self.settings.reduce_motion;
         let state = &mut self.title_reveal;
         state.reveal.retune(motion);

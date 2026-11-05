@@ -125,21 +125,9 @@ impl Gauge {
 pub(super) fn gauge_color(pct: Option<f64>, p: Palette) -> u32 {
     match pct {
         Some(pct) if pct >= FULL_PCT => p.error,
-        Some(pct) if pct >= WARN_PCT => p.warn(),
+        Some(pct) if pct >= WARN_PCT => p.warning,
         Some(_) => p.success,
         None => p.muted,
-    }
-}
-
-/// The capsule's gauge colour: v2 keeps green for finished work, so a
-/// healthy context reads neutral and only the warning bands take a hue.
-fn capsule_color(pct: Option<f64>, p: Palette) -> u32 {
-    if !p.tokens.design.is_v2() {
-        return gauge_color(pct, p);
-    }
-    match pct {
-        Some(pct) if pct >= WARN_PCT => gauge_color(Some(pct), p),
-        _ => p.roles.text_secondary,
     }
 }
 
@@ -207,7 +195,7 @@ pub(super) fn token_label(tokens: u64) -> String {
 /// (bottom of its padding box) so it stays on the title row as notices grow
 /// the island below. `fill` is the animated share of the track.
 pub(super) fn hairline(gauge: Gauge, fill: f32, p: Palette) -> Div {
-    let color = capsule_color(gauge.pct(), p);
+    let color = gauge_color(gauge.pct(), p);
     let reading = matches!(gauge, Gauge::Reading(_));
     div()
         .debug_selector(|| "title-context".into())
@@ -259,7 +247,7 @@ pub(super) fn detail(gauge: Gauge, cold: Option<String>, p: Palette) -> Stateful
         })
         .child(
             div()
-                .text_color(rgb(capsule_color(gauge.pct(), p)))
+                .text_color(rgb(gauge_color(gauge.pct(), p)))
                 .child(share),
         )
         .when_some(rest, |d, rest| d.child("·").child(rest))
@@ -320,47 +308,6 @@ pub(super) fn context_meter(session: &Session, p: Palette) -> Option<Stateful<Di
                 d.child(cache::marker(p, 11., false).debug_selector(|| "context-meter-cold".into()))
             })
             .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx)),
-    )
-}
-
-// area-composer (R3.2, R3.5): design v2's composer says "Context 42%" in
-// words, never "ctx" and no track; neutral tertiary text below 80%, amber
-// from 80%, red at 100% (`format::level`). Same id and tooltip as the meter.
-pub(super) fn context_text_v2(session: &Session, p: Palette) -> Option<Stateful<Div>> {
-    let gauge = Gauge::of(session)?;
-    let t = p.tokens;
-    let pct = gauge.pct();
-    let now = cache::now();
-    let cold = cache::cold(session, now).map(|cold| cache::marker_tooltip(cold, now));
-    let tooltip = match &cold {
-        Some(cold) => format!("{}\n{cold}", gauge.explanation()),
-        None => gauge.explanation(),
-    };
-    let color = pct
-        .and_then(|pct| super::primitives::level_color(wks_native::format::level(pct), &p))
-        .unwrap_or(p.roles.text_tertiary);
-    Some(
-        div()
-            .id("context-meter")
-            .debug_selector(|| "context-meter".into())
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap(px(t.space.xs))
-            .px(px(t.space.sm))
-            .h(px(t.layout.icon_button))
-            .text_size(px(t.text.meta))
-            .text_color(rgb(color))
-            .child(super::primitives::tabular(
-                div().child(wks_native::format::context_label(pct)),
-            ))
-            .when(cold.is_some(), |d| {
-                d.child(
-                    cache::marker(p, t.text.meta, false)
-                        .debug_selector(|| "context-meter-cold".into()),
-                )
-            })
-            .tooltip(super::primitives::tooltip_view(tooltip, None, &p)),
     )
 }
 
@@ -441,9 +388,7 @@ impl Workspace {
     /// show at once. A subagent's capsule never carries it, because its
     /// chat has no composer and the gauge belongs to the parent.
     pub(super) fn title_carries_context(&self) -> bool {
-        // r2-shell: v2 draws no hairline under the title; the composer keeps
-        // its labelled meter.
-        self.view.child.is_none() && capsule_fits(self.title_base_width) && !self.design().is_v2()
+        self.view.child.is_none() && capsule_fits(self.title_base_width)
     }
 
     #[cfg(test)]

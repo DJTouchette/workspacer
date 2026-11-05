@@ -23,8 +23,6 @@ use wks_native::{
     links::{self, DocumentLink, FileKind, FileTarget, Link},
 };
 
-mod v2;
-
 const KEY: &str = "file-preview";
 /// The conversation keeps at least this much width beside a docked viewer.
 pub(super) const MIN_CHAT_BESIDE: f32 = 400.;
@@ -962,7 +960,7 @@ impl PreviewPane {
                 .child(
                     Icon::new(IconName::TriangleAlert)
                         .size(px(20.))
-                        .text_color(rgb(p.warn())),
+                        .text_color(rgb(p.warning)),
                 )
                 .child(
                     div()
@@ -1047,7 +1045,7 @@ impl PreviewPane {
         div()
             .flex_1()
             .p_6()
-            .text_color(rgb(p.warn()))
+            .text_color(rgb(p.warning))
             .child("This preview could not be displayed.")
             .into_any_element()
     }
@@ -1269,7 +1267,7 @@ impl Render for PreviewPane {
                 ],
             };
             (
-                ws.palette(),
+                ws.appearance.palette(),
                 ws.settings.text_size as f32,
                 ws.settings.text_size.clamp(12, 20) as f32,
                 style,
@@ -1348,17 +1346,6 @@ impl Render for PreviewPane {
             .as_ref()
             .map(|t| t.path.clone())
             .unwrap_or_else(|| self.explorer.root.clone());
-        let header_v2 = p.tokens.design.is_v2().then(|| v2::HeaderV2 {
-            title: title.clone(),
-            path: path.clone(),
-            details: details.clone(),
-            icon: icon.clone(),
-            dirty,
-            saving,
-            can_save: editable && !saving && (dirty || self.conflict.is_some()),
-            editable,
-            window_pane,
-        });
         let modes = self.render_modes(p, cx);
         let back = (!self.history.is_empty())
             .then(|| back.on_click(cx.listener(|this, _, _, cx| this.back_guarded(cx))));
@@ -1426,7 +1413,7 @@ impl Render for PreviewPane {
                                         .size(px(7.))
                                         .flex_shrink_0()
                                         .rounded_full()
-                                        .bg(rgb(p.warn())),
+                                        .bg(rgb(p.warning)),
                                 )
                             }),
                     )
@@ -1443,10 +1430,6 @@ impl Render for PreviewPane {
             .child(place)
             .child(copy)
             .child(close);
-        let header = match header_v2 {
-            Some(h) => self.render_header_v2(h, p, cx).into_any_element(),
-            None => header.into_any_element(),
-        };
         let banner = |id: &'static str, tone: u32, icon: IconName, text: String| {
             div()
                 .debug_selector(move || id.into())
@@ -1479,7 +1462,7 @@ impl Render for PreviewPane {
                 .border_b_1()
                 .border_color(rgb(p.border))
                 .text_size(px(12.))
-                .text_color(rgb(p.warn()))
+                .text_color(rgb(p.warning))
                 .child(Icon::new(IconName::Info).size(px(12.)).flex_shrink_0())
                 .child(div().flex_1().min_w_0().child(notice))
         });
@@ -1513,7 +1496,7 @@ impl Render for PreviewPane {
                     "{name} could not be read back before saving ({error}). It may have been moved or deleted. Overwrite to write your version there anyway."
                 ),
             };
-            banner("file-viewer-conflict", p.warn(), IconName::TriangleAlert, text)
+            banner("file-viewer-conflict", p.warning, IconName::TriangleAlert, text)
                 .child(overwrite.on_click(cx.listener(|this, _, _, cx| this.save(true, cx))))
                 .when(matches!(conflict, Conflict::Changed { .. }), |d| {
                     d.child(reload.on_click(cx.listener(|this, _, window, cx| {
@@ -1542,7 +1525,7 @@ impl Render for PreviewPane {
             };
             banner(
                 "file-viewer-unsaved",
-                p.warn(),
+                p.warning,
                 IconName::TriangleAlert,
                 format!("{name} has unsaved changes. Save them {next}?"),
             )
@@ -1628,12 +1611,6 @@ impl Render for PreviewPane {
                 d.rounded(px(p.panel_radius))
                     .border_1()
                     .border_color(rgb(p.border))
-            })
-            // Design v2: the same card edge as the Changes dock beside it.
-            .when(!window_pane && p.tokens.design.is_v2(), |d| {
-                d.rounded(px(p.tokens.radius.panel))
-                    .border(px(p.tokens.stroke.hairline))
-                    .border_color(rgb(p.roles.card_border))
             })
             .when(self.presentation == Presentation::Sheet, |d| {
                 d.shadow(chrome::floating_shadow(p))
@@ -2421,7 +2398,7 @@ impl Workspace {
             return None;
         }
         let pane = self.chat.viewer.pane.clone()?;
-        let p = self.palette();
+        let p = self.appearance.palette();
         let viewport = window.viewport_size();
         let width = (viewport.width - px(24.)).min(px(820.)).max(px(280.));
         pane.update(cx, |pane, _| {

@@ -6,8 +6,6 @@ mod cache;
 mod children;
 mod chrome;
 mod cleanup;
-// area-composer
-mod composer_v2;
 mod conversation;
 mod default_shell;
 mod explorer;
@@ -28,8 +26,6 @@ mod motion;
 mod navigation;
 mod plan;
 mod portrait;
-pub(crate) mod primitives;
-// r5-system: the design system's components (`docs/design-system.md`).
 mod project_groups;
 mod project_links;
 mod projects;
@@ -48,7 +44,6 @@ mod slash;
 mod smooth_scroll;
 mod states;
 mod syntax;
-pub(crate) mod system;
 mod tasks;
 mod terminal;
 mod titles;
@@ -59,23 +54,6 @@ mod updater;
 mod usage;
 mod window_destroy;
 mod work;
-// area-shell
-mod attention;
-mod capsule;
-mod model_popover;
-mod shell;
-// r4-truth
-mod status;
-// r2-shell
-mod palette;
-// area-transcript
-mod transcript_v2;
-// r3-fleet
-mod fleet;
-// r4-approvals
-mod decision;
-// r5-fleet
-mod grants;
 use chrome::ControlTextStyle;
 pub(crate) use chrome::custom_caption;
 use gpui::{
@@ -139,7 +117,7 @@ use gpui_component::{
 use launch::{PickerItem, model_items};
 use navigation::Screen;
 use std::{collections::HashMap, sync::Arc};
-use wks_native::appearance::{Appearance, Design, Palette, Tokens, preference_path};
+use wks_native::appearance::{Appearance, Palette, preference_path};
 use wks_native::controller::{Action, Command, Controller, NewSession, View};
 use wks_native::launch::{CatalogKey, ModelChoice, Permission};
 use wks_native::model::Session;
@@ -147,7 +125,7 @@ use wks_native::navigation::{Provider, Settings};
 use wks_native::projects::KnownProject;
 use wks_native::timing::{self, TurnClock};
 
-const CHAT_WIDTH: f32 = Tokens::V1.layout.chat_width;
+const CHAT_WIDTH: f32 = 900.;
 
 /// Fade height above the conversation dock; within its 12px of transcript padding.
 const DOCK_FADE: f32 = 12.;
@@ -180,24 +158,7 @@ bundled_icons!(
     "lucide/reply.svg",
     "lucide/megaphone.svg",
     "lucide/snowflake.svg",
-    // r2-transcript: tool event row glyphs.
-    "lucide/file-text.svg",
-    "lucide/pencil.svg",
-    "lucide/sparkles.svg",
-    "lucide/wrench.svg",
     "lucide/git-pull-request.svg",
-    // r4-calm (R4.6): one glyph per concept.
-    "lucide/layout-grid.svg",
-    "lucide/server.svg",
-    "lucide/plug.svg",
-    "lucide/keyboard.svg",
-    "lucide/clipboard-list.svg",
-    "lucide/history.svg",
-    "lucide/list-checks.svg",
-    "lucide/rotate-ccw.svg",
-    "lucide/refresh-cw.svg",
-    // r5-shell (R5.4): Scratch's own glyph, distinct from Projects' folder.
-    "lucide/sticky-note.svg",
 );
 
 impl gpui::AssetSource for Assets {
@@ -213,16 +174,7 @@ impl gpui::AssetSource for Assets {
     }
 }
 
-/// Point gpui-component's global theme at `appearance` under `design`. V1
-/// maps the shipped set of colours and leaves the rest stock; v2 maps every
-/// widget family (lists, tabs, scrollbars, tables…) so nothing falls back to
-/// gpui-component's defaults. Re-run whenever either input changes.
-pub fn configure_theme(
-    appearance: Appearance,
-    design: Design,
-    window: Option<&mut Window>,
-    cx: &mut App,
-) {
+pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: &mut App) {
     typography::register_fonts(cx);
     use gpui_component::{Theme, ThemeMode};
     Theme::change(
@@ -234,7 +186,7 @@ pub fn configure_theme(
         window,
         cx,
     );
-    let p = appearance.palette_for(design);
+    let p = appearance.palette();
     let theme = Theme::global_mut(cx);
     theme.colors.background = rgb(p.base).into();
     theme.colors.foreground = rgb(p.text).into();
@@ -256,137 +208,17 @@ pub fn configure_theme(
         p.surface
     })
     .into();
-    // r5-system: v2 gives an off switch its own knob; v1 keeps one thumb
-    // (r6-surfaces: and the primary track, with no hairline).
-    theme.colors.switch_thumb_off = None;
-    theme.colors.switch_on = None;
-    theme.colors.switch_border = None;
     theme.colors.popover = rgb(p.surface).into();
     theme.colors.popover_foreground = rgb(p.text).into();
     // Text selection is translucent and painted beneath the glyphs (see the
     // vendored Inline patch), so selected text keeps its syntax colors.
     theme.colors.selection = gpui::rgba(p.selection).into();
-    theme.highlight_theme = syntax::highlight_theme(appearance, design);
-    theme.font_size = px(p.tokens.text.ui);
+    theme.highlight_theme = syntax::highlight_theme(appearance);
+    theme.font_size = px(15.);
     theme.font_family = "Inter".into();
     theme.mono_font_family = "JetBrains Mono".into();
-    theme.mono_font_size = px(p.tokens.text.mono);
+    theme.mono_font_size = px(13.);
     theme.radius = px(p.control_radius);
-    if design.is_v2() {
-        configure_theme_v2(&mut theme.colors, &p, appearance.is_dark());
-        theme.radius_lg = px(p.tokens.radius.panel);
-    }
-}
-
-/// The v2 mapping of every remaining gpui-component colour, from the
-/// palette and its roles.
-fn configure_theme_v2(c: &mut gpui_component::ThemeColor, p: &Palette, dark: bool) {
-    let solid = |color: u32| gpui::Hsla::from(rgb(color));
-    let tone = |color: u32, alpha: f32| solid(color).opacity(alpha);
-    let w = p.tokens.wash;
-    let r = p.roles;
-    c.accent = solid(r.hover);
-    c.accent_foreground = solid(p.text);
-    c.secondary = tone(p.text, w.rest);
-    c.secondary_hover = tone(p.text, w.hover);
-    c.secondary_active = tone(p.text, w.pressed);
-    c.secondary_foreground = solid(p.text);
-    c.primary_active = solid(p.primary_pressed);
-    // r5-system (R5.1 Toggle), r6-surfaces (R6.1): the one toggle's
-    // colours, so gpui-component's Switch and `system::toggle` agree. On:
-    // the accent track with a white knob. Off: a light track, a white knob
-    // and a hairline around both, so an off switch never reads as a heavy
-    // filled "on" pill.
-    let (on, off) = (
-        system::toggle_colors(true, true, p),
-        system::toggle_colors(false, true, p),
-    );
-    c.switch = solid(off.track);
-    c.switch_on = Some(solid(on.track));
-    c.switch_thumb = solid(on.knob);
-    c.switch_thumb_off = Some(solid(off.knob));
-    c.switch_border = off.edge.map(solid);
-    c.muted = solid(p.surface);
-    c.muted_foreground = solid(r.text_secondary);
-    c.border = solid(p.border);
-    c.input = solid(r.border_strong);
-    c.ring = solid(r.focus);
-    c.link_hover = solid(p.primary_hover);
-    c.link_active = solid(p.primary_pressed);
-    c.popover = solid(r.raised);
-    c.popover_foreground = solid(p.text);
-    c.overlay = tone(p.shadow, p.roles.scrim_alpha);
-    c.window_border = solid(p.border);
-    c.title_bar = solid(p.base);
-    c.title_bar_border = solid(p.border);
-    c.list = solid(p.surface);
-    c.list_even = solid(p.surface);
-    c.list_head = solid(p.surface);
-    c.list_hover = solid(r.hover);
-    c.list_active = solid(p.selected);
-    c.list_active_border = solid(r.focus);
-    // r2-systems: Markdown tables share the one table style.
-    let table = primitives::table_style(p);
-    c.table = solid(table.row_bg);
-    c.table_even = solid(table.row_bg);
-    c.table_head = solid(table.head_bg);
-    c.table_head_foreground = solid(table.head_fg);
-    c.table_hover = solid(table.hover);
-    c.table_active = solid(p.selected);
-    c.table_active_border = solid(r.focus);
-    c.table_row_border = solid(table.divider);
-    c.tab = gpui::transparent_black();
-    c.tab_foreground = solid(r.text_secondary);
-    c.tab_active = solid(p.selected);
-    c.tab_active_foreground = solid(p.text);
-    c.tab_bar = solid(p.base);
-    c.tab_bar_segmented = tone(p.text, w.rest);
-    c.scrollbar = gpui::transparent_black();
-    c.scrollbar_thumb = tone(p.text, w.pressed);
-    c.scrollbar_thumb_hover = tone(p.text, w.pressed + w.rest);
-    c.sidebar = solid(p.base);
-    c.sidebar_foreground = solid(p.text);
-    c.sidebar_border = solid(p.border);
-    c.sidebar_accent = solid(r.hover);
-    c.sidebar_accent_foreground = solid(p.text);
-    c.sidebar_primary = solid(p.primary);
-    c.sidebar_primary_foreground = solid(p.on_primary);
-    c.accordion = solid(p.surface);
-    c.accordion_hover = solid(r.hover);
-    c.group_box = solid(p.surface);
-    c.group_box_foreground = solid(p.text);
-    c.description_list_label = solid(p.base);
-    c.description_list_label_foreground = solid(r.text_secondary);
-    c.skeleton = tone(p.text, w.rest);
-    c.progress_bar = solid(p.primary);
-    c.slider_bar = solid(p.primary);
-    c.slider_thumb = solid(if dark { p.text } else { p.surface });
-    c.drag_border = solid(r.focus);
-    c.drop_target = tone(p.accent, w.tone_rest);
-    c.tiles = solid(p.base);
-    c.danger = solid(p.error);
-    c.danger_hover = tone(p.error, 0.9);
-    c.danger_active = tone(p.error, 0.8);
-    c.danger_foreground = solid(p.on_primary);
-    c.success = solid(p.success);
-    c.success_hover = tone(p.success, 0.9);
-    c.success_active = tone(p.success, 0.8);
-    c.success_foreground = solid(p.on_primary);
-    c.warning = solid(p.warning);
-    c.warning_hover = tone(p.warning, 0.9);
-    c.warning_active = tone(p.warning, 0.8);
-    c.warning_foreground = solid(p.base);
-    c.info = solid(r.info);
-    c.info_hover = tone(r.info, 0.9);
-    c.info_active = tone(r.info, 0.8);
-    c.info_foreground = solid(p.on_primary);
-    c.chart_1 = solid(p.accent);
-    c.chart_2 = solid(p.success);
-    c.chart_3 = solid(p.warning);
-    c.chart_4 = solid(p.busy);
-    c.chart_5 = solid(p.error);
-    c.bullish = solid(p.success);
-    c.bearish = solid(p.error);
 }
 
 fn mono_font() -> &'static str {
@@ -620,9 +452,6 @@ actions!(
     ]
 );
 
-// area-shell
-actions!(native, [NextNeedsYou, ToggleShortcuts]);
-
 /// How the composer's draft leaves it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Submit {
@@ -775,76 +604,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("g t", ToggleTerminal, Some("VimNormal")),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("ctrl-shift-q", Quit, None),
-        // area-shell: design v2 only (the shell adds `DesignV2` to its
-        // context), so v1's keymap is unchanged. Later bindings win, so
-        // `g n` here replaces Scratch's under v2; Scratch moves to `g x`.
-        KeyBinding::new("g n", NextNeedsYou, Some("VimNormal && DesignV2")),
-        KeyBinding::new("g x", ShowScratch, Some("VimNormal && DesignV2")),
-        KeyBinding::new("alt-n", NextNeedsYou, Some("Workspace && DesignV2")),
-        KeyBinding::new("?", ToggleShortcuts, Some("VimNormal && DesignV2")),
-        KeyBinding::new("ctrl-/", ToggleShortcuts, Some("Workspace && DesignV2")),
-        KeyBinding::new("cmd-/", ToggleShortcuts, Some("Workspace && DesignV2")),
-        // r3-transcript: show every work block's tools (free in v1 and in
-        // the composer's input).
-        KeyBinding::new(
-            "ctrl-o",
-            transcript_v2::ExpandAllTools,
-            Some("Workspace && DesignV2"),
-        ),
-        KeyBinding::new(
-            "cmd-o",
-            transcript_v2::ExpandAllTools,
-            Some("Workspace && DesignV2"),
-        ),
-        // r2-shell: the command palette's list keys, ahead of its input's own.
-        KeyBinding::new("up", palette::PaletteUp, Some("CommandPalette > Input")),
-        KeyBinding::new("down", palette::PaletteDown, Some("CommandPalette > Input")),
-        KeyBinding::new("ctrl-p", palette::PaletteUp, Some("CommandPalette > Input")),
-        KeyBinding::new(
-            "ctrl-n",
-            palette::PaletteDown,
-            Some("CommandPalette > Input"),
-        ),
-        KeyBinding::new(
-            "enter",
-            palette::PaletteEnter,
-            Some("CommandPalette > Input"),
-        ),
-        KeyBinding::new(
-            "escape",
-            palette::PaletteClose,
-            Some("CommandPalette > Input"),
-        ),
-        // r3-fleet: Ctrl+Shift+F opens the Fleet anywhere under v2; its grid
-        // keys hold only while it is on screen with nothing else focused
-        // (the shell adds `Fleet` then), after the modal keys so they win.
-        KeyBinding::new(
-            "ctrl-shift-f",
-            fleet::ShowFleet,
-            Some("Workspace && DesignV2"),
-        ),
-        KeyBinding::new(
-            "cmd-shift-f",
-            fleet::ShowFleet,
-            Some("Workspace && DesignV2"),
-        ),
-        KeyBinding::new("left", fleet::FleetLeft, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("h", fleet::FleetLeft, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("right", fleet::FleetRight, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("l", fleet::FleetRight, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("up", fleet::FleetUp, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("k", fleet::FleetUp, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("down", fleet::FleetDown, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("j", fleet::FleetDown, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("enter", fleet::FleetOpen, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("1", fleet::FleetKey1, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("2", fleet::FleetKey2, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("3", fleet::FleetKey3, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("4", fleet::FleetKey4, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("5", fleet::FleetKey5, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("shift-1", fleet::FleetVariant, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("shift-!", fleet::FleetVariant, Some(fleet::KEY_CONTEXT)),
-        KeyBinding::new("!", fleet::FleetVariant, Some(fleet::KEY_CONTEXT)),
     ]);
 }
 
@@ -860,8 +619,6 @@ pub struct Workspace {
     chat: transcript::ChatUi,
     links: link_menu::LinkUi,
     child_ui: children::ChildUi,
-    /// r6-decisions: the destructive request a first Allow armed.
-    arming: decision::Arming,
     tasks: tasks::TasksUi,
     queue: queue::QueueUi,
     async_questions: async_questions::AsyncQuestionUi,
@@ -890,9 +647,6 @@ pub struct Workspace {
     projects_scroll: gpui::UniformListScrollHandle,
     _focus_watch: Vec<gpui::Subscription>,
     appearance: Appearance,
-    /// A design forced for this run (`--design-v2`), over the setting.
-    /// Cleared when the setting is switched in Settings.
-    design_override: Option<Design>,
     theme_error: String,
     controller: Controller,
     view: Arc<View>,
@@ -935,11 +689,6 @@ pub struct Workspace {
     /// The conversation pane's width last frame: the tool rail floats only
     /// where it clears the chat column.
     chat_width: gpui::Pixels,
-    /// r7-pages (R7.6): room under a short conversation's last row, so the
-    /// bottom-aligned transcript reads from the top (`settle_short_pad`).
-    short_pad: gpui::Pixels,
-    /// The transcript list's own top and bottom padding last frame.
-    list_insets: gpui::Pixels,
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
     duration_labels: HashMap<u64, String>,
@@ -995,17 +744,8 @@ pub struct Workspace {
     /// Hands terminal output to its views as it arrives, at most once a
     /// frame, without a view republish.
     _terminal_wake: Task<()>,
-    // area-shell
-    /// Design v2's shell: folded groups, cheat sheet, model popover.
-    shell: shell::ShellUi,
     #[cfg(feature = "ui-tests")]
     rendered_rows: std::rc::Rc<std::cell::RefCell<std::collections::BTreeSet<usize>>>,
-    // area-composer
-    /// The v2 composer's split menu and other dock state.
-    composer_ui: composer_v2::ComposerUi,
-    // r3-fleet
-    /// The Fleet view's focused tile and filter.
-    fleet: fleet::FleetUi,
 }
 
 impl Workspace {
@@ -1039,7 +779,7 @@ impl Workspace {
             InputState::new(window, cx)
                 .multi_line(true)
                 .rows(3)
-                .placeholder(states::PROMPT_PLACEHOLDER_V1)
+                .placeholder("What would you like to work on? (optional)")
         });
         let project_path = cx
             .new(|cx| InputState::new(window, cx).placeholder("Absolute folder path on this hub"));
@@ -1064,23 +804,6 @@ impl Workspace {
                     this.sidebar_scroll
                         .scroll_to_item(0, gpui::ScrollStrategy::Top);
                     cx.notify();
-                }
-            },
-        ));
-        // R6.4: Enter in the model popover's custom-id field applies it
-        // (the popover has no Apply button).
-        focus_watch.push(cx.subscribe_in(
-            &model,
-            window,
-            |this, _, event: &gpui_component::input::InputEvent, window, cx| {
-                if matches!(
-                    event,
-                    gpui_component::input::InputEvent::PressEnter { secondary: false }
-                ) && this.shell.model_popover
-                    && this.model_choice == "__custom"
-                {
-                    this.apply_popover_choice(cx);
-                    this.close_model_popover(window, cx);
                 }
             },
         ));
@@ -1191,8 +914,6 @@ impl Workspace {
                 return;
             }
             let _ = this.update(cx, |this, cx| {
-                // r8-decisions (R8.2): keycaps show after keyboard use.
-                this.note_key_input(&event.keystroke, cx);
                 if this.viewer_modal(window) && !this.viewer_has_focus(window, cx) {
                     this.hold_viewer_focus(window, cx);
                     cx.stop_propagation();
@@ -1225,7 +946,6 @@ impl Workspace {
             chat: transcript::ChatUi::default(),
             links: Default::default(),
             child_ui: children::ChildUi::default(),
-            arming: decision::Arming::default(),
             tasks: tasks::TasksUi::default(),
             queue,
             async_questions: Default::default(),
@@ -1254,7 +974,6 @@ impl Workspace {
             projects_scroll: gpui::UniformListScrollHandle::new(),
             _focus_watch: focus_watch,
             appearance: Appearance::default(),
-            design_override: None,
             theme_error: String::new(),
             controller,
             view: Arc::new(View::default()),
@@ -1276,8 +995,6 @@ impl Workspace {
             cleanup: Default::default(),
             header_bounds: Default::default(),
             chat_width: Default::default(),
-            short_pad: Default::default(),
-            list_insets: Default::default(),
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
             duration_labels: HashMap::new(),
@@ -1320,13 +1037,8 @@ impl Workspace {
             selection_requested: false,
             _updates: updates,
             _terminal_wake: terminal_wake,
-            // area-shell
-            shell: Default::default(),
             #[cfg(feature = "ui-tests")]
             rendered_rows: Default::default(),
-            // area-composer
-            composer_ui: Default::default(),
-            fleet: Default::default(),
         }
     }
 
@@ -1337,49 +1049,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.appearance = appearance;
-        configure_theme(appearance, self.design(), Some(window), cx);
+        configure_theme(appearance, Some(window), cx);
         self.apply_typography(cx);
-        self.sync_prompt_placeholder(window, cx);
         cx.notify();
-    }
-
-    /// The design this workspace draws: a run's forced design, else the
-    /// `design_v2` setting.
-    pub(crate) fn design(&self) -> Design {
-        self.design_override
-            .unwrap_or_else(|| self.settings.design())
-    }
-
-    /// The palette (colours plus [`Tokens`]) for the theme and design in
-    /// use. Every render reads this, never `self.appearance.palette()`, so a
-    /// theme or design change reaches the whole UI.
-    pub(crate) fn palette(&self) -> Palette {
-        self.appearance.palette_for(self.design())
-    }
-
-    /// The design's tokens (also `self.palette().tokens`).
-    #[allow(dead_code)] // For v2 area work; screens adopt it as they move to tokens.
-    pub(crate) fn tokens(&self) -> Tokens {
-        self.design().tokens()
-    }
-
-    /// Force a design for this run without saving it (`--design-v2`);
-    /// `None` returns to the setting. Call before `set_appearance`, which
-    /// applies it.
-    pub fn force_design(&mut self, design: Option<Design>) {
-        self.design_override = design;
-    }
-
-    /// Settings → Appearance → New design (preview): save the choice and
-    /// re-theme everything, as a theme change does.
-    pub(super) fn set_design_v2(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.settings.design_v2 = on;
-        self.design_override = None;
-        configure_theme(self.appearance, self.design(), Some(window), cx);
-        self.apply_typography(cx);
-        self.sync_prompt_placeholder(window, cx);
-        self.save_settings(cx);
-        window.refresh();
     }
 
     fn choose_theme(
@@ -1632,20 +1304,6 @@ impl Workspace {
         // restart on reselection and reconnects, so the count and last row
         // key take part too.
         let rows_changed = rows_signature(&self.view) != rows_signature(&view);
-        // r4-truth: rows arriving in the open conversation (not its first
-        // read, a reselection or a reconnect) are the session being heard
-        // from: a streaming reply is never "Not responding".
-        if rows_changed
-            && !reconnected
-            && !self.view.loading
-            && !view.loading
-            && view.selected.is_some()
-            && view.selected == self.view.selected
-            && view.transcript.revision > self.view.transcript.revision
-            && let Some(id) = &view.selected
-        {
-            self.shell.output_at = Some((id.clone(), timing::now_ms()));
-        }
         if !view.loading && rows_changed && !self.tool_expansion.is_empty() {
             let identities = view
                 .transcript
@@ -1752,11 +1410,6 @@ impl Workspace {
         // registry is read on every (re)connection, not only on Projects.
         if reconnected {
             self.load_projects(cx);
-            // r4-truth (R4.2): job proposals count in Needs you, so v2
-            // reads the job list on every (re)connection, not only on Jobs.
-            if self.design().is_v2() && !self.demo {
-                self.request(wks_native::features::Request::Jobs, cx);
-            }
             if self.new_session {
                 self.refresh_project_inspection(cx);
             }
@@ -1788,7 +1441,6 @@ impl Workspace {
             Command::Select(id) => Some(id.clone()),
             _ => None,
         };
-        self.note_grant(&command); // r5-fleet: Session details lists grants
         match self.controller.command(command) {
             Ok(()) => {
                 if let Some(id) = selection {
@@ -1821,13 +1473,7 @@ impl Workspace {
                 gpui::EntityInputHandler::marked_text_range(input, window, cx)
             })
             .is_some_and(|range| !range.is_empty());
-        // Design v2 leaves Tab to the text field: queueing is in the send
-        // button's menu instead.
-        if composing
-            || self.design().is_v2()
-            || !self.composer_busy()
-            || self.composer.read(cx).value().trim().is_empty()
-        {
+        if composing || !self.composer_busy() || self.composer.read(cx).value().trim().is_empty() {
             cx.propagate();
             return;
         }
@@ -1846,11 +1492,6 @@ impl Workspace {
     fn submit(&mut self, kind: Submit, window: &mut Window, cx: &mut Context<Self>) {
         // Never submit a draft the open viewer covers.
         if self.viewer_modal(window) {
-            return;
-        }
-        // area-composer: the v2 welcome's task field starts an agent.
-        if kind == Submit::Send && self.welcome_prompt_focused(window, cx) {
-            self.start_from_welcome(window, cx);
             return;
         }
         if self.new_session {
@@ -2096,7 +1737,7 @@ impl Workspace {
             }
             return;
         }
-        let rows = self.nav_sessions(cx);
+        let rows = self.visible_sessions(cx);
         if rows.is_empty() {
             return;
         }
@@ -2110,7 +1751,10 @@ impl Workspace {
         let index = current
             .map(|ix| (ix as isize + step).rem_euclid(rows.len() as isize) as usize)
             .unwrap_or(if step < 0 { rows.len() - 1 } else { 0 });
-        self.reveal_sidebar_row(index, cx); // r2-shell
+        self.sidebar_scroll.scroll_to_item(
+            self.sidebar_session_position(index, cx),
+            gpui::ScrollStrategy::Center,
+        );
         self.command(
             Command::Select(self.view.sessions[rows[index]].id.clone()),
             cx,
@@ -2147,7 +1791,7 @@ impl Workspace {
         enabled: bool,
         primary: bool,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         chrome::interactive_control(div().id(id.into()), p, enabled)
             .px_3()
             .py_2()
@@ -2211,7 +1855,6 @@ impl Render for Workspace {
         self.loop_ticker
             .arm(window, cx, |this| &mut this.loop_ticker);
         self.track_orientation(window);
-        self.track_fleet_rail(); // r6-decisions (R6.7)
         self.settle_peek(window, cx);
         self.fit_composer_rows(window, cx);
         let portrait = self.portrait(window);
@@ -2249,13 +1892,7 @@ impl Render for Workspace {
                 | Screen::PullRequest => self.render_feature(window, cx).into_any_element(),
                 Screen::Projects => self.render_projects(window, cx).into_any_element(),
                 Screen::Settings => self.render_settings(window, cx).into_any_element(),
-                // r3-fleet: v2 only; v1 never opens it.
-                Screen::Fleet if self.design().is_v2() => {
-                    self.render_fleet(window, cx).into_any_element()
-                }
-                // r5-system: the component gallery (dev builds only).
-                Screen::Gallery => self.render_gallery().into_any_element(),
-                Screen::Fleet | Screen::Conversation => self
+                Screen::Conversation => self
                     .render_conversation(narrow, compact, window, cx)
                     .into_any_element(),
             }
@@ -2263,8 +1900,6 @@ impl Render for Workspace {
         let docked = [
             self.render_docked_viewer(window, cx),
             self.render_docked_tasks(window, cx),
-            // area-panels
-            self.render_docked_review(window, cx),
         ]
         .into_iter()
         .flatten();

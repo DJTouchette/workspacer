@@ -16,9 +16,6 @@ use wks_native::{
     links,
 };
 
-mod stack;
-mod v2;
-
 const EXPLORER_WIDTH: f32 = 300.;
 const ROW_HEIGHT: f32 = 20.;
 const CHANGE_ROW_HEIGHT: f32 = 36.;
@@ -53,14 +50,12 @@ pub(super) struct ReviewUi {
     /// it (for the same folder) until the new answer lands, so the list never
     /// blanks and nothing is re-parsed per frame.
     status: Option<Status>,
-    /// The answer number, theme and design it was parsed and colored for.
-    parsed: Option<(u64, (Appearance, Design), ParsedDiff)>,
+    /// The answer number and appearance it was parsed and colored for.
+    parsed: Option<(u64, Appearance, ParsedDiff)>,
     /// Syntax-coloring the parsed diff off the UI thread.
     coloring: Option<gpui::Task<()>>,
     pub scroll: gpui::UniformListScrollHandle,
     list_scroll: gpui::UniformListScrollHandle,
-    /// Design v2: the stacked diff, its dock and its menus.
-    pub(super) v2: v2::StackUi,
 }
 
 struct Status {
@@ -214,8 +209,6 @@ impl Workspace {
     /// Open Changes on the commit list with `hash`'s patch shown, as a
     /// clicked commit link does.
     pub(super) fn open_commit(&mut self, hash: &str, window: &mut Window, cx: &mut Context<Self>) {
-        // Commits live on the full page, never in the dock.
-        self.review.v2.page_once = true;
         self.open_feature(Screen::Changes, window, cx);
         if self.screen != Screen::Changes {
             return;
@@ -270,9 +263,8 @@ impl Workspace {
             }
             Mode::Changed => {}
         }
-        // The diff slot held a commit's patch; put the change back (v2
-        // stacks every change from its own slot instead).
-        if was_commits && !self.design().is_v2() {
+        // The diff slot held a commit's patch; put the change back.
+        if was_commits {
             let changes = self.review_changes();
             let keep = self
                 .review
@@ -352,7 +344,7 @@ impl Workspace {
     /// changed files, so the status (and an open commit list) is re-read
     /// instead of showing what was true before it worked.
     pub(super) fn refresh_review_after_turn(&mut self, next: &View, cx: &mut Context<Self>) {
-        if self.screen != Screen::Changes && !self.review_dock_showing() {
+        if self.screen != Screen::Changes {
             return;
         }
         let Some(id) = next
@@ -379,8 +371,7 @@ impl Workspace {
     /// When the change list arrives, show the first change's diff (or keep
     /// the one being read if it is still changed).
     pub(super) fn sync_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sync_change_summary(cx);
-        if self.screen != Screen::Changes && !self.review_dock_showing() {
+        if self.screen != Screen::Changes {
             return;
         }
         self.finish_git_action(window, cx);
@@ -416,15 +407,6 @@ impl Workspace {
             .as_ref()
             .and_then(|s| changes.iter().find(|c| &c.path == s))
             .cloned();
-        if self.design().is_v2() {
-            // Every change at once, stacked; the list only scrolls to one.
-            self.review.selected = keep.or_else(|| changes.first().cloned()).map(|c| c.path);
-            self.request_stack(cx);
-            if self.review.mode == Mode::Files && self.screen == Screen::Changes {
-                self.explore(&root, cx);
-            }
-            return;
-        }
         if self.review.mode == Mode::Commits {
             // The diff slot shows a commit; only remember which change is next.
             self.review.selected = keep.or_else(|| changes.first().cloned()).map(|c| c.path);
@@ -454,10 +436,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<Div> {
-        if self.design().is_v2() {
-            return self.render_review_v2(window, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let short = window.viewport_size().height < px(620.);
         let caption = chrome::custom_caption();
         let back = self
@@ -598,7 +577,7 @@ impl Workspace {
     }
 
     fn diff_panel_shell(&self) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         chrome::card(p)
             .flex_1()
             .min_w_0()
@@ -609,7 +588,7 @@ impl Workspace {
     }
 
     fn diff_placeholder(&self, text: &'static str) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .flex_1()
             .flex()
@@ -632,7 +611,7 @@ impl Workspace {
         let s = state.filter(|s| !s.loading && s.error.is_none())?;
         Some(match &self.review.parsed {
             Some((number, appearance, parsed))
-                if *number == s.number && *appearance == (self.appearance, self.design()) =>
+                if *number == s.number && *appearance == self.appearance =>
             {
                 parsed.clone()
             }
@@ -649,9 +628,9 @@ impl Workspace {
                     widest,
                     highlights: Arc::default(),
                 };
-                let (number, appearance) = (s.number, (self.appearance, self.design()));
+                let (number, appearance) = (s.number, self.appearance);
                 self.review.parsed = Some((number, appearance, parsed.clone()));
-                let theme = syntax::highlight_theme(appearance.0, appearance.1);
+                let theme = syntax::highlight_theme(appearance);
                 let colored = cx
                     .background_executor()
                     .spawn(async move { syntax::highlight_diff(&diff, &theme) });
@@ -672,7 +651,7 @@ impl Workspace {
     }
 
     fn diff_header(&self) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .px_3()
             .py_2()
@@ -712,7 +691,7 @@ impl Workspace {
         open_hint: &'static str,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let Some(state) = state else {
             return panel.child(
                 div()
@@ -785,7 +764,7 @@ impl Workspace {
     }
 
     fn render_diff_panel(&mut self, changes: &[Change], cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let panel = self.diff_panel_shell();
         let loaded = self.review_status().is_some();
         let Some(selected) = self.review.selected.clone() else {
@@ -998,7 +977,7 @@ impl Workspace {
     }
 
     fn render_commit_panel(&mut self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let panel = self.diff_panel_shell();
         let Some(hash) = self.review.commit.clone() else {
             return panel
@@ -1055,7 +1034,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let mode = self.review.mode;
         let segment = |id: &'static str, label: String, active: bool| {
             chrome::interactive_control(div().id(id), p, true)
@@ -1140,7 +1119,7 @@ impl Workspace {
         root: &str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let hide_untracked = self.review.hide_untracked;
         let tree = self
             .explorer
@@ -1277,7 +1256,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let busy = self.git_busy() || !self.view.connected;
         let staged = changes.iter().filter(|c| c.has_staged()).count();
         let unstaged = changes.iter().filter(|c| c.has_unstaged()).count();
@@ -1485,7 +1464,7 @@ impl Workspace {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let active = self.review.selected.as_ref() == Some(&change.path);
         let (name, dir) = match change.path.rsplit_once(['/', '\\']) {
             Some((dir, name)) => (name.to_owned(), dir.to_owned()),
@@ -1604,7 +1583,7 @@ impl Workspace {
     }
 
     fn render_commit_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let state = self.view.requests.get("git-log");
         if state.is_none_or(|s| s.loading) {
             return div()
@@ -1663,7 +1642,7 @@ impl Workspace {
         now: i64,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let active = self.review.commit.as_deref() == Some(hash);
         let clicked = hash.to_owned();
         div()

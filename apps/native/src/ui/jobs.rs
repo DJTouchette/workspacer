@@ -7,7 +7,6 @@
 //! A Runs tab shows every job's runs together, newest first and grouped by
 //! day, each opening to its full output; each job row carries a strip of its
 //! last runs so a failing job stands out without opening it.
-use super::primitives::{self, ButtonSize, ButtonVariant, Col, StatusBadge, StatusKind, tabular};
 use super::*;
 use wks_native::features::{JobAction, Request};
 use wks_native::jobs::{self, Job, Run};
@@ -15,8 +14,6 @@ use wks_native::timing::now_ms;
 
 pub(super) const JOBS_DESCRIPTION: &str =
     "Work the hub runs on a schedule, even while this window is closed.";
-// r2-pages: agrees with the New job button, which asks an agent to write one.
-const JOBS_FOOTER_V2: &str = "New job asks an agent to write one for you. Anything an agent proposes waits here, switched off, until you approve it.";
 const JOBS_FOOTER: &str = "To add or change a job, ask any agent. What it proposes waits here, switched off, until you approve it.";
 const NO_JOBS_TITLE: &str = "No jobs yet";
 const NO_JOBS: &str = "Ask any agent for one, for example “every weekday at 7, run the tests and wake an agent if anything fails.” What it proposes waits here until you approve it.";
@@ -55,40 +52,7 @@ impl Workspace {
         self.request(Request::JobAction(action), cx);
     }
 
-    /// r5-integration: a proposal's number keys where it takes them (the
-    /// focused Fleet card, Jobs' first proposal): R7.1's 1 Allow, 2 Deny.
-    /// They go through the same checks as their buttons.
-    pub(super) fn job_proposal_key(
-        &mut self,
-        job: &Job,
-        all: &[Job],
-        n: usize,
-        cx: &mut Context<Self>,
-    ) {
-        match n {
-            1 if self.job_approvable(job, all) => {
-                if self.confirm_allow(&job_confirm_key(job), job_risk(job), cx) {
-                    self.job_action(JobAction::Save(job.approval()), cx)
-                }
-            }
-            2 if self.job_decidable() => self.remove_job(&job.id, true, cx),
-            _ => {}
-        }
-    }
-
-    /// Whether a proposal can be decided now (connected, not a demo, no
-    /// write in flight).
-    fn job_decidable(&self) -> bool {
-        self.view.connected && !self.demo && !self.job_busy()
-    }
-
-    /// Whether `job` can be approved: decidable, and a change still has
-    /// the job it replaces.
-    fn job_approvable(&self, job: &Job, all: &[Job]) -> bool {
-        self.job_decidable() && (!job.change() || all.iter().any(|j| j.id == job.replaces))
-    }
-
-    pub(super) fn toggle_job(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn toggle_job(&mut self, id: &str, cx: &mut Context<Self>) {
         self.extras.job_confirm_remove = None;
         if self.extras.job_expanded.as_deref() == Some(id) {
             self.extras.job_expanded = None;
@@ -109,10 +73,7 @@ impl Workspace {
     }
 
     pub(super) fn render_jobs(&self, cx: &mut Context<Self>) -> Div {
-        if self.design().is_v2() {
-            return self.render_jobs_v2(cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let rows = self.job_rows();
         let list = rows.clone().unwrap_or_default();
         let runs = self.job_runs();
@@ -181,13 +142,13 @@ impl Workspace {
     /// The hub did not answer `jobs.list`: say so plainly, with its reason
     /// and a way to ask again, instead of opening on a bare error.
     fn jobs_unavailable(&self, error: String, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let connected = self.view.connected;
         jobs_state(
             IconName::TriangleAlert,
             UNAVAILABLE_TITLE,
             UNAVAILABLE,
-            p.warn(),
+            p.warning,
             p,
         )
         .debug_selector(|| "jobs-unavailable".into())
@@ -216,7 +177,7 @@ impl Workspace {
 
     /// Jobs / Runs, a segmented control; Runs counts today's failures.
     fn job_tabs(&self, list: &[Job], runs: Option<&[Run]>, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let now = now_ms();
         let failed_today = runs.map_or(0, |runs| {
             runs.iter()
@@ -305,7 +266,7 @@ impl Workspace {
         runs: Option<Vec<Run>>,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let caption = |text: String, color: u32| {
             div()
                 .py_6()
@@ -384,7 +345,7 @@ impl Workspace {
         let mut ix = 0;
         while ix < shown.len() {
             let day = days[ix].clone();
-            let mut card = self.page_card().flex().flex_col().overflow_hidden();
+            let mut card = chrome::card(p).flex().flex_col().overflow_hidden();
             let start = ix;
             while ix < shown.len() && days[ix] == day {
                 card = card.child(self.run_row(ix, ix > start, &shown[ix], list, cx));
@@ -420,7 +381,7 @@ impl Workspace {
         list: &[Job],
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let key = (run.job_id.clone(), run.started_at);
         let open = self.extras.job_run_open.as_ref() == Some(&key);
         let job = list.iter().find(|j| j.id == run.job_id);
@@ -470,11 +431,7 @@ impl Workspace {
                 .flex_shrink_0()
                 .text_color(rgb(p.muted)),
             )
-            .child(if self.design().is_v2() {
-                primitives::status_indicator(run_kind(run), &p)
-            } else {
-                status_dot(color, 8.)
-            })
+            .child(status_dot(color, 8.))
             .child(
                 div()
                     .flex_1()
@@ -558,7 +515,7 @@ impl Workspace {
     }
 
     fn run_detail(&self, ix: usize, run: &Run, job: Option<&Job>, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let now = now_ms();
         let mut when = format!(
             "Started {} ({})",
@@ -647,8 +604,8 @@ impl Workspace {
     }
 
     /// A job's last runs as small bars, oldest to newest.
-    fn run_strip(&self, id: &str, runs: Option<&[Run]>) -> Option<gpui::AnyElement> {
-        let p = self.palette();
+    fn run_strip(&self, id: &str, runs: Option<&[Run]>) -> Option<Div> {
+        let p = self.appearance.palette();
         let mut last: Vec<&Run> = runs?
             .iter()
             .filter(|r| r.job_id == id)
@@ -658,37 +615,6 @@ impl Workspace {
             return None;
         }
         last.reverse();
-        if self.design().is_v2() {
-            // Taller bars for failures; a tooltip says what the strip shows.
-            let t = p.tokens;
-            let summary = strip_summary(&last);
-            return Some(
-                div()
-                    .id(SharedString::from(format!("job-strip-{id}")))
-                    .debug_selector({
-                        let id = id.to_owned();
-                        move || format!("job-strip-{id}")
-                    })
-                    .flex_shrink_0()
-                    .h(px(t.icon.xs))
-                    .flex()
-                    .items_end()
-                    .gap(px(t.space.xxs))
-                    .tooltip(primitives::tooltip_view(summary, None, &p))
-                    .children(last.into_iter().map(|run| {
-                        div()
-                            .w(px(t.space.xs))
-                            .h(px(if run.status == "error" {
-                                t.icon.xs
-                            } else {
-                                t.space.md
-                            }))
-                            .rounded(px(t.stroke.hairline))
-                            .bg(rgb(run_color(run, p)))
-                    }))
-                    .into_any_element(),
-            );
-        }
         Some(
             div()
                 .flex_shrink_0()
@@ -701,8 +627,7 @@ impl Workspace {
                         .h(px(if run.status == "error" { 12. } else { 8. }))
                         .rounded(px(1.))
                         .bg(rgb(run_color(run, p)))
-                }))
-                .into_any_element(),
+                })),
         )
     }
 
@@ -714,10 +639,7 @@ impl Workspace {
         runs: Option<&[Run]>,
         cx: &mut Context<Self>,
     ) -> Div {
-        if self.design().is_v2() {
-            return self.job_row_v2(ix, job, all, runs, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let expanded = self.extras.job_expanded.as_deref() == Some(job.id.as_str());
         let target = job
             .change()
@@ -740,85 +662,80 @@ impl Workspace {
             when = format!("{when} · proposed by {}", job.proposed_by);
         }
         let toggle = job.id.clone();
-        // r2-pages: v2 reads as a sentence, the command in an inset.
-        let header = {
-            div()
-                .id(("job-row", ix))
-                .min_w_0()
-                .px_4()
-                .py_3()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap_3()
-                .cursor_pointer()
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx)))
-                .child(
-                    Icon::new(if expanded {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    })
-                    .size(px(12.))
-                    .flex_shrink_0()
-                    .text_color(rgb(p.muted)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(220.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(3.))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .min_w_0()
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_size(px(chrome::scale::BODY))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(rgb(if paused { p.muted } else { p.text }))
-                                        .child(job.name.clone()),
-                                )
-                                .children(self.job_chip(job, p))
-                                .child(div().flex_1())
-                                .child(self.job_status(job, now))
-                                .children(
-                                    (!proposal).then(|| self.run_strip(&job.id, runs)).flatten(),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .truncate()
-                                .text_size(px(chrome::scale::META))
-                                .text_color(rgb(if paused { p.muted } else { p.prose }))
-                                .child(when),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .truncate()
-                                .font_family(mono_font())
-                                .text_size(px(chrome::scale::CAPTION))
-                                .text_color(rgb(p.muted))
-                                .debug_selector(move || format!("job-action-{ix}"))
-                                .child(if job.host().is_empty() {
-                                    job.action_summary()
-                                } else {
-                                    // Queued work says where; inline is the default
-                                    // and stays unsaid (Details shows it).
-                                    format!("{} · {}", job.action_summary(), job.host_label())
-                                }),
-                        ),
-                )
-                .child(self.job_actions(ix, job, target, cx))
-        };
+        let header = div()
+            .id(("job-row", ix))
+            .min_w_0()
+            .px_4()
+            .py_3()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_3()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx)))
+            .child(
+                Icon::new(if expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .size(px(12.))
+                .flex_shrink_0()
+                .text_color(rgb(p.muted)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(220.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(chrome::scale::BODY))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(if paused { p.muted } else { p.text }))
+                                    .child(job.name.clone()),
+                            )
+                            .children(self.job_chip(job, p))
+                            .child(div().flex_1())
+                            .child(self.job_status(job, now))
+                            .children((!proposal).then(|| self.run_strip(&job.id, runs)).flatten()),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(chrome::scale::META))
+                            .text_color(rgb(if paused { p.muted } else { p.prose }))
+                            .child(when),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(mono_font())
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .debug_selector(move || format!("job-action-{ix}"))
+                            .child(if job.host().is_empty() {
+                                job.action_summary()
+                            } else {
+                                // Queued work says where; inline is the default
+                                // and stays unsaid (Details shows it).
+                                format!("{} · {}", job.action_summary(), job.host_label())
+                            }),
+                    ),
+            )
+            .child(self.job_actions(ix, job, target, cx));
         let card = chrome::card(p)
             .debug_selector(move || format!("job-row-{ix}"))
             .overflow_hidden()
@@ -848,20 +765,6 @@ impl Workspace {
     /// The state beside a job's name: waiting for approval, running, or
     /// switched off.
     fn job_chip(&self, job: &Job, p: Palette) -> Option<Div> {
-        if self.design().is_v2() {
-            let badge = if job.change() {
-                StatusBadge::new(StatusKind::Idle).label("Proposed change")
-            } else if job.proposal() {
-                return None;
-            } else if job.running {
-                StatusBadge::new(StatusKind::Working)
-            } else if !job.enabled {
-                StatusBadge::new(StatusKind::Paused)
-            } else {
-                return None;
-            };
-            return Some(badge.render(&p));
-        }
         let (text, color) = if job.change() {
             ("Proposed change", p.warning)
         } else if job.proposal() {
@@ -879,7 +782,7 @@ impl Workspace {
 
     /// Right of a job's name: how its last run went.
     fn job_status(&self, job: &Job, now: i64) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let caption = |text: String, color: u32| {
             div()
                 .flex_shrink_0()
@@ -889,20 +792,6 @@ impl Workspace {
         };
         if job.proposal() {
             return div();
-        }
-        if self.design().is_v2() {
-            let badge = match &job.last_run {
-                None => StatusBadge::new(StatusKind::Idle).label("Not run yet"),
-                Some(run) => {
-                    let at = run.finished_at.unwrap_or(run.started_at);
-                    StatusBadge::new(run_kind(run)).label(format!(
-                        "{} {}",
-                        run_word(run),
-                        jobs::since(at, now)
-                    ))
-                }
-            };
-            return badge.render(&p);
         }
         let Some(run) = &job.last_run else {
             return caption("Not run yet".into(), p.muted);
@@ -928,9 +817,6 @@ impl Workspace {
         target: Option<&Job>,
         cx: &mut Context<Self>,
     ) -> Div {
-        if self.design().is_v2() {
-            return self.job_actions_v2(ix, job, target, cx);
-        }
         let enabled = self.view.connected && !self.demo && !self.job_busy();
         let id = job.id.clone();
         let proposal = job.proposal();
@@ -938,27 +824,7 @@ impl Workspace {
         let remove_id = id.clone();
         // Removing is quiet until it is asked for; the second click, which
         // deletes the history too, is the one that looks destructive.
-        let v2 = self.design().is_v2().then(|| self.palette());
-        // V2: one quiet ghost until asked, then a ghost-danger confirm.
-        let v2_button = |id: SharedString, label: &'static str, variant, enabled: bool| {
-            v2.map(|p| primitives::button(id, label, None, variant, ButtonSize::Small, enabled, &p))
-        };
-        let remove = if let Some(button) = v2_button(
-            job_control("remove", ix),
-            match (confirming, proposal) {
-                (true, _) => "Remove job and history",
-                (false, true) => "Reject",
-                (false, false) => "Remove",
-            },
-            if confirming {
-                ButtonVariant::Destructive
-            } else {
-                ButtonVariant::Tertiary
-            },
-            enabled,
-        ) {
-            button
-        } else if confirming {
+        let remove = if confirming {
             self.danger_button(job_control("remove", ix), "Remove job and history", enabled)
         } else {
             self.job_quiet(
@@ -986,65 +852,44 @@ impl Workspace {
             let approval = job.approval();
             // Proposals sort first: the first is the page's one primary
             // action, the rest stay tonal.
-            let approve = v2_button(
-                job_control("approve", ix),
-                "Approve",
-                if ix == 0 {
-                    ButtonVariant::Primary
-                } else {
-                    ButtonVariant::Secondary
-                },
-                can_approve,
-            )
-            .unwrap_or_else(|| {
-                self.button_style(job_control("approve", ix), "Approve", can_approve, ix == 0)
-            })
-            .debug_selector(move || format!("job-approve-{ix}"))
-            .when(can_approve, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.job_action(JobAction::Save(approval.clone()), cx);
-                }))
-            });
+            let approve = self
+                .button_style(job_control("approve", ix), "Approve", can_approve, ix == 0)
+                .debug_selector(move || format!("job-approve-{ix}"))
+                .when(can_approve, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.job_action(JobAction::Save(approval.clone()), cx);
+                    }))
+                });
             return row.child(approve);
         }
         let paused = job.with_enabled(!job.enabled);
         let pause_label = if job.enabled { "Pause" } else { "Resume" };
-        let pause = v2_button(
-            job_control("pause", ix),
-            pause_label,
-            ButtonVariant::Secondary,
-            enabled,
-        )
-        .unwrap_or_else(|| self.button(job_control("pause", ix), pause_label, enabled))
-        .debug_selector(move || format!("job-pause-{ix}"))
-        .when(enabled, |d| {
-            d.on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.job_action(JobAction::Save(paused.clone()), cx);
-            }))
-        });
+        let pause = self
+            .button(job_control("pause", ix), pause_label, enabled)
+            .debug_selector(move || format!("job-pause-{ix}"))
+            .when(enabled, |d| {
+                d.on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.job_action(JobAction::Save(paused.clone()), cx);
+                }))
+            });
         let can_run = enabled && !job.running;
-        let run = v2_button(
-            job_control("run", ix),
-            "Run now",
-            ButtonVariant::Secondary,
-            can_run,
-        )
-        .unwrap_or_else(|| self.button(job_control("run", ix), "Run now", can_run))
-        .debug_selector(move || format!("job-run-{ix}"))
-        .when(can_run, |d| {
-            d.on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.job_action(JobAction::Run(id.clone()), cx);
-            }))
-        });
+        let run = self
+            .button(job_control("run", ix), "Run now", can_run)
+            .debug_selector(move || format!("job-run-{ix}"))
+            .when(can_run, |d| {
+                d.on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.job_action(JobAction::Run(id.clone()), cx);
+                }))
+            });
         row.child(pause).child(run)
     }
 
     /// A text-only, low-emphasis row action.
     fn job_quiet(&self, id: SharedString, label: &'static str, enabled: bool) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         chrome::interactive_control(div().id(id), p, enabled)
             .px_3()
             .py_2()
@@ -1073,7 +918,7 @@ impl Workspace {
     /// The whole spec (beside the job a change would replace) and, for an
     /// approved job, its recent runs.
     fn job_detail(&self, job: &Job, target: Option<&Job>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let note = if job.change() {
             Some(CHANGE_NOTE)
         } else if job.proposal() {
@@ -1116,7 +961,7 @@ impl Workspace {
     }
 
     fn spec_block(&self, title: Option<&'static str>, job: &Job, base: Option<&Job>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let before = base.map(|base| self.job_details(base));
         div()
             .flex()
@@ -1142,7 +987,7 @@ impl Workspace {
                             .w(px(72.))
                             .flex_shrink_0()
                             .text_size(px(chrome::scale::CAPTION))
-                            .text_color(rgb(if changed { p.warn() } else { p.muted }))
+                            .text_color(rgb(if changed { p.warning } else { p.muted }))
                             .child(label),
                     )
                     .child(
@@ -1157,7 +1002,7 @@ impl Workspace {
     }
 
     fn job_history(&self, id: &str) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let state = self
             .view
             .requests
@@ -1247,15 +1092,6 @@ fn run_color(run: &Run, p: Palette) -> u32 {
         "ok" => p.success,
         "error" => p.error,
         _ => p.muted,
-    }
-}
-
-/// A run's state in the shared status vocabulary (v2).
-fn run_kind(run: &Run) -> StatusKind {
-    match run.status.as_str() {
-        "ok" => StatusKind::Done,
-        "error" => StatusKind::Failed,
-        _ => StatusKind::Idle,
     }
 }
 
@@ -1431,743 +1267,4 @@ fn schedule(trigger: &serde_json::Value, twelve_hour: bool) -> Option<String> {
         "manual" => "Only when run by hand".into(),
         _ => return None,
     })
-}
-
-// area-pages: the Jobs page under design v2.
-/// What the New job button prefills in a new session's task.
-pub(super) const NEW_JOB_PROMPT: &str = "Create a scheduled job that ";
-
-impl Workspace {
-    /// The page's one primary: a new session, its task prefilled to ask the
-    /// agent for a job (agents write jobs; this page approves them).
-    pub(super) fn new_job_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let p = self.palette();
-        let enabled = self.view.connected && !self.demo;
-        // r5-shell (R5.4): every page header's main action is Secondary, in
-        // the header's right slot, whatever else is on the page (a waiting
-        // proposal's decision owns the page's one Primary).
-        primitives::button(
-            "jobs-new",
-            "New job",
-            Some(IconName::Plus),
-            ButtonVariant::Secondary,
-            ButtonSize::Small,
-            enabled,
-            &p,
-        )
-        .debug_selector(|| "jobs-new".into())
-        .tooltip(primitives::tooltip_view(
-            "Ask an agent to write one; it waits here for your approval",
-            None,
-            &p,
-        ))
-        .when(enabled, |d| {
-            d.on_click(cx.listener(|this, _, window, cx| this.start_new_job(window, cx)))
-        })
-    }
-
-    /// Open New session with the task reading "Create a scheduled job that "
-    /// and the caret after it.
-    pub(super) fn start_new_job(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.demo || self.spawn_pending || self.view.creating {
-            return;
-        }
-        self.show_new_session(window, cx);
-        self.prompt.update(cx, |input, cx| {
-            input.set_value(NEW_JOB_PROMPT, window, cx);
-            input.focus(window, cx);
-        });
-        cx.notify();
-    }
-
-    fn render_jobs_v2(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let rows = self.job_rows();
-        let list = rows.clone().unwrap_or_default();
-        let runs = self.job_runs();
-        let read_error = self
-            .view
-            .requests
-            .get("jobs")
-            .filter(|s| !s.loading)
-            .and_then(|s| s.error.clone())
-            .filter(|e| !e.is_empty());
-        let page = div()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.lg))
-            .child(self.job_tabs_v2(&list, runs.as_deref(), cx))
-            .when(rows.is_some(), |d| {
-                d.children(
-                    read_error
-                        .clone()
-                        .map(|e| chrome::notice_line(e, chrome::Tone::Error, p)),
-                )
-            })
-            .child(self.feature_message("job-action"));
-        if self.extras.job_runs_tab {
-            return page.child(self.render_run_history(&list, runs, cx));
-        }
-        let Some(rows) = rows else {
-            return page.child(match read_error {
-                Some(error) => self.jobs_unavailable(error, cx),
-                None => chrome::notice_line("Loading jobs…", chrome::Tone::Loading, p),
-            });
-        };
-        if rows.is_empty() {
-            return page.child(
-                primitives::empty_state(
-                    IconName::Calendar,
-                    NO_JOBS_TITLE,
-                    Some(NO_JOBS.into()),
-                    &p,
-                )
-                .debug_selector(|| "jobs-empty".into())
-                .child(self.new_job_button(cx)),
-            );
-        }
-        // r3-pages (R3.6): one dense table of scheduled jobs, a job per row:
-        // name, schedule, last runs, next run and actions. R4.3: proposals
-        // wait above it as decisions, the same component as a tool approval
-        // (the whole command, where it runs, Approve primary, Reject
-        // secondary, Details for the full spec): they wait on you.
-        let waiting = rows.iter().filter(|j| j.proposal()).count();
-        let mut page = page;
-        if waiting > 0 {
-            page = page
-                .child(primitives::section_header(
-                    "Waiting for your approval",
-                    Some(waiting.to_string().into()),
-                    &p,
-                ))
-                .children(
-                    rows.iter()
-                        .enumerate()
-                        .take(waiting)
-                        .map(|(ix, job)| self.job_proposal_v2(ix, job, &rows, cx)),
-                );
-        }
-        let mut table: Option<Div> = None;
-        for (ix, job) in rows.iter().enumerate().skip(waiting) {
-            if ix == waiting {
-                page = page.child(
-                    primitives::section_header(
-                        "Scheduled",
-                        Some((rows.len() - waiting).to_string().into()),
-                        &p,
-                    )
-                    .when(ix > 0, |d| d.pt(px(t.space.md))),
-                );
-                table = Some(primitives::page_table(&p).child(self.job_table_head(false)));
-            }
-            table = table.map(|tb| tb.child(self.render_job(ix, job, &rows, runs.as_deref(), cx)));
-        }
-        page = page.children(table);
-        page.child(
-            div()
-                .pt(px(t.space.xs))
-                .text_size(px(t.text.meta))
-                .text_color(rgb(p.roles.text_tertiary))
-                .child(JOBS_FOOTER_V2),
-        )
-    }
-
-    /// A job an agent proposed, as the one decision component (R4.3): the
-    /// question, what it does and when, who proposed it, the whole command
-    /// it runs (wrapped, never cut beside Approve), its folder and host,
-    /// Approve primary, Reject secondary, and Details for the full spec
-    /// (and, for a change, the job as it is now).
-    fn job_proposal_v2(&self, ix: usize, job: &Job, all: &[Job], cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
-        let mut decision = self.job_proposal_decision(
-            ix,
-            job,
-            all,
-            "job",
-            super::decision::Frame::Card { compact: false },
-            cx,
-        );
-        // R6.3: the first proposal takes the number keys (1 Approve,
-        // 2 Reject: `page_decision_keys`) and shows them; the others wait
-        // their turn below it.
-        decision.keys = self.keycaps(ix == 0);
-        // R7.2: one Filled per region: the first proposal's Allow.
-        decision.filled = ix == 0;
-        decision.render(&p)
-    }
-
-    /// r5-fleet (R5.4): a job proposal as the DecisionCard, in Jobs (a card,
-    /// `prefix` "job") or on a Fleet tile (inline, `prefix` "fleet-job"), so
-    /// the Fleet's Needs you shows it as a card it counts.
-    pub(super) fn job_proposal_decision(
-        &self,
-        ix: usize,
-        job: &Job,
-        all: &[Job],
-        prefix: &'static str,
-        frame: super::decision::Frame,
-        cx: &mut Context<Self>,
-    ) -> super::decision::Decision {
-        use super::decision::{Choice, Decision, Details};
-        let p = self.palette();
-        let enabled = self.job_decidable();
-        let target = job
-            .change()
-            .then(|| all.iter().find(|j| j.id == job.replaces))
-            .flatten();
-        let can_approve = self.job_approvable(job, all);
-        let quoted = |name: &str| format!("\u{201c}{name}\u{201d}");
-        let headline = match (job.change(), target) {
-            (true, Some(current)) => format!("Change the job {}?", quoted(&current.name)),
-            (true, None) => format!("Change a removed job to {}?", quoted(&job.name)),
-            (false, _) => format!("Schedule the job {}?", quoted(&job.name)),
-        };
-        let when = schedule(&job.spec["trigger"], self.settings.twelve_hour_clock)
-            .unwrap_or_else(|| job.trigger_summary());
-        let (sentence, command) = job.describe();
-        let by = Some(job.proposed_by.as_str())
-            .filter(|b| !b.is_empty())
-            .map(|b| format!("proposed by {b}"));
-        let reason =
-            wks_native::format::meta([Some(sentence), Some(when), by].into_iter().flatten());
-        let action = &job.spec["action"];
-        let folder = [&action["spawn"]["cwd"], &action["shell"]["cwd"]]
-            .into_iter()
-            .find_map(|v| v.as_str().map(str::trim).filter(|c| !c.is_empty()))
-            .map(str::to_owned);
-        let host = match job.host() {
-            "" | "local" => self.decision_host(),
-            "any" => "whichever machine is free".to_owned(),
-            peer => peer.to_owned(),
-        };
-        let approval = job.approval();
-        // r6-qa (R6.3): a job that deletes files or branches carries the
-        // risk chip and approves on the second press, like any approval.
-        let risk = job_risk(job);
-        let confirm = job_confirm_key(job);
-        let armed = self.armed(&confirm);
-        // Keycaps show only where the keys go (`decision.keys`: the focused
-        // Fleet card); the numbers are `job_proposal_key`'s.
-        // R7.1: one verb pair for every approval, jobs included: Allow /
-        // Deny, on slots 1 and 2.
-        let allow = Choice::new(format!("{prefix}-approve-{ix}"), "Allow")
-            .slot(super::decision::Slot::Positive)
-            .tooltip("Allow: it runs on its schedule from now on")
-            .enabled(can_approve)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                if this.confirm_allow(&confirm, risk, cx) {
-                    this.job_action(JobAction::Save(approval.clone()), cx);
-                }
-            }));
-        let remove_id = job.id.clone();
-        let reject = Choice::new(format!("{prefix}-remove-{ix}"), "Deny")
-            .slot(super::decision::Slot::Deny)
-            .tooltip("Deny the proposal; nothing runs")
-            .enabled(enabled)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.remove_job(&remove_id, true, cx);
-            }));
-        let open = self.extras.job_expanded.as_deref() == Some(job.id.as_str());
-        let toggle = job.id.clone();
-        let mut decision = Decision::new(format!("{prefix}-row-{ix}"), allow, frame);
-        decision.headline = vec![(headline, false)];
-        decision.headline_selector = Some(format!("{prefix}-headline-{ix}").into());
-        decision.reason = Some(reason);
-        decision.command = command.clone();
-        decision.request = command.map(|c| format!("$ {c}"));
-        decision.request_selector = format!("{prefix}-action-{ix}").into();
-        decision.folder = folder;
-        decision.host = Some(host);
-        decision.risk = risk;
-        decision.armed = armed;
-        decision.deny = Some(reject);
-        decision.details = Some(Details::element(
-            Choice::new(format!("{prefix}-details-{ix}"), "Details").on_click(cx.listener(
-                move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.toggle_job(&toggle, cx)
-                },
-            )),
-            open,
-            open.then(|| {
-                let t = p.tokens;
-                primitives::inset(&p)
-                    .debug_selector(|| "job-detail".into())
-                    .gap(px(t.space.md))
-                    .child(
-                        div()
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .child(if job.change() {
-                                CHANGE_NOTE
-                            } else {
-                                PROPOSAL_NOTE
-                            }),
-                    )
-                    .map(|d| match target {
-                        Some(current) => d
-                            .child(self.spec_block(Some("Now"), current, None))
-                            .child(self.spec_block(Some("Proposed"), job, Some(current))),
-                        None => d.child(self.spec_block(None, job, None)),
-                    })
-                    .into_any_element()
-            }),
-        ));
-        decision
-    }
-
-    /// The column labels over a jobs table.
-    fn job_table_head(&self, proposals: bool) -> Div {
-        let p = self.palette();
-        let pg = p.tokens.pages();
-        primitives::page_table_head(
-            &[
-                ("", Col::Fixed(p.tokens.icon.sm)),
-                ("Job", Col::Flex),
-                ("Schedule", Col::Fixed(pg.when)),
-                (
-                    if proposals {
-                        "Proposed by"
-                    } else {
-                        "Last runs"
-                    },
-                    Col::Fixed(pg.runs),
-                ),
-                (if proposals { "" } else { "Next" }, Col::Fixed(pg.age)),
-                ("", Col::Keep(pg.actions)),
-            ],
-            &p,
-        )
-    }
-
-    /// A v2 job as one table row (R3.6): its name and what it does, the
-    /// schedule, the last runs (strip and the newest result), the next run,
-    /// and actions; the row opens to the whole spec and its runs.
-    fn job_row_v2(
-        &self,
-        ix: usize,
-        job: &Job,
-        all: &[Job],
-        runs: Option<&[Run]>,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let pg = t.pages();
-        let now = now_ms();
-        let expanded = self.extras.job_expanded.as_deref() == Some(job.id.as_str());
-        let target = job
-            .change()
-            .then(|| all.iter().find(|j| j.id == job.replaces))
-            .flatten();
-        let proposal = job.proposal();
-        let paused = !job.enabled && !proposal;
-        let dim = |c: u32| if paused { p.roles.text_tertiary } else { c };
-        let when = schedule(&job.spec["trigger"], self.settings.twelve_hour_clock)
-            .unwrap_or_else(|| job.trigger_summary());
-        let next = if proposal {
-            String::new()
-        } else if paused {
-            "—".to_owned()
-        } else {
-            job.next_run_at
-                .map_or_else(|| "—".to_owned(), |at| jobs::until(at, now))
-        };
-        let (sentence, command) = job.describe();
-        let what = if job.change() {
-            let name = target.map_or("a removed job", |t| t.name.as_str());
-            format!("Changes {name} · {sentence}")
-        } else {
-            sentence
-        };
-        let toggle = job.id.clone();
-        let secondary = |text: String| {
-            div()
-                .min_w_0()
-                .truncate()
-                .text_size(px(t.text.meta))
-                .text_color(rgb(dim(p.roles.text_secondary)))
-                .child(text)
-        };
-        let row = primitives::page_table_row(&p)
-            .id(("job-row", ix))
-            .py(px(t.space.sm))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(p.roles.hover)))
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_job(&toggle, cx)))
-            .child(
-                primitives::page_cell(Col::Fixed(t.icon.sm)).child(
-                    Icon::new(if expanded {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    })
-                    .size(px(t.icon.sm))
-                    .text_color(rgb(p.roles.text_tertiary)),
-                ),
-            )
-            .child(
-                primitives::page_cell(Col::Flex)
-                    .flex_col()
-                    .items_start()
-                    .gap(px(t.space.xxs))
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .gap(px(t.space.md))
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .font_weight(FontWeight(t.weight.semibold))
-                                    .text_color(rgb(dim(p.text)))
-                                    .child(job.name.clone()),
-                            )
-                            .children(self.job_chip(job, p)),
-                    )
-                    .child(match command {
-                        Some(command) => div()
-                            .w_full()
-                            .min_w_0()
-                            .truncate()
-                            .debug_selector(move || format!("job-action-{ix}"))
-                            .font_family(mono_font())
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(dim(p.roles.text_secondary)))
-                            .child(format!("$ {command}")),
-                        None => secondary(what.clone()).w_full(),
-                    }),
-            )
-            .child(
-                primitives::page_cell(Col::Fixed(pg.when))
-                    .child(secondary(when).text_size(px(t.text.body))),
-            )
-            .child(if proposal {
-                primitives::page_cell(Col::Fixed(pg.runs)).child(
-                    primitives::truncated(
-                        SharedString::from(format!("job-proposer-{ix}")),
-                        job.proposed_by.clone(),
-                        &p,
-                    )
-                    .text_color(rgb(p.roles.text_secondary)),
-                )
-            } else {
-                primitives::page_cell(Col::Fixed(pg.runs))
-                    .flex_col()
-                    .items_start()
-                    .gap(px(t.space.xxs))
-                    .child(self.job_status(job, now))
-                    .children(self.run_strip(&job.id, runs))
-            })
-            .child(primitives::page_cell(Col::Fixed(pg.age)).child(tabular(
-                div().text_color(rgb(p.roles.text_secondary)).child(next),
-            )))
-            .child(
-                primitives::page_cell(Col::Keep(pg.actions))
-                    .justify_end()
-                    .child(self.job_actions(ix, job, target, cx)),
-            );
-        div()
-            .debug_selector(move || format!("job-row-{ix}"))
-            .w_full()
-            .flex()
-            .flex_col()
-            .child(row)
-            .when(expanded, |d| d.child(self.job_detail(job, target)))
-    }
-
-    /// Jobs / Runs as the shared segmented control, each with its count.
-    fn job_tabs_v2(&self, list: &[Job], runs: Option<&[Run]>, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let now = now_ms();
-        let failed_today = runs.map_or(0, |runs| {
-            runs.iter()
-                .filter(|r| r.status == "error" && jobs::day_label(r.started_at, now) == "Today")
-                .count()
-        });
-        let waiting = list.iter().filter(|j| j.proposal()).count();
-        let scheduled = list.len() - waiting;
-        let tab = |id: &'static str, label: &'static str, runs_tab: bool, alert: Option<Div>| {
-            primitives::segment(id, label, self.extras.job_runs_tab == runs_tab, &p)
-                .debug_selector(move || id.into())
-                .gap(px(t.space.sm))
-                .children(alert)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.extras.job_runs_tab != runs_tab {
-                        this.extras.job_runs_tab = runs_tab;
-                        if runs_tab {
-                            this.request(Request::JobRuns, cx);
-                        }
-                        cx.notify();
-                    }
-                }))
-        };
-        let count = |n: usize| {
-            div()
-                .text_color(rgb(p.roles.text_tertiary))
-                .child(n.to_string())
-        };
-        div().flex().child(
-            primitives::segmented(&p)
-                .child(tab(
-                    "jobs-tab-jobs",
-                    "Jobs",
-                    false,
-                    Some(if waiting > 0 {
-                        primitives::pill(
-                            format!("{waiting} to approve"),
-                            primitives::Intent::Neutral,
-                            &p,
-                        )
-                    } else {
-                        count(scheduled)
-                    }),
-                ))
-                .child(tab(
-                    "jobs-tab-runs",
-                    "Runs",
-                    true,
-                    (failed_today > 0).then(|| {
-                        primitives::pill(
-                            format!("{failed_today} failed today"),
-                            primitives::Intent::Danger,
-                            &p,
-                        )
-                    }),
-                )),
-        )
-    }
-
-    /// A v2 job row's actions: Approve (the first proposal is the page's
-    /// primary) and Reject for proposals; Pause/Resume and Run now for jobs,
-    /// with Remove in the overflow menu behind a confirm step.
-    fn job_actions_v2(
-        &self,
-        ix: usize,
-        job: &Job,
-        target: Option<&Job>,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let enabled = self.view.connected && !self.demo && !self.job_busy();
-        let id = job.id.clone();
-        let proposal = job.proposal();
-        let confirming = self.extras.job_confirm_remove.as_deref() == Some(id.as_str());
-        let button = |id: SharedString, label: &'static str, variant, enabled: bool| {
-            primitives::button(id, label, None, variant, ButtonSize::Small, enabled, &p)
-        };
-        let row = div()
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap(px(t.space.xs));
-        if proposal {
-            let remove_id = id.clone();
-            // R7.1/R7.2: Allow / Deny, in their tiers.
-            let reject = button(
-                job_control("remove", ix),
-                "Deny",
-                super::system::actions::tier(super::system::actions::Verb::Deny),
-                enabled,
-            )
-            .debug_selector(move || format!("job-remove-{ix}"))
-            .when(enabled, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.remove_job(&remove_id, true, cx);
-                }))
-            });
-            let can_approve = enabled && (!job.change() || target.is_some());
-            let approval = job.approval();
-            let (risk, confirm) = (job_risk(job), job_confirm_key(job));
-            // R8.3: armed, the filled red "Press again to delete".
-            let armed = self.armed(&confirm) && risk.is_some_and(super::decision::Risk::confirms);
-            let approve = button(
-                job_control("approve", ix),
-                if armed {
-                    super::decision::PRESS_AGAIN
-                } else {
-                    "Allow"
-                },
-                if armed {
-                    super::system::actions::armed_variant()
-                } else {
-                    super::system::actions::region_variant(
-                        super::system::actions::Verb::Allow,
-                        ix == 0,
-                    )
-                },
-                can_approve,
-            )
-            .debug_selector(move || format!("job-approve-{ix}"))
-            .when(can_approve, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    if this.confirm_allow(&confirm, risk, cx) {
-                        this.job_action(JobAction::Save(approval.clone()), cx);
-                    }
-                }))
-            });
-            // r4-pages (R4.5): fixed slots, so every row's actions align.
-            let slot = |b: Stateful<Div>| {
-                primitives::action_slot(
-                    t.pages().action_slot,
-                    Some(primitives::slot_button(b, &p).into_any_element()),
-                )
-            };
-            return primitives::action_slots(vec![slot(reject), slot(approve)], &p);
-        }
-        if confirming {
-            // The second step names what goes: the job and its history.
-            let remove_id = id.clone();
-            return row
-                .child(
-                    button(
-                        job_control("keep", ix),
-                        "Keep",
-                        ButtonVariant::Tertiary,
-                        true,
-                    )
-                    .debug_selector(move || format!("job-keep-{ix}"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.extras.job_confirm_remove = None;
-                        cx.notify();
-                    })),
-                )
-                .child(
-                    button(
-                        job_control("remove", ix),
-                        "Remove job and history",
-                        // R8.2: the armed second step of a removal.
-                        super::system::actions::armed_variant(),
-                        enabled,
-                    )
-                    .debug_selector(move || format!("job-remove-{ix}"))
-                    .when(enabled, |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.remove_job(&remove_id, false, cx);
-                        }))
-                    }),
-                );
-        }
-        let paused = job.with_enabled(!job.enabled);
-        let pause_label = if job.enabled { "Pause" } else { "Resume" };
-        let pause = button(
-            job_control("pause", ix),
-            pause_label,
-            ButtonVariant::Secondary,
-            enabled,
-        )
-        .debug_selector(move || format!("job-pause-{ix}"))
-        .when(enabled, |d| {
-            d.on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.job_action(JobAction::Save(paused.clone()), cx);
-            }))
-        });
-        let can_run = enabled && !job.running;
-        let run_id = id.clone();
-        let run = button(
-            job_control("run", ix),
-            "Run now",
-            ButtonVariant::Secondary,
-            can_run,
-        )
-        .debug_selector(move || format!("job-run-{ix}"))
-        .when(can_run, |d| {
-            d.on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.job_action(JobAction::Run(run_id.clone()), cx);
-            }))
-        });
-        let remove_id = id.clone();
-        let remove = primitives::menu_item(
-            job_control("remove", ix),
-            "Remove…",
-            Some(IconName::Delete),
-            true,
-            enabled,
-            &p,
-        )
-        .debug_selector(move || format!("job-remove-{ix}"))
-        .when(enabled, |d| {
-            d.on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.close_page_menu(cx);
-                this.remove_job(&remove_id, false, cx);
-            }))
-        });
-        // r4-pages (R4.5): Pause and Resume share one slot width, so Run
-        // now and the overflow sit at the same x on every row.
-        let slot = |b: Stateful<Div>| {
-            primitives::action_slot(
-                t.pages().action_slot,
-                Some(primitives::slot_button(b, &p).into_any_element()),
-            )
-        };
-        primitives::action_slots(
-            vec![
-                slot(pause),
-                slot(run),
-                div().flex_shrink_0().child(self.page_overflow(
-                    format!("job-{ix}"),
-                    vec![remove.into_any_element()],
-                    cx,
-                )),
-            ],
-            &p,
-        )
-    }
-}
-
-/// The run strip's tooltip: "Last 10 runs: 8 succeeded, 2 failed".
-pub(super) fn strip_summary(runs: &[&Run]) -> String {
-    let ok = runs.iter().filter(|r| r.status == "ok").count();
-    let failed = runs.iter().filter(|r| r.status == "error").count();
-    let skipped = runs.len() - ok - failed;
-    let mut parts = Vec::new();
-    if ok > 0 {
-        parts.push(format!("{ok} succeeded"));
-    }
-    if failed > 0 {
-        parts.push(format!("{failed} failed"));
-    }
-    if skipped > 0 {
-        parts.push(format!("{skipped} skipped"));
-    }
-    let head = match runs.len() {
-        1 => "Last run".to_owned(),
-        n => format!("Last {n} runs"),
-    };
-    format!("{head}: {}", parts.join(", "))
-}
-
-/// r6-qa (R6.3): the risk a proposed job's command carries, read the way
-/// an approval's is (`decision::risk`), in the job's own folder.
-fn job_risk(job: &Job) -> Option<super::decision::Risk> {
-    let command = job.describe().1?;
-    let action = &job.spec["action"];
-    let cwd = [&action["spawn"]["cwd"], &action["shell"]["cwd"]]
-        .into_iter()
-        .find_map(serde_json::Value::as_str)
-        .unwrap_or("");
-    super::decision::risk(
-        &serde_json::json!({"toolName": "Bash", "toolInput": {"command": command}}),
-        cwd,
-    )
-}
-
-/// The arming key of a proposed job's Approve (`decision::confirm_key`).
-fn job_confirm_key(job: &Job) -> String {
-    super::decision::confirm_key(&format!("job:{}", job.id), None)
 }

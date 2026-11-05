@@ -2,8 +2,6 @@
 //! and searchable from the page itself. Grouping, ordering and matching live
 //! in `wks_native::history`; this is the page, its keyboard cursor and the
 //! per-group collapse and "Show more" state.
-use super::primitives::{self, Col, tabular};
-use super::system::StatusCell;
 use super::*;
 use gpui::AnyElement;
 use gpui_component::input::{InputEvent, MoveDown, MoveUp};
@@ -407,7 +405,7 @@ impl Workspace {
 
     /// The page's items below its header: toolbar, status, groups, footer.
     pub(super) fn render_recent(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let page = self.recent_page(cx);
         // Until the first answer there is nothing to call empty.
         let loading = self.view.requests.get("recent").is_none_or(|s| s.loading);
@@ -476,12 +474,7 @@ impl Workspace {
         items.push(self.feature_message("session-forget").into_any_element());
         if page.groups.is_empty() && !loading {
             items.push(self.render_recent_empty(&page, cx).into_any_element());
-        } else if self.design().is_v2() {
-            items.push(self.recent_head_v2().into_any_element());
         }
-        // r7-pages (R7.6): the head, bands and rows are one table frame,
-        // drawn in slices because each row is the scroller's own child.
-        let table_from = items.len().saturating_sub(1);
         let mut row_ix = 0;
         for (g, group) in page.groups.iter().enumerate() {
             let collapsed = !page.searching && self.extras.recent.collapsed.contains(&group.key);
@@ -492,13 +485,10 @@ impl Workspace {
                         .find(|k| projects::same_dir(&k.path, &group.path))
                 })
                 .flatten();
-            items.push(if self.design().is_v2() {
-                self.render_recent_group_v2(g, group, project, collapsed, page.searching, cx)
-                    .into_any_element()
-            } else {
+            items.push(
                 self.render_recent_group(g, group, project, collapsed, page.searching, cx)
-                    .into_any_element()
-            });
+                    .into_any_element(),
+            );
             if collapsed {
                 continue;
             }
@@ -514,13 +504,10 @@ impl Workspace {
                 if selected && self.extras.recent.reveal.replace(false) {
                     self.extras.recent.scroll.scroll_to_item(items.len());
                 }
-                items.push(if self.design().is_v2() {
-                    self.render_recent_row_v2(row_ix, entry, group, selected, now, cx)
-                        .into_any_element()
-                } else {
+                items.push(
                     self.render_recent_row(row_ix, entry, group, selected, now, cx)
-                        .into_any_element()
-                });
+                        .into_any_element(),
+                );
                 row_ix += 1;
             }
             let hidden = group.entries.len().saturating_sub(limit);
@@ -576,15 +563,6 @@ impl Workspace {
                 );
             }
         }
-        if self.design().is_v2() && !(page.groups.is_empty() && !loading) {
-            let len = items.len() - table_from;
-            for (i, item) in items.iter_mut().skip(table_from).enumerate() {
-                let inner = std::mem::replace(item, div().into_any_element());
-                *item = system::table_part(system::TablePart::of(i, len), &p)
-                    .child(inner)
-                    .into_any_element();
-            }
-        }
         if !page.searching && self.history_next().is_some() {
             let loading_more = self
                 .view
@@ -598,7 +576,7 @@ impl Workspace {
                     .flex()
                     .justify_center()
                     .child(
-                        self.pbutton(
+                        self.button(
                             "history-load-more",
                             if loading_more {
                                 "Loading older sessions…"
@@ -638,7 +616,7 @@ impl Workspace {
     /// "142 sessions in 12 projects", or how many a search found, with
     /// fold-all and clear-search actions.
     fn render_recent_summary(&self, page: &RecentPage, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let plural =
             |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
         let groups = plural(page.groups.len(), "project", "projects");
@@ -680,7 +658,7 @@ impl Workspace {
             )
             .when(page.searching, |d| {
                 d.child(
-                    self.pquiet(
+                    self.quiet_button(
                         "history-clear-search",
                         "Clear search",
                         IconName::Close,
@@ -693,7 +671,7 @@ impl Workspace {
             })
             .when(!page.searching && page.groups.len() > 1, |d| {
                 d.child(
-                    self.pquiet(
+                    self.quiet_button(
                         "history-fold-all",
                         if all_folded {
                             "Expand all"
@@ -726,7 +704,7 @@ impl Workspace {
     /// Nothing to list: a search that found nothing, an empty Hidden
     /// filter, or a hub with no sessions yet. Says which, and the way out.
     fn render_recent_empty(&self, page: &RecentPage, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let (icon, title, body) = match (page.searching, self.extras.show_archived) {
             (true, _) => (
                 IconName::Search,
@@ -780,7 +758,7 @@ impl Workspace {
             .when(!page.searching && self.extras.show_archived, |d| {
                 d.child(
                     div().pt_2().child(
-                        self.pbutton("history-show-all", "Show all sessions", true)
+                        self.button("history-show-all", "Show all sessions", true)
                             .debug_selector(|| "history-show-all".into())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.extras.show_archived = false;
@@ -801,7 +779,7 @@ impl Workspace {
         searching: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let key = group.key.clone();
         let count = if searching {
             format!("{} of {}", group.entries.len(), group.total)
@@ -888,9 +866,11 @@ impl Workspace {
         now: i64,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let s = &entry.session;
         let open = s.clone();
+        let resume = s.clone();
+        let id = s.id.clone();
         let connected = self.view.connected;
         // Inside its group the header names the folder; a row says only
         // where it differs: a subfolder, or which worktree.
@@ -903,7 +883,49 @@ impl Workspace {
         // session's state is worth reading.
         let live = connected && !s.stopped();
         let reveal = selected || confirming;
-        let actions = self.recent_actions(ix, s, hidden, confirming, cx);
+        let mut actions: Vec<Stateful<Div>> = Vec::new();
+        // A child cleared from the sidebar on this device comes back here;
+        // that is not an archive restore.
+        if self.clear_marked(&s.id) {
+            let id = s.id.clone();
+            actions.push(
+                self.row_action("unclear-recent", "Show in sidebar", true, false)
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new(CLEARED_TOOLTIP).build(window, cx)
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.unclear_session(&id, cx)
+                    })),
+            );
+        }
+        if s.stopped() && matches!(s.provider.as_str(), "claude" | "codex") {
+            actions.push(
+                self.row_action("resume-recent", "Resume…", connected, false)
+                    .when(connected, |d| {
+                        d.on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.resume_session(&resume, window, cx)
+                        }))
+                    }),
+            );
+        }
+        actions.push(
+            self.row_action(
+                "archive-recent",
+                if hidden { "Unhide" } else { "Hide" },
+                true,
+                false,
+            )
+            .debug_selector(move || format!("recent-hide-{ix}"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.toggle_archive(&id, cx)
+            })),
+        );
+        if self.history_available() {
+            actions.extend(self.render_forget_controls(ix, s, confirming, cx));
+        }
         div()
             .id(("recent-row", ix))
             .group(ROW_GROUP)
@@ -968,10 +990,7 @@ impl Workspace {
                                     .child(entry.title.clone()),
                             )
                             .when(live, |d| {
-                                d.child(div().flex_shrink_0().child(match self.v2_palette() {
-                                    Some(v2) => self.session_status_v2(s).render(&v2),
-                                    None => session_badge(s, p, connected),
-                                }))
+                                d.child(div().flex_shrink_0().child(session_badge(s, p, connected)))
                             })
                             // Under the Hidden filter every row is; the badge would only repeat it.
                             .when(hidden && !self.extras.show_archived, |d| {
@@ -996,7 +1015,7 @@ impl Workspace {
                             .min_w_0()
                             .text_size(px(chrome::scale::CAPTION))
                             .text_color(rgb(p.muted))
-                            .child(div().flex_shrink_0().child(self.page_model(s, 11.)))
+                            .child(div().flex_shrink_0().child(chrome::model_badge(s, p, 11.)))
                             .when(!place.is_empty(), |d| {
                                 d.child(dot()).child(
                                     div()
@@ -1063,66 +1082,7 @@ impl Workspace {
             })
     }
 
-    /// A history row's actions: Show in sidebar (a cleared child), Resume…,
-    /// Hide / Unhide, and Delete… or its confirmation.
-    fn recent_actions(
-        &self,
-        ix: usize,
-        s: &Session,
-        hidden: bool,
-        confirming: bool,
-        cx: &mut Context<Self>,
-    ) -> Vec<Stateful<Div>> {
-        let resume = s.clone();
-        let id = s.id.clone();
-        let connected = self.view.connected;
-        let mut actions: Vec<Stateful<Div>> = Vec::new();
-        // A child cleared from the sidebar on this device comes back here;
-        // that is not an archive restore.
-        if self.clear_marked(&s.id) {
-            let id = s.id.clone();
-            actions.push(
-                self.row_action("unclear-recent", "Show in sidebar", true, false)
-                    .tooltip(|window, cx| {
-                        gpui_component::tooltip::Tooltip::new(CLEARED_TOOLTIP).build(window, cx)
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.unclear_session(&id, cx)
-                    })),
-            );
-        }
-        if s.stopped() && matches!(s.provider.as_str(), "claude" | "codex") {
-            actions.push(
-                self.row_action("resume-recent", "Resume…", connected, false)
-                    .when(connected, |d| {
-                        d.on_click(cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.resume_session(&resume, window, cx)
-                        }))
-                    }),
-            );
-        }
-        actions.push(
-            self.row_action(
-                "archive-recent",
-                if hidden { "Unhide" } else { "Hide" },
-                true,
-                false,
-            )
-            .debug_selector(move || format!("recent-hide-{ix}"))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.toggle_archive(&id, cx)
-            })),
-        );
-        if self.history_available() {
-            actions.extend(self.render_forget_controls(ix, s, confirming, cx));
-        }
-        actions
-    }
-
-    /// A history row's text action: no fill until hovered, so a list of rows never
+    /// A row's text action: no fill until hovered, so a list of rows never
     /// repeats a column of buttons. Muted, or error-toned when destructive.
     fn row_action(
         &self,
@@ -1131,23 +1091,7 @@ impl Workspace {
         enabled: bool,
         danger: bool,
     ) -> Stateful<Div> {
-        let p = self.palette();
-        if self.design().is_v2() {
-            // r5-shell: the system's Tertiary / Destructive small button.
-            return primitives::button(
-                id,
-                label,
-                None,
-                if danger {
-                    primitives::ButtonVariant::Destructive
-                } else {
-                    primitives::ButtonVariant::Tertiary
-                },
-                primitives::ButtonSize::Small,
-                enabled,
-                &p,
-            );
-        }
+        let p = self.appearance.palette();
         let (wash, ink) = if danger {
             (gpui::Hsla::from(rgb(p.error)).opacity(0.12), p.error)
         } else {
@@ -1203,7 +1147,7 @@ impl Workspace {
                         }
                         cx.notify();
                     })),
-                self.pdanger("forget-recent", "Delete for good", enabled)
+                self.danger_button("forget-recent", "Delete for good", enabled)
                     .h(px(28.))
                     .py_0()
                     .flex()
@@ -1270,245 +1214,4 @@ pub(super) fn recent_place(cwd: &str, group: &Group, worktree_root: &str) -> Str
         return key[base.len() + 1..].to_owned();
     }
     key
-}
-
-// r3-pages (R3.6): history as one dense, left-aligned table: a column
-// header, each project a band, each session a row (name, state, agent,
-// folder, last active). r5-shell (R5.4): the actions have their own fixed
-// column at the row's end, shown while hovered, never covering a value.
-impl Workspace {
-    fn recent_columns(&self) -> [(&'static str, Col); 6] {
-        let p = self.palette();
-        let pg = p.tokens.pages();
-        [
-            ("Session", Col::Flex),
-            ("Status", Col::Fixed(pg.status)),
-            ("Model", Col::Fixed(pg.machine)),
-            ("Folder", Col::Fixed(pg.when)),
-            ("Last active", Col::End(pg.age)),
-            ("", Col::Keep(primitives::action_slots_width(3, &p))),
-        ]
-    }
-
-    fn recent_head_v2(&self) -> Div {
-        let p = self.palette();
-        primitives::page_table_head(&self.recent_columns(), &p)
-            .debug_selector(|| "history-head".into())
-    }
-
-    fn render_recent_group_v2(
-        &self,
-        g: usize,
-        group: &Group,
-        project: Option<&KnownProject>,
-        collapsed: bool,
-        searching: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let p = self.palette();
-        let t = p.tokens;
-        let key = group.key.clone();
-        let count = if searching {
-            format!("{} of {}", group.entries.len(), group.total)
-        } else {
-            group.total.to_string()
-        };
-        let hint = match group.kind {
-            GroupKind::NoFolder => String::new(),
-            GroupKind::Worktrees => format!("{} · worktrees", group.path),
-            GroupKind::Project | GroupKind::Folder => group.path.clone(),
-        };
-        chrome::interactive_control(
-            system::table_band(&p).id(("history-group", g)),
-            p,
-            !searching,
-        )
-        .debug_selector(move || format!("history-group-{g}"))
-        .when(!searching, |d| {
-            d.hover(move |s| s.bg(rgb(p.roles.hover)))
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle_recent_group(&key, cx)))
-        })
-        .child(
-            Icon::new(if collapsed {
-                IconName::ChevronRight
-            } else {
-                IconName::ChevronDown
-            })
-            .size(px(t.icon.sm))
-            .text_color(rgb(p.roles.text_tertiary)),
-        )
-        .child(self.project_mark(project, &group.path, t.layout.avatar))
-        .child(
-            div()
-                .flex_shrink_0()
-                .max_w(px(t.pages().when))
-                .truncate()
-                .text_size(px(t.text.body))
-                .font_weight(FontWeight(t.weight.semibold))
-                .text_color(rgb(p.text))
-                .child(group.name.clone()),
-        )
-        .child(tabular(
-            div()
-                .flex_shrink_0()
-                .text_size(px(t.text.meta))
-                .text_color(rgb(p.roles.text_tertiary))
-                .debug_selector(move || format!("history-count-{g}"))
-                .child(count),
-        ))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .font_family(mono_font())
-                .text_size(px(t.text.meta))
-                .text_color(rgb(p.roles.text_tertiary))
-                .child(hint),
-        )
-    }
-
-    fn render_recent_row_v2(
-        &self,
-        ix: usize,
-        entry: &Entry,
-        group: &Group,
-        selected: bool,
-        now: i64,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let p = self.palette();
-        let t = p.tokens;
-        let [_, status_col, agent_col, folder_col, age_col, actions_col] = self.recent_columns();
-        let s = &entry.session;
-        let open = s.clone();
-        let connected = self.view.connected;
-        let place = recent_place(&s.cwd, group, self.worktree_root());
-        // r8-attention (R8.1): "Last active" is the sidebar's fact in the
-        // sidebar's units: a live session's last activity, "23m ago".
-        let at = self
-            .view
-            .sessions
-            .iter()
-            .find(|live| live.id == s.id)
-            .and_then(|live| live.telemetry.last_activity_ms)
-            .unwrap_or(entry.updated_at);
-        let age = if at > 0 {
-            wks_native::format::ago(at, now)
-        } else {
-            wks_native::format::EMPTY.to_owned()
-        };
-        let hidden = self.history_hidden(&s.id, None);
-        let confirming = self.extras.recent.confirm_delete.as_deref() == Some(s.id.as_str());
-        let live = connected && !s.stopped();
-        let reveal = selected || confirming;
-        let actions = self.recent_actions(ix, s, hidden, confirming, cx);
-        let cluster = div()
-            .id("recent-actions")
-            .flex()
-            .items_center()
-            .gap(px(t.space.xs))
-            .on_click(|_, _, cx| cx.stop_propagation());
-        primitives::page_table_row(&p)
-            .id(("recent-row", ix))
-            .group(ROW_GROUP)
-            .debug_selector(move || format!("recent-row-{ix}"))
-            .relative()
-            .when(connected, |d| {
-                d.cursor_pointer()
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_recent(open.clone(), window, cx)
-                    }))
-            })
-            .map(|d| {
-                if selected {
-                    d.bg(rgb(p.selected))
-                } else {
-                    d.hover(move |s| s.bg(rgb(p.roles.hover)))
-                }
-            })
-            .child(
-                primitives::page_cell(Col::Flex)
-                    .gap(px(t.space.md))
-                    // Rows sit under their band's name.
-                    .pl(px(t.icon.sm + t.space.md))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .font_weight(FontWeight(t.weight.medium))
-                            .text_color(rgb(p.text))
-                            .child(entry.title.clone()),
-                    )
-                    .when(hidden && !self.extras.show_archived, |d| {
-                        d.child(
-                            primitives::pill("Hidden", primitives::Intent::Neutral, &p)
-                                .flex_shrink_0()
-                                .debug_selector(move || format!("recent-hidden-{ix}")),
-                        )
-                    }),
-            )
-            .child(
-                // r5-shell (R5.4): every row states its status; an ended
-                // session says so.
-                primitives::page_cell(status_col.1).child(
-                    if live {
-                        let badge = self.session_status_v2(s);
-                        let cell = StatusCell::new(badge.kind);
-                        match badge.label {
-                            Some(label) => cell.label(label),
-                            None => cell,
-                        }
-                    } else {
-                        StatusCell::new(primitives::StatusKind::Ended)
-                    }
-                    .render(&p),
-                ),
-            )
-            .child(
-                primitives::page_cell(agent_col.1)
-                    .text_size(px(t.text.meta))
-                    .child(self.page_model(s, t.text.meta)),
-            )
-            .child(
-                primitives::page_cell(folder_col.1).child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .font_family(mono_font())
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_tertiary))
-                        .child(if place.is_empty() {
-                            wks_native::format::EMPTY.to_owned()
-                        } else {
-                            place
-                        }),
-                ),
-            )
-            .child(
-                primitives::page_cell(age_col.1).child(tabular(
-                    div()
-                        .whitespace_nowrap()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_secondary))
-                        .child(age),
-                )),
-            )
-            .child(
-                // Hovered (or under the cursor), the actions show in their
-                // own column; only the cursor's row is in the Tab order.
-                primitives::page_cell(actions_col.1)
-                    .justify_end()
-                    .when(!reveal, |d| {
-                        d.opacity(0.).group_hover(ROW_GROUP, |s| s.opacity(1.))
-                    })
-                    .child(
-                        cluster.children(
-                            actions
-                                .into_iter()
-                                .map(|a| if reveal { a } else { a.tab_stop(false) }),
-                        ),
-                    ),
-            )
-    }
 }

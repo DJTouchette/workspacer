@@ -94,16 +94,8 @@ impl RenderOnce for Switch {
         let toggle_state = window.use_keyed_state(self.id.clone(), cx, |_, _| checked);
 
         let (bg, toggle_bg) = match checked {
-            true => (
-                cx.theme().switch_on.unwrap_or(cx.theme().primary),
-                cx.theme().switch_thumb,
-            ),
-            false => (
-                cx.theme().switch,
-                cx.theme()
-                    .switch_thumb_off
-                    .unwrap_or(cx.theme().switch_thumb),
-            ),
+            true => (cx.theme().primary, cx.theme().switch_thumb),
+            false => (cx.theme().switch, cx.theme().switch_thumb),
         };
 
         let (bg, toggle_bg) = if self.disabled {
@@ -124,9 +116,6 @@ impl RenderOnce for Switch {
             _ => px(16.),
         };
         let inset = px(2.);
-        // Workspacer patch: the off hairline (track and thumb).
-        let edge = cx.theme().switch_border.filter(|_| !checked);
-        let transparent = cx.theme().transparent;
         let radius = if cx.theme().radius >= px(4.) {
             bg_height
         } else {
@@ -148,12 +137,8 @@ impl RenderOnce for Switch {
                         .rounded(radius)
                         .flex()
                         .items_center()
-                        .map(|this| match edge {
-                            // A 1px edge plus 1px padding keeps the thumb's
-                            // 2px inset.
-                            Some(edge) => this.border_1().border_color(edge).p(px(1.)),
-                            None => this.border(inset).border_color(transparent),
-                        })
+                        .border(inset)
+                        .border_color(cx.theme().transparent)
                         .bg(bg)
                         .when_some(self.tooltip.clone(), |this, tooltip| {
                             this.tooltip(move |window, cx| {
@@ -165,7 +150,6 @@ impl RenderOnce for Switch {
                             div()
                                 .rounded(radius)
                                 .bg(toggle_bg)
-                                .when_some(edge, |this, edge| this.border_1().border_color(edge))
                                 .shadow_md()
                                 .size(bar_width)
                                 .map(|this| {

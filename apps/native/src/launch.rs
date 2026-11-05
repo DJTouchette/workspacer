@@ -30,18 +30,6 @@ impl Permission {
         }
     }
 
-    /// R6.4: the one design-v2 word for each mode, the same on the
-    /// composer's access chip, New session, the model popover and the Model
-    /// page ("Ask first" everywhere, never "Ask to approve").
-    pub fn word(self) -> &'static str {
-        match self {
-            Self::Ask => "Ask first",
-            Self::AcceptEdits => "Can edit",
-            Self::Plan => "Plan only",
-            Self::FullAccess => "Full access",
-        }
-    }
-
     pub fn description(self) -> &'static str {
         match self {
             Self::Ask => "The agent asks when a tool needs approval.",

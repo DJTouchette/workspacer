@@ -21,13 +21,6 @@ pub(super) enum Screen {
     Handoff,
     /// The session's linked pull request and its review threads.
     PullRequest,
-    // r3-fleet
-    /// Every live session as a grid of tiles (design v2).
-    Fleet,
-    // r5-system (R5.3)
-    /// The design system's component gallery: every component in every
-    /// state. Dev builds only (`wks-native --gallery`); never in the nav.
-    Gallery,
 }
 
 impl Workspace {
@@ -220,21 +213,6 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if self.shell.palette.open {
-            self.close_palette(window, cx);
-            return;
-        }
-        if self.shell.shortcuts || self.shell.model_popover {
-            self.shell.shortcuts = false;
-            self.shell.model_popover = false;
-            cx.notify();
-            return;
-        }
-        // r8-decisions (R8.3, R8.5): Esc cancels an armed "Press again to
-        // delete", then closes the Fleet's menu or Details sheet.
-        if self.escape_decision(cx) {
-            return;
-        }
         if self.close_peek(window, cx) {
             return;
         }
@@ -257,11 +235,6 @@ impl Workspace {
         }
         if self.searching_recent(window, cx) {
             self.back_from_feature(window, cx);
-            return;
-        }
-        // area-composer (v2): the composer's primary reads "Stop · Esc"
-        // while the agent works and nothing is drafted.
-        if self.stop_on_escape(window, cx) {
             return;
         }
         if self.focus.is_focused(window) {
@@ -295,12 +268,7 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn open_project_path(
-        &mut self,
-        path: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn open_project_path(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.requested_session.is_some() {
             self.settings_error =
                 "This window is pinned to a session. Open another window to browse projects."
@@ -401,14 +369,17 @@ impl Workspace {
             self.projects_scroll
                 .scroll_to_item(self.project_cursor, gpui::ScrollStrategy::Center);
         } else {
-            let rows = self.nav_sessions(cx);
+            let rows = self.visible_sessions(cx);
             let index = if last {
                 rows.len().saturating_sub(1)
             } else {
                 0
             };
             if let Some(&ix) = rows.get(index) {
-                self.reveal_sidebar_row(index, cx);
+                self.sidebar_scroll.scroll_to_item(
+                    self.sidebar_session_position(index, cx),
+                    gpui::ScrollStrategy::Center,
+                );
                 self.command(Command::Select(self.view.sessions[ix].id.clone()), cx);
             }
         }
@@ -425,7 +396,7 @@ impl Workspace {
     }
 
     pub(super) fn shell(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let viewer = self.viewer_owns_keys(window, cx);
         div()
             .relative()
@@ -435,27 +406,13 @@ impl Workspace {
             .children(self.render_file_viewer(window, cx))
             .children(self.render_tasks_sheet(window, cx))
             .children(self.render_link_menu(cx))
-            .children(self.render_shortcuts(cx))
-            .children(self.render_model_popover(window, cx))
-            .children(self.render_palette(window, cx))
-            .key_context(
-                match (
-                    viewer,
-                    self.vim() && self.focus.is_focused(window), // r2-shell
-                    self.design().is_v2(),
-                    self.fleet_keys(window), // r3-fleet
-                ) {
-                    (true, _, _, _) => "FileViewer",
-                    (false, true, false, _) => "Workspace VimNormal",
-                    (false, false, false, _) => "Workspace",
-                    // area-shell: v2's keys (`g n`, `?`) bind under `DesignV2`.
-                    (false, true, true, false) => "Workspace VimNormal DesignV2",
-                    (false, false, true, false) => "Workspace DesignV2",
-                    // r3-fleet: the grid's keys bind under `Fleet`.
-                    (false, true, true, true) => "Workspace VimNormal DesignV2 Fleet",
-                    (false, false, true, true) => "Workspace DesignV2 Fleet",
-                },
-            )
+            .key_context(if viewer {
+                "FileViewer"
+            } else if self.settings.vim_navigation && self.focus.is_focused(window) {
+                "Workspace VimNormal"
+            } else {
+                "Workspace"
+            })
             .track_focus(&self.focus)
             .capture_action(
                 cx.listener(|this, _: &gpui_component::input::Paste, window, cx| {
@@ -490,15 +447,6 @@ impl Workspace {
 
     fn workspace_actions(&self, shell: Div, cx: &mut Context<Self>) -> Div {
         shell
-            // r8-decisions (R8.2): keycaps show only after keyboard use.
-            .capture_any_mouse_up(cx.listener(Self::note_pointer_input))
-            // area-composer: number keys on a v2 approval strip.
-            .on_key_down(cx.listener(Self::decision_keys))
-            // r6-decisions: number keys on Jobs' proposal and a stalled subagent.
-            .on_key_down(cx.listener(Self::page_decision_keys))
-            .on_key_down(cx.listener(Self::shell_keys))
-            // r3-fleet
-            .map(|shell| self.fleet_actions(shell, cx))
             .on_action(cx.listener(Self::send))
             .on_action(cx.listener(Self::send_now))
             .on_action(cx.listener(Self::queue_message))
@@ -536,8 +484,7 @@ impl Workspace {
             }))
             .on_action(cx.listener(|this, _: &ToggleVim, window, cx| {
                 if this.screen == Screen::Settings {
-                    let on = !this.vim(); // r2-shell
-                    this.settings.set_vim(this.design(), on);
+                    this.settings.vim_navigation = !this.settings.vim_navigation;
                     window.focus(&this.focus);
                     this.save_settings(cx);
                 }
@@ -584,19 +531,6 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &ShowScratch, window, cx| {
                 this.open_feature(Screen::Scratch, window, cx)
             }))
-            .on_action(
-                cx.listener(|this, _: &NextNeedsYou, window, cx| this.next_needs_you(window, cx)),
-            )
-            .on_action(
-                cx.listener(|this, _: &super::transcript_v2::ExpandAllTools, _, cx| {
-                    this.toggle_expand_all(cx)
-                }),
-            )
-            .on_action(cx.listener(|this, _: &ToggleShortcuts, _, cx| {
-                if this.design().is_v2() {
-                    this.toggle_shortcuts(cx)
-                }
-            }))
             .on_action(cx.listener(|this, _: &ShowConversation, window, cx| {
                 this.show_screen(Screen::Conversation, window, cx)
             }))
@@ -636,14 +570,9 @@ impl Workspace {
             .on_action(
                 cx.listener(|this, _: &OpenProject, window, cx| this.open_project(window, cx)),
             )
-            .on_action(cx.listener(|this, _: &SwitchSession, window, cx| {
-                // r2-shell: v2's Ctrl+K is the command palette.
-                if this.design().is_v2() {
-                    this.open_palette(window, cx)
-                } else {
-                    this.open_switcher(window, cx)
-                }
-            }))
+            .on_action(
+                cx.listener(|this, _: &SwitchSession, window, cx| this.open_switcher(window, cx)),
+            )
             .on_action(
                 cx.listener(|this, _: &SearchEnter, window, cx| this.open_search_match(window, cx)),
             )
@@ -675,15 +604,12 @@ impl Workspace {
     }
 
     pub(super) fn render_projects(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        if self.design().is_v2() {
-            return self.render_projects_v2(window, cx);
-        }
         // Short windows give the list, not the explanations, the height.
         let short = window.viewport_size().height < px(620.);
         // Narrow windows keep each folder's actions to icons.
         let compact = window.viewport_size().width < px(960.);
         let gutter = if short { 16. } else { 24. };
-        let p = self.palette();
+        let p = self.appearance.palette();
         let rows = self.project_rows(cx);
         let count = rows.len();
         let can_write = self.can_write_projects();
@@ -720,7 +646,7 @@ impl Workspace {
         } else {
             "No folders match the sidebar search."
         };
-        let hint = if self.vim() {
+        let hint = if self.settings.vim_navigation {
             "j / k navigate · Enter open · n new agent · / filter · i add folder · Ctrl Enter pin"
         } else {
             "Click a folder to see its sessions · New agent starts another there"
@@ -820,7 +746,7 @@ impl Workspace {
 
     /// The hub registry takes writes now: connected, not a demo, and no save
     /// already in flight.
-    pub(super) fn can_write_projects(&self) -> bool {
+    fn can_write_projects(&self) -> bool {
         let saving = self
             .view
             .requests
@@ -841,7 +767,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let field = self.project_path.read(cx);
         let adding = field.focus_handle(cx).is_focused(window) || !field.value().trim().is_empty();
         div()
@@ -892,13 +818,8 @@ impl Workspace {
     }
 
     /// The path field that pins a folder on the hub.
-    pub(super) fn render_project_form(
-        &self,
-        short: bool,
-        can_write: bool,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.palette();
+    fn render_project_form(&self, short: bool, can_write: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
         div()
             .debug_selector(|| "pin-folder-form".into())
             .p(px(if short { 8. } else { 12. }))
@@ -958,8 +879,8 @@ impl Workspace {
     }
     /// Settings and project notices, with the offer to keep projects on
     /// this device when the hub could not take them.
-    pub(super) fn render_project_notices(&self, cx: &mut Context<Self>) -> Vec<Div> {
-        let p = self.palette();
+    fn render_project_notices(&self, cx: &mut Context<Self>) -> Vec<Div> {
+        let p = self.appearance.palette();
         let mut notices = Vec::new();
         if !self.settings_error.is_empty() {
             notices.push(chrome::notice_line(
@@ -1012,7 +933,7 @@ impl Workspace {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let can_write = self.can_write_projects();
         let can_spawn = self.view.connected && !self.demo;
         let pinned = project.favourite;

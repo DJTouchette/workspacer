@@ -18,7 +18,6 @@ mod cold_cache;
 mod composer;
 mod connection;
 mod controls;
-mod design;
 mod history_screen;
 mod history_store;
 mod hosts_view;
@@ -26,8 +25,6 @@ mod job_list;
 mod kept_sessions;
 mod message_queue;
 mod new_agent;
-// area-panels
-mod panels;
 mod portrait;
 mod preferences;
 mod project_groups;
@@ -43,20 +40,8 @@ mod switching;
 mod tables;
 mod task_list;
 mod title;
-// area-transcript
-mod transcript_design;
 mod viewer;
 mod window;
-// area-shell
-mod shell_v2;
-// area-pages
-mod pages_v2;
-// area-composer
-mod composer_v2;
-// r3-fleet
-mod fleet;
-// r4-truth
-mod status_truth;
 
 /// A demo workspace in a 1000×700 window, with the commands it issues and
 /// the sender that feeds it views.
@@ -103,10 +88,6 @@ fn project_read(command: &Command) -> bool {
                     | Request::ScratchPending
                     | Request::InspectProject { .. }
                     | Request::BrowseFolders { .. }
-                    // r7-pages (R7.8): the selected session's change count,
-                    // read in the background for the toolbar.
-                    | Request::Changes { .. }
-                    | Request::DiffSet { .. }
             )
     )
 }
@@ -217,7 +198,7 @@ fn accent_border(
     bounds: gpui::Bounds<gpui::Pixels>,
 ) -> bool {
     let accent: gpui::Hsla =
-        rgb(workspace.read_with(visual, |this, _| this.palette().accent)).into();
+        rgb(workspace.read_with(visual, |this, _| this.appearance.palette().accent)).into();
     let near = |a: gpui::Pixels, b: gpui::Pixels| (a - b).abs() < px(0.5);
     visual.update(|window, _| {
         window.rendered_borders().into_iter().any(|(quad, color)| {

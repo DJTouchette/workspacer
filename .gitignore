@@ -7,8 +7,6 @@ dist/
 release/
 *.js.map
 .DS_Store
-# design screenshot rig output (apps/desktop/scripts/design-shots)
-design-shots-out/
 
 # Rust target dirs (apps/tui, services/claudemon)
 target/

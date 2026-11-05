@@ -1,7 +1,7 @@
 //! A session's pending question set: the picker in the dock, its answers
 //! and their submission.
 use super::*;
-use gpui::{AnyElement, relative};
+use gpui::AnyElement;
 use gpui_component::scroll::ScrollableElement;
 use serde_json::Value;
 use wks_native::elicitation::{Elicitation, Kind};
@@ -64,8 +64,6 @@ impl Workspace {
         if signature != self.extras.question_signature {
             let questions = pending.map(question_list).unwrap_or_default();
             self.extras.question_signature = signature;
-            // r2-systems: a new set starts the stepper at its first question.
-            self.composer_ui.question_step = 0;
             self.tools.question_card = card;
             self.tools.open_after = None;
             self.extras.answer_watches.clear();
@@ -235,7 +233,7 @@ impl Workspace {
         interactive: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let message = Elicitation {
             server: server.to_owned(),
             kind: Kind::Url(url.to_owned()),
@@ -346,7 +344,7 @@ impl Workspace {
 
     /// Toggle (multiple choice) or choose (single choice) one option. A choice
     /// replaces typed text for that question, as typing replaces a choice.
-    pub(super) fn pick_option(
+    fn pick_option(
         &mut self,
         ix: usize,
         option_ix: usize,
@@ -402,10 +400,6 @@ impl Workspace {
             cx.propagate();
             return;
         }
-        if self.design().is_v2() {
-            self.answer_enter_v2(cx);
-            return;
-        }
         if self.answers_ready(cx) {
             self.submit_answers(cx);
             return;
@@ -432,10 +426,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        if self.design().is_v2() {
-            return self.render_questions_v2(session, enabled, compact, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let list = session
             .questions
             .as_ref()
@@ -452,28 +443,12 @@ impl Workspace {
         let body_max = window.viewport_size().height * if compact { 0.4 } else { 0.46 };
         let elicitation =
             wks_native::elicitation::detect(&list, session.elicitation_server.as_deref());
-        let v2 = self.design().is_v2();
-        let t = p.tokens;
-        let position = v2
-            .then(|| {
-                let decisions = self.decisions(session);
-                let ix = decisions
-                    .iter()
-                    .position(|d| *d == super::composer_v2::Decision::Questions)?;
-                (decisions.len() > 1).then(|| format!("{} of {}", ix + 1, decisions.len()))
-            })
-            .flatten();
         let header = div()
             .flex()
             .items_center()
             .gap_2()
             .text_size(px(12.))
-            .when(v2, |d| d.gap(px(t.space.sm)).text_size(px(t.text.body)))
-            .child(if v2 {
-                primitives::status_indicator(primitives::StatusKind::NeedsYou, &p)
-            } else {
-                status_dot(p.warning)
-            })
+            .child(status_dot(p.warning))
             .child(
                 div()
                     .flex_1()
@@ -503,25 +478,9 @@ impl Workspace {
                         } else {
                             p.muted
                         }))
-                        .when(v2, |d| {
-                            d.text_size(px(t.text.meta))
-                                .text_color(rgb(if answered == total {
-                                    p.text
-                                } else {
-                                    p.roles.text_tertiary
-                                }))
-                        })
                         .child(format!("{answered} of {total} answered")),
                 )
-            })
-            .children(position.map(|label| {
-                div()
-                    .debug_selector(|| "question-position".into())
-                    .flex_shrink_0()
-                    .text_size(px(t.text.meta))
-                    .text_color(rgb(p.roles.text_tertiary))
-                    .child(label)
-            }));
+            });
         let card = div()
             .id("question-choices")
             .debug_selector(|| "question-card".into())
@@ -542,14 +501,7 @@ impl Workspace {
             .border_color(rgb(p.border))
             .flex()
             .flex_col()
-            .gap(px(if compact { 6. } else { 10. }))
-            .when(v2, |d| {
-                d.p(px(if compact { t.space.md } else { t.space.lg }))
-                    .rounded(px(t.radius.panel))
-                    .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
-                    .map(|d| system::floating(d, &p))
-                    .gap(px(if compact { t.space.sm } else { t.space.md }))
-            });
+            .gap(px(if compact { 6. } else { 10. }));
         if list.is_empty() {
             // A question the hub could not structure: answer from the composer.
             return card
@@ -673,21 +625,12 @@ impl Workspace {
             None if total > 1 => "Send answers".into(),
             None => "Send answer".into(),
         };
-        let submit_enabled = interactive && ready && !self.view.busy;
-        let submit = if v2 {
-            primitives::button(
+        let submit = self
+            .primary_button(
                 "submit-answers",
                 label,
-                None,
-                primitives::ButtonVariant::Primary,
-                primitives::ButtonSize::Small,
-                submit_enabled,
-                &p,
+                interactive && ready && !self.view.busy,
             )
-        } else {
-            self.primary_button("submit-answers", label, submit_enabled)
-        };
-        let submit = submit
             .debug_selector(|| "submit-answers".into())
             .flex_shrink_0()
             .when(interactive && ready, |d| {
@@ -769,12 +712,6 @@ impl Workspace {
                 .pt(px(8.))
                 .border_t_1()
                 .border_color(rgb(p.border))
-                .when(v2, |d| {
-                    d.pt(px(t.space.md))
-                        .border_color(rgb(p.roles.card_border))
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_secondary))
-                })
                 .flex()
                 .items_center()
                 .gap_2()
@@ -799,9 +736,7 @@ impl Workspace {
         children: &mut Vec<AnyElement>,
         focused: &mut Option<usize>,
     ) {
-        let p = self.palette();
-        let v2 = self.design().is_v2();
-        let t = p.tokens;
+        let p = self.appearance.palette();
         let multiple = q["multiSelect"].as_bool().unwrap_or(false);
         let options = q["options"].as_array().cloned().unwrap_or_default();
         let header = q["header"]
@@ -858,23 +793,8 @@ impl Workspace {
                 .text_size(px(chrome::scale::OVERLINE))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(p.muted))
-                .when(v2, |d| {
-                    // Sentence case: card eyebrows are not page sections.
-                    d.text_size(px(t.text.meta))
-                        .font_weight(FontWeight(t.weight.medium))
-                        .text_color(rgb(p.roles.text_secondary))
-                        .when(ix > 0, |d| {
-                            d.mt(px(t.space.xs))
-                                .pt(px(t.space.lg))
-                                .border_color(rgb(p.roles.card_border))
-                        })
-                })
                 .when(!overline.is_empty(), |d| {
-                    d.child(div().min_w_0().truncate().child(if v2 {
-                        overline.clone()
-                    } else {
-                        overline.to_uppercase()
-                    }))
+                    d.child(div().min_w_0().truncate().child(overline.to_uppercase()))
                 })
                 .when(!how.is_empty(), |d| {
                     d.child(
@@ -882,15 +802,7 @@ impl Workspace {
                             .flex_shrink_0()
                             .font_weight(FontWeight::NORMAL)
                             .text_size(px(chrome::scale::CAPTION))
-                            .when(v2, |d| {
-                                d.text_size(px(t.text.meta))
-                                    .text_color(rgb(p.roles.text_tertiary))
-                            })
-                            .child(if v2 && !overline.is_empty() {
-                                format!("· {how}")
-                            } else {
-                                how.to_owned()
-                            }),
+                            .child(how),
                     )
                 })
                 .child(div().flex_1())
@@ -905,11 +817,6 @@ impl Workspace {
                             .text_size(px(chrome::scale::CAPTION))
                             .font_weight(FontWeight::NORMAL)
                             .text_color(rgb(p.success))
-                            // Green is for finished work only.
-                            .when(v2, |d| {
-                                d.text_size(px(t.text.meta))
-                                    .text_color(rgb(p.roles.text_secondary))
-                            })
                             .child(Icon::new(IconName::CircleCheck).size(px(12.)))
                             .child("Answered"),
                     )
@@ -924,10 +831,6 @@ impl Workspace {
                 .line_height(gpui::relative(1.4))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(p.text))
-                .when(v2, |d| {
-                    d.text_size(px(t.text.subheading))
-                        .line_height(relative(t.text.line_height))
-                })
                 .child(text)
                 .into_any_element(),
         );
@@ -995,7 +898,7 @@ impl Workspace {
         focus: Option<&FocusHandle>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let label = option["label"]
             .as_str()
             .or(option.as_str())
@@ -1006,87 +909,33 @@ impl Workspace {
             .unwrap_or("")
             .trim()
             .to_owned();
-        let v2 = self.design().is_v2();
-        let t = p.tokens;
         let badge_size = if compact { 16. } else { 18. };
-        let badge = if v2 {
-            // R3.2: a radio or a check box leads; the number key trails as
-            // the one faint keycap hint, the same token as the approval's.
-            let fill = if interactive { p.primary } else { p.disabled };
-            div()
-                .debug_selector(move || format!("question-{ix}-option-{option_ix}-badge"))
-                .flex_shrink_0()
-                .mt(px((t.text.body * 1.4 - t.icon.sm) / 2.))
-                .size(px(t.icon.sm))
-                .rounded(px(if multiple {
-                    t.radius.xs
-                } else {
-                    t.icon.sm / 2.
-                }))
-                .flex()
-                .items_center()
-                .justify_center()
-                .border(px(t.stroke.hairline))
-                .map(|d| match (multiple, chosen) {
-                    (true, true) => d
-                        .bg(rgb(fill))
-                        .border_color(rgb(fill))
+        let badge = div()
+            .debug_selector(move || format!("question-{ix}-option-{option_ix}-badge"))
+            .flex_shrink_0()
+            .mt(px(1.))
+            .size(px(badge_size))
+            .rounded(px(if multiple { 4. } else { badge_size / 2. }))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(10.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .map(|d| {
+                if chosen {
+                    d.bg(rgb(if interactive { p.primary } else { p.disabled }))
                         .text_color(rgb(p.on_primary))
-                        .child(Icon::new(IconName::Check).size(px(t.icon.xs))),
-                    (false, true) => d.border_color(rgb(fill)).child(
-                        div()
-                            .size(px(t.icon.sm / 2.))
-                            .rounded(px(t.icon.sm / 4.))
-                            .bg(rgb(fill)),
-                    ),
-                    (_, false) => d.border_color(rgb(p.roles.border_strong)),
-                })
-        } else {
-            div()
-                .debug_selector(move || format!("question-{ix}-option-{option_ix}-badge"))
-                .flex_shrink_0()
-                .mt(px(1.))
-                .size(px(badge_size))
-                .rounded(px(if multiple { 4. } else { badge_size / 2. }))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(10.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .map(|d| {
-                    if chosen {
-                        d.bg(rgb(if interactive { p.primary } else { p.disabled }))
-                            .text_color(rgb(p.on_primary))
-                    } else {
-                        d.border_1()
-                            .border_color(gpui::Hsla::from(rgb(p.muted)).opacity(0.5))
-                            .text_color(rgb(p.muted))
-                    }
-                })
-                .map(|d| match (multiple, chosen) {
-                    (true, true) => d.child(Icon::new(IconName::Check).size(px(11.))),
-                    (true, false) => d,
-                    (false, _) => d.child(format!("{}", option_ix + 1)),
-                })
-        };
-        // R4.3: keycaps only while the number keys answer this question
-        // (no approval or plan above it takes them).
-        let keyed = self.selected_session().is_some_and(|s| {
-            self.keyed_decision(s) == Some(super::composer_v2::Decision::Questions)
-        });
-        let key_hint = (v2 && keyed && option_ix < 9).then(|| {
-            div()
-                .flex_shrink_0()
-                .mt(px((t.text.body * 1.4 - t.text.overline * 1.25) / 2.))
-                .child(
-                    primitives::keycap_hint((option_ix + 1).to_string(), false, &p)
-                        // R6.3: dimmed while the digits type into the
-                        // composer instead of answering.
-                        .when(!self.composer_ui.digits_to_card, |d| {
-                            d.opacity(t.wash.yielded)
-                        }),
-                )
-        });
+                } else {
+                    d.border_1()
+                        .border_color(gpui::Hsla::from(rgb(p.muted)).opacity(0.5))
+                        .text_color(rgb(p.muted))
+                }
+            })
+            .map(|d| match (multiple, chosen) {
+                (true, true) => d.child(Icon::new(IconName::Check).size(px(11.))),
+                (true, false) => d,
+                (false, _) => d.child(format!("{}", option_ix + 1)),
+            });
         chrome::interactive_control(
             div().id(("question-option", ix * 1000 + option_ix)),
             p,
@@ -1108,36 +957,8 @@ impl Workspace {
         } else {
             rgb(p.base).into()
         })
-        .when(interactive && !chosen && !v2, |d| {
+        .when(interactive && !chosen, |d| {
             d.hover(|s| s.bg(rgb(p.selected)))
-        })
-        .when(v2, |d| {
-            let (hover, ring) = (p.roles.hover, p.roles.card_border);
-            d.px(px(t.space.md))
-                .py(px(if compact { t.space.xs } else { t.space.sm }))
-                .gap(px(t.space.md))
-                .rounded(px(t.radius.control))
-                .map(|d| {
-                    if chosen {
-                        d.bg(primitives::wash(p.accent, t.wash.tone_rest))
-                            .shadow(vec![gpui::BoxShadow {
-                                color: rgb(p.accent).into(),
-                                offset: gpui::point(px(0.), px(0.)),
-                                blur_radius: px(0.),
-                                spread_radius: px(t.stroke.hairline),
-                            }])
-                    } else {
-                        d.bg(rgb(p.chat)).shadow(vec![gpui::BoxShadow {
-                            color: rgb(ring).into(),
-                            offset: gpui::point(px(0.), px(0.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(t.stroke.hairline),
-                        }])
-                    }
-                })
-                .when(interactive && !chosen, move |d| {
-                    d.hover(move |s| s.bg(rgb(hover)))
-                })
         })
         .child(badge)
         .child(
@@ -1157,14 +978,6 @@ impl Workspace {
                             FontWeight::MEDIUM
                         })
                         .text_color(rgb(if interactive { p.text } else { p.muted }))
-                        .when(v2, |d| {
-                            d.text_size(px(t.text.body))
-                                .font_weight(FontWeight(if chosen {
-                                    t.weight.semibold
-                                } else {
-                                    t.weight.medium
-                                }))
-                        })
                         .child(label),
                 )
                 .when(!description.is_empty(), |d| {
@@ -1173,15 +986,10 @@ impl Workspace {
                             .text_size(px(chrome::scale::META))
                             .line_height(gpui::relative(1.4))
                             .text_color(rgb(p.muted))
-                            .when(v2, |d| {
-                                d.text_size(px(t.text.meta))
-                                    .text_color(rgb(p.roles.text_secondary))
-                            })
                             .child(description),
                     )
                 }),
         )
-        .children(key_hint)
         .when(interactive, |d| {
             d.on_click(cx.listener(move |this, _, window, cx| {
                 this.pick_option(ix, option_ix, multiple, window, cx)
@@ -1206,391 +1014,5 @@ impl Workspace {
                 },
             ))
         })
-    }
-}
-
-// r2-systems: the v2 question set is a stepper inside the one "waiting on
-// you" container: one question at a time, "2/3", number keys, Back / Next,
-// no scroll region of its own.
-impl Workspace {
-    /// The question the stepper shows, clamped to the set.
-    pub(super) fn question_step(&self, total: usize) -> usize {
-        self.composer_ui.question_step.min(total.saturating_sub(1))
-    }
-
-    /// Show question `step` of the pending set.
-    pub(super) fn go_to_question(&mut self, step: usize, cx: &mut Context<Self>) {
-        self.composer_ui.question_step = step;
-        cx.notify();
-    }
-
-    /// Whether question `ix` has an answer (or may be left blank).
-    fn question_answered(&self, ix: usize, list: &[Value], cx: &App) -> bool {
-        self.question_answers(cx)
-            .get(ix)
-            .is_some_and(|a| !a.trim().is_empty())
-            || list.get(ix).is_some_and(|q| self.optional_question(ix, q))
-    }
-
-    /// A number key on the stepper: choose that option of the shown
-    /// question; a single choice then moves on to the next question.
-    pub(super) fn question_number_key(
-        &mut self,
-        n: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let list = self
-            .selected_session()
-            .and_then(|s| s.questions.as_ref())
-            .map(question_list)
-            .unwrap_or_default();
-        if list.is_empty() || self.pending_elicitation().is_some() {
-            return false;
-        }
-        let step = self.question_step(list.len());
-        let question = &list[step];
-        let count = question["options"].as_array().map_or(0, Vec::len);
-        if n == 0 || n > count.min(9) {
-            return false;
-        }
-        let multiple = question["multiSelect"].as_bool().unwrap_or(false);
-        self.pick_option(step, n - 1, multiple, window, cx);
-        if !multiple && step + 1 < list.len() {
-            self.go_to_question(step + 1, cx);
-        }
-        true
-    }
-
-    /// Enter in a typed answer under v2: send when everything is answered,
-    /// else move on once this question is answered.
-    pub(super) fn answer_enter_v2(&mut self, cx: &mut Context<Self>) {
-        if self.answers_ready(cx) {
-            self.submit_answers(cx);
-            return;
-        }
-        let list = self
-            .selected_session()
-            .and_then(|s| s.questions.as_ref())
-            .map(question_list)
-            .unwrap_or_default();
-        let step = self.question_step(list.len());
-        if self.question_answered(step, &list, cx) && step + 1 < list.len() {
-            self.go_to_question(step + 1, cx);
-        }
-    }
-
-    /// The pending question set as the "waiting on you" container.
-    pub(super) fn render_questions_v2(
-        &self,
-        session: &Session,
-        enabled: bool,
-        compact: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        use primitives::{ButtonSize, ButtonVariant, Headline};
-        let p = self.palette();
-        let t = p.tokens;
-        let list = session
-            .questions
-            .as_ref()
-            .map(question_list)
-            .unwrap_or_default();
-        let total = list.len();
-        let step = self.question_step(total);
-        let ready = self.answers_ready(cx);
-        let sent = self.extras.answers_sent;
-        let interactive = enabled && !sent && self.extras.answer_submission.is_none();
-        let elicitation =
-            wks_native::elicitation::detect(&list, session.elicitation_server.as_deref());
-        let decisions = self.decisions(session);
-        let position =
-            super::composer_v2::position_label(&decisions, super::composer_v2::Decision::Questions);
-        let card = primitives::waiting_card(compact, &p)
-            .id("question-choices")
-            .debug_selector(|| "question-card".into())
-            .key_context("QuestionPicker")
-            .on_action(cx.listener(|this, _: &SubmitAnswers, _, cx| this.submit_answers(cx)))
-            .on_action(
-                cx.listener(|this, _: &AnswerEnter, window, cx| this.answer_enter(window, cx)),
-            )
-            .occlude();
-        let text_headline =
-            |text: String| primitives::headline(vec![Headline::Text(text.into())], &p);
-        if list.is_empty() {
-            // A question the hub could not structure: answer from the composer.
-            return card
-                .child(primitives::waiting_head(
-                    text_headline("The agent asked for input".into()),
-                    Some("Type your answer in the composer below".into()),
-                    position.map(Into::into),
-                    Vec::new(),
-                    &p,
-                ))
-                .child(
-                    primitives::waiting_actions(&p).child(
-                        primitives::button(
-                            "answer-text",
-                            "Answer with composer",
-                            None,
-                            ButtonVariant::Primary,
-                            ButtonSize::Small,
-                            enabled,
-                            &p,
-                        )
-                        .when(enabled, |d| {
-                            let card = session.card();
-                            d.on_click(cx.listener(move |this, _, _, cx| {
-                                this.act(
-                                    Action::Answer(
-                                        this.composer.read(cx).value().to_string(),
-                                        card.clone(),
-                                    ),
-                                    cx,
-                                )
-                            }))
-                        }),
-                    ),
-                );
-        }
-        if let Some(Elicitation {
-            server,
-            kind: Kind::Url(url),
-        }) = &elicitation
-        {
-            return card
-                .child(primitives::waiting_head(
-                    text_headline(format!("Open a link for “{server}”?")),
-                    Some("An MCP server asks you to open a page".into()),
-                    position.map(Into::into),
-                    Vec::new(),
-                    &p,
-                ))
-                .child(self.render_url_elicitation(server, url, &list[0], interactive, cx));
-        }
-        let q = &list[step];
-        let multiple = q["multiSelect"].as_bool().unwrap_or(false);
-        let options = q["options"].as_array().cloned().unwrap_or_default();
-        let header = q["header"]
-            .as_str()
-            .map(str::trim)
-            .filter(|h| !h.is_empty());
-        let text = q["question"]
-            .as_str()
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .or(header)
-            .unwrap_or("Your answer is needed")
-            .to_owned();
-        let how = match (options.is_empty(), multiple) {
-            (true, _) if self.optional_question(step, q) => Some("Optional"),
-            (true, _) => None,
-            (false, true) => Some("Choose any"),
-            (false, false) => Some("Choose one, or press its number"),
-        };
-        let context: Vec<String> = [
-            elicitation
-                .as_ref()
-                .map(|e| format!("For the MCP server “{}”", e.server)),
-            header.filter(|h| *h != text).map(str::to_owned),
-            how.map(str::to_owned),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        let consent = elicitation
-            .as_ref()
-            .filter(|e| step == e.consent_index(&list))
-            .map(|e| e.server.clone());
-        let typed = self
-            .extras
-            .answers
-            .get(step)
-            .is_some_and(|input| !input.read(cx).value().trim().is_empty());
-        let answered = self.question_answered(step, &list, cx);
-        let options_view = div()
-            .id("question-list")
-            .debug_selector(|| "question-list".into())
-            .flex()
-            .flex_col()
-            .gap(px(t.space.xs))
-            .children(options.iter().enumerate().map(|(option_ix, option)| {
-                let chosen = !typed
-                    && self
-                        .extras
-                        .selected_options
-                        .get(step)
-                        .is_some_and(|selected| selected.contains(&option_ix));
-                let handle = self
-                    .extras
-                    .option_focus
-                    .get(step)
-                    .and_then(|row| row.get(option_ix));
-                self.render_option(
-                    step,
-                    option_ix,
-                    option,
-                    options.len(),
-                    multiple,
-                    chosen,
-                    interactive,
-                    compact,
-                    handle,
-                    cx,
-                )
-            }))
-            .when_some(
-                self.extras.answers.get(step).filter(|_| consent.is_none()),
-                |d, input| {
-                    d.child(
-                        div()
-                            .debug_selector(move || format!("question-{step}-answer"))
-                            .mt(px(t.space.xxs))
-                            .text_size(px(t.text.body))
-                            .child(Input::new(input).disabled(!interactive)),
-                    )
-                },
-            );
-        let failed = self.extras.answer_error.clone().filter(|_| !sent);
-        let status: Option<AnyElement> = if let Some(error) = failed {
-            Some(chrome::notice_line(error, chrome::Tone::Error, p).into_any_element())
-        } else if sent {
-            Some(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(t.space.sm))
-                    .child(div().flex_1().min_w_0().child(chrome::notice_line(
-                        "Answers sent. Waiting for the agent…",
-                        chrome::Tone::Loading,
-                        p,
-                    )))
-                    .child(
-                        primitives::button(
-                            "edit-answers",
-                            "Edit answers",
-                            None,
-                            ButtonVariant::Secondary,
-                            ButtonSize::Small,
-                            enabled,
-                            &p,
-                        )
-                        .debug_selector(|| "edit-answers".into())
-                        .when(enabled, |d| {
-                            d.on_click(cx.listener(|this, _, _, cx| {
-                                this.extras.answers_sent = false;
-                                cx.notify();
-                            }))
-                        }),
-                    )
-                    .into_any_element(),
-            )
-        } else if self.view.busy || self.extras.answer_submission.is_some() {
-            Some(chrome::notice_line("Sending…", chrome::Tone::Loading, p).into_any_element())
-        } else {
-            None
-        };
-        let last = step + 1 >= total;
-        let submit_label: SharedString = match &elicitation {
-            Some(e) => match self.question_answers(cx).last().map(String::as_str) {
-                Some(wks_native::elicitation::SUBMIT) => format!("Submit to {}", e.server).into(),
-                Some(wks_native::elicitation::DECLINE) => "Send decline".into(),
-                _ => "Submit or decline".into(),
-            },
-            None if total > 1 => "Send answers".into(),
-            None => "Send answer".into(),
-        };
-        let back = (step > 0).then(|| {
-            primitives::button(
-                "question-back",
-                "Back",
-                Some(IconName::ArrowLeft),
-                ButtonVariant::Tertiary,
-                ButtonSize::Small,
-                interactive,
-                &p,
-            )
-            .debug_selector(|| "question-back".into())
-            .when(interactive, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| this.go_to_question(step - 1, cx)))
-            })
-        });
-        let forward = if last {
-            let enabled = interactive && ready && !self.view.busy;
-            primitives::button(
-                "submit-answers",
-                submit_label,
-                None,
-                ButtonVariant::Primary,
-                ButtonSize::Small,
-                enabled,
-                &p,
-            )
-            .debug_selector(|| "submit-answers".into())
-            .tooltip(primitives::tooltip_view(
-                "Send every answer to the agent",
-                Some(if cfg!(target_os = "macos") {
-                    "⌘ Enter"
-                } else {
-                    "Ctrl Enter"
-                }),
-                &p,
-            ))
-            .when(enabled, |d| {
-                d.on_click(cx.listener(|this, _, _, cx| this.submit_answers(cx)))
-            })
-        } else {
-            let enabled = interactive && answered;
-            primitives::button(
-                "question-next",
-                "Next",
-                Some(IconName::ArrowRight),
-                ButtonVariant::Primary,
-                ButtonSize::Small,
-                enabled,
-                &p,
-            )
-            .debug_selector(|| "question-next".into())
-            .when(enabled, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| this.go_to_question(step + 1, cx)))
-            })
-        };
-        let pager = super::composer_v2::pager(step, total);
-        card.child(
-            primitives::waiting_head(
-                text_headline(text).debug_selector(move || format!("question-{step}-text")),
-                (!context.is_empty()).then(|| wks_native::format::meta(&context).into()),
-                // The set's own pager; the dock's "n of m" rides after it.
-                match (pager, position) {
-                    (Some(pager), Some(position)) => Some(format!("{pager} · {position}").into()),
-                    (pager, position) => pager.or(position).map(Into::into),
-                },
-                Vec::new(),
-                &p,
-            )
-            .debug_selector(|| "question-progress".into()),
-        )
-        .when_some(consent, |d, server| {
-            d.child(
-                div()
-                    .debug_selector(|| "elicitation-consent".into())
-                    .text_size(px(t.text.meta))
-                    .text_color(rgb(p.roles.text_secondary))
-                    .child(format!(
-                        "Your answers are sent to “{server}” only if you choose Submit. Decline sends nothing."
-                    )),
-            )
-        })
-        .child(options_view)
-        .children(status)
-        .child(
-            primitives::waiting_actions(&p)
-                .debug_selector(|| "question-footer".into())
-                .child(forward)
-                .children(back)
-                // r8-conversation (R8.4): the card's one way to reply.
-                .child(div().flex_1())
-                .children(self.reply_instead_button(enabled, cx)),
-        )
     }
 }

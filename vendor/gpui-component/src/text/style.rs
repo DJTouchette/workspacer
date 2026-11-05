@@ -54,25 +54,6 @@ pub struct ProseColors {
     pub code_header: Hsla,
 }
 
-/// Prose rhythm (Workspacer patch): a reading measure for running text and
-/// more room above headings. `None` on [`TextViewStyle::layout`] preserves
-/// upstream rendering.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ProseLayout {
-    /// Maximum width of paragraphs, headings, lists and quotes. Code blocks,
-    /// tables and rules still span the whole view.
-    pub measure: Option<Pixels>,
-    /// Space above a heading that follows other blocks.
-    pub heading_space: Pixels,
-    /// Space above a heading that opens the text (what precedes it is
-    /// outside the view).
-    pub heading_lead: Pixels,
-    /// Space below a heading.
-    pub heading_gap: Pixels,
-    /// Whether level 1-2 headings keep their underline.
-    pub heading_rule: bool,
-}
-
 /// TextViewStyle used to customize the style for [`TextView`].
 #[derive(Clone)]
 pub struct TextViewStyle {
@@ -102,8 +83,6 @@ pub struct TextViewStyle {
     /// line at one size, so a smaller-looking inline code font is a family
     /// whose glyphs are drawn smaller (Workspacer patch).
     pub inline_code_family: Option<SharedString>,
-    /// Prose rhythm: reading measure and heading spacing (Workspacer patch).
-    pub layout: Option<ProseLayout>,
 }
 
 impl PartialEq for TextViewStyle {
@@ -114,7 +93,6 @@ impl PartialEq for TextViewStyle {
             && self.heading_base_font_size == other.heading_base_font_size
             && self.highlight_theme == other.highlight_theme
             && self.inline_code_family == other.inline_code_family
-            && self.layout == other.layout
             // Identity is excluded like `on_link_click`; turning it on or off reparses.
             && self.linkify.is_some() == other.linkify.is_some()
     }
@@ -136,7 +114,6 @@ impl Default for TextViewStyle {
             code_block: StyleRefinement::default(),
             is_dark: false,
             inline_code_family: None,
-            layout: None,
         }
     }
 }

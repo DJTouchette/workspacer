@@ -170,7 +170,7 @@ impl Workspace {
 
     /// Settings → About: channel, versions, status and actions.
     pub(super) fn render_update_card(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let installed = wks_native::features::installed_version();
         let channel = wks_native::updates::Channel::of(&installed);
         let checking = self.view.requests.get("updates").is_some_and(|s| s.loading);
@@ -344,7 +344,7 @@ fn outcome_notice(outcome: &serde_json::Value) -> String {
 
 /// Unsaved-edit notices mention "saved", so the shared classifier would call
 /// them successes.
-pub(super) fn update_tone(notice: &str) -> chrome::Tone {
+fn update_tone(notice: &str) -> chrome::Tone {
     if notice.starts_with("Updated to ") {
         chrome::Tone::Success
     } else if notice.contains("failed") || notice.contains("could not") {

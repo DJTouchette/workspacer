@@ -159,7 +159,7 @@ impl Workspace {
     /// The note above the composer when the selected session's cache has
     /// gone cold and its context is large: what the next message costs.
     pub(super) fn render_cold_note(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let now = now();
         let (session, cache) = self.cold_note_cache(now)?;
         let key = dismissal(session, cache);
@@ -176,18 +176,7 @@ impl Workspace {
                 .rounded(px(p.control_radius))
                 .bg(rgb(p.surface))
                 .border_1()
-                .border_color(gpui::Hsla::from(rgb(p.warn())).opacity(0.45))
-                .when(self.design().is_v2(), |d| {
-                    let t = p.tokens;
-                    d.gap(px(t.space.md))
-                        .pl(px(t.space.lg))
-                        .pr(px(t.space.xs))
-                        .py(px(t.space.xs))
-                        .rounded(px(t.radius.panel))
-                        .border(px(t.stroke.hairline))
-                        .border_color(primitives::wash(p.warn(), t.wash.tone_hover))
-                        .bg(primitives::wash(p.warn(), t.wash.rest))
-                })
+                .border_color(gpui::Hsla::from(rgb(p.warning)).opacity(0.45))
                 .child(marker(p, 13., false))
                 .child(
                     div()
@@ -195,7 +184,7 @@ impl Workspace {
                         .min_w_0()
                         .text_size(px(chrome::scale::META))
                         .line_height(gpui::relative(1.45))
-                        .text_color(rgb(p.warn()))
+                        .text_color(rgb(p.warning))
                         .child(note_text(cache, now)),
                 )
                 .child(

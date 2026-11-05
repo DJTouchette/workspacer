@@ -13,50 +13,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let style = self.markdown_style(self.link_handler(cx), false, cx);
-        self.render_markdown_styled(key, source, style, window, cx)
-    }
-
-    /// r7-qa: Markdown nested in a card (a plan in its decision card). No
-    /// line of it outranks the card's own headline: headings are the
-    /// headline's size (`text.lead`), the body a step under it
-    /// (`text.subheading`). v2 only; v1 draws `render_markdown`.
-    pub(super) fn render_markdown_nested(
-        &self,
-        key: &str,
-        source: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let t = self.tokens();
+        let p = self.appearance.palette();
         let mut style = self.markdown_style(self.link_handler(cx), false, cx);
-        style.heading_base_font_size = px(t.text.lead);
-        style.heading_font_size = Some(std::sync::Arc::new(|_, base| base));
-        self.render_markdown_styled(key, source, style, window, cx)
-            .text_size(px(t.text.subheading))
-    }
-
-    fn render_markdown_styled(
-        &self,
-        key: &str,
-        source: &str,
-        mut style: TextViewStyle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let p = self.palette();
         let (hover, menu) = super::link_menu::link_events(cx.entity().downgrade(), None);
         style.on_link_hover = Some(hover);
         style.on_link_menu = Some(menu);
         let key = key.to_owned();
         let debug_key = key.clone();
-        // area-transcript: v2 left-aligns text columns (numbers stay right).
-        let aligned = if self.design().is_v2() {
-            left_align_text_columns(source)
-        } else {
-            None
-        };
-        let source = aligned.as_deref().unwrap_or(source);
         div()
             .id(SharedString::from(key.clone()))
             .debug_selector(move || format!("markdown-inline-{debug_key}"))
@@ -64,9 +27,6 @@ impl Workspace {
             .w_full()
             .text_color(rgb(p.prose))
             .line_height(gpui::relative(1.6))
-            .when(self.design().is_v2(), |d| {
-                d.line_height(gpui::relative(p.tokens.transcript().prose_line_height))
-            })
             .child(
                 TextView::markdown(
                     SharedString::from(format!("markdown-{key}")),
@@ -106,10 +66,7 @@ impl Workspace {
         document: bool,
         cx: &App,
     ) -> TextViewStyle {
-        if self.design().is_v2() {
-            return self.markdown_style_v2(on_link_click, document, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         TextViewStyle {
             on_link_click: Some(on_link_click),
             // Chat paths resolve against the session's cwd on click. A
@@ -161,7 +118,6 @@ impl Workspace {
                 .bg(rgb(p.code_block))
                 .style()
                 .clone(),
-            layout: None,
         }
     }
 }
@@ -175,7 +131,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let copy = raw.to_owned();
         let mut card = div()
             .id(SharedString::from(format!("result-{key}")))
@@ -346,224 +302,4 @@ pub(super) fn linkify() -> Arc<gpui_component::text::LinkifyFn> {
             },
         )
     })
-}
-
-// area-transcript
-impl Workspace {
-    /// The v2 prose look: one accent (links only), neutral inline code and
-    /// bullets, headings on the v2 rhythm, and code blocks on the card
-    /// surface with a hairline edge rather than a hole in the page.
-    fn markdown_style_v2(
-        &self,
-        on_link_click: Arc<gpui_component::text::LinkClickFn>,
-        document: bool,
-        cx: &App,
-    ) -> TextViewStyle {
-        let p = self.palette();
-        let t = p.tokens;
-        let tt = t.transcript();
-        let steps = tt.heading_steps;
-        TextViewStyle {
-            on_link_click: Some(on_link_click),
-            linkify: (!document).then(linkify),
-            on_link_hover: None,
-            on_link_menu: None,
-            unordered_list_marker: Some("• ".into()),
-            prose: Some(ProseColors {
-                strong: rgb(p.text).into(),
-                code: rgb(p.text).into(),
-                code_background: system::inline_code_bg(&p),
-                marker: rgb(p.roles.text_tertiary).into(),
-                muted: rgb(p.roles.text_secondary).into(),
-                rule: rgb(p.border).into(),
-                border: rgb(p.roles.card_border).into(),
-                code_header: rgb(p.code_header).into(),
-            }),
-            // r3-transcript: 16px between paragraphs, whatever the reader's
-            // text size (a rem is that size, `configure_theme`).
-            paragraph_gap: gpui::rems(
-                tt.paragraph_space / self.settings.text_size.clamp(12, 20) as f32
-                    * if document { 1.25 } else { 1. },
-            ),
-            heading_base_font_size: px(self.settings.text_size as f32),
-            heading_font_size: Some(if document {
-                Arc::new(move |level, base| {
-                    base + px(match level {
-                        1 => steps[0] * 2.,
-                        2 => steps[1] * 2.,
-                        3 => steps[2] * 2.,
-                        _ => steps[3],
-                    })
-                })
-            } else {
-                Arc::new(move |level, base| {
-                    base + px(match level {
-                        1 => steps[0],
-                        2 => steps[1],
-                        3 => steps[2],
-                        _ => steps[3],
-                    })
-                })
-            }),
-            highlight_theme: cx.theme().highlight_theme.clone(),
-            is_dark: self.appearance.is_dark(),
-            inline_code_family: super::typography::inline_code_family(&cx.theme().mono_font_family),
-            code_block: div()
-                .rounded(px(t.radius.control))
-                .bg(rgb(p.code_block))
-                .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
-                .style()
-                .clone(),
-            // r3-transcript: one content width (prose spans the column, as
-            // code, tables and tool rows do); headings sit on the 8px rhythm,
-            // 32 above (the block before keeps its paragraph gap, the rest
-            // is added) and 12 below, with no underline.
-            layout: Some(gpui_component::text::ProseLayout {
-                measure: None,
-                heading_space: px((tt.heading_space - tt.paragraph_space).max(0.)),
-                // A heading that opens a message follows another transcript
-                // row, which leaves `row_gap` between them.
-                heading_lead: px(if document {
-                    0.
-                } else {
-                    (tt.heading_space - tt.row_gap).max(0.)
-                }),
-                heading_gap: px(tt.heading_gap),
-                heading_rule: false,
-            }),
-        }
-    }
-}
-
-/// Splits one Markdown table row into its cells (outer pipes dropped,
-/// escaped pipes kept).
-fn table_cells(line: &str) -> Vec<String> {
-    let trimmed = line.trim();
-    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
-    let inner = match inner.strip_suffix('|') {
-        Some(rest) if !rest.ends_with('\\') => rest,
-        _ => inner,
-    };
-    let mut cells = vec![String::new()];
-    let mut escaped = false;
-    for c in inner.chars() {
-        match c {
-            '|' if !escaped => cells.push(String::new()),
-            _ => cells.last_mut().expect("one cell").push(c),
-        }
-        escaped = c == '\\' && !escaped;
-    }
-    cells.into_iter().map(|c| c.trim().to_owned()).collect()
-}
-
-/// A delimiter row's cells (`:--`, `:-:`, `--:`), or `None` if `line` is
-/// not one.
-fn delimiter_row(line: &str) -> Option<Vec<String>> {
-    if !line.contains('-') || !line.contains('|') {
-        return None;
-    }
-    let cells = table_cells(line);
-    cells
-        .iter()
-        .all(|c| {
-            let c = c.trim_start_matches(':').trim_end_matches(':');
-            !c.is_empty() && c.chars().all(|ch| ch == '-')
-        })
-        .then_some(cells)
-}
-
-/// Whether a cell reads as a number: digits with the usual punctuation,
-/// units and signs ("1,024", "-3.5%", "$0.04", "12 ms", "+2").
-fn numeric(cell: &str) -> bool {
-    let cell = cell
-        .trim_matches(|c| c == '*' || c == '`' || c == '_')
-        .trim();
-    let digits = cell.chars().filter(char::is_ascii_digit).count();
-    let visible = cell.chars().filter(|c| !c.is_whitespace()).count();
-    digits > 0
-        && digits * 2 >= visible
-        && cell
-            .chars()
-            .all(|c| c.is_ascii_digit() || c.is_whitespace() || ",.%$€£+-−×:/kKMGBmsh".contains(c))
-}
-
-/// Markdown with every right- or centre-aligned table column whose cells are
-/// not numbers re-marked as left-aligned: prose reads from a shared left
-/// edge, and only figures line up on the right. `None` when nothing changes.
-pub(super) fn left_align_text_columns(source: &str) -> Option<String> {
-    let lines: Vec<&str> = source.split('\n').collect();
-    let mut out: Vec<String> = lines.iter().map(|l| (*l).to_owned()).collect();
-    let mut changed = false;
-    let mut fence: Option<&str> = None;
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        let trimmed = line.trim_start();
-        if let Some(open) = fence {
-            if trimmed.starts_with(open) {
-                fence = None;
-            }
-            i += 1;
-            continue;
-        }
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fence = Some(&trimmed[..3]);
-            i += 1;
-            continue;
-        }
-        let Some(aligns) = (line.contains('|') && i + 1 < lines.len())
-            .then(|| delimiter_row(lines[i + 1]))
-            .flatten()
-        else {
-            i += 1;
-            continue;
-        };
-        let mut end = i + 2;
-        while end < lines.len() && lines[end].contains('|') && !lines[end].trim().is_empty() {
-            end += 1;
-        }
-        let body: Vec<Vec<String>> = lines[i + 2..end].iter().map(|l| table_cells(l)).collect();
-        let mut aligned = aligns.clone();
-        for (column, align) in aligns.iter().enumerate() {
-            if !align.ends_with(':') {
-                continue;
-            }
-            let all_numbers = body
-                .iter()
-                .filter_map(|row| row.get(column))
-                .filter(|cell| !cell.is_empty())
-                .all(|cell| numeric(cell));
-            if !all_numbers {
-                aligned[column] = ":--".into();
-            }
-        }
-        if aligned != aligns {
-            out[i + 1] = format!("| {} |", aligned.join(" | "));
-            changed = true;
-        }
-        i = end;
-    }
-    changed.then(|| out.join("\n"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::left_align_text_columns as align;
-
-    #[test]
-    fn text_columns_read_from_the_left_and_numbers_stay_right() {
-        let source = "| Area | Status | Notes | Lines |\n|:--|:-:|--:|--:|\n| Tables | Done | Header, stripes | 1,204 |\n| Quotes | Done | Accent rail | 12 |";
-        let aligned = align(source).expect("text columns change");
-        let delimiter = aligned.lines().nth(1).unwrap();
-        assert_eq!(delimiter, "| :-- | :-- | :-- | --: |");
-        assert!(aligned.ends_with("| Quotes | Done | Accent rail | 12 |"));
-    }
-
-    #[test]
-    fn left_aligned_tables_and_code_fences_are_untouched() {
-        assert_eq!(align("| A | B |\n|---|:--|\n| x | y |"), None);
-        assert_eq!(align("```\n| A | B |\n|--:|--:|\n| x | y |\n```"), None);
-        assert_eq!(align("no tables here"), None);
-        assert_eq!(align("| Cost |\n|--:|\n| $0.04 |\n| 12 ms |"), None);
-    }
 }

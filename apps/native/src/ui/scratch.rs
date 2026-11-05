@@ -17,13 +17,6 @@ use wks_native::scratch::{self, Content, Filter, Item, Listing, Status};
 use wks_native::{jobs, timing::now_ms, tool_preview};
 
 pub(super) const SCRATCH_DESCRIPTION: &str = "Personal files kept outside git and shared by every worktree: harnesses, repros and SQL meant to be run by hand.";
-// r3-pages (R3.5): what scratch is, in a newcomer's words.
-// r8-attention (R8.6): one line, the same in the nav item's tooltip.
-pub(super) const SCRATCH_DESCRIPTION_V2: &str =
-    "Notes and scripts your agents keep for you outside git. You run them, not Workspacer.";
-/// The Scratch page's scope covering every project: what the sidebar's
-/// count adds up, so the page's counts match it.
-pub(super) const ALL_SCRATCH: &str = "all:";
 const NO_PROJECT: (&str, &str) = (
     "No project open",
     "Open an agent or a project to see its scratch.",
@@ -75,10 +68,8 @@ impl Workspace {
             .sessions
             .iter()
             .position(|s| Some(&s.id) == self.view.selected.as_ref());
-        let v2_all = self.design().is_v2().then(|| ALL_SCRATCH.to_owned());
         self.extras.scratch_project = preset
             .or_else(|| self.project_filter.clone())
-            .or(v2_all)
             .or_else(|| {
                 let ix = selected?;
                 match groups.of_session(&self.view.sessions, ix, &root) {
@@ -102,31 +93,6 @@ impl Workspace {
         let Some(target) = self.extras.scratch_project.as_deref() else {
             return Vec::new();
         };
-        if target == ALL_SCRATCH {
-            // Every project's folders, then folders in no project.
-            let groups = self.project_groups();
-            let mut all: Vec<String> = Vec::new();
-            let known = self.known_projects();
-            let folders = groups
-                .groups
-                .iter()
-                .flat_map(|g| g.folders.iter().cloned())
-                .chain(
-                    known
-                        .iter()
-                        .filter(|k| k.listed("") && !groups.grouped(&k.path))
-                        .map(|k| k.path.clone()),
-                );
-            for folder in folders {
-                if !all
-                    .iter()
-                    .any(|f| wks_native::projects::same_dir(f, &folder))
-                {
-                    all.push(folder);
-                }
-            }
-            return all;
-        }
         match target.strip_prefix("group:") {
             Some(id) => self
                 .project_groups()
@@ -251,7 +217,7 @@ impl Workspace {
     }
 
     pub(super) fn render_scratch(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let page = div().flex().flex_col().gap_3();
         if self.extras.scratch_project.is_none() {
             return page.child(empty_state(IconName::FolderClosed, NO_PROJECT, p));
@@ -289,7 +255,7 @@ impl Workspace {
                     )
                     .child(
                         div().pt_1().child(
-                            self.pbutton("scratch-retry", "Try again", true)
+                            self.button("scratch-retry", "Try again", true)
                                 .debug_selector(|| "scratch-retry".into())
                                 .on_click(cx.listener(|this, _, _, cx| this.refresh_scratch(cx))),
                         ),
@@ -307,19 +273,6 @@ impl Workspace {
         let page = page.when_some(failed, |d, error| {
             d.child(chrome::notice_line(error, chrome::Tone::Error, p))
         });
-        // r3-pages: across every project, folders that share one scratch
-        // (a repo and a folder inside it) list it once, so the counts match
-        // the sidebar's.
-        let listings: Vec<(String, Listing)> =
-            if self.extras.scratch_project.as_deref() == Some(ALL_SCRATCH) {
-                let mut seen = std::collections::HashSet::new();
-                listings
-                    .into_iter()
-                    .filter(|(_, l)| seen.insert(l.root.clone()))
-                    .collect()
-            } else {
-                listings
-            };
         let filter = self.extras.scratch_filter;
         let rows: Vec<Row> = listings
             .iter()
@@ -335,8 +288,6 @@ impl Workspace {
             .iter()
             .filter(|r| r.item.status == Status::Pending)
             .count();
-        let v2 = self.design().is_v2();
-        let all_scope = self.extras.scratch_project.as_deref() == Some(ALL_SCRATCH);
         let page = page.child(
             div()
                 .flex()
@@ -347,14 +298,7 @@ impl Workspace {
                     "scratch-filter",
                     vec![
                         (Filter::Open, format!("Open {open}")),
-                        (
-                            Filter::Pending,
-                            if v2 {
-                                format!("To run {pending}")
-                            } else {
-                                format!("Pending {pending}")
-                            },
-                        ),
+                        (Filter::Pending, format!("Pending {pending}")),
                         (Filter::All, format!("All {}", rows.len())),
                     ],
                     filter,
@@ -364,9 +308,7 @@ impl Workspace {
                     },
                     cx,
                 ))
-                // r3-pages: v2's "To run" tab already counts them (R3.1:
-                // no amber for bookkeeping).
-                .when(pending > 0 && !v2, |d| {
+                .when(pending > 0, |d| {
                     d.child(
                         chrome::notice_line(
                             if pending == 1 {
@@ -389,9 +331,6 @@ impl Workspace {
                 .iter()
                 .filter(|r| std::ptr::eq(r.listing, listing) && filter.admits(r.item))
                 .collect();
-            if all_scope && shown.is_empty() {
-                continue;
-            }
             if sectioned {
                 body = body.child(self.scratch_section(cwd, listing, cx));
             }
@@ -437,7 +376,7 @@ impl Workspace {
 
     /// A folder's heading inside a multi-folder project.
     fn scratch_section(&self, cwd: &str, listing: &Listing, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let pending = listing.pending();
         div()
             .pt_2()
@@ -466,16 +405,11 @@ impl Workspace {
                     .child(listing.root.clone()),
             )
             .when(pending > 0, |d| {
-                let v2 = self.design().is_v2();
                 d.child(
                     div()
                         .text_size(px(chrome::scale::CAPTION))
-                        .text_color(rgb(if v2 { p.roles.text_tertiary } else { p.warning }))
-                        .child(if v2 {
-                            format!("{pending} to run")
-                        } else {
-                            format!("{pending} pending")
-                        }),
+                        .text_color(rgb(p.warning))
+                        .child(format!("{pending} pending")),
                 )
             })
             .child(div().flex_1())
@@ -497,9 +431,9 @@ impl Workspace {
         let copy = folder.to_owned();
         let mut out = vec![
             if compact {
-                self.picon(id, "Copy folder path", IconName::Copy, true)
+                self.icon_button(id, "Copy folder path", IconName::Copy, true)
             } else {
-                self.pquiet(id, "Copy folder path", IconName::Copy, true)
+                self.quiet_button(id, "Copy folder path", IconName::Copy, true)
             }
             .debug_selector(|| "scratch-copy-folder".into())
             .on_click(cx.listener(move |_, _, _, cx| {
@@ -513,9 +447,9 @@ impl Workspace {
                 {
                     let id = SharedString::from(format!("scratch-reveal-folder-{}", folder.len()));
                     if compact {
-                        self.picon(id, "Show folder", IconName::FolderOpen, true)
+                        self.icon_button(id, "Show folder", IconName::FolderOpen, true)
                     } else {
-                        self.pquiet(id, "Show folder", IconName::FolderOpen, true)
+                        self.quiet_button(id, "Show folder", IconName::FolderOpen, true)
                     }
                 }
                 .on_click(
@@ -536,7 +470,7 @@ impl Workspace {
         listings: Option<&[(String, Listing)]>,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let target = self.extras.scratch_project.clone().unwrap_or_default();
         let groups = self.project_groups();
         let (identity, name) = match target.strip_prefix("group:").and_then(|id| groups.get(id)) {
@@ -577,19 +511,6 @@ impl Workspace {
                 .filter(|k| k.listed("") && !groups.grouped(&k.path))
                 .map(|k| (k.path.clone(), k)),
         );
-        let v2 = self.design().is_v2();
-        if v2 {
-            let mut all = wks_native::project_groups::Group {
-                id: String::new(),
-                name: "All projects".to_owned(),
-                folders: vec![],
-                color: None,
-                icon: None,
-            }
-            .as_known();
-            all.path = ALL_SCRATCH.to_owned();
-            choices.insert(0, (ALL_SCRATCH.to_owned(), all));
-        }
         let shown: Vec<_> = choices.into_iter().take(SWITCHER_PROJECTS).collect();
         // The switcher names the open project itself (as its selected tab),
         // so the heading only repeats it when the switcher cannot.
@@ -606,14 +527,6 @@ impl Workspace {
                 let active = choice == target
                     || (!choice.starts_with("group:")
                         && wks_native::projects::same_dir(&choice, &target));
-                let pending = if choice == ALL_SCRATCH {
-                    self.pending_total()
-                } else {
-                    match choice.strip_prefix("group:").and_then(|id| groups.get(id)) {
-                        Some(group) => self.pending_in(&group.folders),
-                        None => self.pending_in(std::slice::from_ref(&choice)),
-                    }
-                };
                 interactive_control(div().id(("scratch-project", ix)), p, !active)
                     .debug_selector(move || format!("scratch-project-{ix}"))
                     .h(px(28.))
@@ -636,24 +549,8 @@ impl Workspace {
                                 this.pick_scratch_project(choice.clone(), cx)
                             }))
                     })
-                    .map(|d| {
-                        if !v2 {
-                            return d.child(self.project_mark(Some(&known), &known.path, 18.));
-                        }
-                        // r3-pages: plain chips (no monogram crowding the
-                        // label), each with its count of files to run.
-                        d.pl(px(p.tokens.space.md))
-                            .gap(px(p.tokens.space.sm))
-                            .child(known.title().to_owned())
-                            .when(pending > 0, |d| {
-                                d.child(super::primitives::count_badge(
-                                    super::primitives::count_text(pending),
-                                    super::primitives::CountTone::Neutral,
-                                    &p,
-                                ))
-                            })
-                    })
-                    .when(!v2, |d| d.child(known.title().to_owned()))
+                    .child(self.project_mark(Some(&known), &known.path, 18.))
+                    .child(known.title().to_owned())
             })
             .collect::<Vec<_>>();
         let single = listings
@@ -727,7 +624,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let item = row.item;
         let expanded = self
             .extras
@@ -740,15 +637,13 @@ impl Workspace {
         if let Some(at) = item.modified_at {
             meta = format!("{meta} · {}", jobs::since(at, now_ms()));
         }
-        self.page_card()
+        chrome::card(p)
             .debug_selector(move || format!("scratch-row-{ix}"))
             .flex()
             .flex_col()
-            .when(
-                item.status == Status::Pending && !self.design().is_v2(),
-                |d| d.border_color(rgb(p.warning)),
-            )
-            // r3-pages: v2 rows are neutral; the status pill says "To run".
+            .when(item.status == Status::Pending, |d| {
+                d.border_color(rgb(p.warning))
+            })
             .child(
                 div()
                     .id(("scratch-row", ix))
@@ -797,23 +692,11 @@ impl Workspace {
                                             .child(item.path.clone()),
                                     )
                                     .child(self.scratch_status(item))
-                                    .when(self.design().is_v2(), |d| {
-                                        d.children(self.scratch_marks_v2(ix, item))
-                                    })
-                                    .when(item.keep && !self.design().is_v2(), |d| {
+                                    .when(item.keep, |d| {
                                         d.child(tag(IconName::Heart, "kept", p.muted))
                                     })
-                                    .when(item.sensitive && !self.design().is_v2(), |d| {
-                                        // r2-pages: a fact, not attention (R2.1).
-                                        d.child(tag(
-                                            IconName::EyeOff,
-                                            "sensitive",
-                                            if self.design().is_v2() {
-                                                p.roles.text_tertiary
-                                            } else {
-                                                p.warning
-                                            },
-                                        ))
+                                    .when(item.sensitive, |d| {
+                                        d.child(tag(IconName::EyeOff, "sensitive", p.warning))
                                     }),
                             )
                             .child(
@@ -842,21 +725,7 @@ impl Workspace {
     }
 
     fn scratch_status(&self, item: &Item) -> Div {
-        let p = self.palette();
-        if self.design().is_v2() {
-            // r3-pages (R3.2): the shared pill and status, one per file.
-            use super::primitives::{Intent, StatusBadge, StatusKind, pill};
-            return match item.status {
-                Status::Pending => pill("To run", Intent::Neutral, &p),
-                Status::Draft => pill("Draft", Intent::Neutral, &p),
-                Status::Archived => pill("Archived", Intent::Neutral, &p),
-                Status::Done => StatusBadge::new(StatusKind::Done).render(&p),
-                // The purpose line already says nothing was recorded.
-                Status::Unrecorded => div(),
-            }
-            .flex_shrink_0()
-            .debug_selector(|| "scratch-status".into());
-        }
+        let p = self.appearance.palette();
         let color = match item.status {
             Status::Pending => p.warning,
             Status::Done => p.success,
@@ -878,7 +747,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let item = row.item;
         let cwd = row.cwd.to_owned();
         let enabled = self.view.connected && !self.demo && !self.scratch_busy();
@@ -893,9 +762,9 @@ impl Workspace {
             let path = item.path.clone();
             let mark_cwd = cwd.clone();
             let button = if status == Status::Done && item.status == Status::Pending {
-                self.pprimary(format!("scratch-mark-{wire}-{ix}"), label, enabled)
+                self.primary_button(format!("scratch-mark-{wire}-{ix}"), label, enabled)
             } else {
-                self.pbutton(format!("scratch-mark-{wire}-{ix}"), label, enabled)
+                self.button(format!("scratch-mark-{wire}-{ix}"), label, enabled)
             };
             actions = actions.child(
                 button
@@ -914,7 +783,7 @@ impl Workspace {
         let keep = !item.keep;
         // Keeping is a side setting, not a status: quieter than the marks.
         actions = actions.child(
-            self.pquiet(
+            self.quiet_button(
                 format!("scratch-keep-{ix}"),
                 if item.keep { "Stop keeping" } else { "Keep" },
                 IconName::Heart,
@@ -934,7 +803,7 @@ impl Workspace {
         );
         let copy = absolute.clone();
         actions = actions.child(
-            self.pquiet(
+            self.quiet_button(
                 format!("scratch-copy-{ix}"),
                 "Copy path",
                 IconName::Copy,
@@ -948,25 +817,26 @@ impl Workspace {
         if self.extras.local_paths {
             let open = absolute.clone();
             let reveal = absolute;
-            actions =
-                actions
-                    .child(
-                        self.pquiet(format!("scratch-open-{ix}"), "Open", IconName::File, true)
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.open_with_system(std::path::Path::new(&open))
-                            })),
-                    )
-                    .child(
-                        self.pquiet(
-                            format!("scratch-reveal-{ix}"),
-                            "Show in folder",
-                            IconName::FolderOpen,
-                            true,
-                        )
+            actions = actions
+                .child(
+                    self.quiet_button(format!("scratch-open-{ix}"), "Open", IconName::File, true)
                         .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.reveal_path(std::path::Path::new(&reveal))
+                            cx.open_with_system(std::path::Path::new(&open))
                         })),
-                    );
+                )
+                .child(
+                    self.quiet_button(
+                        format!("scratch-reveal-{ix}"),
+                        "Show in folder",
+                        IconName::FolderOpen,
+                        true,
+                    )
+                    .on_click(
+                        cx.listener(move |_, _, _, cx| {
+                            cx.reveal_path(std::path::Path::new(&reveal))
+                        }),
+                    ),
+                );
         }
         let save_item = item.clone();
         let save_cwd = cwd.clone();
@@ -980,7 +850,7 @@ impl Workspace {
             .child(Input::new(&self.extras.scratch_note).disabled(!enabled))
             .child(
                 div().flex().child(
-                    self.pbutton(
+                    self.button(
                         format!("scratch-save-{ix}"),
                         "Save purpose and note",
                         enabled,
@@ -1034,7 +904,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let item = row.item;
         let state = self.view.requests.get("scratch-read").filter(|s| {
             matches!(&s.request, Request::ScratchRead { cwd, path } if path == &item.path && cwd == row.cwd)
@@ -1085,42 +955,6 @@ impl Workspace {
                 p,
             ),
         }
-    }
-}
-
-impl Workspace {
-    /// Kept and sensitive as quiet icons with their meaning on hover, so a
-    /// row carries one status word and nothing else to read.
-    fn scratch_marks_v2(&self, ix: usize, item: &Item) -> Vec<Stateful<Div>> {
-        let p = self.palette();
-        let t = p.tokens;
-        let mark = |id: String, icon: IconName, tip: &'static str| {
-            div()
-                .id(SharedString::from(id))
-                .flex_shrink_0()
-                .tooltip(super::primitives::tooltip_view(tip, None, &p))
-                .child(
-                    Icon::new(icon)
-                        .size(px(t.icon.xs))
-                        .text_color(rgb(p.roles.text_tertiary)),
-                )
-        };
-        let mut marks = Vec::new();
-        if item.keep {
-            marks.push(mark(
-                format!("scratch-kept-{ix}"),
-                IconName::Heart,
-                "Kept: cleanup leaves this file alone",
-            ));
-        }
-        if item.sensitive {
-            marks.push(mark(
-                format!("scratch-sensitive-{ix}"),
-                IconName::EyeOff,
-                "Sensitive: its text stays hidden until you open it",
-            ));
-        }
-        marks
     }
 }
 

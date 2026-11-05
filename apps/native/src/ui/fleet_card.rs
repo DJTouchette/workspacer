@@ -85,7 +85,7 @@ pub(super) fn entry_status(
         FleetKind::Failed => ("Failed", p.error),
         FleetKind::Escalated => ("Escalated", p.warning),
         FleetKind::Blocked => ("Blocked", p.warning),
-        FleetKind::Threshold => ("Threshold crossed", p.warn()),
+        FleetKind::Threshold => ("Threshold crossed", p.warning),
         FleetKind::Progress => ("Still running", p.accent),
     }
 }
@@ -110,13 +110,13 @@ const DETAIL_INDENT: f32 = 28.;
 const DISCLOSURE_INSET: f32 = 6.;
 
 /// "Structured result — Builder (session:abc):" → "Structured result · Builder".
-pub(super) fn report_title(title: &str) -> String {
+fn report_title(title: &str) -> String {
     let title = title.trim_end_matches(':');
     let title = title.rfind(" (session:").map_or(title, |at| &title[..at]);
     title.replacen(" — ", " · ", 1)
 }
 
-pub(super) fn short_id(id: &str) -> String {
+fn short_id(id: &str) -> String {
     if id.chars().count() > 10 {
         format!("{}…", id.chars().take(8).collect::<String>())
     } else {
@@ -143,16 +143,13 @@ impl Workspace {
 
     /// Opening is offered only for this conversation's own workers (or an
     /// agent with no recorded parent), and rechecked at click time.
-    pub(super) fn fleet_openable(&self, owner: &str, id: &str) -> bool {
+    fn fleet_openable(&self, owner: &str, id: &str) -> bool {
         self.view.connected
             && self.view.sessions.iter().any(|s| {
                 s.id == id && (s.parent_session_id.is_empty() || s.parent_session_id == owner)
             })
     }
 
-    /// The v1 card. (r5-integration: design v2 draws its own fleet card in
-    /// the v2 transcript, on the system's edges and tokens, and calls it
-    /// directly, so this file holds the v1 card only.)
     pub(super) fn render_fleet_card(
         &mut self,
         key: &str,
@@ -161,7 +158,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let owner = self.view.selected.clone().unwrap_or_default();
         let (overline, icon, tone) = kind_face(fleet.kind, p);
         let single = fleet.entries.len() == 1;
@@ -400,7 +397,7 @@ impl Workspace {
                 details = details.child(
                     div()
                         .text_size(px(12.))
-                        .text_color(rgb(p.warn()))
+                        .text_color(rgb(p.warning))
                         .child(crossed.clone()),
                 );
             }
@@ -494,7 +491,7 @@ impl Workspace {
         open: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         chrome::interactive_control(
             div().id(SharedString::from(format!("toggle-{key}"))),
             p,

@@ -94,9 +94,6 @@ pub struct Settings {
     /// Wide windows float the session's tools at the chat's right edge
     /// instead of revealing them in the title capsule.
     pub tool_rail: bool,
-    /// Draw the redesign preview (`Design::V2` tokens and palettes) instead
-    /// of the shipped look. Off by default; `--design-v2` forces it for a run.
-    pub design_v2: bool,
     /// Client-local session organization, scoped by hub identity.
     pub names: BTreeMap<String, BTreeMap<String, String>>,
     pub archived: BTreeMap<String, Vec<String>>,
@@ -114,61 +111,6 @@ pub struct Settings {
     pub default_codex_access: crate::launch::Permission,
     /// Bookmarks are scoped to the hub endpoint so remote paths do not cross hosts.
     pub projects: BTreeMap<String, Vec<String>>,
-    // area-shell
-    /// Design v2 sidebar density: one 28px line per session instead of the
-    /// comfortable two-line row.
-    pub sidebar_compact: bool,
-    // area-transcript
-    /// How wide the transcript reads under design v2 (v1 has one measure).
-    pub reading_width: ReadingWidth,
-    // area-panels
-    /// Width of the docked Changes panel (design v2), unzoomed; `None`
-    /// follows the window. Dragging its edge sets it.
-    pub review_dock_width: Option<f32>,
-    /// Changes shows old and new side by side instead of one column (v2).
-    pub review_split: bool,
-    // r2-shell
-    /// Vim-style modal keys under design v2: off by default there (v1 keeps
-    /// `vim_navigation`, on by default). Settings → Keyboard sets whichever
-    /// the current design reads (`Settings::vim`).
-    pub vim_navigation_v2: bool,
-    // r5-fleet
-    /// The Fleet shows its dense table (one row per session) instead of
-    /// the tile grid; remembered on this device.
-    pub fleet_table: bool,
-}
-// area-transcript
-/// The transcript's reading measure under design v2: Settings -> Chat.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ReadingWidth {
-    /// The fluid default: grows with the window up to `reading_max`.
-    #[default]
-    Comfortable,
-    /// Room for wide tables and code (`layout.reading_wide`).
-    Wide,
-    /// The whole conversation pane, less its gutters.
-    Full,
-}
-impl ReadingWidth {
-    pub const ALL: [Self; 3] = [Self::Comfortable, Self::Wide, Self::Full];
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Comfortable => "Comfortable",
-            Self::Wide => "Wide",
-            Self::Full => "Full",
-        }
-    }
-    /// The column's content width cap in logical px.
-    pub fn measure(self, tokens: &crate::tokens::Tokens) -> f32 {
-        // r2-transcript: the fluid column's caps (it grows with the window).
-        let tt = tokens.transcript();
-        match self {
-            Self::Comfortable => tt.reading_max,
-            Self::Wide => tt.reading_wide,
-            Self::Full => tokens.layout.reading_full,
-        }
-    }
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -179,7 +121,7 @@ impl Default for Settings {
             twelve_hour_clock: false,
             merge_turn_tools: false,
             interface_scale: 100,
-            sidebar_width: crate::tokens::Tokens::V1.layout.sidebar_width,
+            sidebar_width: 304.,
             window_layout: WindowLayout::Auto,
             portrait_dock_share: PORTRAIT_DOCK_SHARE,
             vim_navigation: true,
@@ -189,7 +131,6 @@ impl Default for Settings {
             review_panel: true,
             reduce_motion: false,
             tool_rail: true,
-            design_v2: false,
             names: BTreeMap::new(),
             archived: BTreeMap::new(),
             cleared_children: BTreeMap::new(),
@@ -198,16 +139,6 @@ impl Default for Settings {
             default_claude_access: crate::launch::Permission::Ask,
             default_codex_access: crate::launch::Permission::Ask,
             projects: BTreeMap::new(),
-            // area-shell
-            sidebar_compact: false,
-            // area-transcript
-            reading_width: ReadingWidth::Comfortable,
-            // area-panels
-            review_dock_width: None,
-            review_split: false,
-            // r2-shell
-            vim_navigation_v2: false,
-            fleet_table: false,
         }
     }
 }
@@ -223,27 +154,6 @@ impl Settings {
             access
         } else {
             Permission::Ask
-        }
-    }
-    /// The design these settings select.
-    pub fn design(&self) -> crate::tokens::Design {
-        crate::tokens::Design::from_flag(self.design_v2)
-    }
-    // r2-shell
-    /// Whether modal (vim) keys are on for `design`.
-    pub fn vim(&self, design: crate::tokens::Design) -> bool {
-        if design.is_v2() {
-            self.vim_navigation_v2
-        } else {
-            self.vim_navigation
-        }
-    }
-    /// Turn modal keys on or off for `design`.
-    pub fn set_vim(&mut self, design: crate::tokens::Design, on: bool) {
-        if design.is_v2() {
-            self.vim_navigation_v2 = on;
-        } else {
-            self.vim_navigation = on;
         }
     }
     pub fn load(path: &Path) -> anyhow::Result<Self> {
@@ -411,18 +321,6 @@ mod tests {
         settings.add_project("hub-b", "C:\\work\\app").unwrap();
         assert_eq!(settings.bookmarks("hub-a"), ["/work/app"]);
         assert_eq!(settings.bookmarks("hub-b"), ["C:\\work\\app"]);
-    }
-    #[test]
-    fn design_v2_defaults_off_and_reads_as_smoke_seeds_it() {
-        use crate::tokens::Design;
-        assert!(!Settings::default().design_v2);
-        let old: Settings = serde_json::from_str(r#"{"vim_navigation":false}"#).unwrap();
-        assert_eq!(old.design(), Design::V1);
-        // scripts/smoke.py `--setting design_v2=true` writes exactly this.
-        let seeded: Settings = serde_json::from_str(r#"{"design_v2":true}"#).unwrap();
-        assert_eq!(seeded.design(), Design::V2);
-        // r2-shell: modal keys are off under v2 until chosen; v1 keeps them.
-        assert!(!seeded.vim(Design::V2) && seeded.vim(Design::V1));
     }
     #[test]
     fn settings_defaults_and_persistence() {

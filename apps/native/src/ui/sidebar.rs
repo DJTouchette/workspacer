@@ -4,11 +4,11 @@ use gpui_component::tooltip::Tooltip;
 use std::collections::BTreeMap;
 use wks_native::child_agents::{ChildAgent, ClearMark, clear_key_provider, clear_key_session};
 
-pub(super) const CLEAR_CHILD: &str = "Clear · hide this finished child here on this device · not archived or stopped · still in Session history";
-pub(super) const CLEAR_SUBAGENT: &str = "Clear · hide this finished subagent here on this device · nothing is stopped · the parent chat keeps its record";
-pub(super) const CLEAR_FINISHED: &str = "Clear finished children · hide them here on this device · running children stay · nothing is archived or stopped";
+const CLEAR_CHILD: &str = "Clear · hide this finished child here on this device · not archived or stopped · still in Session history";
+const CLEAR_SUBAGENT: &str = "Clear · hide this finished subagent here on this device · nothing is stopped · the parent chat keeps its record";
+const CLEAR_FINISHED: &str = "Clear finished children · hide them here on this device · running children stay · nothing is archived or stopped";
 
-pub(super) fn child_limit_note(session: &Session) -> &'static str {
+fn child_limit_note(session: &Session) -> &'static str {
     if session
         .subagents
         .as_array()
@@ -20,14 +20,14 @@ pub(super) fn child_limit_note(session: &Session) -> &'static str {
     }
 }
 
-pub(super) fn provider_clear(parent: &str, child: &ChildAgent) -> (String, ClearMark) {
+fn provider_clear(parent: &str, child: &ChildAgent) -> (String, ClearMark) {
     (
         clear_key_provider(parent, &child.id),
         ClearMark::provider(child, super::timing::now_ms()),
     )
 }
 
-pub(super) fn session_clear(session: &Session) -> (String, ClearMark) {
+fn session_clear(session: &Session) -> (String, ClearMark) {
     (
         clear_key_session(&session.id),
         ClearMark::session(session, super::timing::now_ms()),
@@ -36,9 +36,9 @@ pub(super) fn session_clear(session: &Session) -> (String, ClearMark) {
 
 /// Rail rows share one height (it is a uniform_list); sessions take the
 /// larger mark and nested children the smaller.
-const RAIL_ROW: f32 = Tokens::V1.layout.rail_row;
-const RAIL_SESSION: f32 = Tokens::V1.layout.rail_session;
-const RAIL_CHILD: f32 = Tokens::V1.layout.rail_child;
+const RAIL_ROW: f32 = 44.;
+const RAIL_SESSION: f32 = 30.;
+const RAIL_CHILD: f32 = 22.;
 
 /// What a rail mark shows inside its ring.
 enum AvatarGlyph {
@@ -214,7 +214,7 @@ impl Workspace {
 
     /// A session's provider-native children, read from its subagents
     /// inventory once per change rather than on every frame.
-    pub(super) fn native_children(&self, parent: &Session) -> std::rc::Rc<Vec<ChildAgent>> {
+    fn native_children(&self, parent: &Session) -> std::rc::Rc<Vec<ChildAgent>> {
         let mut held = self.sidebar_children.borrow_mut();
         if let Some((inventory, children)) = held.get(&parent.id)
             && Arc::ptr_eq(inventory, &parent.subagents)
@@ -235,9 +235,6 @@ impl Workspace {
     }
 
     pub(super) fn sidebar_session_position(&self, index: usize, cx: &App) -> usize {
-        if self.design().is_v2() {
-            return self.shell_position(index, cx);
-        }
         let sessions = self.visible_sessions(cx);
         self.sidebar_rows(cx)
             .iter()
@@ -257,7 +254,7 @@ impl Workspace {
         rail: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         // Children inherit the parent's provider unless their model says otherwise.
         let provider = self
             .view
@@ -434,7 +431,7 @@ impl Workspace {
                                     } else if wks_native::child_agents::provider_active(
                                         &child.status,
                                     ) {
-                                        p.warn()
+                                        p.warning
                                     } else {
                                         p.muted
                                     }))
@@ -687,7 +684,7 @@ impl Workspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let rows = self.sidebar_rows(cx);
         div()
             // The same id as the full sidebar, so a control focused in one
@@ -776,7 +773,7 @@ impl Workspace {
                         IconName::Info,
                         true,
                     )
-                    .text_color(rgb(p.warn()))
+                    .text_color(rgb(p.warning))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open_peek(super::portrait::Peek::Pinned, cx)
                     })),
@@ -907,7 +904,7 @@ impl Workspace {
                         IconName::Redo,
                         self.view.can_resume_power_pause,
                     )
-                    .text_color(rgb(p.warn()))
+                    .text_color(rgb(p.warning))
                     .when(self.view.can_resume_power_pause, |d| {
                         d.on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
                     }),
@@ -952,7 +949,7 @@ impl Workspace {
                     })),
             )
             .when(!self.view.connected, |d| {
-                d.child(div().py_1().child(status_dot(p.warn())))
+                d.child(div().py_1().child(status_dot(p.warning)))
             })
             .into_any_element()
     }
@@ -965,9 +962,6 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         if self.sidebar_collapsed {
-            if self.design().is_v2() {
-                return self.render_rail_v2(cx);
-            }
             return self.render_sidebar_rail(window, cx);
         }
         self.render_sidebar_panel(window, cx)
@@ -979,10 +973,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        if self.design().is_v2() {
-            return self.render_sidebar_v2(window, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let editing = [
             &self.composer,
             &self.search,
@@ -1090,7 +1081,7 @@ impl Workspace {
                         .px_3()
                         .pb_3()
                         .text_size(px(chrome::scale::META))
-                        .text_color(rgb(p.warn()))
+                        .text_color(rgb(p.warning))
                         .child(self.view.notice.clone())
                         .when(self.view.can_resume_power_pause, |d| {
                             d.child(
@@ -1650,7 +1641,7 @@ impl Workspace {
                                 .text_size(px(chrome::scale::OVERLINE))
                                 .text_color(rgb(p.muted))
                                 .child(label)
-                                .when(!self.view.connected, |d| d.child(status_dot(p.warn()))),
+                                .when(!self.view.connected, |d| d.child(status_dot(p.warning))),
                         )
                     }),
             )
@@ -1687,53 +1678,50 @@ impl Workspace {
                         }),
                     ),
             )
-            .child(self.sidebar_drag_watch(cx))
+            .child({
+                let entity = cx.entity().downgrade();
+                let dragging = self.sidebar_drag.is_some();
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, window, _| {
+                        if !dragging {
+                            return;
+                        }
+                        let moving = entity.clone();
+                        window.on_mouse_event(
+                            move |event: &gpui::MouseMoveEvent, phase, window, cx| {
+                                if phase.capture() {
+                                    let _ = moving.update(cx, |this, cx| {
+                                        if let Some((start, width)) = this.sidebar_drag {
+                                            this.settings.sidebar_width =
+                                                wks_native::navigation::sidebar_width(
+                                                    width + unzoom(event.position.x - start),
+                                                    unzoom(window.viewport_size().width),
+                                                );
+                                            cx.stop_propagation();
+                                            cx.notify();
+                                        }
+                                    });
+                                }
+                            },
+                        );
+                        let releasing = entity.clone();
+                        window.on_mouse_event(move |_: &gpui::MouseUpEvent, phase, _, cx| {
+                            if phase.capture() {
+                                let _ = releasing.update(cx, |this, cx| {
+                                    if this.sidebar_drag.take().is_some() {
+                                        this.save_settings(cx);
+                                        cx.stop_propagation();
+                                    }
+                                });
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size(px(0.))
+            })
             .into_any_element()
-    }
-}
-
-impl Workspace {
-    /// While the sidebar's edge is dragged, follow the pointer anywhere in
-    /// the window and save the width on release.
-    pub(super) fn sidebar_drag_watch(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let entity = cx.entity().downgrade();
-        let dragging = self.sidebar_drag.is_some();
-        canvas(
-            |_, _, _| (),
-            move |_, _, window, _| {
-                if !dragging {
-                    return;
-                }
-                let moving = entity.clone();
-                window.on_mouse_event(move |event: &gpui::MouseMoveEvent, phase, window, cx| {
-                    if phase.capture() {
-                        let _ = moving.update(cx, |this, cx| {
-                            if let Some((start, width)) = this.sidebar_drag {
-                                this.settings.sidebar_width = wks_native::navigation::sidebar_width(
-                                    width + unzoom(event.position.x - start),
-                                    unzoom(window.viewport_size().width),
-                                );
-                                cx.stop_propagation();
-                                cx.notify();
-                            }
-                        });
-                    }
-                });
-                let releasing = entity.clone();
-                window.on_mouse_event(move |_: &gpui::MouseUpEvent, phase, _, cx| {
-                    if phase.capture() {
-                        let _ = releasing.update(cx, |this, cx| {
-                            if this.sidebar_drag.take().is_some() {
-                                this.save_settings(cx);
-                                cx.stop_propagation();
-                            }
-                        });
-                    }
-                });
-            },
-        )
-        .absolute()
-        .size(px(0.))
     }
 }
 
@@ -1743,7 +1731,7 @@ impl Workspace {
     fn pending_badge(&self) -> Option<Div> {
         let total = self.pending_total();
         (total > 0).then(|| {
-            let p = self.palette();
+            let p = self.appearance.palette();
             div()
                 .absolute()
                 .top(px(-3.))
@@ -1770,9 +1758,9 @@ impl Workspace {
 
     /// The collapsed rail's view of the sidebar's project filter: the
     /// project's mark, ringed, with a tooltip saying how to clear it.
-    pub(super) fn rail_filter(&self) -> Option<Stateful<Div>> {
+    fn rail_filter(&self) -> Option<Stateful<Div>> {
         let filter = self.project_filter.clone()?;
-        let p = self.palette();
+        let p = self.appearance.palette();
         let (known, title) = match self.filter_group() {
             Some(group) => (Some(group.as_known()), group.name),
             None => (

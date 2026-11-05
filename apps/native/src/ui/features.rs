@@ -1,5 +1,4 @@
 //! Secondary views keep the conversation uncluttered and preserve its draft/scroll.
-use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
 use super::*;
 use gpui::AnyElement;
 use serde_json::Value;
@@ -72,10 +71,6 @@ pub(super) struct Extras {
     pub launch_host: wks_native::hosts::HostChoice,
     /// "Queue if busy" for This machine: submit through the queue instead.
     pub launch_queue: bool,
-    // r2-pages
-    /// Design v2's New session: which chip's choices are open under the
-    /// task box (one at a time; `None` keeps the form short).
-    pub launch_panel: Option<super::launch::LaunchPanel>,
     /// The project folder chosen on a peer (from its target's `cwds`).
     pub launch_host_cwd: String,
     /// The user picked `launch_host_cwd` themselves: a later targets read
@@ -225,9 +220,7 @@ pub(super) struct Extras {
     pub handoff_sent: bool,
     pub handoff_seen: u64,
     /// Session history's search, groups and keyboard cursor.
-    pub recent: super::recent::RecentUi, // area-pages
-    /// Design v2 page state: open overflow menus and expanded host cards.
-    pub pages: PagesUi,
+    pub recent: super::recent::RecentUi,
 }
 impl Extras {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
@@ -288,7 +281,6 @@ impl Extras {
             limits_after: 0,
             launch_host: Default::default(),
             launch_queue: false,
-            launch_panel: None,
             launch_host_cwd: String::new(),
             launch_host_cwd_picked: false,
             targets_seen: 0,
@@ -377,7 +369,6 @@ impl Extras {
             handoff_sent: false,
             handoff_seen: 0,
             recent: super::recent::RecentUi::new(window, cx),
-            pages: Default::default(),
         }
     }
 }
@@ -517,11 +508,6 @@ impl Workspace {
         }
         if self.new_session && screen == Screen::Setup {
             self.extras.return_launch = true;
-        }
-        // area-panels: under design v2, Changes opens as a dock beside the
-        // conversation when the window has room.
-        if screen == Screen::Changes && self.open_changes_dock(window, cx) {
-            return;
         }
         self.show_screen(screen, window, cx);
         self.extras.notice.clear();
@@ -768,7 +754,7 @@ impl Workspace {
     }
     /// The request's loading or error line, toned; empty when settled.
     pub(super) fn feature_message(&self, key: &str) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         match self.view.requests.get(key) {
             Some(s) if s.loading => chrome::notice_line("Loading…", chrome::Tone::Loading, p),
             Some(s) => match s.error.as_ref().filter(|e| !e.is_empty()) {
@@ -780,36 +766,17 @@ impl Workspace {
     }
 
     pub(super) fn render_feature(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let short = window.viewport_size().height < px(620.);
         let session_name = self.selected_session().map(|s| self.session_title(s));
         let handoff_title = self.handoff_title();
         let (title, description): (&str, Option<SharedString>) = match self.screen {
-            // r3-pages (R3.5): no "connection".
-            Screen::Recent if self.design().is_v2() => (
-                "Session history",
-                Some("Every session you have run, ended ones included.".into()),
-            ),
             Screen::Recent => (
                 "Session history",
                 Some("Every session this connection knows about, including ended ones.".into()),
             ),
-            // r2-pages: no "hub" in v2's default copy.
-            Screen::Jobs if self.design().is_v2() => (
-                "Jobs",
-                Some("Work that runs on a schedule, even while this window is closed.".into()),
-            ),
             Screen::Jobs => ("Jobs", Some(super::jobs::JOBS_DESCRIPTION.into())),
-            // r2-pages: v2 says "Machines".
-            Screen::Hosts if self.design().is_v2() => {
-                ("Machines", Some(super::hosts::HOSTS_DESCRIPTION.into()))
-            }
             Screen::Hosts => ("Hosts", Some(super::hosts::HOSTS_DESCRIPTION.into())),
-            // r3-pages (R3.5): named as the palette names it, and explained.
-            Screen::Scratch if self.design().is_v2() => (
-                "Scratch files",
-                Some(super::scratch::SCRATCH_DESCRIPTION_V2.into()),
-            ),
             Screen::Scratch => ("Scratch", Some(super::scratch::SCRATCH_DESCRIPTION.into())),
             Screen::History => ("Conversation history", Some(HISTORY_DESCRIPTION.into())),
             // The session itself is the hero; its facts follow underneath.
@@ -828,7 +795,7 @@ impl Workspace {
         };
         let trailing = match self.screen {
             Screen::Recent => Some(
-                self.pquiet(
+                self.quiet_button(
                     "history-refresh",
                     "Refresh",
                     IconName::Redo,
@@ -840,7 +807,7 @@ impl Workspace {
                 .into_any_element(),
             ),
             Screen::Jobs => Some(
-                self.pquiet(
+                self.quiet_button(
                     "jobs-refresh",
                     "Refresh",
                     IconName::Redo,
@@ -855,7 +822,7 @@ impl Workspace {
                 .into_any_element(),
             ),
             Screen::Hosts => Some(
-                self.pquiet(
+                self.quiet_button(
                     "hosts-refresh",
                     "Refresh",
                     IconName::Redo,
@@ -868,7 +835,7 @@ impl Workspace {
                 .into_any_element(),
             ),
             Screen::Scratch => Some(
-                self.pquiet(
+                self.quiet_button(
                     "scratch-refresh",
                     "Refresh",
                     IconName::Redo,
@@ -883,7 +850,7 @@ impl Workspace {
                 let can_check = self.view.connected
                     && !self.view.requests.get("setup").is_some_and(|s| s.loading);
                 Some(
-                    self.pquiet("setup-refresh", "Recheck", IconName::Redo, can_check)
+                    self.quiet_button("setup-refresh", "Recheck", IconName::Redo, can_check)
                         .debug_selector(|| "setup-refresh".into())
                         .when(can_check, |d| {
                             d.on_click(cx.listener(|this, _, _, cx| {
@@ -936,13 +903,6 @@ impl Workspace {
             chrome::notice_line(self.extras.notice.clone(), tone, p)
                 .debug_selector(|| "feature-notice".into())
         });
-        if self.design().is_v2() {
-            // Every feature page shares one frame under v2: the shared page
-            // header (back link, title, description, actions) in the shared
-            // page width (`docs/design-v2.md`, "Migrating a screen").
-            // r5-system (R5.1 PageShell): one top for every page.
-            return self.feature_page_v2(title.to_owned(), description, notice, body, cx);
-        }
         let header = self.page_header(
             Some(back),
             (self.screen == Screen::Session && session_name.is_some()).then_some("SESSION DETAILS"),
@@ -1068,7 +1028,7 @@ impl Workspace {
 
     /// The session's status as a tinted pill, beside its name in the header.
     fn session_status_pill(&self, s: &Session) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let (status, color) = if self.view.connected {
             self.status_of(s, p)
         } else {
@@ -1092,7 +1052,7 @@ impl Workspace {
 
     /// Under the session's name: its agent, effort and project at a glance.
     fn session_summary_line(&self, s: &Session) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let sep = || div().text_color(rgb(p.disabled)).child("·");
         let effort = (!s.effort.is_empty())
             .then(|| format!("{} effort", wks_native::launch::effort_label(&s.effort)));
@@ -1105,7 +1065,7 @@ impl Workspace {
             .min_w_0()
             .text_size(px(chrome::scale::META))
             .text_color(rgb(p.muted))
-            .child(self.page_model(s, 12.).font_weight(FontWeight::MEDIUM))
+            .child(chrome::model_badge(s, p, 12.).font_weight(FontWeight::MEDIUM))
             .when_some(effort, |d, effort| d.child(sep()).child(effort))
             .when_some(s.context_window, |d, tokens| {
                 d.child(sep())
@@ -1119,18 +1079,17 @@ impl Workspace {
                     .gap_1()
                     .min_w_0()
                     .child(Icon::new(IconName::Folder).size(px(12.)))
-                    .child(div().truncate().child(if self.design().is_v2() {
-                        // r7-qa (R7.4): one name per project.
-                        self.project_name(&s.cwd)
-                    } else {
-                        chrome::project_label(&s.cwd).to_owned()
-                    })),
+                    .child(
+                        div()
+                            .truncate()
+                            .child(chrome::project_label(&s.cwd).to_owned()),
+                    ),
             )
     }
 
     /// `narrow`: labels sit above their values instead of in a column.
     fn render_session(&self, narrow: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let Some(s) = self.selected_session() else {
             return empty_note("Select a session in the sidebar first.", p);
         };
@@ -1200,7 +1159,7 @@ impl Workspace {
                                 .child(Input::new(&self.extras.name)),
                         )
                         .child(
-                            self.pbutton("save-session-name", "Save", true)
+                            self.button("save-session-name", "Save", true)
                                 .debug_selector(|| "save-session-name".into())
                                 .flex_shrink_0()
                                 .py(px(6.))
@@ -1232,8 +1191,7 @@ impl Workspace {
         .flatten()
         .collect::<Vec<_>>()
         .join(" · ");
-        let details = self
-            .page_card()
+        let details = chrome::card(p)
             .debug_selector(|| "session-details-card".into())
             .px_4()
             .pt_4()
@@ -1249,7 +1207,7 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .min_w_0()
-                    .child(self.page_model(s, 12.).flex_shrink_0())
+                    .child(chrome::model_badge(s, p, 12.).flex_shrink_0())
                     .when(!agent_detail.is_empty(), |d| {
                         d.child(
                             div()
@@ -1261,7 +1219,7 @@ impl Workspace {
                     })
                     .into_any_element(),
                 model_enabled.then(|| {
-                    self.pquiet("session-change-model", "Change…", IconName::Settings, true)
+                    self.quiet_button("session-change-model", "Change…", IconName::Settings, true)
                         .debug_selector(|| "session-change-model".into())
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_feature(Screen::Model, window, cx)
@@ -1326,7 +1284,7 @@ impl Workspace {
         let mut carry_on: Vec<AnyElement> = Vec::new();
         if s.stopped() && self.supported_session() {
             carry_on.push(
-                self.pprimary("resume-session", "Resume session…", !busy)
+                self.primary_button("resume-session", "Resume session…", !busy)
                     .debug_selector(|| "resume-session".into())
                     .when(!busy, |d| {
                         d.on_click(cx.listener(move |this, _, window, cx| {
@@ -1341,7 +1299,7 @@ impl Workspace {
             .filter(|_| self.view.connected)
         {
             carry_on.push(
-                self.pbutton(
+                self.button(
                     "handoff-session",
                     format!(
                         "Continue with {}…",
@@ -1363,7 +1321,7 @@ impl Workspace {
         if wks_native::handoff::targets(s).is_ok() && self.view.connected {
             let fresh = s.clone();
             carry_on.push(
-                self.pbutton("fresh-session", "Start fresh from a summary…", !busy)
+                self.button("fresh-session", "Start fresh from a summary…", !busy)
                     .debug_selector(|| "fresh-session".into())
                     .when(!busy, |d| {
                         d.on_click(cx.listener(move |this, _, window, cx| {
@@ -1384,8 +1342,7 @@ impl Workspace {
             action_row(title, text, Some(control), p)
         };
         let has_carry_on = !carry_on.is_empty();
-        let actions = self
-            .page_card()
+        let actions = chrome::card(p)
             .debug_selector(|| "session-actions-card".into())
             .px_4()
             .pt_4()
@@ -1412,24 +1369,14 @@ impl Workspace {
             .child(
                 manage_row(
                     if archived { "Archived" } else { "Archive" },
-                    match (archived, s.stopped(), self.design().is_v2()) {
-                        // r3-pages (R3.5): no "hub".
-                        (true, _, true) => "Hidden from the sidebar everywhere you use Workspacer.",
-                        (false, true, true) => {
-                            "Hides it from the sidebar everywhere you use Workspacer."
-                        }
-                        (false, false, true) => {
-                            "Ends its agent and hides it from the sidebar everywhere you use Workspacer."
-                        }
-                        (true, _, false) => "Hidden from the list in every client of this hub.",
-                        (false, true, false) => {
-                            "Hides it from the list in every client of this hub."
-                        }
-                        (false, false, false) => {
+                    match (archived, s.stopped()) {
+                        (true, _) => "Hidden from the list in every client of this hub.",
+                        (false, true) => "Hides it from the list in every client of this hub.",
+                        (false, false) => {
                             "Ends its agent and hides it from the list in every client of this hub."
                         }
                     },
-                    self.pbutton(
+                    self.button(
                         "archive-session",
                         if archived {
                             "Restore from archive"
@@ -1451,7 +1398,7 @@ impl Workspace {
                     if confirming {
                         div().into_any_element()
                     } else {
-                        self.pdanger("end-session", "End session…", !busy)
+                        self.danger_button("end-session", "End session…", !busy)
                             .debug_selector(|| "end-session".into())
                             .when(!busy, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
@@ -1486,7 +1433,7 @@ impl Workspace {
                                 .flex()
                                 .gap_2()
                                 .child(
-                                    self.pbutton("cancel-end", "Keep running", true)
+                                    self.button("cancel-end", "Keep running", true)
                                         .debug_selector(|| "cancel-end".into())
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.extras.confirm_end = None;
@@ -1494,7 +1441,7 @@ impl Workspace {
                                         })),
                                 )
                                 .child(
-                                    self.pdanger("confirm-end", "End session", !busy)
+                                    self.danger_button("confirm-end", "End session", !busy)
                                         .debug_selector(|| "confirm-end".into())
                                         .when(!busy, |d| {
                                             d.on_click(cx.listener(|this, _, _, cx| {
@@ -1510,7 +1457,6 @@ impl Workspace {
         let context = self.render_context_card(s, cx);
         let mcp = self.render_mcp_card(s, cx);
         let codex = self.render_codex_card(s, cx);
-        let grants = self.render_grants_card(s, cx); // r5-fleet (v2 only)
         div()
             .flex()
             .flex_col()
@@ -1527,10 +1473,9 @@ impl Workspace {
             .children(context)
             .children(codex)
             .children(mcp)
-            .children(grants)
     }
     fn render_history(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let history = self.view.requests.get("history").cloned();
         let state = history.as_ref();
         let items = state.and_then(|s| s.value["rows"].as_array());
@@ -1549,17 +1494,22 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .child(
-                        self.pquiet("older-history", "Previous", IconName::ChevronLeft, page > 0)
-                            .when(page > 0, |d| {
-                                d.on_click(cx.listener(|this, _, _, cx| {
-                                    this.extras.history_page =
-                                        this.extras.history_page.saturating_sub(1);
-                                    this.extras
-                                        .history_scroll
-                                        .set_offset(gpui::point(px(0.), px(0.)));
-                                    cx.notify();
-                                }))
-                            }),
+                        self.quiet_button(
+                            "older-history",
+                            "Previous",
+                            IconName::ChevronLeft,
+                            page > 0,
+                        )
+                        .when(page > 0, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| {
+                                this.extras.history_page =
+                                    this.extras.history_page.saturating_sub(1);
+                                this.extras
+                                    .history_scroll
+                                    .set_offset(gpui::point(px(0.), px(0.)));
+                                cx.notify();
+                            }))
+                        }),
                     )
                     .child(
                         div()
@@ -1568,7 +1518,7 @@ impl Workspace {
                             .child(format!("Page {} of {}", page + 1, pages)),
                     )
                     .child(
-                        self.pquiet(
+                        self.quiet_button(
                             "newer-history",
                             "Next",
                             IconName::ChevronRight,
@@ -1633,7 +1583,7 @@ impl Workspace {
             )
     }
     fn render_setup(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         // Recheck lives in the page header, beside the title it refreshes.
         div()
             .flex()
@@ -1653,10 +1603,7 @@ impl Workspace {
 
     /// One provider: whether it is installed, and its connection check.
     fn render_setup_card(&self, provider: &'static str, cx: &mut Context<Self>) -> Div {
-        if self.design().is_v2() {
-            return self.render_setup_card_v2(provider, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let state = self.view.requests.get("setup");
         let busy = state.is_some_and(|s| s.loading);
         let can_check = !busy && self.view.connected;
@@ -1678,7 +1625,7 @@ impl Workspace {
         let color = match status {
             "responding" => p.success,
             "unchecked" | "unsupported" => p.muted,
-            _ => p.warn(),
+            _ => p.warning,
         };
         let description = if checking {
             "Checking this agent…"
@@ -1697,7 +1644,7 @@ impl Workspace {
         let installed = if found == Some(true) {
             p.success
         } else if found == Some(false) {
-            p.warn()
+            p.warning
         } else {
             p.muted
         };
@@ -1726,47 +1673,27 @@ impl Workspace {
                             .child(if claude { "Claude Code" } else { "Codex CLI" }),
                     ),
             )
-            .when_some(self.v2_palette(), |d, v2| {
-                // v2: the shared status vocabulary, no pill.
-                d.child(
-                    div()
-                        .debug_selector(move || format!("setup-installed-{provider}"))
-                        .flex_shrink_0()
-                        .child({
-                            // r2-systems: the one setup vocabulary and source.
-                            let setup = self.agent_setup(provider);
-                            let nothing_ready = ["claude", "codex"].iter().all(|id| {
-                                self.agent_setup(id) != super::states::AgentSetup::Installed
-                            });
-                            StatusBadge::new(setup.kind(nothing_ready))
-                                .label(setup.label())
-                                .render(&v2)
-                        }),
-                )
-            })
-            .when(!self.design().is_v2(), |d| {
-                d.child(
-                    div()
-                        .debug_selector(move || format!("setup-installed-{provider}"))
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .px(px(10.))
-                        .py_1()
-                        .rounded_full()
-                        .bg(gpui::Hsla::from(rgb(installed)).opacity(0.12))
-                        .text_size(px(chrome::scale::CAPTION))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(rgb(installed))
-                        .child(status_dot(installed))
-                        .child(match found {
-                            Some(true) => "Installed",
-                            Some(false) => "Not found",
-                            None => "Not checked",
-                        }),
-                )
-            });
+            .child(
+                div()
+                    .debug_selector(move || format!("setup-installed-{provider}"))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .px(px(10.))
+                    .py_1()
+                    .rounded_full()
+                    .bg(gpui::Hsla::from(rgb(installed)).opacity(0.12))
+                    .text_size(px(chrome::scale::CAPTION))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(rgb(installed))
+                    .child(status_dot(installed))
+                    .child(match found {
+                        Some(true) => "Installed",
+                        Some(false) => "Not found",
+                        None => "Not checked",
+                    }),
+            );
         // How to install and sign in, with the terminal command set apart.
         let (install, command) = if claude {
             ("Install Claude Code, then sign in by running", "claude")
@@ -1819,7 +1746,7 @@ impl Workspace {
                     .child(description),
             )
             .child(
-                self.pbutton(
+                self.button(
                     if claude {
                         "setup-claude"
                     } else {
@@ -1845,7 +1772,7 @@ impl Workspace {
                     }))
                 }),
             );
-        self.page_card()
+        chrome::card(p)
             .p_4()
             .flex()
             .flex_col()
@@ -1873,196 +1800,8 @@ impl Workspace {
             })
     }
 
-    // r2-pages: R2.3 one state set (Ready / Needs sign-in / Not installed),
-    // copy matched to the state, and the command to run, copyable.
-    fn render_setup_card_v2(&self, provider: &'static str, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let state = self.view.requests.get("setup");
-        let busy = state.is_some_and(|s| s.loading);
-        let can_check = !busy && self.view.connected;
-        let value = state.map(|s| s.value.as_ref()).unwrap_or(&Value::Null);
-        let claude = provider == "claude";
-        let found = value["installed"]
-            .as_array()
-            .and_then(|rows| rows.iter().find(|r| r["provider"] == provider))
-            .and_then(|r| r["found"].as_bool());
-        let current = state.is_some_and(|s| {
-            matches!(&s.request, Request::Setup { provider: checked, .. } if checked == provider)
-        });
-        let checking = busy && current;
-        let readiness = if current && !busy {
-            value["readiness"]["state"].as_str().unwrap_or("unchecked")
-        } else {
-            "unchecked"
-        };
-        let setup = SetupState::of(found, readiness);
-        let (install, sign_in) = if claude {
-            ("npm install -g @anthropic-ai/claude-code", "claude")
-        } else {
-            ("npm install -g @openai/codex", "codex login")
-        };
-        // r8-qa (R8.6): one name per agent, the same as the welcome card.
-        let name = wks_native::format::agent_name(provider);
-        let (sentence, command): (String, Option<&'static str>) = match setup {
-            SetupState::NotInstalled => (
-                format!(
-                    "{name} isn't installed on this machine. Run this in a terminal, then check again:"
-                ),
-                Some(install),
-            ),
-            SetupState::NeedsSignIn => (
-                format!("{name} is installed. Sign in by running this in a terminal:"),
-                Some(sign_in),
-            ),
-            SetupState::Ready => (
-                format!("{name} is installed, signed in and answering."),
-                None,
-            ),
-            SetupState::Installed => (
-                format!("{name} is installed. Check the connection to confirm you're signed in."),
-                None,
-            ),
-            SetupState::Problem(why) => (why.to_owned(), None),
-            SetupState::Unknown => ("Looking for it on this machine…".to_owned(), None),
-        };
-        let badge = if checking {
-            StatusBadge::new(StatusKind::Working).label("Checking…")
-        } else {
-            setup.badge()
-        };
-        let copy_id = SharedString::from(format!("setup-copy-{provider}"));
-        let inset = command.map(|command| {
-            div()
-                .debug_selector(move || format!("setup-command-{provider}"))
-                .flex()
-                .items_center()
-                .gap(px(t.space.md))
-                .pl(px(t.space.lg))
-                .pr(px(t.space.xs))
-                .py(px(t.space.xs))
-                .rounded(px(t.radius.control))
-                .bg(primitives::tonal(&p, t.wash.rest))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .font_family(mono_font())
-                        .text_size(px(t.text.mono))
-                        .text_color(rgb(p.text))
-                        .child(format!("$ {command}")),
-                )
-                .child(
-                    primitives::button(
-                        copy_id.clone(),
-                        "Copy",
-                        Some(IconName::Copy),
-                        ButtonVariant::Tertiary,
-                        ButtonSize::Small,
-                        true,
-                        &p,
-                    )
-                    .debug_selector(move || format!("setup-copy-{provider}"))
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(command.to_owned()))
-                    })),
-                )
-        });
-        let check = primitives::button(
-            if claude {
-                "setup-claude"
-            } else {
-                "setup-codex"
-            },
-            if checking {
-                "Checking…"
-            } else {
-                "Check connection"
-            },
-            None,
-            ButtonVariant::Secondary,
-            ButtonSize::Small,
-            can_check && setup != SetupState::NotInstalled,
-            &p,
-        )
-        .debug_selector(move || format!("setup-{provider}"))
-        .when(can_check && setup != SetupState::NotInstalled, |d| {
-            d.on_click(cx.listener(move |this, _, _, cx| {
-                let provider = provider.into();
-                this.request(
-                    Request::Setup {
-                        provider,
-                        check: true,
-                    },
-                    cx,
-                )
-            }))
-        });
-        primitives::card(&p)
-            .debug_selector(move || format!("setup-card-{provider}"))
-            .gap(px(t.space.lg))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(t.space.lg))
-                    .child(chrome::provider_mark(provider, t.layout.avatar_lg, p))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(t.space.xxs))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(t.space.md))
-                                    .child(
-                                        div()
-                                            .text_size(px(t.text.subheading))
-                                            .font_weight(FontWeight(t.weight.semibold))
-                                            .text_color(rgb(p.text))
-                                            .child(name),
-                                    )
-                                    .child(
-                                        div()
-                                            .debug_selector(move || {
-                                                format!("setup-installed-{provider}")
-                                            })
-                                            .child(badge.render(&p)),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(t.text.body))
-                                    .line_height(gpui::relative(t.text.line_height))
-                                    .text_color(rgb(p.roles.text_secondary))
-                                    .child(sentence),
-                            ),
-                    )
-                    // Nothing to check until it is installed.
-                    .when(setup != SetupState::NotInstalled, |d| d.child(check)),
-            )
-            .children(inset.map(|inset| div().pl(px(t.layout.avatar_lg + t.space.lg)).child(inset)))
-            .when(current && !busy, |d| {
-                d.when_some(state.and_then(|s| s.error.as_ref()), |d, error| {
-                    d.child(chrome::notice_line(error.clone(), chrome::Tone::Error, p))
-                })
-                .when_some(value["readinessError"].as_str(), |d, error| {
-                    d.child(chrome::notice_line(
-                        error.to_owned(),
-                        chrome::Tone::Warning,
-                        p,
-                    ))
-                })
-            })
-    }
-
     fn render_model(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         if !self.supported_session() {
             return empty_note(
                 "Model switching is available for Claude and Codex sessions.",
@@ -2089,7 +1828,9 @@ impl Workspace {
         // A model with a single context window offers no choice: say which
         // it is rather than draw a one-option switch.
         let only_window = self
-            .catalog_model(&self.model_choice)
+            .catalog_models
+            .iter()
+            .find(|m| m.id == self.model_choice)
             .and_then(|m| match m.windows.as_slice() {
                 [only] => Some(*only),
                 _ => None,
@@ -2131,7 +1872,7 @@ impl Workspace {
                 ))
             })
             .child(
-                self.page_card()
+                chrome::card(p)
                     .debug_selector(|| "model-card".into())
                     .p_4()
                     .flex()
@@ -2168,7 +1909,7 @@ impl Workspace {
                                     .child(MODEL_APPLY_NOTE),
                             )
                             .child(
-                                self.pprimary("apply-model", "Apply", !busy)
+                                self.primary_button("apply-model", "Apply", !busy)
                                     .debug_selector(|| "apply-model".into())
                                     .flex_shrink_0()
                                     .when(!busy, |d| {
@@ -2189,20 +1930,12 @@ impl Workspace {
     /// only be chosen at launch, such as Claude full access for a session
     /// started with approvals on.
     fn render_live_access(&self, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let Some(session) = self.selected_session() else {
             return div();
         };
         let provider = session.provider_id().to_owned();
         let current = Permission::from_wire(&provider, session.access_mode());
-        let v2 = self.design().is_v2();
-        // R3.5 (v2): the effective mode is always shown selected, as in the
-        // model popover; until the agent reports one, that is "Ask first".
-        let shown = if v2 {
-            super::model_popover::effective_access(current, Permission::choices(&provider))
-        } else {
-            current
-        };
         let switching = self.view.busy && self.extras.access_switching;
         // One segmented control, the current mode chosen. The chosen mode is
         // not clickable, so it is never sent again.
@@ -2222,9 +1955,8 @@ impl Workspace {
                     .copied()
                     .map(|permission| {
                         let id = SharedString::from(format!("live-access-{}", permission.label()));
-                        let active = shown == Some(permission);
-                        // Unreported (v2), the shown default can still be set.
-                        let enabled = !busy && (!active || (v2 && current.is_none()));
+                        let active = current == Some(permission);
+                        let enabled = !busy && !active;
                         let provider = provider.clone();
                         chrome::interactive_control(div().id(id.clone()), p, enabled)
                             .debug_selector(move || id.to_string())
@@ -2237,17 +1969,13 @@ impl Workspace {
                             .text_size(px(chrome::scale::META))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(rgb(match (active, busy) {
-                                (true, _) if permission == Permission::FullAccess => p.warn(),
+                                (true, _) if permission == Permission::FullAccess => p.warning,
                                 (true, _) => p.text,
                                 (false, true) => p.disabled,
                                 (false, false) => p.muted,
                             }))
                             .when(active, |d| d.bg(rgb(p.selected)))
-                            .child(if v2 {
-                                super::model_popover::access_word(permission)
-                            } else {
-                                permission.label()
-                            })
+                            .child(permission.label())
                             .when(enabled, |d| {
                                 d.hover(move |s| s.text_color(rgb(p.text)))
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -2279,15 +2007,6 @@ impl Workspace {
                     chrome::Tone::Info
                 },
             ),
-            // r5-shell: what is in force, plainly (the popover says the same).
-            (false, None) if v2 && session.permission_mode.is_empty() => (
-                format!(
-                    "Currently: {} (the default). {}",
-                    super::model_popover::access_word(Permission::Ask),
-                    super::model_popover::access_consequence(Permission::Ask)
-                ),
-                chrome::Tone::Info,
-            ),
             (false, None) if session.permission_mode.is_empty() => (
                 "The provider has not reported this session’s mode yet. Choosing one sets it."
                     .to_owned(),
@@ -2301,7 +2020,7 @@ impl Workspace {
                 chrome::Tone::Warning,
             ),
         };
-        self.page_card()
+        chrome::card(p)
             .debug_selector(|| "access-card".into())
             .p_4()
             .flex()
@@ -2335,7 +2054,7 @@ impl Workspace {
                             "Codex can plan before it acts in its next turns, keeping the approvals above."
                         },
                         Some(
-                            self.pbutton(
+                            self.button(
                                 "live-plan-mode",
                                 if plan { "Leave plan mode" } else { "Plan mode" },
                                 enabled,
@@ -2507,552 +2226,4 @@ pub(super) fn card_heading(
                 .text_color(rgb(p.muted))
                 .child(text)
         }))
-}
-
-// area-pages: the shared v2 page frame and the small helpers every migrated
-// page uses (`docs/design-v2.md`, "Migrating a screen").
-impl Workspace {
-    /// The palette when design v2 is on; `None` keeps a call site on v1.
-    pub(super) fn v2_palette(&self) -> Option<Palette> {
-        self.design().is_v2().then(|| self.palette())
-    }
-
-    /// The card surface for the design in use: `chrome::card` under v1; the
-    /// v2 card's surface, edge and lift (no padding or layout, which the
-    /// caller sets as it did for v1) under v2.
-    pub(super) fn page_card(&self) -> Div {
-        match self.v2_palette() {
-            Some(p) => {
-                let t = p.tokens;
-                div()
-                    .rounded(px(t.radius.panel))
-                    .bg(rgb(p.surface))
-                    .border(px(t.stroke.hairline))
-                    .border_color(rgb(p.roles.card_border))
-                    .shadow(primitives::elevation(&p, t.elevation.raised))
-            }
-            None => chrome::card(self.palette()),
-        }
-    }
-
-    /// R4.5: the back link a v2 page header carries ("Back to chat", or
-    /// "Back to new session" when the page was opened from that form). One
-    /// id on every page: only one page shows at a time. r6-surfaces (R6.5):
-    /// top-level pages (the sidebar's destinations) have none, since the
-    /// sidebar is the navigation; drill-in pages keep it.
-    pub(super) fn page_back_v2(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        self.page_back_v2_enabled(true, cx)
-    }
-
-    /// Whether the page showing is one of the sidebar's destinations.
-    pub(super) fn top_level_page(&self) -> bool {
-        self.new_session
-            || matches!(
-                self.screen,
-                Screen::Projects
-                    | Screen::Settings
-                    | Screen::Recent
-                    | Screen::Jobs
-                    | Screen::Hosts
-                    | Screen::Scratch
-                    | Screen::Fleet
-                    // r7-pages (R7.6): Agent setup is a top-level page
-                    // too (the welcome's "Set up agents"): no back link.
-                    | Screen::Setup
-            )
-    }
-
-    /// [`Self::page_back_v2`], disabled while the page cannot be left (New
-    /// session while it starts).
-    pub(super) fn page_back_v2_enabled(
-        &self,
-        enabled: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.top_level_page() && !self.extras.return_launch {
-            return None;
-        }
-        let p = self.palette();
-        Some(
-            primitives::back_link_enabled(
-                "feature-back",
-                if self.extras.return_launch {
-                    "Back to new session"
-                } else {
-                    "Back to chat"
-                },
-                enabled,
-                &p,
-            )
-            .debug_selector(|| "feature-back".into())
-            .tooltip(primitives::tooltip_view("Go back", Some("Esc"), &p))
-            .when(enabled, |d| {
-                d.on_click(cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)))
-            })
-            .into_any_element(),
-        )
-    }
-
-    /// Every feature page under v2: back link, title, one-line description
-    /// and right-aligned actions over the body, in the shared page width.
-    pub(super) fn feature_page_v2(
-        &mut self,
-        title: String,
-        description: Option<SharedString>,
-        notice: Option<Div>,
-        body: Div,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let back = self.page_back_v2(cx);
-        let actions = self.feature_actions_v2(cx);
-        let header = primitives::page_header(back, title, description, actions, &p)
-            .debug_selector(|| "page-header".into());
-        let header = match self.selected_session() {
-            Some(s) if self.screen == Screen::Session => div()
-                .flex()
-                .flex_col()
-                .gap(px(t.space.md))
-                .child(header)
-                .child(self.session_summary_line(s)),
-            _ => header,
-        };
-        // r3-pages: forms keep a readable measure, left-aligned, while
-        // tables use the page's width. r5-system (PageShell): the header
-        // takes the same width rule, so a form's actions sit on its edge.
-        let width = match self.screen {
-            Screen::Model
-            | Screen::Session
-            | Screen::Handoff
-            | Screen::PullRequest
-            | Screen::Setup => system::PageWidth::Form,
-            _ => system::PageWidth::Wide,
-        };
-        if self.screen == Screen::Recent {
-            // Its rows are the page's own children, so the keyboard cursor
-            // can scroll one into view.
-            let mut items = vec![div().pb(px(t.space.xl)).child(header).into_any_element()];
-            items.extend(notice.map(|n| div().pb(px(t.space.md)).child(n).into_any_element()));
-            items.extend(self.render_recent(cx));
-            return self.page_list(
-                "feature-view",
-                t.pages().wide,
-                false,
-                &self.extras.recent.scroll,
-                items,
-            );
-        }
-        self.page_view(
-            "feature-view",
-            t.pages().wide,
-            false,
-            system::page_shell(
-                header,
-                notice.map(IntoElement::into_any_element),
-                div().w_full().child(body),
-                width,
-                &p,
-            ),
-        )
-    }
-
-    /// The page header's actions under v2: at most one primary, the rest
-    /// secondary or ghost.
-    fn feature_actions_v2(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let p = self.palette();
-        let connected = self.view.connected;
-        let refresh = |id: &'static str| {
-            primitives::button_with_icon(
-                id,
-                "Refresh",
-                primitives::Concept::Refresh,
-                ButtonVariant::Tertiary,
-                ButtonSize::Small,
-                connected,
-                &p,
-            )
-            .debug_selector(move || id.into())
-        };
-        match self.screen {
-            Screen::Recent => vec![
-                refresh("history-refresh")
-                    .when(connected, |d| {
-                        d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Recent, cx)))
-                    })
-                    .into_any_element(),
-            ],
-            Screen::Jobs => vec![
-                refresh("jobs-refresh")
-                    .when(connected, |d| {
-                        d.on_click(cx.listener(|this, _, _, cx| {
-                            this.request(Request::Jobs, cx);
-                            this.request(Request::JobRuns, cx);
-                        }))
-                    })
-                    .into_any_element(),
-                self.new_job_button(cx).into_any_element(),
-            ],
-            // r2-pages: the page's one Refresh re-reads the project links too.
-            Screen::Hosts => vec![
-                refresh("hosts-refresh")
-                    .when(connected, |d| {
-                        d.on_click(cx.listener(|this, _, _, cx| {
-                            this.request(Request::Hosts, cx);
-                            this.request(Request::ProjectLinks, cx);
-                        }))
-                    })
-                    .into_any_element(),
-            ],
-            Screen::Scratch => vec![
-                refresh("scratch-refresh")
-                    .when(connected, |d| {
-                        d.on_click(cx.listener(|this, _, _, cx| this.refresh_scratch(cx)))
-                    })
-                    .into_any_element(),
-            ],
-            Screen::Setup => {
-                let can_check =
-                    connected && !self.view.requests.get("setup").is_some_and(|s| s.loading);
-                vec![
-                    // r2-pages: one style for every page's refresh.
-                    primitives::button_with_icon(
-                        "setup-refresh",
-                        "Check again",
-                        primitives::Concept::Refresh,
-                        ButtonVariant::Tertiary,
-                        ButtonSize::Small,
-                        can_check,
-                        &p,
-                    )
-                    .debug_selector(|| "setup-refresh".into())
-                    .when(can_check, |d| {
-                        d.on_click(cx.listener(|this, _, _, cx| {
-                            let provider = this.provider.into();
-                            this.request(
-                                Request::Setup {
-                                    provider,
-                                    check: false,
-                                },
-                                cx,
-                            )
-                        }))
-                    })
-                    .into_any_element(),
-                ]
-            }
-            Screen::Session => self
-                .selected_session()
-                .map(|s| {
-                    let badge = self.session_status_v2(s);
-                    div()
-                        .debug_selector(|| "session-status".into())
-                        .child(badge.render(&p))
-                        .into_any_element()
-                })
-                .into_iter()
-                .collect(),
-            Screen::Handoff => self
-                .handoff_continue(cx)
-                .map(IntoElement::into_any_element)
-                .into_iter()
-                .collect(),
-            _ => Vec::new(),
-        }
-    }
-}
-
-// r2-pages
-/// One agent's setup, in the one state set Setup, the welcome and the
-/// sidebar share: Ready / Needs sign-in / Not installed (plus a failed
-/// check, and "not read yet").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SetupState {
-    /// Installed, signed in and answering (the connection check passed).
-    Ready,
-    /// Installed; sign-in not confirmed yet (unchecked, or no check exists).
-    Installed,
-    NeedsSignIn,
-    NotInstalled,
-    /// Installed, but the connection check failed for another reason.
-    Problem(&'static str),
-    Unknown,
-}
-
-impl SetupState {
-    /// From `setup.installed[].found` and the last readiness check.
-    pub(super) fn of(found: Option<bool>, readiness: &str) -> Self {
-        match (found, readiness) {
-            (Some(false), _) => Self::NotInstalled,
-            (_, "unauthenticated") => Self::NeedsSignIn,
-            (_, "limited") => {
-                Self::Problem("Signed in, but the account has reached its usage limit.")
-            }
-            (_, "timeout") => Self::Problem("The connection check timed out. Try it again."),
-            (_, "network-error") => {
-                Self::Problem("The network is unavailable, so the check couldn't run.")
-            }
-            (Some(true), "responding") => Self::Ready,
-            (Some(true), "unchecked" | "unsupported") => Self::Installed,
-            (Some(true), _) => Self::Problem("The connection check failed. Try it again."),
-            (None, _) => Self::Unknown,
-        }
-    }
-
-    pub(super) fn badge(self) -> StatusBadge {
-        match self {
-            Self::Ready => StatusBadge::new(StatusKind::Ready),
-            // r7-int: agrees with "Check the connection to confirm…".
-            Self::Installed => StatusBadge::new(StatusKind::Ready).label("Installed"),
-            Self::NeedsSignIn => StatusBadge::new(StatusKind::NeedsYou).label("Needs sign-in"),
-            Self::NotInstalled => StatusBadge::new(StatusKind::Offline).label("Not installed"),
-            Self::Problem(_) => StatusBadge::new(StatusKind::Failed).label("Check failed"),
-            Self::Unknown => StatusBadge::new(StatusKind::Unknown).label("Not checked"),
-        }
-    }
-}
-
-/// Design v2 page state (area-pages).
-#[derive(Default)]
-pub(super) struct PagesUi {
-    /// The overflow ("…") menu open on a page, by its key.
-    pub menu: Option<String>,
-    /// Hosts whose Details (metrics and queue) are open, by host.
-    pub hosts_open: std::collections::BTreeSet<String>,
-}
-
-impl Workspace {
-    /// A "More actions" trigger with its menu below it while open. Each item
-    /// is a [`primitives::menu_item`] whose click handler does its work and
-    /// calls [`Self::close_page_menu`]; a click outside closes it too.
-    pub(super) fn page_overflow(
-        &self,
-        key: impl Into<String>,
-        items: Vec<AnyElement>,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.palette();
-        let key: String = key.into();
-        let trigger_id = SharedString::from(format!("{key}-more"));
-        let selector = trigger_id.clone();
-        let trigger = primitives::overflow_trigger(trigger_id, &p)
-            .debug_selector(move || selector.to_string());
-        self.page_menu(key, trigger, items, cx)
-    }
-
-    // r3-pages
-    /// Any page control that opens a menu below it (the "…" trigger, the
-    /// Projects page's "Add…"): the trigger toggles `pages.menu` under
-    /// `key`; a click outside closes it.
-    pub(super) fn page_menu(
-        &self,
-        key: impl Into<String>,
-        trigger: Stateful<Div>,
-        items: Vec<AnyElement>,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.palette();
-        let t = p.tokens;
-        let key: String = key.into();
-        let open = self.extras.pages.menu.as_deref() == Some(key.as_str());
-        let toggle = key.clone();
-        let trigger = trigger.on_click(cx.listener(move |this, _, _, cx| {
-            cx.stop_propagation();
-            let menu = &mut this.extras.pages.menu;
-            *menu = if menu.as_deref() == Some(toggle.as_str()) {
-                None
-            } else {
-                Some(toggle.clone())
-            };
-            cx.notify();
-        }));
-        let menu_selector = format!("{key}-menu");
-        div()
-            .relative()
-            .flex_shrink_0()
-            .child(trigger)
-            .when(open, |d| {
-                d.child(
-                    gpui::deferred(
-                        div()
-                            .absolute()
-                            .top(px(t.layout.icon_button + t.space.xs))
-                            .right_0()
-                            .child(
-                                primitives::menu(&p)
-                                    .debug_selector(move || menu_selector.clone())
-                                    .on_mouse_down_out(
-                                        cx.listener(|this, _, _, cx| this.close_page_menu(cx)),
-                                    )
-                                    .children(items),
-                            ),
-                    )
-                    .with_priority(1),
-                )
-            })
-    }
-
-    pub(super) fn close_page_menu(&mut self, cx: &mut Context<Self>) {
-        if self.extras.pages.menu.take().is_some() {
-            cx.notify();
-        }
-    }
-}
-
-// area-pages: design-aware buttons for the migrated pages. Under v1 each one
-// is exactly the shipped control; under v2 the shared primitive in the
-// matching variant (one primary per region, destructive as ghost-danger).
-impl Workspace {
-    /// `self.button` / a v2 secondary button.
-    pub(super) fn pbutton(
-        &self,
-        id: impl Into<SharedString>,
-        label: impl Into<SharedString>,
-        enabled: bool,
-    ) -> Stateful<Div> {
-        let id: SharedString = id.into();
-        match self.v2_palette() {
-            Some(p) => primitives::button(
-                id,
-                label,
-                None,
-                ButtonVariant::Secondary,
-                ButtonSize::Small,
-                enabled,
-                &p,
-            ),
-            None => self.button(id, label, enabled),
-        }
-    }
-
-    /// `self.primary_button` / a v2 primary button.
-    pub(super) fn pprimary(
-        &self,
-        id: impl Into<SharedString>,
-        label: impl Into<SharedString>,
-        enabled: bool,
-    ) -> Stateful<Div> {
-        let id: SharedString = id.into();
-        match self.v2_palette() {
-            Some(p) => primitives::button(
-                id,
-                label,
-                None,
-                ButtonVariant::Primary,
-                ButtonSize::Small,
-                enabled,
-                &p,
-            ),
-            None => self.primary_button(id, label, enabled),
-        }
-    }
-
-    /// `self.danger_button` / a v2 ghost-danger button.
-    pub(super) fn pdanger(
-        &self,
-        id: impl Into<SharedString>,
-        label: impl Into<SharedString>,
-        enabled: bool,
-    ) -> Stateful<Div> {
-        let id: SharedString = id.into();
-        match self.v2_palette() {
-            Some(p) => primitives::button(
-                id,
-                label,
-                None,
-                ButtonVariant::Destructive,
-                ButtonSize::Small,
-                enabled,
-                &p,
-            ),
-            None => self.danger_button(id, label, enabled),
-        }
-    }
-
-    /// `self.quiet_button` / a v2 ghost button with its icon.
-    pub(super) fn pquiet(
-        &self,
-        id: impl Into<SharedString>,
-        label: &'static str,
-        icon: IconName,
-        enabled: bool,
-    ) -> Stateful<Div> {
-        let id: SharedString = id.into();
-        match self.v2_palette() {
-            Some(p) => primitives::button(
-                id,
-                label,
-                Some(icon),
-                ButtonVariant::Tertiary,
-                ButtonSize::Small,
-                enabled,
-                &p,
-            ),
-            None => self.quiet_button(id, label, icon, enabled),
-        }
-    }
-
-    /// `self.icon_button` / a v2 ghost icon button with a tooltip.
-    pub(super) fn picon(
-        &self,
-        id: impl Into<SharedString>,
-        label: &'static str,
-        icon: IconName,
-        enabled: bool,
-    ) -> Stateful<Div> {
-        let id: SharedString = id.into();
-        match self.v2_palette() {
-            Some(p) => {
-                primitives::icon_button(id, icon, label, ButtonVariant::Tertiary, enabled, &p)
-            }
-            None => self.icon_button(id, label, icon, enabled),
-        }
-    }
-}
-
-// area-pages: neutral provider identity on the pages (v2 keeps brand colour
-// for the composer's model chip only).
-impl Workspace {
-    /// A session's provider mark and model: `chrome::model_badge` under v1;
-    /// tertiary grey under v2.
-    pub(super) fn page_model(&self, s: &Session, size: f32) -> Div {
-        let p = self.palette();
-        let Some(v2) = self.v2_palette() else {
-            return chrome::model_badge(s, p, size);
-        };
-        let t = v2.tokens;
-        let glyph = match s.provider.as_str() {
-            "claude" => Some("brand/claude.svg"),
-            "codex" => Some("brand/openai.svg"),
-            _ => None,
-        };
-        div()
-            .flex()
-            .items_center()
-            .gap(px(t.space.xs))
-            .text_color(rgb(v2.roles.provider))
-            .when_some(glyph, |d, path| {
-                d.child(
-                    gpui::svg()
-                        .path(path)
-                        .size(px(t.icon.xs))
-                        .flex_shrink_0()
-                        .text_color(rgb(v2.roles.provider)),
-                )
-            })
-            .child(s.display_model())
-    }
-
-    /// A session's status as the shared v2 badge: the one derivation
-    /// (r4-truth), read from the live session when the fleet still holds
-    /// it (a History row is the hub's stored copy).
-    pub(super) fn session_status_v2(&self, s: &Session) -> StatusBadge {
-        let live = self
-            .view
-            .sessions
-            .iter()
-            .find(|l| l.id == s.id)
-            .unwrap_or(s);
-        self.session_status(live, timing::now_ms()).badge()
-    }
 }

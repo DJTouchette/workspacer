@@ -434,26 +434,6 @@ pub fn group_span(
     ix: usize,
     merge_turn: bool,
 ) -> Option<std::ops::Range<usize>> {
-    let cap = if merge_turn {
-        MERGED_GROUP_CAP
-    } else {
-        GROUP_CAP
-    };
-    group_span_capped(rows, ix, merge_turn, cap)
-}
-
-// r2-transcript
-/// Rows one design v2 work group may hold: it shows only its latest calls
-/// until opened, so a burst reads as one "Worked … · n tools" group.
-pub const V2_GROUP_CAP: usize = MERGED_GROUP_CAP;
-
-/// [`group_span`] with an explicit cap on the rows one group may hold.
-pub fn group_span_capped(
-    rows: &std::collections::VecDeque<std::sync::Arc<crate::model::Row>>,
-    ix: usize,
-    merge_turn: bool,
-    cap: usize,
-) -> Option<std::ops::Range<usize>> {
     let regular = |i: usize| {
         rows.get(i)
             .and_then(|r| r.tool.as_ref())
@@ -483,6 +463,11 @@ pub fn group_span_capped(
     }
     // Keep expansion bounded: a long burst must not build thousands of tool
     // cards inside one virtual-list item.
+    let cap = if merge_turn {
+        MERGED_GROUP_CAP
+    } else {
+        GROUP_CAP
+    };
     start += ((ix - start) / cap) * cap;
     end = end.min(start + cap);
     Some(start..end)

@@ -271,7 +271,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let session = self.view.selected.clone().unwrap_or_default();
         let key = card_key(&session, &row.item_id);
         let live = live && !row.item_id.is_empty() && self.view.child.is_none();
@@ -308,38 +308,16 @@ impl Workspace {
             .flex_col()
             .gap_2()
             .text_size(px(12.))
-            .when(self.design().is_v2(), |d| {
-                let t = p.tokens;
-                d.p(px(t.space.lg))
-                    .rounded(px(t.radius.panel))
-                    .map(|d| system::edge(d, system::Side::All, system::EdgeTone::Card, &p))
-                    .map(|d| system::lifted(d, system::Level::Raised, &p))
-                    .gap(px(t.space.md))
-                    .text_size(px(t.text.body))
-            })
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(if self.design().is_v2() {
-                        // Answered is a decision made, not a success; open
-                        // ones need the user but block nothing.
-                        primitives::status_indicator(
-                            if answered.is_some() {
-                                primitives::StatusKind::Idle
-                            } else {
-                                primitives::StatusKind::NeedsYou
-                            },
-                            &p,
-                        )
+                    .child(status_dot(if answered.is_some() {
+                        p.success
                     } else {
-                        status_dot(if answered.is_some() {
-                            p.success
-                        } else {
-                            p.accent
-                        })
-                    })
+                        p.accent
+                    }))
                     .child(
                         div()
                             .font_weight(FontWeight::MEDIUM)
@@ -348,9 +326,6 @@ impl Workspace {
                             } else {
                                 p.text
                             }))
-                            .when(self.design().is_v2() && answered.is_some(), |d| {
-                                d.text_color(rgb(p.roles.text_secondary))
-                            })
                             .child(if answered.is_some() {
                                 "Answered"
                             } else if row.questions.len() > 1 {

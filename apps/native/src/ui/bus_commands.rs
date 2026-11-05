@@ -159,7 +159,7 @@ impl Workspace {
     /// A hub navigation request the window could not apply: a quiet card in
     /// the sidebar with its tone icon, the request copy action and dismiss.
     pub(super) fn render_ui_notice(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let payload = self
             .ui_bus
             .payload

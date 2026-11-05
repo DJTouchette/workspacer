@@ -162,36 +162,7 @@ impl Workspace {
     pub(super) fn render_link_status(&self) -> Option<Div> {
         let (_, link) = self.links.hovered.as_ref()?;
         let text = links::describe(link)?;
-        let p = self.palette();
-        if self.design().is_v2() {
-            let t = p.tokens;
-            return Some(
-                div()
-                    .absolute()
-                    .left(px(t.space.lg))
-                    .bottom(self.composer_dock_bounds.size.height + px(t.space.sm))
-                    .max_w(relative(0.8))
-                    .child(
-                        div()
-                            .debug_selector(|| "link-status".into())
-                            .px(px(t.space.md))
-                            .py(px(t.space.xxs))
-                            .rounded(px(t.radius.sm))
-                            .border(px(t.stroke.hairline))
-                            .border_color(rgb(p.roles.border_strong))
-                            .bg(rgb(p.roles.raised))
-                            .shadow(super::primitives::elevation(&p, t.elevation.floating))
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(if matches!(link, Link::Refused(_)) {
-                                p.warn()
-                            } else {
-                                p.roles.text_secondary
-                            }))
-                            .truncate()
-                            .child(text),
-                    ),
-            );
-        }
+        let p = self.appearance.palette();
         Some(
             div()
                 .absolute()
@@ -210,7 +181,7 @@ impl Workspace {
                         .shadow(chrome::floating_shadow(p))
                         .text_size(px(11.))
                         .text_color(rgb(if matches!(link, Link::Refused(_)) {
-                            p.warn()
+                            p.warning
                         } else {
                             p.muted
                         }))
@@ -223,46 +194,12 @@ impl Workspace {
     /// The open link menu over everything, with a backdrop that closes it.
     pub(super) fn render_link_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let menu = self.links.menu.as_ref()?;
-        let p = self.palette();
+        let p = self.appearance.palette();
         let local = match &menu.link {
             Link::File(target) => std::path::Path::new(&target.path).exists(),
             _ => false,
         };
         let rows = actions(&menu.link, local);
-        if self.design().is_v2() {
-            // The shared menu shell; same ids, selectors and actions.
-            let workspace = cx.entity().downgrade();
-            let close = move |_: &gpui::MouseDownEvent, _: &mut Window, cx: &mut App| {
-                let _ = workspace.update(cx, |this, cx| {
-                    this.links.menu = None;
-                    cx.notify();
-                });
-            };
-            let card = super::primitives::menu(&p)
-                .id("link-menu")
-                .debug_selector(|| "link-menu".into())
-                .absolute()
-                .left(menu.position.x)
-                .top(menu.position.y)
-                .occlude()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .children(rows.into_iter().map(|action| {
-                    super::primitives::menu_item(action.id(), action.label(), None, false, true, &p)
-                        .debug_selector(move || format!("link-menu-{}", action.id()))
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.run_link_action(action, cx)),
-                        )
-                }));
-            let layer = div()
-                .id("link-menu-backdrop")
-                .absolute()
-                .inset_0()
-                .occlude()
-                .on_mouse_down(MouseButton::Left, close.clone())
-                .on_mouse_down(MouseButton::Right, close)
-                .child(card);
-            return Some(gpui::deferred(layer).with_priority(2).into_any_element());
-        }
         let workspace = cx.entity().downgrade();
         let close = move |_: &gpui::MouseDownEvent, _: &mut Window, cx: &mut App| {
             let _ = workspace.update(cx, |this, cx| {

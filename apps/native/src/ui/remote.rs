@@ -69,10 +69,7 @@ impl Workspace {
 
     /// Tailscale status and the HTTPS switch.
     pub(super) fn render_remote_sharing(&self, cx: &mut Context<Self>) -> Div {
-        if self.design().is_v2() && self.remote_unavailable() {
-            return self.remote_unavailable_v2();
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let busy = self.remote_busy();
         let state = self.remote_state();
         let refresh = self
@@ -87,13 +84,9 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(self.note(remote.error.clone(), p.warn()))
+                .child(self.note(remote.error.clone(), p.warning))
                 .child(self.note(
-                    if self.design().is_v2() {
-                        "Remote sharing is managed on the machine that runs your agents."
-                    } else {
-                        "Remote sharing is managed by the machine that owns this hub."
-                    },
+                    "Remote sharing is managed by the machine that owns this hub.",
                     p.muted,
                 )),
             Some(remote) if !remote.available => div()
@@ -105,7 +98,7 @@ impl Workspace {
                     p.muted,
                 ))
                 .child(
-                    self.pquiet(
+                    self.quiet_button(
                         "tailscale-download",
                         "Get Tailscale",
                         IconName::ExternalLink,
@@ -126,7 +119,7 @@ impl Workspace {
     }
 
     fn render_serve_switch(&self, remote: &Remote, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let serving = remote.serving;
         let enabled = remote.can_serve && !busy;
         let confirm = self.remote.confirm_reset;
@@ -191,11 +184,11 @@ impl Workspace {
                     ),
             )
             .when(!remote.hint.is_empty(), |d| {
-                d.child(self.note(remote.hint.clone(), p.warn()))
+                d.child(self.note(remote.hint.clone(), p.warning))
                     .when_some(hint_link, |d, link| {
                         d.child(
                             div().flex().child(
-                                self.pquiet(
+                                self.quiet_button(
                                     "tailscale-hint",
                                     "Open Tailscale admin",
                                     IconName::ExternalLink,
@@ -217,19 +210,19 @@ impl Workspace {
                         .gap_2()
                         .child(self.note(
                             "Turning this off runs `tailscale serve reset`, which removes every Tailscale Serve handler on this machine, not only Workspacer's.",
-                            p.warn(),
+                            p.warning,
                         ))
                         .child(
                             div()
                                 .flex()
                                 .gap_2()
                                 .child(
-                                    self.pprimary("tailscale-reset", "Stop sharing", true)
+                                    self.primary_button("tailscale-reset", "Stop sharing", true)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.remote_action(RemoteAction::Serve(false), cx)
                                         })),
                                 )
-                                .child(self.pbutton("tailscale-keep", "Keep sharing", true).on_click(
+                                .child(self.button("tailscale-keep", "Keep sharing", true).on_click(
                                     cx.listener(|this, _, _, cx| {
                                         this.remote.confirm_reset = false;
                                         cx.notify();
@@ -242,7 +235,7 @@ impl Workspace {
 
     /// Scope picker, QR code and link for one pairing.
     pub(super) fn render_phone_pairing(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let busy = self.remote_busy();
         let Some(remote) = self.remote_state() else {
             return div().child(self.note("Check Tailscale above first.", p.muted));
@@ -255,11 +248,7 @@ impl Workspace {
         }
         if !remote.can_manage_tokens {
             return div().child(self.note(
-                if self.design().is_v2() {
-                    "Only the machine that runs your agents can create pairing links."
-                } else {
-                    "Only the machine that owns this hub can create pairing links."
-                },
+                "Only the machine that owns this hub can create pairing links.",
                 p.muted,
             ));
         }
@@ -320,20 +309,20 @@ impl Workspace {
                                     .flex_wrap()
                                     .gap_2()
                                     .child(
-                                        self.pquiet("pairing-copy", "Copy link", IconName::Copy, true)
+                                        self.quiet_button("pairing-copy", "Copy link", IconName::Copy, true)
                                             .on_click(move |_, _, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
                                             }),
                                     )
                                     .child(
-                                        self.pquiet("pairing-open", "Open here", IconName::ExternalLink, true)
+                                        self.quiet_button("pairing-open", "Open here", IconName::ExternalLink, true)
                                             .on_click(move |_, _, cx| cx.open_url(&open)),
                                     ),
                             ),
                     )
             }
             None => div().child(
-                self.pprimary(
+                self.primary_button(
                     "pairing-create",
                     if busy {
                         "Creating…"
@@ -358,7 +347,7 @@ impl Workspace {
             .child(self.note(
                 description,
                 if scope == "operator" {
-                    p.warn()
+                    p.warning
                 } else {
                     p.muted
                 },
@@ -368,7 +357,7 @@ impl Workspace {
 
     /// Every pairing token, each revocable.
     pub(super) fn render_paired_devices(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let busy = self.remote_busy();
         let pairings = self
             .remote_state()
@@ -414,7 +403,7 @@ impl Workspace {
                             }),
                     )
                     .child(
-                        self.pbutton(
+                        self.button(
                             format!("pairing-revoke-{ix}"),
                             if confirming {
                                 "Confirm revoke"
@@ -424,7 +413,7 @@ impl Workspace {
                             !busy,
                         )
                         .debug_selector(move || format!("pairing-revoke-{ix}"))
-                        .when(confirming, |d| d.text_color(rgb(p.warn())))
+                        .when(confirming, |d| d.text_color(rgb(p.warning)))
                         .when(!busy, |d| {
                             d.on_click(cx.listener(move |this, _, _, cx| {
                                 if this.remote.confirm_revoke.as_deref() == Some(&token) {

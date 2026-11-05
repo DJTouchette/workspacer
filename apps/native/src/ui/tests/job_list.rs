@@ -16,16 +16,6 @@ fn listed() -> serde_json::Value {
 
 #[gpui::test]
 fn jobs_page_reviews_a_proposed_change_and_only_writes_owner_actions(cx: &mut TestAppContext) {
-    reviews_a_proposed_change(cx, wks_native::appearance::Design::V1);
-}
-
-/// The v2 worked example keeps every selector and write of the shipped page.
-#[gpui::test]
-fn jobs_page_under_design_v2_keeps_its_actions(cx: &mut TestAppContext) {
-    reviews_a_proposed_change(cx, wks_native::appearance::Design::V2);
-}
-
-fn reviews_a_proposed_change(cx: &mut TestAppContext, design: wks_native::appearance::Design) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     // Tall enough that the open proposal's details (Host row included)
     // leave the next row's actions on screen.
@@ -33,7 +23,6 @@ fn reviews_a_proposed_change(cx: &mut TestAppContext, design: wks_native::appear
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
             this.demo = false;
-            this.force_design(Some(design));
             this.update_view(Arc::new(state("a")), window, cx);
             this.open_feature(Screen::Jobs, window, cx);
         })
@@ -46,38 +35,9 @@ fn reviews_a_proposed_change(cx: &mut TestAppContext, design: wks_native::appear
         "opening the page reads the jobs"
     );
     request_state(&workspace, &mut visual, Request::Jobs, 1, listed());
-    for selector in ["page-header", "page-title"] {
-        assert!(
-            visual.debug_bounds(selector).is_some(),
-            "{design:?} {selector}"
-        );
-    }
-    // r6-surfaces (R6.5): Jobs is a sidebar destination; v2 has no back link.
-    assert_eq!(
-        visual.debug_bounds("feature-back").is_some(),
-        !design.is_v2(),
-        "{design:?} back link"
-    );
-    if design.is_v2() {
-        assert!(visual.debug_bounds("jobs-refresh").is_some());
-        // Small controls at the v2 height.
-        let pause = visual.debug_bounds("job-pause-1").unwrap();
-        assert_eq!(
-            f32::from(pause.size.height),
-            wks_native::tokens::Tokens::V2.layout.control_height_sm
-        );
-    }
 
-    // The proposal sorts first and opens to the job it would change (v2:
-    // R4.3, the decision's Details).
-    if design.is_v2() {
-        // The whole command and where it runs, beside Approve.
-        assert!(visual.debug_bounds("job-action-0").is_some());
-        assert!(visual.debug_bounds("decision-where").is_some());
-        click(&mut visual, "job-details-0");
-    } else {
-        click(&mut visual, "job-row-0");
-    }
+    // The proposal sorts first and opens to the job it would change.
+    click(&mut visual, "job-row-0");
     assert!(visual.debug_bounds("job-detail").is_some());
     assert!(effects(&mut commands).iter().any(|c| matches!(
         c,
@@ -97,10 +57,6 @@ fn reviews_a_proposed_change(cx: &mut TestAppContext, design: wks_native::appear
     assert!(approval.get("proposedBy").is_none());
 
     // Removing a job takes a second click; nothing is sent on the first.
-    if design.is_v2() {
-        // v2 keeps Remove in the row's overflow menu.
-        click(&mut visual, "job-1-more");
-    }
     click(&mut visual, "job-remove-1");
     assert!(
         !effects(&mut commands)

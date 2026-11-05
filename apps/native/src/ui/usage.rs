@@ -9,7 +9,7 @@ fn color(window: &UsageWindow, p: Palette) -> u32 {
     if window.pct >= 90. {
         p.error
     } else if window.pct >= 70. || window.pace.as_deref() == Some("overspending") {
-        p.warn()
+        p.warning
     } else {
         p.success
     }
@@ -26,7 +26,7 @@ fn long_label(window: &UsageWindow) -> &'static str {
 fn pace_line(window: &UsageWindow, p: Palette) -> Option<(String, u32)> {
     let (pace, expected) = (window.pace.as_deref()?, window.expected_pct?);
     let (verdict, tone) = match pace {
-        "overspending" => ("Ahead of pace", p.warn()),
+        "overspending" => ("Ahead of pace", p.warning),
         "ahead" => ("Slightly ahead of pace", p.muted),
         _ => ("On track", p.success),
     };
@@ -177,7 +177,7 @@ fn unmeasured_line(state: &usage::Unmeasured, p: Palette, size: f32) -> Div {
         .child(
             div()
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(rgb(if state.error { p.warn() } else { p.muted }))
+                .text_color(rgb(if state.error { p.warning } else { p.muted }))
                 .child(state.state),
         )
         .child(state.reason.clone())
@@ -222,7 +222,7 @@ impl Workspace {
         if strip.is_none() && notes.is_empty() {
             return None;
         }
-        let p = self.palette();
+        let p = self.appearance.palette();
         Some(
             // A hairline above, like the footer's: the session list scrolls
             // under this strip, and without an edge a half-clipped row reads
@@ -265,13 +265,7 @@ impl Workspace {
     /// for accounts whose token has expired. Unknown install state never nags.
     pub(super) fn usage_notes(&self, accounts: &[Account]) -> Vec<(IconName, String)> {
         let installed = |provider: &str| self.view.installed.get(provider).copied();
-        // r8-attention (R8.6): v2 names each agent one way ("Codex CLI").
-        let codex = if self.design().is_v2() {
-            wks_native::format::agent_name("codex")
-        } else {
-            "Codex"
-        };
-        let mut notes: Vec<(IconName, String)> = [("claude", "Claude Code"), ("codex", codex)]
+        let mut notes: Vec<(IconName, String)> = [("claude", "Claude Code"), ("codex", "Codex")]
             .into_iter()
             .filter(|(id, _)| installed(id) == Some(false))
             .map(|(_, name)| (IconName::ArrowDown, format!("Install {name}")))
@@ -295,7 +289,7 @@ impl Workspace {
         accounts: Vec<Account>,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let error = self.view.usage_error.clone();
         if accounts.is_empty() && error.is_none() {
             return None;
@@ -324,7 +318,7 @@ impl Workspace {
                             .child(
                                 Icon::new(IconName::TriangleAlert)
                                     .size(px(11.))
-                                    .text_color(rgb(p.warn())),
+                                    .text_color(rgb(p.warning)),
                             )
                             .child(
                                 div()
@@ -395,162 +389,12 @@ impl Workspace {
         )
     }
 
-    /// Design v2's footer usage: each installed, measured account's most
-    /// pressing window, one line each (r4-calm, R4.6; r6-surfaces, R6.5):
-    /// its mark, "Claude", a meter and "42%"; the full sentence ("42% of
-    /// 5-hour limit used") is in the tooltip. Neutral as it fills,
-    /// red only at the limit (`format::level`, amber is for "needs you").
-    /// The tooltip adds when each resets (`format::usage_line`); a click
-    /// opens the detail modal.
-    pub(super) fn render_usage_compact(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let p = self.palette();
-        let t = p.tokens;
-        let (accounts, now) = self.usage_accounts().unwrap_or_default();
-        let installed = |provider: &str| self.view.installed.get(provider).copied() != Some(false);
-        let shown: Vec<(Account, UsageWindow)> = accounts
-            .into_iter()
-            .filter(|a| installed(&a.provider))
-            .filter_map(|a| {
-                let w = a.primary()?.clone();
-                Some((a, w))
-            })
-            .collect();
-        let error = self.view.usage_error.clone();
-        if shown.is_empty() && error.is_none() {
-            return None;
-        }
-        let mut lines: Vec<String> = shown
-            .iter()
-            .map(|(a, w)| {
-                wks_native::format::usage_line(
-                    &a.title,
-                    long_label(w),
-                    w.pct,
-                    w.resets_at.map(|at| (at - now) * 1000),
-                )
-            })
-            .collect();
-        if shown.is_empty() {
-            lines.push("Usage unavailable · click to retry".into());
-        }
-        lines.push("How much of each account's usage limit is used. Click for details.".into());
-        let tip = lines.join("\n");
-        let top = shown
-            .iter()
-            .max_by(|(_, a), (_, b)| a.pct.total_cmp(&b.pct));
-        Some(
-            chrome::interactive_control(div().id("sidebar-usage"), p, true)
-                .debug_selector(|| "sidebar-usage".into())
-                .w_full()
-                .min_w_0()
-                .min_h(px(t.layout.control_height))
-                .px(px(t.space.sm))
-                .py(px(t.space.xs))
-                .rounded(px(t.radius.control))
-                .flex()
-                .flex_col()
-                .justify_center()
-                .gap(px(t.space.xs))
-                .flex_shrink_0()
-                .text_size(px(t.text.meta))
-                .hover(move |s| s.bg(rgb(p.roles.hover)))
-                .tooltip(super::primitives::tooltip_view(tip, None, &p))
-                .when(shown.is_empty(), |d| {
-                    d.debug_selector(|| "sidebar-usage-error".into()).child(
-                        Icon::new(IconName::TriangleAlert)
-                            .size(px(t.icon.xs))
-                            .text_color(rgb(p.roles.text_tertiary)),
-                    )
-                })
-                // r7-status (R7.5): one footer entry, the account nearest
-                // its limit; every account's sentence is in the tooltip and
-                // the details open on click.
-                .children(top.iter().map(|(a, w)| {
-                    // r8-attention (R8.6): said in full, "Codex · 93% of 5h
-                    // limit used", the meter under it with when it resets.
-                    let selector = format!("sidebar-usage-row-{}", a.provider);
-                    let level = wks_native::format::level(w.pct);
-                    let tone = super::primitives::level_color(level, &p);
-                    let pct = w.pct.max(0.).round() as u64;
-                    let resets = w
-                        .resets_at
-                        .map(|at| wks_native::format::resets_in((at - now) * 1000));
-                    div()
-                        .debug_selector(move || selector.clone())
-                        .w_full()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap(px(t.space.xxs))
-                        .child(
-                            div()
-                                .w_full()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap(px(t.space.sm))
-                                .child(super::shell::neutral_glyph(&a.provider, t.icon.sm, p))
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_color(rgb(p.roles.text_secondary))
-                                        .child(format!("{} · ", a.title))
-                                        .child(super::primitives::tabular(
-                                            div()
-                                                .text_color(rgb(
-                                                    tone.unwrap_or(p.roles.text_secondary)
-                                                ))
-                                                .font_weight(FontWeight(t.weight.medium))
-                                                .child(format!("{pct}%")),
-                                        ))
-                                        .child(format!(
-                                            " of {} limit used",
-                                            wks_native::format::window_name(w.label)
-                                        ))
-                                        .flex()
-                                        .whitespace_nowrap(),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .w_full()
-                                .min_w_0()
-                                .pl(px(t.icon.sm + t.space.sm))
-                                .flex()
-                                .items_center()
-                                .gap(px(t.space.sm))
-                                .child(
-                                    super::primitives::meter(
-                                        (w.pct / 100.) as f32,
-                                        super::primitives::level_intent(level),
-                                        &p,
-                                    )
-                                    .flex_1()
-                                    .min_w(px(t.shell().meter_width)),
-                                )
-                                .children(resets.map(|resets| {
-                                    div()
-                                        .flex_shrink_0()
-                                        .text_color(rgb(p.roles.text_tertiary))
-                                        .child(resets)
-                                })),
-                        )
-                }))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.usage_open = true;
-                    this.command(Command::RefreshUsage, cx);
-                    cx.notify();
-                })),
-        )
-    }
-
     /// Detail modal over the whole window. Backdrop click, ✕ and Esc close it.
     pub(super) fn render_usage_modal(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         if !self.usage_open {
             return None;
         }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let (accounts, now) = self.usage_accounts().unwrap_or_default();
         let updated = self
             .view
@@ -634,7 +478,7 @@ impl Workspace {
                         d.child(
                             div()
                                 .text_size(px(11.))
-                                .text_color(rgb(p.warn()))
+                                .text_color(rgb(p.warning))
                                 .child(format!("Last refresh failed: {failure}")),
                         )
                     })

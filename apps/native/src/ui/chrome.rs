@@ -160,23 +160,20 @@ pub(super) fn brand_badge(provider: &str, name: String, p: Palette, size: f32) -
 
 /// Native type scale for chrome outside the conversation. Chat prose follows
 /// the reader's text-size setting instead; these keep pages consistent.
-/// The v1 (shipped) values of `Tokens::text`: v2 styles read
-/// `p.tokens.text.*` instead, so the redesign can retune them.
 pub(super) mod scale {
-    use wks_native::tokens::Tokens;
     /// Page titles (Settings, Projects, Changes…); `TITLE_SHORT` in short windows.
-    pub const TITLE: f32 = Tokens::V1.text.title;
-    pub const TITLE_SHORT: f32 = Tokens::V1.text.title_short;
+    pub const TITLE: f32 = 22.;
+    pub const TITLE_SHORT: f32 = 18.;
     /// Card and section headings.
-    pub const HEADING: f32 = Tokens::V1.text.heading;
+    pub const HEADING: f32 = 15.;
     /// Body copy and control labels on pages.
-    pub const BODY: f32 = Tokens::V1.text.body;
+    pub const BODY: f32 = 13.;
     /// Descriptions, metadata and notices.
-    pub const META: f32 = Tokens::V1.text.meta;
+    pub const META: f32 = 12.;
     /// Captions, chips and hints.
-    pub const CAPTION: f32 = Tokens::V1.text.caption;
+    pub const CAPTION: f32 = 11.;
     /// Uppercase overlines.
-    pub const OVERLINE: f32 = Tokens::V1.text.overline;
+    pub const OVERLINE: f32 = 10.;
 }
 
 /// The shared raised surface for page content: settings groups, launch
@@ -205,8 +202,7 @@ pub(super) fn notice_line(text: impl Into<SharedString>, tone: Tone, p: Palette)
     let (color, text_color) = match tone {
         Tone::Info | Tone::Loading => (p.muted, p.muted),
         Tone::Success => (p.success, p.text),
-        // r8-int (R8.1): v2 warnings take the warning hue, not amber.
-        Tone::Warning => (p.warn(), p.warn()),
+        Tone::Warning => (p.warning, p.warning),
         Tone::Error => (p.error, p.error),
     };
     div()
@@ -325,7 +321,7 @@ pub(super) fn tone_glow(tone: Tone, strength: f32, p: Palette) -> gpui::BoxShado
     let color = match tone {
         Tone::Info | Tone::Loading => p.accent,
         Tone::Success => p.success,
-        Tone::Warning => p.warn(),
+        Tone::Warning => p.warning,
         Tone::Error => p.error,
     };
     gpui::BoxShadow {
@@ -377,23 +373,37 @@ pub(super) fn project_label(path: &str) -> &str {
 }
 
 impl Workspace {
-    /// The title's notices, each with what it says (so the island can move
-    /// it and fade its words out once it goes): the connection, status,
-    /// feature, context, sandbox, refresh and omitted-history rows that are
-    /// not dismissed. `carried`: the capsule carries the context gauge.
-    pub(super) fn title_notice_rows(
+    /// Compact floating title pill: status, project / title, model chip and
+    /// icon actions, sized to its content rather than the whole chat width.
+    /// The title capsule and its transient notices as one surface: notices
+    /// grow the capsule downward, like an island, instead of floating loose
+    /// beneath it. With nothing to say it stays the plain capsule. `status`
+    /// is the conversation notice (local first, then the hub's).
+    /// `actions` are the capsule's secondary actions, shown on hover or
+    /// focus (see `island.rs`); a subagent's capsule has none.
+    pub(super) fn render_title_island(
         &mut self,
+        bar: Stateful<Div>,
+        actions: Option<Div>,
         status: String,
-        carried: bool,
-        compact: bool,
+        window: &Window,
         cx: &mut Context<Self>,
-    ) -> Vec<(Notice, AnyElement)> {
+    ) -> AnyElement {
+        let p = self.appearance.palette();
+        let compact = unzoom(window.viewport_size().height) < 300.;
         let omitted = if self.view.transcript.omitted && !self.view.transcript.has_older {
             OMITTED_NOTICE
         } else {
             ""
         };
         let feature = self.extras.notice.clone();
+        // The context gauge rides the main capsule unless it is too narrow
+        // (then the composer keeps its meter); a subagent's capsule has none.
+        let carried = actions.is_some() && self.title_carries_context();
+        let gauge = self
+            .selected_session()
+            .filter(|_| carried)
+            .and_then(Gauge::of);
         let context = self
             .selected_session()
             .filter(|_| carried)
@@ -610,38 +620,6 @@ impl Workspace {
                 row,
             ));
         }
-        rows
-    }
-
-    /// Compact floating title pill: status, project / title, model chip and
-    /// icon actions, sized to its content rather than the whole chat width.
-    /// The title capsule and its transient notices as one surface: notices
-    /// grow the capsule downward, like an island, instead of floating loose
-    /// beneath it. With nothing to say it stays the plain capsule. `status`
-    /// is the conversation notice (local first, then the hub's).
-    /// `actions` are the capsule's secondary actions, shown on hover or
-    /// focus (see `island.rs`); a subagent's capsule has none.
-    pub(super) fn render_title_island(
-        &mut self,
-        bar: Stateful<Div>,
-        actions: Option<Div>,
-        status: String,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let p = self.palette();
-        let compact = unzoom(window.viewport_size().height) < 300.;
-        // The context gauge rides the main capsule unless it is too narrow
-        // (then the composer keeps its meter); a subagent's capsule has none.
-        let carried = actions.is_some() && self.title_carries_context();
-        let gauge = self
-            .selected_session()
-            .filter(|_| carried)
-            .and_then(Gauge::of);
-        let rows = self.title_notice_rows(status, carried, compact, cx);
-        let has = |slot: &str| rows.iter().any(|(n, _)| n.slot == slot);
-        let (show_status, show_feature, show_omitted) =
-            (has("status"), has("feature"), has("omitted"));
         let now = std::time::Instant::now();
         let motion = !self.settings.reduce_motion;
         let (notices, mut elements): (Vec<Notice>, Vec<AnyElement>) = rows.into_iter().unzip();
@@ -883,7 +861,7 @@ impl Workspace {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .debug_selector(move || format!("island-notice-{slot}"))
             .flex_shrink_0()
@@ -926,10 +904,7 @@ impl Workspace {
         session: Option<&Session>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        if self.design().is_v2() {
-            return self.render_title_bar_v2(narrow, enabled, title, session, cx);
-        }
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .id("title-bar")
             .debug_selector(|| "title-bar".into())
@@ -1042,7 +1017,7 @@ impl Workspace {
                                     .flex_shrink_0()
                                     .text_color(rgb(
                                         if access == wks_native::launch::Permission::FullAccess {
-                                            p.warn()
+                                            p.warning
                                         } else {
                                             p.muted
                                         },
@@ -1084,9 +1059,6 @@ impl Workspace {
         floating: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        if self.design().is_v2() {
-            return self.chat_actions_v2(enabled, floating, cx);
-        }
         let selected = self.view.selected.is_some();
         let model_enabled = enabled && self.supported_session();
         div()
@@ -1136,7 +1108,7 @@ impl Workspace {
                 )
                 .debug_selector(|| "open-terminal".into())
                 .when(self.terminal.open, |d| {
-                    d.text_color(rgb(self.palette().accent))
+                    d.text_color(rgb(self.appearance.palette().accent))
                 })
                 .when(selected, |d| {
                     d.on_click(cx.listener(move |this, event, window, cx| {
@@ -1224,7 +1196,7 @@ impl Workspace {
         icon: impl Into<Icon>,
         enabled: bool,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         interactive_control(div().id(id.into()), p, enabled)
             .px_2()
             .py_2()
@@ -1254,7 +1226,7 @@ impl Workspace {
         enabled: bool,
         primary: bool,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let (bg, fg, hover, pressed) = match (enabled, primary) {
             (false, _) => (p.selected, p.disabled, p.selected, p.selected),
             (true, true) => (p.primary, p.on_primary, p.primary_hover, p.primary_pressed),
@@ -1310,7 +1282,7 @@ impl Workspace {
         enabled: bool,
         primary: bool,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         interactive_control(div().id(id.into()), p, enabled)
             .size(px(28.))
             .rounded_full()
@@ -1346,7 +1318,7 @@ impl Workspace {
         label: impl Into<SharedString>,
         enabled: bool,
     ) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let tint = |alpha: f32| gpui::Hsla::from(rgb(p.error)).opacity(alpha);
         interactive_control(div().id(id.into()), p, enabled)
             .px_3()
@@ -1407,19 +1379,19 @@ impl Workspace {
             .id(id)
             .size_full()
             .overflow_y_scroll()
-            .px(px(if short { 16. } else { PAGE_GUTTER }))
+            .px(px(if short { 16. } else { 24. }))
             .pt(px(if custom_caption() {
                 PAGE_CAPTION_INSET
             } else if short {
                 12.
             } else {
-                PAGE_TOP
+                24.
             }))
             .pb(px(if short { 16. } else { 32. }))
     }
 
     fn page_frame(&self, scroller: Stateful<Div>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .relative()
             .flex_1()
@@ -1441,7 +1413,7 @@ impl Workspace {
         trailing: Option<AnyElement>,
         short: bool,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         div()
             .debug_selector(|| "page-header".into())
             .w_full()
@@ -1494,11 +1466,6 @@ impl Workspace {
             )
     }
 }
-
-/// A page's side padding and its top below the window edge (no custom
-/// caption): every page frame's, so their left edges agree (r4-pages).
-pub(super) const PAGE_GUTTER: f32 = 24.;
-pub(super) const PAGE_TOP: f32 = 24.;
 
 /// The window-chrome strip across the top of a page, when the app draws its
 /// own caption: drags the window, stops short of the caption buttons.
@@ -1556,7 +1523,7 @@ impl Workspace {
         if !custom_caption() {
             return None;
         }
-        let p = self.palette();
+        let p = self.appearance.palette();
         let native = cfg!(target_os = "windows");
         let maximized = window.is_maximized();
         let button = |id: &'static str, icon: IconName, area: gpui::WindowControlArea| {

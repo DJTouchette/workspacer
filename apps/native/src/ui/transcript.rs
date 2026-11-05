@@ -24,10 +24,6 @@ pub(super) struct ChatUi {
     preview_inflight: bool,
     frozen: BTreeMap<String, Frozen>,
     capture_number: u64,
-    /// The session and row count last seen while following (v2 "n new").
-    pub seen: Option<(String, usize)>,
-    /// r3-transcript: Ctrl+O shows every work block's tools and output.
-    pub expand_all: bool,
 }
 struct Preview {
     image: Option<Arc<gpui::Image>>,
@@ -37,13 +33,6 @@ struct Preview {
 struct Frozen {
     files: Vec<FileChange>,
     estimated: bool,
-}
-
-/// Whether `row` opens a new turn: a message of yours. Under v2 a fleet or
-/// supervisor wake (another session's news, delivered as a "You" row) does
-/// not: the turn around it is one turn with one "Changed N files" (R5.4).
-fn starts_turn(row: &Row, v2: bool) -> bool {
-    row.role == "You" && !(v2 && content::fleet(&row.text).is_some())
 }
 
 fn turn_id(rows: &std::collections::VecDeque<Arc<Row>>, start: usize) -> String {
@@ -198,11 +187,10 @@ impl Workspace {
             }) && new.is_some_and(|s| {
                 matches!(s.state.as_str(), "idle" | "input" | "done" | "background")
             }) {
-                let v2 = self.design().is_v2();
                 let rows = &view.transcript.rows;
                 let start = rows
                     .iter()
-                    .rposition(|r| starts_turn(r, v2))
+                    .rposition(|r| r.role == "You")
                     .map_or(0, |i| i + 1);
                 let files = content::turn_changes(rows.iter().skip(start).map(AsRef::as_ref));
                 if !files.is_empty() {
@@ -316,41 +304,23 @@ impl Workspace {
         let Some(row) = rows.get(ix) else {
             return div().into_any_element();
         };
-        let group = self.work_span(rows, ix);
+        let group = wks_native::tool_preview::group_span(rows, ix, self.settings.merge_turn_tools);
         // Preserve raw list indices for bookmarks and selection. The final slot
         // owns the group, so the existing tail probe still tracks its painted end.
         if group.as_ref().is_some_and(|span| ix + 1 < span.end) {
             return div().w_full().h(px(0.)).into_any_element();
         }
         let session = self.view.selected.clone().unwrap_or_default();
-        let v2 = self.design().is_v2();
-        let tt = self.tokens().transcript();
-        // v2: room above each turn of yours, so turns read as sections.
-        let turn_start = v2
-            && ix > 0
-            && row.role == "You"
-            && row.tool.is_none()
-            && content::fleet(&row.text).is_none();
-        // R6.6: a wake the strip above the transcript carries, and a skill
-        // folded into the next run's meta line, take no room.
-        let folded_skill = self.folded_skill(rows, ix);
-        let in_strip = v2 && (self.wake_in_strip(row, "live") || folded_skill);
         let mut body = div()
             .group("message")
             .w_full()
             .py_1()
-            // R6.6: the 8/16/32 rhythm: half the block gap above and below
-            // each row (16 between blocks), the turn gap above a turn.
-            .when(v2, |d| {
-                d.py(px(if in_strip { 0. } else { tt.row_gap / 2. }))
-            })
-            .when(turn_start, |d| d.pt(px(tt.turn_gap - tt.row_gap / 2.)))
             .when(ix + 1 == rows.len(), |d| {
                 d.debug_selector(|| "chat-content-column".into())
             });
         if let Some(span) = group {
             body = body.child(self.render_work_card(span, window, cx)).when(
-                row.timestamp_ms.is_some() && !v2,
+                row.timestamp_ms.is_some(),
                 |d| {
                     d.child(meta_spacing(
                         self.timestamp_footer(None, row.timestamp_ms)
@@ -359,13 +329,13 @@ impl Workspace {
                     ))
                 },
             );
-        } else if !folded_skill {
+        } else {
             body = body.child(self.render_message(row, "live", false, window, cx));
         }
-        if !starts_turn(row, v2) && (ix + 1 == rows.len() || starts_turn(&rows[ix + 1], v2)) {
+        if row.role != "You" && (ix + 1 == rows.len() || rows[ix + 1].role == "You") {
             let start = (0..=ix)
                 .rev()
-                .find(|i| starts_turn(&rows[*i], v2))
+                .find(|i| rows[*i].role == "You")
                 .map_or(0, |i| i + 1);
             let key = format!("{session}\0{}", turn_id(rows, start));
             let turn = rows.range(start..=ix);
@@ -374,12 +344,9 @@ impl Workspace {
             });
             let frozen = self.chat.frozen.get(&key);
             let files = frozen.map_or(&*estimate, |f| &f.files);
-            if !files.is_empty() && v2 {
+            if !files.is_empty() {
                 let estimated = frozen.is_none_or(|f| f.estimated);
-                body = body.child(self.render_turn_changes_v2(files, estimated, cx));
-            } else if !files.is_empty() {
-                let estimated = frozen.is_none_or(|f| f.estimated);
-                let p = self.palette();
+                let p = self.appearance.palette();
                 body = body.child(
                     div()
                         .mt_2()
@@ -452,13 +419,7 @@ impl Workspace {
             })
         });
         // Children with no spawning call in view, pinned where they started.
-        if let Some(children) = self
-            .child_ui
-            .overview
-            .get(&ix)
-            .cloned()
-            .filter(|_| !self.folded_overview(rows, ix))
-        {
+        if let Some(children) = self.child_ui.overview.get(&ix).cloned() {
             body = body.child(self.render_overview(&session, &children, window, cx));
         }
         let earlier = (ix == 0 && self.view.transcript.has_older).then(|| self.render_earlier(cx));
@@ -478,7 +439,7 @@ impl Workspace {
                 d.debug_selector(|| "last-transcript-row".into())
             })
             .child(
-                self.reading_column()
+                chrome::chat_column()
                     .children(earlier)
                     .child(body)
                     .children(pending),
@@ -489,16 +450,13 @@ impl Workspace {
     /// row renders just before the reader reaches it: that is the moment to
     /// fetch the next page, keeping the scroll anchored on the current row.
     fn render_earlier(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let loading = self.view.loading_older;
         if !loading && !self.view.loading && self.view.connected {
             let this = cx.entity().downgrade();
             cx.defer(move |cx| {
                 let _ = this.update(cx, |this, cx| this.command(Command::LoadOlder, cx));
             });
-        }
-        if self.design().is_v2() {
-            return self.render_earlier_v2(loading, cx);
         }
         div()
             .id("earlier-messages")
@@ -554,10 +512,6 @@ impl Workspace {
             // 12s"); a clock under every block only spaced the turn out.
             .filter(|_| row.role != "Thinking");
         let has_meta = duration.is_some() || timestamp.is_some();
-        if self.design().is_v2() {
-            return self
-                .render_message_v2(row, namespace, continued, duration, timestamp, window, cx);
-        }
         let mut footer = self.timestamp_footer(duration.map(Into::into), timestamp);
         // A fleet/supervisor wake arrives as a user turn but is not the user
         // speaking: it renders as its own card, named for its worker(s).
@@ -622,7 +576,7 @@ impl Workspace {
             .items_center()
             .gap_2()
             .text_size(px(11.))
-            .text_color(rgb(self.palette().disabled))
+            .text_color(rgb(self.appearance.palette().disabled))
             .children(duration)
             .when_some(timestamp, |d, timestamp| {
                 d.child(timing::timestamp_label(
@@ -632,7 +586,7 @@ impl Workspace {
                 ))
             })
     }
-    pub(super) fn render_message_content(
+    fn render_message_content(
         &mut self,
         row: &Row,
         namespace: &str,
@@ -640,17 +594,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let session = self.view.selected.clone().unwrap_or_default();
         let key = format!("{namespace}:{}:{}", self.chat_owner(), row.key);
         // Rows that are not anyone's message: task-list markers, the
         // daemon's notices and the agent's non-blocking questions.
         if row.tool.is_none() && !continued {
-            if self.design().is_v2()
-                && let Some(row) = self.render_quiet_row_v2(row, &key, cx)
-            {
-                return row;
-            }
             match row.role.as_str() {
                 "Plan" => {
                     if let Some(marker) = self.render_plan_marker(&key, &row.text, cx) {
@@ -709,7 +658,6 @@ impl Workspace {
             }
         }
         let copy = row.copy_text();
-        let copy_you = copy.clone();
         // A live message of yours: what the agent did with it, and the
         // history controls that can name it.
         let live_you = row.role == "You" && namespace == "live" && self.view.child.is_none();
@@ -728,15 +676,6 @@ impl Workspace {
         let panel = live_you
             .then(|| self.render_message_action(row, cx))
             .flatten();
-        let v2 = self.design().is_v2();
-        let v2_you = v2 && row.role == "You";
-        // v2 gives your turn its controls beneath the bubble, not a header.
-        let receipt_v2 = receipt.filter(|_| v2_you);
-        let (actions, actions_v2) = if v2_you {
-            (Vec::new(), actions)
-        } else {
-            (actions, Vec::new())
-        };
         let mut body = div()
             .w_full()
             .px_3()
@@ -745,11 +684,7 @@ impl Workspace {
             .flex_col()
             .gap_2()
             .when(row.tool.is_some(), |d| d.relative().px_0().py_1().gap_1())
-            .when(v2 && row.tool.is_none(), |d| {
-                d.px_0().py_0().gap(px(p.tokens.space.md))
-            })
-            .when(v2_you, |d| self.user_bubble_v2(d))
-            .when(row.role == "You" && !v2, |d| {
+            .when(row.role == "You", |d| {
                 d.max_w(gpui::relative(0.85))
                     .ml_auto()
                     .bg(rgb(p.user))
@@ -757,53 +692,46 @@ impl Workspace {
                     .px_4()
                     .py_3()
             })
-            .when(
-                row.tool.is_none() && row.role != "Assistant" && !v2_you,
-                |d| {
-                    d.child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .text_size(px(11.))
-                            .text_color(rgb(p.muted))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .when(row.role != "Assistant" && row.tool.is_none(), |d| {
-                                        d.child(row.role.clone())
-                                    })
-                                    .children(receipt.map(|label| {
-                                        div()
-                                            .debug_selector(|| "message-receipt".into())
-                                            .text_color(rgb(p.disabled))
-                                            .child(format!("· {label}"))
-                                    })),
-                            )
-                            .child(
-                                div().flex().items_center().gap_1().children(actions).child(
-                                    self.icon_button(
-                                        SharedString::from(format!("copy-{key}")),
-                                        "Copy message",
-                                        IconName::Copy,
-                                        true,
-                                    )
-                                    .size(px(24.))
-                                    .opacity(0.)
-                                    .group_hover("message", |style| style.opacity(1.))
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                copy.clone(),
-                                            ))
-                                        },
-                                    ),
-                                ),
+            .when(row.tool.is_none() && row.role != "Assistant", |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .when(row.role != "Assistant" && row.tool.is_none(), |d| {
+                                    d.child(row.role.clone())
+                                })
+                                .children(receipt.map(|label| {
+                                    div()
+                                        .debug_selector(|| "message-receipt".into())
+                                        .text_color(rgb(p.disabled))
+                                        .child(format!("· {label}"))
+                                })),
+                        )
+                        .child(
+                            div().flex().items_center().gap_1().children(actions).child(
+                                self.icon_button(
+                                    SharedString::from(format!("copy-{key}")),
+                                    "Copy message",
+                                    IconName::Copy,
+                                    true,
+                                )
+                                .size(px(24.))
+                                .opacity(0.)
+                                .group_hover("message", |style| style.opacity(1.))
+                                .on_click(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                                }),
                             ),
-                    )
-                },
-            )
+                        ),
+                )
+            })
             .when(row.truncated, |d| {
                 d.child(
                     div()
@@ -817,8 +745,7 @@ impl Workspace {
             // Orchestration detail; live cards hold it inside the card body.
             let mut lead: Vec<gpui::AnyElement> = Vec::new();
             let mut trail: Vec<gpui::AnyElement> = Vec::new();
-            // r2-transcript: v2's skill row says enough on its own line.
-            if tool.category() == "Skill" && !self.design().is_v2() {
+            if tool.category() == "Skill" {
                 let target = tool.target();
                 if let Some(skill) = self
                     .selected_session()
@@ -860,66 +787,35 @@ impl Workspace {
                     let long = description.lines().count() > 6 || description.len() > 600;
                     let open_key = format!("{key}-task-open");
                     let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
-                    let v2 = self.design().is_v2();
-                    let brief_max = p.tokens.transcript().brief_max;
-                    // r2-transcript: one quiet line, the whole brief on click.
-                    if v2 {
-                        lead.push(self.dispatch_brief_v2(
-                            &key,
-                            description,
-                            open_key,
-                            open,
-                            window,
-                            cx,
-                        ));
-                    } else {
-                        lead.push(
-                            div()
-                                .pl(px(10.))
-                                .border_l_2()
-                                .border_color(gpui::Hsla::from(rgb(p.accent)).opacity(0.45))
-                                .when(v2, |d| {
-                                    d.pl(px(p.tokens.space.lg))
-                                        .border_l(px(p.tokens.stroke.focus))
-                                        .border_color(rgb(p.border))
-                                        .text_size(px(p.tokens.text.body))
-                                })
-                                .text_color(rgb(p.prose))
-                                .child(
+                    lead.push(
+                        div()
+                            .pl(px(10.))
+                            .border_l_2()
+                            .border_color(gpui::Hsla::from(rgb(p.accent)).opacity(0.45))
+                            .text_color(rgb(p.prose))
+                            .child(
+                                div()
+                                    .when(long && !open, |d| d.max_h(px(132.)).overflow_hidden())
+                                    .child(literal(format!("{key}-task"), description, window, cx)),
+                            )
+                            .when(long, |d| {
+                                d.child(
                                     div()
-                                        .when(long && !open, |d| {
-                                            d.max_h(px(brief_max)).overflow_hidden()
-                                        })
-                                        .child(literal(
-                                            format!("{key}-task"),
-                                            description,
-                                            window,
-                                            cx,
-                                        )),
+                                        .id(SharedString::from(format!("{open_key}-toggle")))
+                                        .debug_selector(|| "task-brief-toggle".into())
+                                        .mt_1()
+                                        .text_size(px(11.))
+                                        .text_color(rgb(p.accent))
+                                        .cursor_pointer()
+                                        .hover(|s| s.underline())
+                                        .child(if open { "Show less" } else { "Show full task" })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_open(open_key.clone(), false, cx)
+                                        })),
                                 )
-                                .when(long, |d| {
-                                    d.child(
-                                        div()
-                                            .id(SharedString::from(format!("{open_key}-toggle")))
-                                            .debug_selector(|| "task-brief-toggle".into())
-                                            .mt_1()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(p.accent))
-                                            .cursor_pointer()
-                                            .hover(|s| s.underline())
-                                            .child(if open {
-                                                "Show less"
-                                            } else {
-                                                "Show full task"
-                                            })
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.toggle_open(open_key.clone(), false, cx)
-                                            })),
-                                    )
-                                })
-                                .into_any_element(),
-                        );
-                    }
+                            })
+                            .into_any_element(),
+                    );
                 }
             }
             if let Some(path) = input["file_path"]
@@ -937,15 +833,10 @@ impl Workspace {
                 );
             }
             if live && let Some(children) = self.child_ui.agents.by_tool.get(&tool.id).cloned() {
-                // r2-transcript: child rows under a delegation never repeat
-                // its title.
-                let rows = if self.design().is_v2() {
-                    let title = tool.target();
-                    self.render_children_v2(&session, &key, &children, Some(&title), window, cx)
-                } else {
+                trail.push(
                     self.render_children(&session, &key, &children, window, cx)
-                };
-                trail.push(rows.into_any_element());
+                        .into_any_element(),
+                );
             }
             if tool.category() == "Workflow" {
                 let result =
@@ -977,10 +868,6 @@ impl Workspace {
                             .into_any_element(),
                     );
                 }
-            }
-            if live && self.design().is_v2() {
-                lead.append(&mut trail);
-                return self.render_orchestration_v2(row, lead, window, cx);
             }
             if live {
                 lead.append(&mut trail);
@@ -1134,16 +1021,11 @@ impl Workspace {
         }
         self.schedule_previews(cx);
         if row.role == "You" {
-            let you_key = key.clone();
             // A reply to the agent's async questions reads as its answers.
             let body = match wks_native::questions::parse_reply(&row.text) {
                 Some(replies) => body.child(super::async_questions::render_reply(&replies, p)),
                 None => body.child(literal(key, &text, window, cx)),
             };
-            if v2 {
-                return self
-                    .user_turn_v2(row, &you_key, body, receipt_v2, actions_v2, panel, copy_you);
-            }
             return match panel {
                 Some(panel) => div().w_full().flex().flex_col().child(body).child(panel),
                 None => body,
@@ -1172,29 +1054,7 @@ impl Workspace {
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .when(v2, |d| {
-                            let t = p.tokens;
-                            d.p(px(t.space.lg))
-                                .gap(px(t.space.md))
-                                .rounded(px(t.radius.panel))
-                                .map(|d| {
-                                    system::edge(d, system::Side::All, system::EdgeTone::Card, &p)
-                                })
-                                .text_size(px(t.text.body))
-                        })
-                        .map(|d| {
-                            if !v2 {
-                                return d.child(card.title);
-                            }
-                            let t = p.tokens;
-                            d.child(
-                                div()
-                                    .text_size(px(t.text.subheading))
-                                    .font_weight(FontWeight(t.weight.semibold))
-                                    .text_color(rgb(p.text))
-                                    .child(card.title),
-                            )
-                        })
+                        .child(card.title)
                         .child(literal(block_key.clone(), &card.fallback, window, cx));
                     if !card.body.trim().is_empty() {
                         // Card links take the same routes as Markdown links;
@@ -1208,18 +1068,9 @@ impl Workspace {
                                     window,
                                     cx,
                                 )
-                                .style(if v2 {
-                                    // r2-transcript: one table style, the
-                                    // chat's own, inside cards too.
-                                    let mut style =
-                                        self.markdown_style(self.link_handler(cx), false, cx);
-                                    style.linkify = None;
-                                    style
-                                } else {
-                                    gpui_component::text::TextViewStyle {
-                                        on_link_click: Some(self.link_handler(cx)),
-                                        ..Default::default()
-                                    }
+                                .style(gpui_component::text::TextViewStyle {
+                                    on_link_click: Some(self.link_handler(cx)),
+                                    ..Default::default()
                                 })
                                 .selectable(true),
                             ),
@@ -1252,25 +1103,6 @@ impl Workspace {
                                 ),
                             };
                             let selector = format!("card-action-{block_key}-{i}");
-                            // r2-transcript: the shared button, plain words.
-                            if v2 {
-                                return super::primitives::button(
-                                    SharedString::from(format!("{block_key}-action-{i}")),
-                                    super::transcript_v2::card_action_label(&action),
-                                    None,
-                                    super::primitives::ButtonVariant::Secondary,
-                                    super::primitives::ButtonSize::Small,
-                                    enabled,
-                                    &p,
-                                )
-                                .debug_selector(move || selector)
-                                .tooltip(super::primitives::tooltip_view(effect, None, &p))
-                                .when(enabled, |d| {
-                                    d.on_click(cx.listener(move |this, _, window, cx| {
-                                        this.card_action(&owner, &action, window, cx)
-                                    }))
-                                });
-                            }
                             chrome::interactive_control(
                                 div().id(SharedString::from(format!("{block_key}-action-{i}"))),
                                 p,
@@ -1306,18 +1138,7 @@ impl Workspace {
                             })
                         })
                         .collect::<Vec<_>>();
-                    if !actions.is_empty() && v2 {
-                        let t = p.tokens;
-                        card_body = card_body.child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap(px(t.space.sm))
-                                .pt(px(t.space.xs))
-                                .children(actions),
-                        );
-                    } else if !actions.is_empty() {
+                    if !actions.is_empty() {
                         card_body = card_body.child(
                             div()
                                 .flex()
@@ -1346,7 +1167,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let owner = self.view.selected.clone().unwrap_or_default();
-        let p = self.palette();
+        let p = self.appearance.palette();
         let label = match &link {
             wks_native::links::Link::File(target) => target.path.clone(),
             _ => label.to_owned(),
@@ -1475,7 +1296,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let copy = text.to_owned();
         let raw_key = format!("{key}-raw");
         let expanded = self.chat.open.get(&raw_key).copied().unwrap_or(false);
@@ -1601,7 +1422,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
-        let p = self.palette();
+        let p = self.appearance.palette();
         self.view
             .pending_messages
             .iter()
@@ -1648,7 +1469,7 @@ impl Workspace {
     }
 
     pub(super) fn render_pending(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = self.palette();
+        let p = self.appearance.palette();
         let mut body = div()
             .w_full()
             .max_w(px(CHAT_WIDTH))
