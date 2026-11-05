@@ -1881,7 +1881,8 @@ use gpui::AnyElement;
 impl Workspace {
     /// r2 integration: what runs in `folders`, counted the way the sidebar
     /// groups it (`session_bucket`): working sessions only (idle ones are
-    /// not "working"), and the sessions the sidebar's Needs you holds.
+    /// not "working"), and the sessions the sidebar's Needs you holds
+    /// (r7-int: Review, its own band under Needs you, counts too).
     fn fleet_in(&self, folders: &[String]) -> (usize, usize) {
         let now = timing::now_ms();
         let (mut working, mut needs) = (0, 0);
@@ -1894,7 +1895,7 @@ impl Workspace {
             }
             match self.session_bucket(session, now) {
                 super::attention::Bucket::Working => working += 1,
-                super::attention::Bucket::NeedsYou => needs += 1,
+                super::attention::Bucket::NeedsYou | super::attention::Bucket::Review => needs += 1,
                 _ => {}
             }
         }
@@ -2251,7 +2252,12 @@ impl Workspace {
                                         .render(&p),
                                 )
                             })
-                            .child(div().min_w_0().truncate().child(meta.join(" · "))),
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(wks_native::format::meta(&meta)),
+                            ),
                     ),
             )
             .child(
@@ -2401,7 +2407,7 @@ impl Workspace {
         let activity = if facts.is_empty() && project.sessions == 0 {
             "No sessions yet".to_owned()
         } else {
-            facts.join(" · ")
+            wks_native::format::meta(&facts)
         };
         let selected = ix == self.project_cursor;
         let group = SharedString::from(format!("project-row-{ix}"));

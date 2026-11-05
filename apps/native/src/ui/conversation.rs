@@ -176,6 +176,7 @@ impl Workspace {
                 system::edge(
                     div()
                         .debug_selector(|| "wake-strip-band".into())
+                        .relative()
                         .w_full()
                         .flex_shrink_0()
                         .bg(rgb(p.chat))
@@ -185,6 +186,14 @@ impl Workspace {
                     &p,
                 )
                 .child(strip)
+                .child(chrome::measure(
+                    cx.entity().downgrade(),
+                    |this: &mut Self, bounds, _| {
+                        let changed = this.wake_strip_height != bounds.size.height;
+                        this.wake_strip_height = bounds.size.height;
+                        changed
+                    },
+                ))
             });
         let entity = cx.entity().downgrade();
         // r7-pages (R7.6): a short conversation reads from the top. The list
@@ -201,14 +210,15 @@ impl Workspace {
         } else {
             self.header_bounds.size.height + px(16.)
         };
-        // What of the pane is not the rows' room: the list's own padding
-        // and the dock's inset below it. Under the wake strip a short
-        // conversation keeps the bottom alignment (no pad).
-        self.list_insets = if strip.is_some() {
-            gpui::px(1.0e9)
+        // What of the pane is not the rows' room: the wake strip's band
+        // (r7-int: a short conversation under it reads from the top too),
+        // the list's own padding and the dock's inset below it.
+        let above = if strip.is_some() {
+            self.wake_strip_height
         } else {
-            list_top + px(self.tokens().space.lg) + self.transcript_inset_v2(compact)
+            list_top
         };
+        self.list_insets = above + px(self.tokens().space.lg) + self.transcript_inset_v2(compact);
         let transcript = list(self.list.clone(), move |ix, window, cx| {
             entity
                 .update(cx, |this, cx| {
@@ -649,6 +659,14 @@ impl Workspace {
             .reading_column()
             .id("conversation-dock-cards")
             .debug_selector(|| "conversation-dock-cards".into())
+            // r7-int: the cards keep the composer's width (and line up with
+            // it) whatever the reading width; under Comfortable the two are
+            // the same.
+            .when(self.design().is_v2(), |d| {
+                let gutter = px(2. * self.tokens().layout.chat_gutter);
+                let width = px(system::composer_width(&p)) + gutter;
+                d.max_w(self.reading_max().min(width))
+            })
             .flex_shrink_0()
             .max_h(self.dock_cards_budget(selected, compact, window))
             .overflow_y_scroll()

@@ -1452,8 +1452,8 @@ impl Workspace {
     /// the request as a question ("Run `cargo test` in native?"), why, where
     /// (folder and host), a long command whole, and the numbered actions:
     /// 1 Allow primary and 2 Deny (Destructive) side by side, 3 Always allow
-    /// (its exact rule, Tertiary) below, and Deny's menu holding the last
-    /// key, Deny with note…. Details expands the full request. Keys show while this is the decision they answer.
+    /// (its exact rule, Tertiary) below, and Deny with note on 4, a
+    /// visible Text button (R7.1). Details expands the full request. Keys show while this is the decision they answer.
     pub(super) fn render_approval_strip(
         &self,
         approval: &Value,

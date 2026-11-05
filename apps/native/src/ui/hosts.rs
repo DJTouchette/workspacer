@@ -1052,23 +1052,17 @@ impl Workspace {
                         div()
                             .text_size(px(t.text.meta))
                             .text_color(rgb(p.roles.text_tertiary))
-                            .child(
-                                [
-                                    r.agent_words(),
-                                    r.shell_words(),
-                                    r.queued_line(),
-                                    format!("{} disk", r.disk_free()),
-                                    r.sampled_at
-                                        .map(|at| {
-                                            format!("updated {}", wks_native::jobs::since(at, now))
-                                        })
-                                        .unwrap_or_default(),
-                                ]
-                                .into_iter()
-                                .filter(|s| !s.is_empty())
-                                .collect::<Vec<_>>()
-                                .join(" · "),
-                            ),
+                            .child(wks_native::format::meta([
+                                r.agent_words(),
+                                r.shell_words(),
+                                r.queued_line(),
+                                format!("{} disk", r.disk_free()),
+                                r.sampled_at
+                                    .map(|at| {
+                                        format!("updated {}", wks_native::jobs::since(at, now))
+                                    })
+                                    .unwrap_or_default(),
+                            ])),
                     )
                     .children(r.gate_reasons().iter().map(|reason| {
                         chrome::notice_line(plain_reason_sentence(reason), chrome::Tone::Warning, p)

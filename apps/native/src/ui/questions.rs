@@ -1559,7 +1559,7 @@ impl Workspace {
         card.child(
             primitives::waiting_head(
                 text_headline(text).debug_selector(move || format!("question-{step}-text")),
-                (!context.is_empty()).then(|| context.join(" · ").into()),
+                (!context.is_empty()).then(|| wks_native::format::meta(&context).into()),
                 // The set's own pager; the dock's "n of m" rides after it.
                 match (pager, position) {
                     (Some(pager), Some(position)) => Some(format!("{pager} · {position}").into()),

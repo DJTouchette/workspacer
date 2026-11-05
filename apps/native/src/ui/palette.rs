@@ -281,12 +281,11 @@ impl Workspace {
                 .telemetry
                 .last_activity_ms
                 .map(|at| wks_native::format::age(at, now));
-            let meta = [Some(self.project_name(&s.cwd)), reason.map(|r| r.text), age]
-                .into_iter()
-                .flatten()
-                .filter(|m| !m.is_empty())
-                .collect::<Vec<_>>()
-                .join(" · ");
+            let meta = wks_native::format::meta(
+                [Some(self.project_name(&s.cwd)), reason.map(|r| r.text), age]
+                    .into_iter()
+                    .flatten(),
+            );
             let status = status.kind;
             out.push(Entry {
                 scope: Scope::Sessions,

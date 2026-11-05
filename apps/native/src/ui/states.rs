@@ -413,7 +413,7 @@ pub(super) const STARTERS: [(&str, &str); 3] = [
 
 /// An agent's row in the welcome checklist.
 /// One agent's setup state, from one source (the hub's install report or
-/// the Setup page's last check), with one set of words everywhere: Ready /
+/// the Setup page's last check), with one set of words everywhere: Installed /
 /// Needs sign-in / Not installed (`docs/design-v2-direction.md` R2.3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AgentSetup {
@@ -445,18 +445,20 @@ impl AgentSetup {
     // r2-systems
     pub(super) fn label(self) -> &'static str {
         match self {
-            Self::Installed => "Ready",
+            // r7-int: "Installed", not "Ready": sign-in is not confirmed
+            // until the Setup page's connection check passes.
+            Self::Installed => "Installed",
             Self::NeedsSignIn => "Needs sign-in",
             Self::Missing => "Not installed",
             Self::Unknown => "Not checked",
         }
     }
 
-    /// Ready is done; the rest are neutral unless nothing can run (then the
+    /// Installed is done; the rest are neutral unless nothing can run (then the
     /// user must act: attention).
     ///
     /// r6-qa (R6.2): each word keeps the status table's glyph, as on
-    /// Agent setup: Ready (a target, not Done's check), Not installed
+    /// Agent setup: Installed (Ready's target, not Done's check), Not installed
     /// (Offline's dash), Not checked (Unknown's dots).
     pub(super) fn kind(self, nothing_ready: bool) -> primitives::StatusKind {
         match self {
@@ -866,7 +868,7 @@ impl Workspace {
     }
 
     /// The agents and whether each is ready, from the one setup source
-    /// ([`Self::agent_setup`]): Ready / Needs sign-in / Not installed, the
+    /// ([`Self::agent_setup`]): Installed / Needs sign-in / Not installed, the
     /// next step in words and its command, copyable.
     fn render_agent_checklist(&self, first_run: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
@@ -954,7 +956,7 @@ impl Workspace {
                     .justify_between()
                     .child(primitives::section_header(
                         "Agents",
-                        first_run.then(|| format!("{ready} of 2 ready").into()),
+                        first_run.then(|| format!("{ready} of 2 installed").into()),
                         &p,
                     ))
                     .child(

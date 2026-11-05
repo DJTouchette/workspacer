@@ -6,7 +6,7 @@
 //! The field is always there and always bordered. While a decision waits
 //! it never fades: unfocused and empty it folds to one bordered line,
 //! "Reply instead…" ([`composer_reply_line`], R6.3), and on focus it is the
-//! full field whose placeholder says the request stays pending, with Send
+//! full field whose placeholder says the request stays open, with Send
 //! at Secondary (the decision card owns the Primary,
 //! [`super::composer_send_state`]).
 use super::super::primitives::{self as prim, ButtonSize, ButtonVariant, ControlState};

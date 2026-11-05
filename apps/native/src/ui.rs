@@ -940,6 +940,9 @@ pub struct Workspace {
     short_pad: gpui::Pixels,
     /// The transcript list's own top and bottom padding last frame.
     list_insets: gpui::Pixels,
+    /// r7-int (R7.6): the wake strip's band height last frame, so a short
+    /// conversation under it still reads from the top.
+    wake_strip_height: gpui::Pixels,
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
     duration_labels: HashMap<u64, String>,
@@ -1276,6 +1279,7 @@ impl Workspace {
             chat_width: Default::default(),
             short_pad: Default::default(),
             list_insets: Default::default(),
+            wake_strip_height: Default::default(),
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
             duration_labels: HashMap::new(),

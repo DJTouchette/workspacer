@@ -25,7 +25,7 @@ pub(super) fn meta_v2(task: &bg::Task, now: i64, pid: bool) -> String {
     if let (Some(pid), true, true) = (task.pid, task.running(), pid) {
         parts.push(format!("pid {pid}"));
     }
-    parts.join(" · ")
+    wks_native::format::meta(parts)
 }
 
 /// What Retry drafts for the agent: tasks are the agent's to run, so the

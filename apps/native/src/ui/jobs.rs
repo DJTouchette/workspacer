@@ -1629,11 +1629,8 @@ impl Workspace {
         let by = Some(job.proposed_by.as_str())
             .filter(|b| !b.is_empty())
             .map(|b| format!("proposed by {b}"));
-        let reason = [Some(sentence), Some(when), by]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ");
+        let reason =
+            wks_native::format::meta([Some(sentence), Some(when), by].into_iter().flatten());
         let action = &job.spec["action"];
         let folder = [&action["spawn"]["cwd"], &action["shell"]["cwd"]]
             .into_iter()

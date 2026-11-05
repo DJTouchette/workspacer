@@ -108,23 +108,22 @@ def shots():
         [("click", "SIDEBAR_ROW_CHILD"), ("sleep", 1.5)])
     add("background-tasks", "Background tasks panel (dev server log, deploy, failed tests)",
         [("move", "TITLE_PILL"), ("click", "TITLE_TASKS_BADGE"), ("sleep", 2)])
-    # r3-composer: v2 shows the details inline (no toggle); the shot opens
-    # Deny's split menu instead.
-    add("approval-details", "Bash permission prompt with its details expanded (v2: Deny's menu open)",
-        [("design", [("click", "APPROVAL_DETAILS")], [("click", "APPROVAL_DENY_MENU"), ("sleep", 0.5)])])
+    # r7-int: Deny's split menu is gone (R7.1); v2 opens the approval's
+    # Details (the whole command, why, access, what Always allow saves).
+    add("approval-details", "Bash permission prompt with its Details open (v2: command, reason, access, Always allow's rule)",
+        [("design", [("click", "APPROVAL_DETAILS")], [("click", "APPROVAL_DETAILS"), ("sleep", 0.5)])])
     add("question-prompt", "Pending AskUserQuestion picker (three questions)", fixture="questions")
     add("plan-and-limit", "ExitPlanMode plan approval plus spent 5-hour usage window", fixture="plan")
     add("task-log", "Background task log: the dev server's output",
         [("move", "TITLE_PILL"), ("click", "TITLE_TASKS_BADGE"), ("sleep", 2), ("click", "TASK_ROW_DEV"), ("sleep", 2)])
-    # r3-composer: v2's Deny with note lives in Deny's split menu.
+    # r7-int: v2's Deny with note is a visible Text button (R7.1, slot 4).
     # r4-integration: the menu item focuses the note itself. The typed text
     # always lands, but Xvfb sometimes keeps presenting the frame from before
     # the typing; End (a no-op at the end of the text) forces a fresh one.
     add("deny-with-note", "Approval dock: Deny with note",
         [("design", [("click", "APPROVAL_DENY_NOTE"), ("sleep", 0.5),
                      ("type", "Run only the session tests, not the whole suite.")],
-          [("click", "APPROVAL_DENY_MENU"), ("sleep", 0.5), ("click", "APPROVAL_DENY_NOTE"),
-           ("sleep", 0.5), ("type", "Run only the session tests, not the whole suite."),
+          [("click", "APPROVAL_DENY_NOTE"), ("sleep", 0.5), ("type", "Run only the session tests, not the whole suite."),
            ("sleep", 0.5), ("key", "End")])])
     add("file-viewer", "File viewer with README.md open from a transcript link",
         [("click", "README_LINK"), ("sleep", 2)])
@@ -268,7 +267,7 @@ def shots():
     add("approvals-fleet-needs-you", "Fleet: the Needs you filter, only the tiles that wait on the user",
         fleet + [("design", [("click", 1350, 78)], [("click", 1350, 43)]), ("sleep", 0.5)])  # r6-integration: v2's filters share the title row (v1 never opens Fleet; its click is kept)
     add("approvals-fleet-details", "Fleet: the approval tile's Details open in place",
-        fleet + [("design", [("click", 530, 342)], [("click", 530, 307)]), ("sleep", 0.5)])  # r6-integration: v2 re-measured (rail, one-line rows); v1 keeps its click
+        fleet + [("design", [("click", 530, 342)], [("click", 460, 337)]), ("sleep", 0.5)])  # r7-int: v2 re-measured (one-line quiet row)  # r6-integration: v1 keeps its click
     # r5-system (R5.3): the component gallery (`wks-native --gallery`, dev
     # builds only) in every built-in theme. Taller window: one frame holds
     # every component in every state.
@@ -281,9 +280,9 @@ def shots():
     add("fleet-table", "Fleet: the dense table view, one row per session",
         fleet, settings={"fleet_table": True})
     # r6-decisions (R6.3, R6.7): a request that deletes files, pressed once
-    # (its risk chip, "Press again to allow"); and identical requests on the
+    # (its risk chip, "Press again to delete"); and identical requests on the
     # Fleet, allowed in one batch ("Allow all 3 · cargo test").
-    add("decisions-destructive", "Approval that deletes files: risk chip, Allow pressed once (Press again to allow)",
+    add("decisions-destructive", "Approval that deletes files: risk chip, Allow pressed once (Press again to delete)",
         [("key", "1"), ("sleep", 0.6)], fixture="destructive")
     add("decisions-batch", "Fleet: three sessions ask for the same cargo test in one folder; Allow all 3",
         fleet, fixture="batch")
@@ -538,11 +537,9 @@ LANDMARKS = {
     # header toolbar's "Tasks 3" (r4-calm: icon tools, re-measured).
     "TITLE_TASKS_BADGE": lambda shot: (1532, 20) if shot.get("v2") else (1078, 30),
     # v1: the approval card above the composer; v2: the strip on the composer.
-    "APPROVAL_DETAILS": lambda shot: (1289, 805) if shot["v2"] else (1361, 749),  # r2-systems: the approval is a card above the composer
-    # r3-composer: v2's Deny with note is the first item of Deny's menu.
+    "APPROVAL_DETAILS": lambda shot: (1340, 911) if shot["v2"] else (1361, 749),  # r7-int: v2 re-measured (Details ends the quiet row)  # r2-systems: the approval is a card above the composer
     # (r3-integration: v1's moved right when the fixture's grant label grew.)
-    "APPROVAL_DENY_NOTE": lambda shot: (795, 882) if shot["v2"] else (1030, 797),  # r6-integration re-measured: the menu opens right of the chevron
-    "APPROVAL_DENY_MENU": lambda shot: (710, 874),  # r6-integration: re-measured in the 880 column  # r3-composer: Deny's chevron (v2; r5-fleet re-measured: Allow and Deny side by side)
+    "APPROVAL_DENY_NOTE": lambda shot: (1209, 911) if shot["v2"] else (1030, 797),  # r7-int: v2 re-measured (a visible Text button; Deny's menu is gone)
     "COMPOSER_REPLY": lambda shot: (700, 964),       # r6-conversation: the one-line "Reply instead…" under the card (it expands on focus)
     "QUESTION_ANSWER": lambda shot: (900, 874),      # r3-composer: the release question's answer field (v2; r6-conversation: above the one-line composer)
     "COMPOSER_SEND_MENU": lambda shot: (1373, 960),  # r3-composer: Queue chevron while working (v2; r6-conversation: the 880 column)

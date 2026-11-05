@@ -1913,11 +1913,11 @@ impl Workspace {
                 format!("{name} is installed. Sign in by running this in a terminal:"),
                 Some(sign_in),
             ),
-            SetupState::Ready if readiness == "responding" => (
+            SetupState::Ready => (
                 format!("{name} is installed, signed in and answering."),
                 None,
             ),
-            SetupState::Ready => (
+            SetupState::Installed => (
                 format!("{name} is installed. Check the connection to confirm you're signed in."),
                 None,
             ),
@@ -2766,7 +2766,10 @@ impl Workspace {
 /// check, and "not read yet").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SetupState {
+    /// Installed, signed in and answering (the connection check passed).
     Ready,
+    /// Installed; sign-in not confirmed yet (unchecked, or no check exists).
+    Installed,
     NeedsSignIn,
     NotInstalled,
     /// Installed, but the connection check failed for another reason.
@@ -2787,7 +2790,8 @@ impl SetupState {
             (_, "network-error") => {
                 Self::Problem("The network is unavailable, so the check couldn't run.")
             }
-            (Some(true), "responding" | "unchecked" | "unsupported") => Self::Ready,
+            (Some(true), "responding") => Self::Ready,
+            (Some(true), "unchecked" | "unsupported") => Self::Installed,
             (Some(true), _) => Self::Problem("The connection check failed. Try it again."),
             (None, _) => Self::Unknown,
         }
@@ -2796,6 +2800,8 @@ impl SetupState {
     pub(super) fn badge(self) -> StatusBadge {
         match self {
             Self::Ready => StatusBadge::new(StatusKind::Ready),
+            // r7-int: agrees with "Check the connection to confirm…".
+            Self::Installed => StatusBadge::new(StatusKind::Ready).label("Installed"),
             Self::NeedsSignIn => StatusBadge::new(StatusKind::NeedsYou).label("Needs sign-in"),
             Self::NotInstalled => StatusBadge::new(StatusKind::Offline).label("Not installed"),
             Self::Problem(_) => StatusBadge::new(StatusKind::Failed).label("Check failed"),

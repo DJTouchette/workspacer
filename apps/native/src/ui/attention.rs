@@ -327,7 +327,7 @@ pub(crate) fn children_summary(
     if stalled == 0 && failed == 0 && working > 0 {
         parts.push(format!("{working} working"));
     }
-    Some(parts.join(" · "))
+    Some(wks_native::format::meta(parts))
 }
 
 /// Tell apart rows whose titles repeat: each title shared by more than one

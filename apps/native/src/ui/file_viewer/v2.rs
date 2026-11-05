@@ -89,10 +89,9 @@ impl PreviewPane {
             // The full path and the file's details live in the tooltip, so
             // a narrow dock still shows the folders and the name.
             .tooltip(primitives::tooltip_view(
-                std::iter::once(h.path.clone())
-                    .chain(h.details.iter().cloned())
-                    .collect::<Vec<_>>()
-                    .join(" · "),
+                wks_native::format::meta(
+                    std::iter::once(h.path.clone()).chain(h.details.iter().cloned()),
+                ),
                 None,
                 &p,
             ))

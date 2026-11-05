@@ -63,6 +63,9 @@ pub(super) struct FleetUi {
     /// Columns the grid was last drawn with, for Up and Down (1 in the
     /// table).
     pub(super) columns: usize,
+    /// r7-int: a grid tile's width last frame (logical px), so a tight
+    /// tile's quiet row takes its short labels.
+    pub(super) tile_width: f32,
     /// r5-fleet: each session's last few tools (tool, summary), oldest
     /// first: a working tile's live tail.
     pub(super) recent: HashMap<String, Vec<(String, String)>>,
@@ -1152,6 +1155,12 @@ impl Workspace {
 
     // ── Drawing ─────────────────────────────────────────────────────────
 
+    /// r7-int: whether a grid tile is too narrow for the quiet row's full
+    /// labels on one line ("Always allow 3 · Deny with note 4 · Details").
+    fn fleet_tight(&self) -> bool {
+        self.fleet.tile_width > 0. && self.fleet.tile_width < TIGHT_TILE
+    }
+
     pub(super) fn render_fleet(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
@@ -1166,6 +1175,7 @@ impl Workspace {
             columns(room, f.tile_min, t.space.lg, f.columns_max)
         };
         self.fleet.columns = cols;
+        self.fleet.tile_width = (room - t.space.lg * (cols as f32 - 1.)) / cols as f32;
         self.record_fleet_tools();
         // r4-truth: the sidebar's counts (top-level trees per group, job
         // proposals in Needs you), never a tally of its own. R5.4: every
@@ -1625,6 +1635,11 @@ impl Workspace {
                 decision.keys = false;
                 // One Primary per card: the ask above owns it.
                 decision.allow_primary = false;
+                // r7-int: a tight tile says "Nudge" (its tooltip says the
+                // rest), so the row never runs out of the tile.
+                if self.fleet_tight() {
+                    decision.allow.label = "Nudge".into();
+                }
                 // Its line above says what stalled; this row acts on it.
                 div()
                     .debug_selector(move || format!("fleet-stall-row-{n}"))
@@ -1745,6 +1760,7 @@ impl Workspace {
         // R7.1/R7.2: keys and the Filled Allow only on the focused card.
         decision.keys = focused;
         decision.filled = focused;
+        decision.tight = self.fleet_tight();
         let focus = format!("{JOB_FOCUS}{}", job.id);
         let surface = if focused {
             system::waiting_tile_focused(&p)
@@ -1960,6 +1976,7 @@ impl Workspace {
         // go); unfocused tiles show none. R7.2: only the focused tile's
         // positive answer is Filled; the rest are Bordered.
         let mut decision = decision;
+        decision.tight = self.fleet_tight();
         decision.keys = focused;
         decision.filled = focused;
         div()
@@ -2088,6 +2105,15 @@ impl Workspace {
         ];
         let enabled = self.view.connected && !self.view.busy;
         let text = |s: String, tone: u32| div().min_w_0().truncate().text_color(rgb(tone)).child(s);
+        // r7-int: the focused row says what it would run whole, wrapped,
+        // not cut with the rest in a tooltip.
+        let whole = |s: String, tone: u32| {
+            div()
+                .min_w_0()
+                .py(px(t.space.xs))
+                .text_color(rgb(tone))
+                .child(s)
+        };
         let waiting = tiles
             .iter()
             .take_while(|t| t.bucket == Bucket::NeedsYou)
@@ -2133,8 +2159,14 @@ impl Workspace {
                     primitives::page_cell(cols[4].1)
                         .id(SharedString::from(format!("fleet-job-doing-{ix}")))
                         .debug_selector(move || format!("fleet-job-doing-{ix}"))
-                        .child(text(need.clone(), p.roles.text_secondary))
-                        .tooltip(primitives::tooltip_view(need, None, &p)),
+                        .map(|d| {
+                            if focused {
+                                d.child(whole(need, p.roles.text_secondary))
+                            } else {
+                                d.child(text(need.clone(), p.roles.text_secondary))
+                                    .tooltip(primitives::tooltip_view(need, None, &p))
+                            }
+                        }),
                 )
                 .child(
                     // Its risk ("Deletes branches") and the ask.
@@ -2300,6 +2332,14 @@ impl Workspace {
                 Some(Ask::Approval { risk, .. }) => *risk,
                 _ => None,
             };
+            // r7-int: the focused row's whole command, under the ask, when
+            // the ask does not already say all of it.
+            let full_command = match &tile.ask {
+                Some(Ask::Approval { command, .. }) if focused => Some(command.trim())
+                    .filter(|c| !c.is_empty() && !need.contains(*c))
+                    .map(str::to_owned),
+                _ => None,
+            };
             // r6-integration (R6.2/R6.3): a row answers one ask. When a
             // stalled subagent waits behind the approval, the Needs cell
             // says "+1 more" and names it, so the second ask is not lost;
@@ -2350,7 +2390,30 @@ impl Workspace {
                         .items_center()
                         .gap(px(t.space.xs))
                         .children(need_risk.map(|r| super::decision::risk_chip(r, &p)))
-                        .child(text(need, p.text))
+                        .map(|d| {
+                            if !focused {
+                                return d.child(text(need, p.text));
+                            }
+                            d.child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(whole(need, p.text))
+                                    .when_some(full_command, |d, command| {
+                                        d.child(
+                                            whole(command, p.roles.text_secondary)
+                                                .debug_selector(move || {
+                                                    format!("fleet-row-command-{n}")
+                                                })
+                                                .pt_0()
+                                                .font_family(super::mono_font())
+                                                .text_size(px(t.text.mono)),
+                                        )
+                                    }),
+                            )
+                        })
                         .when_some(behind, |d, behind| {
                             d.child(
                                 div()
@@ -2393,6 +2456,10 @@ impl Workspace {
             .children(rows)
     }
 }
+
+/// r7-int: below this tile width (logical px) the quiet row's labels are
+/// short ("Always", "Note"), so it keeps to one line.
+const TIGHT_TILE: f32 = 420.;
 
 /// The `fleet.focus` prefix of a job proposal's card (a tile's focus is
 /// its session id).

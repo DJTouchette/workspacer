@@ -2470,7 +2470,7 @@ impl Workspace {
         }
         let p = self.palette();
         let t = p.tokens;
-        let tip = notes.join(" · ");
+        let tip = wks_native::format::meta(&notes);
         Some(
             div()
                 .px(px(t.space.sm))

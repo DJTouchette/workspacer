@@ -989,3 +989,18 @@ fn deny_with_note_replaces_the_answer_row(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("deny").is_none(), "no second Deny");
     assert!(visual.debug_bounds("always-option-0").is_none());
 }
+
+/// r7-int: a tile's quiet row (Always allow · Deny with note · Details)
+/// keeps to one line: the grant's rule lives in its tooltip and Details.
+#[gpui::test]
+fn a_tiles_quiet_row_keeps_to_one_line(cx: &mut TestAppContext) {
+    let (_workspace, mut visual, _commands) = open_fleet(cx);
+    refresh(&mut visual);
+    let row = visual.debug_bounds("decision-quiet").unwrap();
+    let control = wks_native::tokens::Tokens::V2.layout.control_height_sm;
+    assert!(
+        f32::from(row.size.height) < 1.5 * control,
+        "one line: {row:?}"
+    );
+    assert!(visual.debug_bounds("fleet-details-0").is_some());
+}

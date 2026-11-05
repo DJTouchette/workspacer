@@ -608,12 +608,7 @@ fn file_header(
         .child(toggle)
         // r3-pages: one status pill per file ("Modified · Staged").
         .when(!data.badges.is_empty(), |d| {
-            let label = data
-                .badges
-                .iter()
-                .map(|(label, _)| *label)
-                .collect::<Vec<_>>()
-                .join(" · ");
+            let label = wks_native::format::meta(data.badges.iter().map(|(label, _)| *label));
             d.child(primitives::pill(label, data.badges[0].1, p).flex_shrink_0())
         })
         .child(counts)
@@ -1604,7 +1599,7 @@ impl Workspace {
             if let Some(branch) = branch {
                 parts.push(branch);
             }
-            parts.join(" · ")
+            wks_native::format::meta(parts)
         };
         let header = div()
             .debug_selector(|| "review-dock-header".into())

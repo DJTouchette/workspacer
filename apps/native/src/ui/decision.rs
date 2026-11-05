@@ -324,7 +324,7 @@ impl Risk {
     }
 
     /// R6.3: a request that deletes files (or branches) is allowed only
-    /// on a second press ("Press again to allow").
+    /// on a second press ("Press again to delete").
     pub(crate) fn confirms(self) -> bool {
         matches!(self, Self::Deletes | Self::DeletesBranches)
     }
@@ -351,7 +351,7 @@ pub(crate) fn confirm_key(session: &str, card: Option<&str>) -> String {
 impl Workspace {
     /// Whether an Allow of the request `key` (with its `risk`) goes ahead
     /// now. A destructive request goes ahead on the second press; the
-    /// first only arms it, so Allow says "Press again to allow".
+    /// first only arms it, so Allow says "Press again to delete".
     pub(crate) fn confirm_allow(
         &mut self,
         key: &str,
@@ -659,6 +659,9 @@ pub(crate) struct Decision {
     /// R6.3: a destructive request ([`Risk::confirms`]) pressed once:
     /// Allow reads "Press again to delete", in red (R7.2).
     pub armed: bool,
+    /// r7-int: a narrow Fleet tile: the quiet row's short labels
+    /// ("Always", "Note"; the full words in their tooltips).
+    pub tight: bool,
     pub frame: Frame,
 }
 
@@ -693,6 +696,7 @@ impl Decision {
             keys: false,
             keys_live: true,
             armed: false,
+            tight: false,
             frame,
         }
     }
@@ -975,11 +979,17 @@ impl Decision {
                 .collect()
         };
         // R7.1: Deny with note, a visible Text button (slot 4).
-        let deny_note = self
-            .deny_note
-            .as_ref()
-            .filter(|_| !noting)
-            .map(|c| c.render(actions::tier(actions::Verb::DenyWithNote), keys, live, p));
+        let tight = self.tight && self.frame == Frame::Inline;
+        let deny_note = self.deny_note.as_ref().filter(|_| !noting).map(|c| {
+            if tight {
+                let mut c = c.clone();
+                c.tooltip.get_or_insert_with(|| c.label.clone());
+                c.label = "Note".into();
+                c.render(actions::tier(actions::Verb::DenyWithNote), keys, live, p)
+            } else {
+                c.render(actions::tier(actions::Verb::DenyWithNote), keys, live, p)
+            }
+        });
         let pair = (allow.is_some() || deny.is_some()).then(|| {
             div()
                 .debug_selector(|| "decision-answer".into())
@@ -1012,39 +1022,51 @@ impl Decision {
         });
         // Then the quiet row: each grant with its exact rule and scope,
         // Deny with note, and Details (it decides nothing) at the end.
+        // r7-int: in a Fleet tile, one line (the grants' rules in their
+        // tooltips and Details).
+        let bare = self.frame == Frame::Inline;
         let grants: Vec<Div> = if noting {
             Vec::new()
         } else {
             self.grants
                 .iter()
-                .map(|g| grant_row(g, keys, live, p))
+                .map(|g| grant_row(g, keys, live, bare, tight, p))
                 .collect()
         };
         let details_toggle = details_toggle.filter(|_| !noting);
-        let quiet =
-            (!grants.is_empty() || details_toggle.is_some() || deny_note.is_some()).then(|| {
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(t.space.sm))
-                    .when(!grants.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .flex_1()
-                                // Narrower than this, Details wraps below.
-                                .min_w(px(t.system().tile_min * 0.75))
-                                .flex()
-                                .flex_col()
-                                .gap(px(t.space.xxs))
-                                .children(grants),
-                        )
-                    })
-                    .children(deny_note.map(|d| div().flex_shrink_0().child(d)))
-                    .children(details_toggle.map(|d| div().flex_shrink_0().child(d)))
-            });
+        let any_grant = !grants.is_empty();
+        let (inline_grants, grants) = if bare {
+            (grants, Vec::new())
+        } else {
+            (Vec::new(), grants)
+        };
+        let quiet = (any_grant || details_toggle.is_some() || deny_note.is_some()).then(|| {
+            div()
+                .debug_selector(|| "decision-quiet".into())
+                .w_full()
+                .min_w_0()
+                .flex()
+                // Wraps only as a last resort (never clipped): a tile's
+                // labels are sized to keep it to one line.
+                .flex_wrap()
+                .items_center()
+                .gap(px(t.space.sm))
+                .children(inline_grants)
+                .when(!grants.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .flex_1()
+                            // Narrower than this, Details wraps below.
+                            .min_w(px(t.system().tile_min * 0.75))
+                            .flex()
+                            .flex_col()
+                            .gap(px(t.space.xxs))
+                            .children(grants),
+                    )
+                })
+                .children(deny_note.map(|d| div().flex_shrink_0().child(d)))
+                .children(details_toggle.map(|d| div().flex_shrink_0().child(d)))
+        });
 
         let content = |d: Div| {
             d.child(head)
@@ -1195,9 +1217,25 @@ pub(crate) fn risk_chip(risk: Risk, p: &Palette) -> Div {
 }
 
 /// "Always allow" (Tertiary, with its key) and, beside it, what it saves.
-fn grant_row(grant: &Grant, keys: bool, live: bool, p: &Palette) -> Div {
+/// r7-int: in a Fleet tile (`bare`) the button alone, what it saves in its
+/// tooltip (and in Details), so the quiet row keeps to one line.
+fn grant_row(grant: &Grant, keys: bool, live: bool, bare: bool, tight: bool, p: &Palette) -> Div {
     let t = p.tokens;
     let id = grant.choice.id.clone();
+    if bare {
+        let mut choice = grant.choice.clone();
+        if choice.tooltip.is_none() {
+            choice.tooltip = Some(format!("Saves {} · {}", grant.rule, grant.scope).into());
+        }
+        // A tight tile: "Always" (the first grant's label is "Always allow").
+        if tight && choice.label.as_ref() == "Always allow" {
+            choice.label = "Always".into();
+        }
+        return div()
+            .debug_selector(move || format!("{id}-row"))
+            .flex_shrink_0()
+            .child(choice.render(actions::tier(actions::Verb::AlwaysAllow), keys, live, p));
+    }
     // One text, so the rule wraps as prose in a narrow tile.
     let lead = "Saves ";
     let text = format!("{lead}\u{2009}{}\u{2009} · {}", grant.rule, grant.scope);

@@ -157,6 +157,48 @@ fn v2_wakes_leave_the_transcript_for_one_strip(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("fleet-card").is_some());
 }
 
+// r7-int (R7.6): a short conversation under the wake strip reads from the
+// top too: the room under its last row is padding, not a gap above it.
+#[gpui::test]
+fn v2_short_conversation_under_the_wake_strip_reads_from_the_top(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _, _) = fixture(cx);
+    let mut view = wake_view(true);
+    view.transcript.snapshot(ConversationSnapshot {
+        seq: 2,
+        first_seq: 1,
+        items: vec![
+            Item {
+                kind: "assistant_text".into(),
+                text: "Working on it.".into(),
+                ..Default::default()
+            },
+            Item {
+                kind: "user_message".into(),
+                text: BLOCKED_WAKE.into(),
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                ..Default::default()
+            },
+        ],
+    });
+    v2(&workspace, &mut visual, view);
+    for _ in 0..3 {
+        visual.update(|window, _| window.refresh());
+        visual.run_until_parked();
+    }
+    let band = visual.debug_bounds("wake-strip-band").unwrap();
+    let column = visual.debug_bounds("chat-content-column").unwrap();
+    assert!(
+        visual.debug_bounds("transcript-short-pad").is_some(),
+        "the spare room sits under the last row"
+    );
+    assert!(
+        column.top() - band.bottom() < px(64.),
+        "the first row sits under the strip, not at the bottom: {:?} vs {:?}",
+        column.top(),
+        band.bottom()
+    );
+}
+
 #[gpui::test]
 fn v2_resolved_wake_is_one_line_and_opens_its_details_on_click(cx: &mut TestAppContext) {
     let (workspace, mut visual, _, _) = fixture(cx);

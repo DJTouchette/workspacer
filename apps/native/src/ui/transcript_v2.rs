@@ -2226,11 +2226,7 @@ impl Workspace {
         let open_key = format!("{key}-v2-open");
         let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
         let button = target.map(|index| self.fleet_go_button(key, &fleet, &names, index, cx));
-        let summary = words
-            .iter()
-            .map(|(line, _)| line.as_str())
-            .collect::<Vec<_>>()
-            .join(" · ");
+        let summary = wks_native::format::meta(words.iter().map(|(line, _)| line.as_str()));
         let toggle = open_key.clone();
         let line = div()
             .id(SharedString::from(format!("{key}-line")))
@@ -2574,11 +2570,11 @@ pub(super) fn child_names(child: &ChildAgent, parent_title: Option<&str>) -> (St
         .find(|s| !s.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| "Agent".into());
-    let context = [role.as_str(), model.as_str()]
-        .into_iter()
-        .filter(|s| !s.is_empty() && *s != primary)
-        .collect::<Vec<_>>()
-        .join(" · ");
+    let context = wks_native::format::meta(
+        [role.as_str(), model.as_str()]
+            .into_iter()
+            .filter(|s| *s != primary),
+    );
     (primary, context)
 }
 
@@ -2602,7 +2598,7 @@ fn child_details(child: &ChildAgent, managed: bool) -> String {
     if let Some(cost) = child.telemetry.cost_usd {
         parts.push(format!("${cost:.3}"));
     }
-    parts.join(" · ")
+    wks_native::format::meta(parts)
 }
 
 fn compact_count(value: u64) -> String {
