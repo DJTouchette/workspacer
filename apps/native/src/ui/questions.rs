@@ -1587,7 +1587,10 @@ impl Workspace {
             primitives::waiting_actions(&p)
                 .debug_selector(|| "question-footer".into())
                 .child(forward)
-                .children(back),
+                .children(back)
+                // r8-conversation (R8.4): the card's one way to reply.
+                .child(div().flex_1())
+                .children(self.reply_instead_button(enabled, cx)),
         )
     }
 }

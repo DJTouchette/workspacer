@@ -43,6 +43,9 @@ pub(super) struct ComposerUi {
     /// opened. It stays open for that decision, so a click elsewhere (which
     /// moves the focus on press) never folds it under the pointer.
     pub reply_open: Option<String>,
+    /// R8.4: the draft's attached files, counted once per frame for the
+    /// card's reply line.
+    pub reply_files: usize,
 }
 
 /// A decision the selected session is waiting on, in dock order.
@@ -300,11 +303,11 @@ pub(super) const SEND_NOW_COPY: &str =
 pub(super) const AFTER_TURN_COPY: &str =
     "Hold it until this turn ends, then send it as the next message.";
 
-/// R6.3: the one line the composer folds to while a decision waits and it
-/// is not in use.
-/// r7-pages (R7.7): it says the consequence: replying leaves the request
-/// open.
-pub(super) const REPLY_LINE: &str = "Reply — the request stays open";
+/// R8.4: the card's Text action that opens its one reply input.
+pub(super) const REPLY_ACTION: &str = "Reply instead";
+
+/// R8.4: what the open reply says beside its send (R7.7: the consequence).
+pub(super) const REPLY_NOTE: &str = "The request stays open until you answer it";
 
 /// The composer's placeholder while a decision waits (R5.4: the field
 /// stays, only its words change).
@@ -358,6 +361,25 @@ fn relative_to<'a>(path: &'a str, cwd: &str) -> &'a str {
 
 /// An approval as a question (`docs/design-v2-direction.md` R2.2): runs of
 /// plain words and code (`true`), e.g. ("Run", `cargo test`, "in native?").
+/// R8.4: a headline's runs as one plain line ("Run cargo test in
+/// native?"), for the folded card: one space between runs, none before
+/// closing punctuation.
+pub(super) fn headline_words(runs: &[(String, bool)]) -> String {
+    let mut out = String::new();
+    for (text, _) in runs {
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let glued = text.starts_with(['?', '!', '.', ',', ':', ';', ')']);
+        if !out.is_empty() && !glued {
+            out.push(' ');
+        }
+        out.push_str(text);
+    }
+    out
+}
+
 pub(super) fn approval_headline(approval: &Value, cwd: &str) -> Vec<(String, bool)> {
     let (tool, summary) = approval_summary(approval);
     let input = approval.get("toolInput").unwrap_or(&Value::Null);
@@ -537,53 +559,6 @@ impl Workspace {
         out
     }
 
-    /// R7.1: the keys the keyed decision shows, exactly (1 2 3 4 of an
-    /// approval, less what it does not offer; a plan's 1 2 and ⇧1; a
-    /// question's options), for the hint under the card.
-    // r8-decisions (R8.2): the composer's keycap row is gone; unused
-    // until the conversation area drops it.
-    #[allow(dead_code)]
-    pub(super) fn decision_key_caps(&self, session: &Session) -> Option<Vec<String>> {
-        let caps: Vec<String> = match self.keyed_decision(session)? {
-            Decision::Approval => {
-                let approval = session.approval.as_ref()?;
-                let always = wks_native::session_controls::always_options(approval);
-                let note = self.deny_note_offered() && !self.extras.deny_open;
-                strip_keys(always.len(), note)
-                    .iter()
-                    .filter_map(StripKey::number)
-                    .map(|n| n.to_string())
-                    .collect()
-            }
-            Decision::Plan => {
-                let (handoff, _) = self.plan_handoff(Some(session));
-                plan_keys(handoff.is_some(), !self.extras.deny_open)
-                    .into_iter()
-                    .map(|k| {
-                        k.number()
-                            .map(|n| n.to_string())
-                            .unwrap_or_else(|| super::decision::VARIANT_KEY.to_owned())
-                    })
-                    .collect()
-            }
-            Decision::Questions => {
-                let list = session
-                    .questions
-                    .as_ref()
-                    .map(super::questions::question_list)
-                    .unwrap_or_default();
-                if list.is_empty() {
-                    return None;
-                }
-                let step = self.question_step(list.len());
-                let n = list[step]["options"].as_array().map_or(0, Vec::len).min(9);
-                (1..=n).map(|n| n.to_string()).collect()
-            }
-            Decision::Limit => Vec::new(),
-        };
-        (!caps.is_empty()).then_some(caps)
-    }
-
     /// R6.3: whether the digit keys answer the keyed decision now: no text
     /// field has focus (the workspace root, or nothing, does) and the
     /// composer holds no draft.
@@ -612,6 +587,286 @@ impl Workspace {
                 .is_some_and(|q| !super::questions::question_list(q).is_empty()),
             Decision::Limit => false,
         })
+    }
+
+    // ----- r8-conversation (R8.4): one decision-and-reply area -----------
+
+    /// The decision (session and card) a reply is open for.
+    pub(super) fn reply_key(&self) -> Option<String> {
+        self.selected_session()
+            .map(|s| format!("{}\0{}", s.id, s.card().unwrap_or_default()))
+    }
+
+    /// R8.4: whether the composer is hidden: a decision takes its slot (an
+    /// approval, a plan or a structured question set) and the card holds
+    /// the one input instead.
+    pub(super) fn composer_hidden(&self) -> bool {
+        self.design().is_v2()
+            && self.view.child.is_none()
+            && self
+                .selected_session()
+                .is_some_and(|s| self.decision_takes_composer(s))
+    }
+
+    /// R8.4: whether the waiting card's reply is open (its input in the
+    /// card, "Reply instead" pressed, or a draft already there).
+    pub(super) fn reply_active(&self) -> bool {
+        self.composer_hidden()
+            && self.composer_ui.reply_open.is_some()
+            && self.composer_ui.reply_open == self.reply_key()
+    }
+
+    /// R8.4: whether the waiting card folds to one line: the reader has
+    /// scrolled up through the transcript and is not writing in it.
+    pub(super) fn decision_collapsed(&self) -> bool {
+        self.composer_hidden() && !self.follow && !self.reply_active() && !self.extras.deny_open
+    }
+
+    /// Once per frame, before the dock draws: a composer with focus or a
+    /// draft opens the card's reply (so Ctrl+L, or a draft from before the
+    /// request, lands in the card), and the input says the request stays
+    /// open.
+    pub(super) fn settle_reply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.composer_hidden() {
+            return;
+        }
+        let composer = self.composer.read(cx);
+        let focused = composer.focus_handle(cx).is_focused(window);
+        let text = !composer.value().is_empty();
+        let files = self.draft_files(cx).len();
+        self.composer_ui.reply_files = files;
+        if focused || text || files > 0 || self.uploading() {
+            self.composer_ui.reply_open = self.reply_key();
+        }
+        if self.composer_ui.placeholder != Some(REPLY_INSTEAD) {
+            self.composer_ui.placeholder = Some(REPLY_INSTEAD);
+            self.composer.update(cx, |input, cx| {
+                input.set_placeholder(REPLY_INSTEAD, window, cx)
+            });
+        }
+    }
+
+    /// Opens the card's reply and puts the cursor in it.
+    pub(super) fn open_reply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.extras.deny_open = false;
+        self.composer_ui.reply_open = self.reply_key();
+        self.composer
+            .update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Cancel: the reply closes, its text goes, and the digits answer the
+    /// card again.
+    pub(super) fn close_reply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.composer_ui.reply_open = None;
+        self.composer
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.focus.focus(window);
+        cx.notify();
+    }
+
+    /// R8.4: "Reply instead", the card's Text action that opens its one
+    /// input. None while the reply or a note is already open.
+    pub(super) fn reply_instead(
+        &self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<super::decision::Choice> {
+        (self.composer_hidden() && !self.reply_active() && !self.extras.deny_open).then(|| {
+            super::decision::Choice::new("reply-instead", REPLY_ACTION)
+                .tooltip(super::decision::REPLY_KEEPS_PENDING)
+                .enabled(enabled)
+                .on_click(cx.listener(|this, _, window, cx| this.open_reply(window, cx)))
+        })
+    }
+
+    /// "Reply instead" as a bare button, for a card that is not a
+    /// `Decision` (the question set's footer).
+    pub(super) fn reply_instead_button(
+        &self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
+        let p = self.palette();
+        self.reply_instead(enabled, cx).map(|_| {
+            primitives::button(
+                "reply-instead",
+                REPLY_ACTION,
+                None,
+                system::actions::tier(system::actions::Verb::Details),
+                ButtonSize::Small,
+                enabled,
+                &p,
+            )
+            .debug_selector(|| "reply-instead".into())
+            .tooltip(primitives::tooltip_view(
+                super::decision::REPLY_KEEPS_PENDING,
+                None,
+                &p,
+            ))
+            .when(enabled, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| this.open_reply(window, cx)))
+            })
+        })
+    }
+
+    /// The agent the reply goes to, by name ("Claude", "Codex").
+    pub(super) fn reply_target(&self) -> &'static str {
+        match self.selected_session().map(Session::provider_id) {
+            Some("codex") => "Codex",
+            _ => "Claude",
+        }
+    }
+
+    /// R8.4: the open reply, last in the card: the composer's own input
+    /// (Enter sends, as in the composer; Esc cancels), what happens to the
+    /// request, Cancel, and the send that names where the text goes ("Send
+    /// to Claude"). Secondary: the card's answer keeps the one Primary.
+    pub(super) fn render_card_reply(
+        &self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !self.reply_active() || self.extras.deny_open {
+            return None;
+        }
+        let p = self.palette();
+        let files = self.composer_ui.reply_files;
+        let draft = !self.composer.read(cx).value().trim().is_empty() || files > 0;
+        let can_send = enabled && !self.uploading() && draft && !self.view.busy;
+        let slash = self.slash_menu(cx);
+        let input = div()
+            .w_full()
+            .min_w_0()
+            .debug_selector(|| "card-reply-input".into())
+            .key_context(match (self.settings.enter_sends, slash.is_empty()) {
+                (true, true) => "Composer ComposerEnter",
+                (false, true) => "Composer",
+                (true, false) => "Composer ComposerEnter SlashMenu",
+                (false, false) => "Composer SlashMenu",
+            })
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" && this.slash_menu(cx).is_empty() {
+                    cx.stop_propagation();
+                    this.close_reply(window, cx);
+                }
+            }))
+            .child(Input::new(&self.composer).disabled(self.view.busy));
+        let menu = (!slash.is_empty()).then(|| {
+            primitives::menu(&p)
+                .debug_selector(|| "slash-menu-layer".into())
+                .occlude()
+                .child(self.render_slash_menu(slash, cx))
+        });
+        let input = system::anchored_menu(input, menu, system::MenuAnchor::AboveStart, &p).w_full();
+        let note = match files {
+            0 => REPLY_NOTE.to_owned(),
+            1 => format!("1 file attached · {REPLY_NOTE}"),
+            n => format!("{n} files attached · {REPLY_NOTE}"),
+        };
+        let cancel = primitives::button(
+            "card-reply-cancel",
+            "Cancel",
+            None,
+            ButtonVariant::Tertiary,
+            ButtonSize::Small,
+            true,
+            &p,
+        )
+        .debug_selector(|| "card-reply-cancel".into())
+        .tooltip(primitives::tooltip_view("Close the reply", Some("Esc"), &p))
+        .on_click(cx.listener(|this, _, window, cx| this.close_reply(window, cx)))
+        .into_any_element();
+        let label = if self.view.busy {
+            "Sending…".to_owned()
+        } else {
+            format!("Send to {}", self.reply_target())
+        };
+        let send = primitives::button(
+            "card-reply-send",
+            label,
+            Some(IconName::ArrowUp),
+            ButtonVariant::Secondary,
+            ButtonSize::Small,
+            can_send,
+            &p,
+        )
+        .debug_selector(|| "card-reply-send".into())
+        .tooltip(primitives::tooltip_view(
+            super::decision::REPLY_KEEPS_PENDING,
+            Some(self.send_key()),
+            &p,
+        ))
+        .when(can_send, |d| {
+            d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx)))
+        })
+        .into_any_element();
+        Some(
+            system::card_reply(input, note, [cancel, send], &p)
+                .debug_selector(|| "card-reply".into())
+                .into_any_element(),
+        )
+    }
+
+    /// R8.4: the waiting decision in a few words, for its folded line
+    /// ("Run `cargo test` in native?", "Approve the plan?", the question).
+    pub(super) fn decision_summary(&self, session: &Session) -> String {
+        match self.decisions(session).first() {
+            Some(Decision::Approval) => session
+                .approval
+                .as_ref()
+                .map(|a| headline_words(&approval_headline(a, &session.cwd)))
+                .unwrap_or_default(),
+            Some(Decision::Plan) => "Start on this plan?".to_owned(),
+            Some(Decision::Questions) => session
+                .questions
+                .as_ref()
+                .map(super::questions::question_list)
+                .and_then(|list| {
+                    list.first()
+                        .and_then(|q| q["question"].as_str().or(q["header"].as_str()))
+                        .map(|q| q.trim().to_owned())
+                })
+                .filter(|q| !q.is_empty())
+                .unwrap_or_else(|| "The agent asked for input".to_owned()),
+            _ => String::new(),
+        }
+    }
+
+    /// R8.4: the folded card, in the dock's place for it: "Needs you ·
+    /// Run `cargo test`? · Open". Open jumps to the latest and unfolds it.
+    /// It replaces "Jump to latest" while it shows.
+    pub(super) fn render_decision_line(&self, session: &Session, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let open = primitives::button(
+            "decision-line-open",
+            "Open",
+            None,
+            ButtonVariant::Secondary,
+            ButtonSize::Small,
+            true,
+            &p,
+        )
+        .debug_selector(|| "decision-line-open".into())
+        .tooltip(primitives::tooltip_view(
+            "Back to the latest, with the request open",
+            None,
+            &p,
+        ))
+        .on_click(cx.listener(|this, _, _, cx| this.jump_to_latest(cx)));
+        system::decision_line(self.decision_summary(session), open, &p)
+            .debug_selector(|| "decision-line".into())
+            .occlude()
+    }
+
+    /// Back to the newest message, following it.
+    pub(super) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
+        self.follow = true;
+        self.list.scroll_to(gpui::ListOffset {
+            item_ix: self.view.transcript.rows.len(),
+            offset_in_item: gpui::Pixels::ZERO,
+        });
+        cx.notify();
     }
 
     /// Whether Esc stops a working agent (v2). Not with modal keys on: there
@@ -700,65 +955,9 @@ impl Workspace {
         }
         let slash_rows = self.slash_menu(cx);
         let draft = !empty || !draft_files.is_empty();
-        // R6.3: while a decision waits and the composer is not in use it is
-        // one bordered line that expands on focus, with the hint that says
-        // the digit keys answer the request. Once opened for a decision it
-        // stays open for that decision.
-        let reply_key = selected
-            .as_ref()
-            .map(|s| format!("{}\0{}", s.id, s.card().unwrap_or_default()));
-        if focused && takes_slot {
-            self.composer_ui.reply_open = reply_key.clone();
-        }
-        if takes_slot
-            && enabled
-            && !focused
-            && self.composer_ui.reply_open != reply_key
-            && !draft
-            && !uploading
-            && slash_rows.is_empty()
-            // A popover or menu hanging from a chip keeps the field open.
-            && !self.shell.model_popover
-            && !self.composer_ui.access_menu
-        {
-            self.composer_ui.send_menu = false;
-            // r8-decisions (R8.2): no keycap row here; the card is the
-            // only place keycaps appear.
-            let hint: Option<AnyElement> = None;
-            // r7-pages (R7.7): a question card holds the one input, so the
-            // composer under it folds to a quiet line, not a second field.
-            let question = decisions.first() == Some(&Decision::Questions);
-            let line = if question {
-                system::composer_reply_link(REPLY_LINE, hint, &p)
-            } else {
-                system::composer_reply_line(REPLY_LINE, hint, &p)
-            };
-            let line = line
-                .id("floating-composer")
-                .debug_selector(|| "chat-composer".into())
-                .cursor_text()
-                .occlude()
-                .tooltip(primitives::tooltip_view(
-                    super::decision::REPLY_KEEPS_PENDING,
-                    None,
-                    &p,
-                ))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.composer_ui.reply_open = reply_key.clone();
-                    this.composer
-                        .update(cx, |input, cx| input.focus(window, cx));
-                    cx.notify();
-                }));
-            return div()
-                .debug_selector(|| "chat-composer-group".into())
-                .w_full()
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .gap(px(t.space.md))
-                .children(self.render_cold_note(cx))
-                .child(line);
-        }
+        // r8-conversation (R8.4): while a decision takes the slot the
+        // composer is hidden (`composer_hidden`); its input is the card's
+        // reply. This field draws only when nothing waits there.
         let state = if !enabled {
             system::ComposerState::Disabled
         } else if focused {
@@ -1583,6 +1782,9 @@ impl Workspace {
         // R6.3: the keycaps stay (no layout shift) but dim while the digits
         // type into the composer instead of answering.
         decision.keys_live = self.composer_ui.digits_to_card;
+        // R8.4: the card and the reply are one component.
+        decision.reply = self.reply_instead(enabled, cx);
+        decision.reply_field = self.render_card_reply(enabled, cx);
         decision.render(&p)
     }
 
@@ -1701,6 +1903,8 @@ impl Workspace {
             || self.extras.deny_open
             || !self.view.connected
             || self.view.busy
+            // R8.4: a folded card answers nothing until it is open again.
+            || self.decision_collapsed()
         {
             return;
         }
@@ -1937,6 +2141,9 @@ impl Workspace {
         decision.keys =
             self.keycaps(session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan)));
         decision.keys_live = self.composer_ui.digits_to_card;
+        // R8.4: the card and the reply are one component.
+        decision.reply = self.reply_instead(enabled, cx);
+        decision.reply_field = self.render_card_reply(enabled, cx);
         decision.render(&p)
     }
 
@@ -2248,6 +2455,20 @@ mod tests {
         );
         assert_eq!(sentence_case("run_in_background"), "Run in background");
         assert_eq!(sentence_case("oldString"), "Old string");
+    }
+
+    // R8.4: the folded card reads its headline as one plain line.
+    #[test]
+    fn a_folded_card_reads_its_headline_as_words() {
+        let runs = vec![
+            ("Run".to_owned(), false),
+            ("cargo test".to_owned(), true),
+            ("in native".to_owned(), false),
+            ("?".to_owned(), false),
+        ];
+        assert_eq!(headline_words(&runs), "Run cargo test in native?");
+        assert_eq!(headline_words(&[]), "");
+        assert_eq!(REPLY_ACTION, "Reply instead");
     }
 
     #[test]

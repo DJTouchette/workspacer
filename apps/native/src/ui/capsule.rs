@@ -91,6 +91,11 @@ impl Workspace {
         };
         let toolbar = (selected.is_some() && !viewing_child)
             .then(|| self.session_toolbar_v2(layout.enabled, cx));
+        // r8-conversation (R8.4): other sessions' news, one chip after the
+        // title ("2 updates"), its popover one row per event.
+        let updates = (selected.is_some() && !viewing_child)
+            .then(|| self.render_updates_chip(cx))
+            .flatten();
         let compact = unzoom(window.viewport_size().height) < 300.;
         let notice = self.title_notice();
         let notices: Vec<AnyElement> = self
@@ -139,6 +144,7 @@ impl Workspace {
                 .pr(px(chrome::CAPTION_WIDTH + t.space.sm))
             })
             .child(left)
+            .children(updates)
             .child(div().flex_1().min_w_0())
             .children(toolbar);
         let band = (!notices.is_empty() || plan.is_some()).then(|| {

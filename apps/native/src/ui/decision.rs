@@ -714,6 +714,12 @@ pub(crate) struct Decision {
     pub deny_variant: ButtonVariant,
     /// R7.1: "Deny with note", a visible Text button on slot 4.
     pub deny_note: Option<Choice>,
+    /// r8-conversation (R8.4): "Reply instead", a Text button (no key) in
+    /// the quiet row that opens the card's one reply input.
+    pub reply: Option<Choice>,
+    /// r8-conversation (R8.4): the open reply (its input, Cancel and the
+    /// send that names where the text goes), last in the card.
+    pub reply_field: Option<AnyElement>,
     /// Whether this decision shows its keycaps: only the focused decision
     /// (R7.1: unfocused tiles show none).
     pub keys: bool,
@@ -759,6 +765,8 @@ impl Decision {
             deny: None,
             deny_variant: actions::tier(actions::Verb::Deny),
             deny_note: None,
+            reply: None,
+            reply_field: None,
             keys: false,
             keys_live: true,
             armed: false,
@@ -1073,6 +1081,11 @@ impl Decision {
                 c.render(actions::tier(actions::Verb::DenyWithNote), keys, live, p)
             }
         });
+        let reply = self
+            .reply
+            .as_ref()
+            .filter(|_| !noting)
+            .map(|c| c.render(actions::tier(actions::Verb::Details), false, live, p));
         let pair = (allow.is_some() || deny.is_some()).then(|| {
             div()
                 .debug_selector(|| "decision-answer".into())
@@ -1104,7 +1117,8 @@ impl Decision {
         // (no grant, no Deny with note), it ends the answer row instead of
         // sitting alone on a line of its own.
         let answers = pair.is_some() || !alternates.is_empty();
-        let lone = !noting && self.grants.is_empty() && deny_note.is_none() && answers;
+        let lone =
+            !noting && self.grants.is_empty() && deny_note.is_none() && reply.is_none() && answers;
         let (answer_details, details_toggle) = if lone {
             (details_toggle, None)
         } else {
@@ -1142,34 +1156,40 @@ impl Decision {
         } else {
             (Vec::new(), grants)
         };
-        let quiet = (any_grant || details_toggle.is_some() || deny_note.is_some()).then(|| {
-            div()
-                .debug_selector(|| "decision-quiet".into())
-                .w_full()
-                .min_w_0()
-                .flex()
-                // Wraps only as a last resort (never clipped): a tile's
-                // labels are sized to keep it to one line.
-                .flex_wrap()
-                .items_center()
-                .gap(px(t.space.sm))
-                .children(inline_grants)
-                .when(!grants.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .flex_1()
-                            // Narrower than this, Details wraps below.
-                            .min_w(px(t.system().tile_min * 0.75))
-                            .flex()
-                            .flex_col()
-                            .gap(px(t.space.xxs))
-                            .children(grants),
-                    )
-                })
-                .children(deny_note.map(|d| div().flex_shrink_0().child(d)))
-                // R8.4: Details at the right on every surface.
-                .children(details_toggle.map(|d| div().ml_auto().flex_shrink_0().child(d)))
-        });
+        let quiet =
+            (any_grant || details_toggle.is_some() || deny_note.is_some() || reply.is_some()).then(
+                || {
+                    div()
+                        .debug_selector(|| "decision-quiet".into())
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        // Wraps only as a last resort (never clipped): a tile's
+                        // labels are sized to keep it to one line.
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(t.space.sm))
+                        .children(inline_grants)
+                        .when(!grants.is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .flex_1()
+                                    // Narrower than this, Details wraps below.
+                                    .min_w(px(t.system().tile_min * 0.75))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(t.space.xxs))
+                                    .children(grants),
+                            )
+                        })
+                        .children(reply.map(|d| div().flex_shrink_0().child(d)))
+                        .children(deny_note.map(|d| div().flex_shrink_0().child(d)))
+                        .children(
+                            // R8.4: Details at the right on every surface.
+                            details_toggle.map(|d| div().ml_auto().flex_shrink_0().child(d)),
+                        )
+                },
+            );
 
         let content = |d: Div| {
             d.child(head)
@@ -1181,6 +1201,7 @@ impl Decision {
                 .children(answer)
                 .children(quiet)
                 .children(details.filter(|_| !noting))
+                .children(self.reply_field.take().filter(|_| !noting))
         };
         match self.frame {
             Frame::Card { compact } => content(primitives::waiting_card(compact, p))

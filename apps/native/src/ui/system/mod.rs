@@ -47,9 +47,9 @@ pub(crate) use card::{
 };
 pub(crate) use code::inline_code_bg;
 pub(crate) use composer::{
-    ComposerState, access_chip, access_option, access_tone, composer_body, composer_field,
-    composer_reply_line, composer_reply_link, composer_specimen, composer_text, composer_toolbar,
-    composer_width, decision_keys_hint, key_hint, key_hints,
+    ComposerState, access_chip, access_option, access_tone, card_reply, composer_body,
+    composer_field, composer_specimen, composer_text, composer_toolbar, composer_width,
+    decision_line, key_hint, key_hints, update_row, updates_chip, updates_popover,
 };
 pub(crate) use edge::{EdgeTone, Side, edge, floating, framed, lifted};
 pub(crate) use elevation::{Level, elevated, scrim_color};
