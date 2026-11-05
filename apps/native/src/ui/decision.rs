@@ -954,7 +954,7 @@ fn grant_row(grant: &Grant, keys: bool, live: bool, p: &Palette) -> Div {
     let end = start + '\u{2009}'.len_utf8() * 2 + grant.rule.len();
     let code = gpui::HighlightStyle {
         color: Some(rgb(p.text).into()),
-        background_color: Some(rgb(p.code_inline).into()),
+        background_color: Some(super::system::inline_code_bg(p)),
         ..Default::default()
     };
     div()
@@ -1076,7 +1076,7 @@ pub(crate) fn headline(parts: &[(String, bool)], p: &Palette) -> Div {
     let has_code = !ranges.is_empty();
     let code = gpui::HighlightStyle {
         font_weight: Some(FontWeight(t.weight.medium)),
-        background_color: Some(rgb(p.code_inline).into()),
+        background_color: Some(super::system::inline_code_bg(p)),
         ..Default::default()
     };
     // One text, so words and code wrap as prose (a flex row of pieces

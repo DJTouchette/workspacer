@@ -932,6 +932,11 @@ pub struct Workspace {
     /// The conversation pane's width last frame: the tool rail floats only
     /// where it clears the chat column.
     chat_width: gpui::Pixels,
+    /// r7-pages (R7.6): room under a short conversation's last row, so the
+    /// bottom-aligned transcript reads from the top (`settle_short_pad`).
+    short_pad: gpui::Pixels,
+    /// The transcript list's own top and bottom padding last frame.
+    list_insets: gpui::Pixels,
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
     duration_labels: HashMap<u64, String>,
@@ -1266,6 +1271,8 @@ impl Workspace {
             cleanup: Default::default(),
             header_bounds: Default::default(),
             chat_width: Default::default(),
+            short_pad: Default::default(),
+            list_insets: Default::default(),
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
             duration_labels: HashMap::new(),

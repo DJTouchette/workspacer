@@ -2732,16 +2732,8 @@ pub(crate) enum Col {
 /// with its hairline edge, clipped, holding a [`page_table_head`] and
 /// [`page_table_row`]s.
 pub(crate) fn page_table(p: &Palette) -> Div {
-    let t = p.tokens;
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .rounded(px(t.radius.panel))
-        .border(px(t.stroke.hairline))
-        .border_color(rgb(p.roles.card_border))
-        .bg(rgb(p.surface))
-        .overflow_hidden()
+    // r7-pages (R7.6): the one table style lives in `system::table`.
+    super::system::table(p)
 }
 
 /// One cell of a page table, sized by its column. Cells share the row's
@@ -2757,41 +2749,14 @@ pub(crate) fn page_cell(col: Col) -> Div {
     }
 }
 
-/// A page table's header row: 12/600 secondary labels on `base`, the same
-/// columns as its rows.
+/// A page table's header row: [`super::system::table_head`].
 pub(crate) fn page_table_head(columns: &[(&'static str, Col)], p: &Palette) -> Div {
-    let s = table_style(p);
-    let t = p.tokens;
-    page_table_row(p)
-        .h(px(t.layout.row_height))
-        .bg(rgb(s.head_bg))
-        .border_t(px(0.))
-        .text_size(px(t.text.meta))
-        .font_weight(FontWeight(t.weight.semibold))
-        .text_color(rgb(s.head_fg))
-        .children(
-            columns
-                .iter()
-                .map(|(label, col)| page_cell(*col).child(*label)),
-        )
+    super::system::table_head(columns, p)
 }
 
-/// A page table's body row: `pages().row` tall at least, cells at the
-/// table's padding, a hairline above. Add `.id(…)` for hover or clicks.
+/// A page table's body row: [`super::system::table_row`].
 pub(crate) fn page_table_row(p: &Palette) -> Div {
-    let s = table_style(p);
-    let t = p.tokens;
-    div()
-        .w_full()
-        .min_h(px(t.pages().row))
-        .px(px(s.cell_x))
-        .flex()
-        .items_center()
-        .gap(px(t.space.lg))
-        .border_t(px(t.stroke.hairline))
-        .border_color(rgb(s.divider))
-        .text_size(px(t.text.body))
-        .text_color(rgb(p.text))
+    super::system::table_row(p)
 }
 
 // r4-pages (R4.5)

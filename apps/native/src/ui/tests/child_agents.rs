@@ -855,7 +855,8 @@ fn worktree_workers_stay_nested_under_their_manager_when_its_project_is_open(
 
 /// r5-integration (design v2): over a read-only subagent, the parent's
 /// pending approval is not its live card (those buttons would answer from
-/// the wrong conversation) but one line that leads back to the parent.
+/// the wrong conversation) but one line that says so; r7-pages (R7.6): the
+/// read-only bar's one "Back to parent" leads back.
 #[gpui::test]
 fn a_viewed_subagent_says_the_parent_waits_instead_of_its_card(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
@@ -884,7 +885,9 @@ fn a_viewed_subagent_says_the_parent_waits_instead_of_its_card(cx: &mut TestAppC
     assert!(visual.debug_bounds("approve").is_none());
     assert!(visual.debug_bounds("child-parent-waiting").is_some());
     effects(&mut commands);
-    let go = visual.debug_bounds("child-parent-go").unwrap();
+    assert!(visual.debug_bounds("child-parent-go").is_none());
+    assert!(visual.debug_bounds("child-back").is_none());
+    let go = visual.debug_bounds("child-back-parent").unwrap();
     visual.simulate_click(go.center(), gpui::Modifiers::default());
     visual.run_until_parked();
     assert!(

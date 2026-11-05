@@ -46,6 +46,45 @@ pub(in crate::ui) struct StackUi {
     bracket: Option<bool>,
     scroll: gpui::UniformListScrollHandle,
     opened: u64,
+    /// r7-pages (R7.8): the selected session's "Changes +N −M", read when
+    /// the session is selected (not only once the panel opens).
+    summary: ChangeSummary,
+}
+
+/// The toolbar's change count for one folder, read in the background.
+#[derive(Default)]
+struct ChangeSummary {
+    /// The folder last asked about, and whether its session was working
+    /// then: a turn's end asks again.
+    asked: Option<(String, bool)>,
+    /// The "changes" answer already turned into a diff-set request.
+    listed: u64,
+    /// The folder's files, insertions and deletions, by diff-set answer.
+    counted: Option<(String, u64, (usize, usize, usize))>,
+}
+
+/// Files, insertions and deletions in a diff-set answer, counted from its
+/// patch lines (no parse: the toolbar needs only the totals).
+fn count_set(value: &serde_json::Value) -> (usize, usize, usize) {
+    let mut files = 0;
+    let (mut added, mut removed) = (0, 0);
+    for file in value["files"].as_array().into_iter().flatten() {
+        files += 1;
+        let diff = file["diff"].as_str().unwrap_or_default();
+        let mut body = false;
+        for line in diff.lines() {
+            if line.starts_with("@@") {
+                body = true;
+            } else if line.starts_with("diff --git ") {
+                body = false;
+            } else if body && line.starts_with('+') {
+                added += 1;
+            } else if body && line.starts_with('-') {
+                removed += 1;
+            }
+        }
+    }
+    (files, added, removed)
 }
 
 /// The overflow menu of one file header, at the click.
@@ -1039,6 +1078,100 @@ impl Workspace {
         self.review_paths()
             .filter(|(c, _)| c == cwd)
             .and_then(|_| self.stack_summary(SET))
+            // r7-pages (R7.8): before the panel has opened, the count read
+            // when the session was selected.
+            .or_else(|| {
+                self.review
+                    .v2
+                    .summary
+                    .counted
+                    .as_ref()
+                    .filter(|(c, _, _)| c == cwd)
+                    .map(|(_, _, counts)| *counts)
+            })
+    }
+
+    /// r7-pages (R7.8): "Changes +N −M" is there as soon as a session is
+    /// selected. With the panel closed, the selected session's folder is
+    /// listed (on selection, and again when a turn ends), its files' diffs
+    /// read, and the totals kept for the toolbar. An open panel or page
+    /// does its own reading, and its count wins.
+    pub(in crate::ui) fn sync_change_summary(&mut self, cx: &mut Context<Self>) {
+        if !self.design().is_v2() || self.screen == Screen::Changes || self.review_dock_showing() {
+            return;
+        }
+        let Some((cwd, working)) = self
+            .selected_session()
+            .filter(|s| !s.cwd.is_empty() && self.view.child.is_none())
+            .map(|s| (s.cwd.clone(), s.working()))
+        else {
+            return;
+        };
+        if !self.view.connected {
+            return;
+        }
+        let summary = &self.review.v2.summary;
+        let ask = match &summary.asked {
+            Some((asked, was_working)) => asked != &cwd || (*was_working && !working),
+            None => true,
+        };
+        if ask {
+            self.review.v2.summary.asked = Some((cwd.clone(), working));
+            self.command(Command::Request(Request::Changes { cwd }), cx);
+            return;
+        }
+        if let Some((_, was_working)) = &mut self.review.v2.summary.asked {
+            *was_working = working;
+        }
+        // The listing came back: read every listed file's diff.
+        if let Some(state) = self.view.requests.get("changes")
+            && !state.loading
+            && state.error.is_none()
+            && state.number > self.review.v2.summary.listed
+            && matches!(&state.request, Request::Changes { cwd: c } if c == &cwd)
+        {
+            self.review.v2.summary.listed = state.number;
+            let root = state.value["root"]
+                .as_str()
+                .filter(|r| !r.is_empty())
+                .unwrap_or(&cwd)
+                .to_owned();
+            let files: Vec<DiffTarget> = super::parse_changes(&state.value, &root)
+                .iter()
+                .take(DIFF_SET_MAX_FILES)
+                .map(|c| {
+                    let staged = !c.has_unstaged();
+                    DiffTarget {
+                        path: c.path.clone(),
+                        staged,
+                        untracked: c.untracked() && !staged,
+                    }
+                })
+                .collect();
+            if files.is_empty() {
+                self.review.v2.summary.counted = Some((cwd, state.number, (0, 0, 0)));
+            } else {
+                self.command(Command::Request(Request::DiffSet { cwd, files }), cx);
+            }
+            return;
+        }
+        // The diffs came back: count them once per answer.
+        if let Some(state) = self.view.requests.get(SET)
+            && !state.loading
+            && state.error.is_none()
+            && matches!(&state.request, Request::DiffSet { cwd: c, .. } if c == &cwd)
+            && self
+                .review
+                .v2
+                .summary
+                .counted
+                .as_ref()
+                .is_none_or(|(c, n, _)| c != &cwd || *n != state.number)
+        {
+            let counts = count_set(&state.value);
+            self.review.v2.summary.counted = Some((cwd, state.number, counts));
+            cx.notify();
+        }
     }
 
     fn stack_summary(&self, slot: &'static str) -> Option<(usize, usize, usize)> {

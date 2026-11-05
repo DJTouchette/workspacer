@@ -270,7 +270,6 @@ fn every_page_shares_one_header_and_left_edge(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     open_v2(&workspace, &mut visual, 900., |_, _, _| {});
     let mut edge = None;
-    let mut forms = Vec::new();
     for (screen, new_session) in [
         (Screen::Projects, false),
         (Screen::Settings, false),
@@ -292,7 +291,8 @@ fn every_page_shares_one_header_and_left_edge(cx: &mut TestAppContext) {
         });
         visual.run_until_parked();
         let title = visual.debug_bounds("page-title").unwrap();
-        let drill_in = matches!(screen, Screen::Setup | Screen::Changes) && !new_session;
+        // r7-pages (R7.6): Agent setup is a top-level page too.
+        let drill_in = screen == Screen::Changes && !new_session;
         match visual.debug_bounds("feature-back") {
             Some(back) => {
                 assert!(drill_in, "{screen:?} is top-level: no back link");
@@ -300,36 +300,39 @@ fn every_page_shares_one_header_and_left_edge(cx: &mut TestAppContext) {
             }
             None => assert!(!drill_in, "{screen:?} has the back link"),
         }
-        // r6-surfaces (R6.5): two templates. Tables share the page's left
-        // edge; a form is one centred column, never wider than the token.
-        let form = new_session || matches!(screen, Screen::Settings | Screen::Setup);
+        // r7-pages (R7.6): one template. Every page's title sits at the
+        // same left edge, forms included; a form's *body* is the 880
+        // column, left-aligned under it. New session is the welcome's
+        // centred composer.
         let left = f32::from(title.left());
         // r6-decisions (R6.7): the Fleet collapses the sidebar to its rail,
         // so its page starts further left by design.
         if screen == Screen::Fleet {
             continue;
         }
-        if form {
+        if new_session {
             let shell = visual.debug_bounds("page-shell").unwrap();
             assert!(
                 f32::from(shell.size.width) <= wks_native::tokens::Tokens::V2.pages().form + 0.5,
-                "{screen:?} (new session {new_session}) is a form column"
+                "new session is the composer column"
             );
-            forms.push((screen, f32::from(shell.left()), f32::from(shell.right())));
             continue;
+        }
+        if matches!(screen, Screen::Settings | Screen::Setup) {
+            let body = visual.debug_bounds("page-body").unwrap();
+            assert!(
+                f32::from(body.size.width) <= wks_native::tokens::Tokens::V2.pages().form + 0.5,
+                "{screen:?} has a form body"
+            );
+            assert!(
+                (f32::from(body.left()) - left).abs() <= 1.,
+                "{screen:?}: the form is left-aligned under its title"
+            );
         }
         let edge = *edge.get_or_insert(left);
         assert!(
             (left - edge).abs() <= 1.,
             "{screen:?} (new session {new_session}) title at {left}, others at {edge}"
-        );
-    }
-    // Every form sits at the same place: one centred column.
-    for pair in forms.windows(2) {
-        let ((a, al, ar), (b, bl, br)) = (pair[0], pair[1]);
-        assert!(
-            (al - bl).abs() <= 1. && (ar - br).abs() <= 1.,
-            "{a:?} and {b:?} forms differ"
         );
     }
 }

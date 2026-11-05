@@ -21,6 +21,7 @@ use gpui::AnyElement;
 
 mod actions;
 mod card;
+mod code;
 mod composer;
 mod edge;
 mod elevation;
@@ -32,6 +33,7 @@ mod overlay;
 mod page;
 mod segmented;
 mod status_cell;
+mod table;
 mod toggle;
 
 #[cfg(test)]
@@ -43,9 +45,11 @@ pub(crate) use actions::{composer_send_state, send_state, stop_variant};
 pub(crate) use card::{
     even_tile_grid, tile, tile_frame, tile_grid, waiting_tile, waiting_tile_focused,
 };
+pub(crate) use code::inline_code_bg;
 pub(crate) use composer::{
     ComposerState, access_chip, access_option, access_tone, composer_body, composer_field,
-    composer_reply_line, composer_specimen, composer_text, composer_toolbar, decision_keys_hint,
+    composer_reply_line, composer_reply_link, composer_specimen, composer_text, composer_toolbar,
+    composer_width, decision_keys_hint,
 };
 pub(crate) use edge::{EdgeTone, Side, edge, floating, framed, lifted};
 pub(crate) use elevation::{Level, elevated, scrim_color};
@@ -56,6 +60,7 @@ pub(crate) use overlay::{Placement, overlay};
 pub(crate) use page::{PageWidth, page_shell};
 pub(crate) use segmented::{Segment, segmented_control};
 pub(crate) use status_cell::StatusCell;
+pub(crate) use table::{TablePart, table, table_band, table_head, table_part, table_row};
 // The re-exports are the system's API: some are only used by the
 // migration still to come (R5.4) or by the tests.
 #[allow(unused_imports)]

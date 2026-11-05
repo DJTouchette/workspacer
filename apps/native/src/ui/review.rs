@@ -379,6 +379,7 @@ impl Workspace {
     /// When the change list arrives, show the first change's diff (or keep
     /// the one being read if it is still changed).
     pub(super) fn sync_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_change_summary(cx);
         if self.screen != Screen::Changes && !self.review_dock_showing() {
             return;
         }

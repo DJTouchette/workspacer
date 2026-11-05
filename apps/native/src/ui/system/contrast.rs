@@ -211,6 +211,13 @@ fn check(theme: Appearance) -> Vec<String> {
     }
     // The label of a pressed row still reads.
     g.at_least("text on pressed", p.text, r.pressed, TEXT);
+    // r7-pages (R7.8): inline code reads on every surface it sits on, and
+    // its chip is visible there (not the near-invisible dark fill).
+    for (name, bg) in surfaces(&p) {
+        let chip = composite(super::inline_code_bg(&p), bg);
+        g.at_least(&format!("inline code on {name}"), p.text, chip, TEXT);
+        g.at_least(&format!("inline code chip on {name}"), chip, bg, 1.15);
+    }
 
     for (name, bg) in surfaces(&p) {
         // Button: every tier in every interactive state.

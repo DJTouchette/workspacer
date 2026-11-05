@@ -816,11 +816,8 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .gap(px(t.space.sm))
-                .child(
-                    system::IconButton::new("child-back", IconName::ArrowLeft, "Back to parent")
-                        .render(&p)
-                        .on_click(cx.listener(|this, _, _, cx| this.leave_child(cx))),
-                )
+                // r7-pages (R7.6): no back arrow here; the one "Back to
+                // parent" is the read-only bar's, labelled.
                 .child(
                     div()
                         .flex_shrink()
@@ -858,15 +855,22 @@ impl Workspace {
                     )
                 })
                 .children(status)
+                // r7-pages (R7.6): no unlabelled icons in the subagent view.
                 .child(
-                    system::IconButton::new("refresh", IconName::Redo, "Refresh subagent")
-                        .enabled(refresh)
-                        .render(&p)
-                        .when(refresh, |d| {
-                            d.on_click(
-                                cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)),
-                            )
-                        }),
+                    primitives::button_with_icon(
+                        "refresh",
+                        "Refresh",
+                        primitives::Concept::Refresh,
+                        primitives::ButtonVariant::Tertiary,
+                        primitives::ButtonSize::Small,
+                        refresh,
+                        &p,
+                    )
+                    .debug_selector(|| "child-refresh".into())
+                    .tooltip(primitives::tooltip_view("Refresh subagent", None, &p))
+                    .when(refresh, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
+                    }),
                 ),
         )
     }
@@ -875,12 +879,12 @@ impl Workspace {
     /// r5-integration (design v2): while a read-only subagent is shown and
     /// its parent waits on a decision, the dock does not draw the parent's
     /// card (its buttons would answer from the wrong conversation). One
-    /// line says so and leads back: "The parent session is waiting on you ·
-    /// Go to parent".
+    /// line says so: "The parent session is waiting on you". r7-pages
+    /// (R7.6): the way back is the read-only bar's one "Back to parent".
     pub(super) fn render_parent_waiting(
         &self,
         parent: Option<&Session>,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Option<Div> {
         if !self.design().is_v2() || self.view.child.is_none() {
             return None;
@@ -910,25 +914,6 @@ impl Workspace {
                         .text_size(px(t.text.meta))
                         .text_color(rgb(p.roles.text_secondary))
                         .child("The parent session is waiting on you"),
-                )
-                .child(
-                    div()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_tertiary))
-                        .child("·"),
-                )
-                .child(
-                    primitives::button(
-                        "child-parent-go",
-                        "Go to parent",
-                        None,
-                        primitives::ButtonVariant::Tertiary,
-                        primitives::ButtonSize::Small,
-                        true,
-                        &p,
-                    )
-                    .debug_selector(|| "child-parent-go".into())
-                    .on_click(cx.listener(|this, _, _, cx| this.leave_child(cx))),
                 ),
         )
     }

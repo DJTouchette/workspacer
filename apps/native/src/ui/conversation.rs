@@ -170,25 +170,65 @@ impl Workspace {
             .flatten()
             .map(|strip| {
                 let t = self.tokens();
-                div()
-                    .w_full()
-                    .flex_shrink_0()
-                    .pt(self.header_bounds.size.height + px(t.transcript().group_gap))
-                    .child(strip)
+                // r7-pages (R7.8): the strip is opaque, on the canvas, with
+                // a hairline under it: the transcript scrolls out of view
+                // at that line, and nothing shows through or ghosts.
+                system::edge(
+                    div()
+                        .debug_selector(|| "wake-strip-band".into())
+                        .w_full()
+                        .flex_shrink_0()
+                        .bg(rgb(p.chat))
+                        .pt(self.header_bounds.size.height + px(t.transcript().group_gap)),
+                    system::Side::Bottom,
+                    system::EdgeTone::Divider,
+                    &p,
+                )
+                .child(strip)
             });
         let entity = cx.entity().downgrade();
+        // r7-pages (R7.6): a short conversation reads from the top. The list
+        // is bottom-aligned (it follows the tail), so the room it would
+        // leave above the first row goes under the last one instead.
+        let short_pad = if self.design().is_v2() && selected.is_some() {
+            self.short_pad
+        } else {
+            gpui::Pixels::ZERO
+        };
+        let last_row = self.list.item_count().saturating_sub(1);
+        let list_top = if strip.is_some() {
+            px(0.)
+        } else {
+            self.header_bounds.size.height + px(16.)
+        };
+        // What of the pane is not the rows' room: the list's own padding
+        // and the dock's inset below it. Under the wake strip a short
+        // conversation keeps the bottom alignment (no pad).
+        self.list_insets = if strip.is_some() {
+            gpui::px(1.0e9)
+        } else {
+            list_top + px(self.tokens().space.lg) + self.transcript_inset_v2(compact)
+        };
         let transcript = list(self.list.clone(), move |ix, window, cx| {
             entity
-                .update(cx, |this, cx| this.render_chat_row(ix, window, cx))
+                .update(cx, |this, cx| {
+                    let row = this.render_chat_row(ix, window, cx);
+                    if ix == last_row && short_pad > gpui::Pixels::ZERO {
+                        div()
+                            .debug_selector(|| "transcript-short-pad".into())
+                            .w_full()
+                            .pb(short_pad)
+                            .child(row)
+                            .into_any_element()
+                    } else {
+                        row
+                    }
+                })
                 .unwrap_or_else(|_| div().into_any_element())
         })
         .flex_1()
         .min_h_0()
-        .pt(if strip.is_some() {
-            px(0.)
-        } else {
-            self.header_bounds.size.height + px(16.)
-        })
+        .pt(list_top)
         .map(|d| {
             if self.design().is_v2() && selected.is_some() {
                 // r4-calm (R4.4): a smaller viewport, not tail space: the
@@ -230,6 +270,12 @@ impl Workspace {
                     changed
                 },
             ))
+            .when(!empty && self.design().is_v2() && selected.is_some(), |d| {
+                d.child(chrome::measure(
+                    cx.entity().downgrade(),
+                    |this: &mut Self, bounds, _| this.settle_short_pad(bounds.size.height),
+                ))
+            })
             .when(empty && !only_children, |d| {
                 d.child(self.render_empty_state(compact, window, cx))
             })
@@ -237,29 +283,9 @@ impl Workspace {
                 d.child(self.render_child_only(window, cx))
             })
             .when(!empty, |d| {
-                // r6-qa (R6.1): under the wake strip the transcript fades in
-                // (as it fades out above the dock), so a half-scrolled line
-                // never shows sliced at the strip's edge.
-                let transcript = if strip.is_some() {
-                    div()
-                        .relative()
-                        .flex_1()
-                        .min_h_0()
-                        .flex()
-                        .flex_col()
-                        .child(transcript)
-                        .child(
-                            super::primitives::fade_mask(
-                                super::primitives::FadeEdge::Top,
-                                p.chat,
-                                &p,
-                            )
-                            .debug_selector(|| "wake-strip-fade".into()),
-                        )
-                        .into_any_element()
-                } else {
-                    transcript.into_any_element()
-                };
+                // r7-pages (R7.8): no fade under the wake strip (it let
+                // faded rows ghost through); the strip is opaque and ends
+                // in a hairline the transcript scrolls under.
                 d.children(strip)
                     .child(transcript)
                     .child(self.wheel_smoother(cx))
@@ -271,22 +297,26 @@ impl Workspace {
             .when(
                 !empty && !self.follow && selected.is_some() && self.design().is_v2(),
                 |d| {
+                    // r7-pages (R7.8): the fade never slices a line. Its
+                    // lower half is solid canvas one reading line tall, so
+                    // a line the viewport cuts at its edge is hidden
+                    // whole; the upper half fades over the next line up.
+                    let t = self.tokens();
+                    let line = t.text.lead * t.transcript().prose_line_height;
+                    let solid = gpui::Hsla::from(rgb(p.chat));
                     d.child(
                         div()
                             .absolute()
                             .left_0()
                             .w_full()
                             .bottom(self.transcript_inset_v2(compact))
-                            .h(px(self.tokens().layout.fade * 1.5))
+                            .h(px(line + line))
                             .debug_selector(|| "transcript-fade".into())
-                            .child(
-                                super::primitives::fade_mask(
-                                    super::primitives::FadeEdge::Bottom,
-                                    p.chat,
-                                    &p,
-                                )
-                                .h_full(),
-                            ),
+                            .bg(gpui::linear_gradient(
+                                0.,
+                                gpui::linear_color_stop(solid, 0.5),
+                                gpui::linear_color_stop(solid.opacity(0.), 1.),
+                            )),
                     )
                 },
             )
@@ -314,6 +344,48 @@ impl Workspace {
             .bg(rgb(p.chat))
             .child(chat)
             .children(terminal_panel)
+    }
+
+    /// r7-pages (R7.6): after a frame, the room a bottom-aligned short
+    /// transcript leaves above its first row moves under its last row
+    /// (`short_pad`), so the conversation is anchored to the top. Once the
+    /// rows outgrow the viewport the pad shrinks back to nothing. Returns
+    /// whether it changed (worth a re-render).
+    fn settle_short_pad(&mut self, pane: gpui::Pixels) -> bool {
+        let count = self.list.item_count();
+        if count == 0 {
+            return false;
+        }
+        // The rows' total height (the pad included). Following the tail,
+        // the bottom-aligned list has no logical scroll top and its scroll
+        // offset is exactly that. Otherwise (a row opened and scrolled
+        // itself into view, say) it is known only once the rows overflow;
+        // while they fit, the pad stays as it is.
+        let rows = if self.list.logical_scroll_top().item_ix >= count {
+            -self.list.scroll_px_offset_for_scrollbar().y
+        } else {
+            let over = self.list.max_offset_for_scrollbar().height;
+            if over <= gpui::Pixels::ZERO {
+                return false;
+            }
+            over + self.list.viewport_bounds().size.height
+        };
+        // The pane's height, not the list's: a list sized by its content
+        // would grow with the pad it is given.
+        let room = pane - self.list_insets;
+        if room <= gpui::Pixels::ZERO {
+            let changed = self.short_pad > gpui::Pixels::ZERO;
+            self.short_pad = gpui::Pixels::ZERO;
+            return changed;
+        }
+        // Capped at the room, so a frame whose rows are not measured yet
+        // can never grow the pad without end.
+        let want = (room - (rows - self.short_pad)).clamp(gpui::Pixels::ZERO, room);
+        let changed = (f32::from(want) - f32::from(self.short_pad)).abs() > 0.5;
+        if changed {
+            self.short_pad = want;
+        }
+        changed
     }
 
     // r4-calm (R4.4)
@@ -636,7 +708,15 @@ impl Workspace {
                 },
             ))
             .when(composer_docked, |d| {
-                d.child(self.render_composer(layout, window, cx))
+                let composer = self.render_composer(layout, window, cx);
+                if self.design().is_v2() {
+                    // r7-pages (R7.6): the one composer width, as on the
+                    // welcome and New session, whatever the reading width.
+                    let width = system::composer_width(&self.palette());
+                    d.child(div().w_full().max_w(px(width)).mx_auto().child(composer))
+                } else {
+                    d.child(composer)
+                }
             });
         let dock_height = f32::from(self.composer_dock_bounds.size.height);
         let opaque_until = 1. - DOCK_FADE / (dock_height + DOCK_FADE).max(DOCK_FADE * 2.);

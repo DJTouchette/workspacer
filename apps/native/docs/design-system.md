@@ -323,7 +323,7 @@ Each entry gives:
 |---|---|---|---|---|
 | `Rest` | `border_strong` | full | "Ask anything, or describe a task…" | Primary, disabled until there is a draft |
 | `Focus` | `focus` | full | as Rest | Primary when there is a draft |
-| `Yielded` (a decision waits) | `border_strong` | R6.3: unfocused and empty, **one bordered line** "Reply instead…" (`composer_reply_line`) with the digit hint at its end; on focus the full field, never faded | "Reply instead — the request stays pending" | **Secondary**: the decision card owns the Primary. Its tooltip says replying leaves the request pending |
+| `Yielded` (a decision waits) | `border_strong` | R6.3: unfocused and empty, **one bordered line** "Reply — the request stays open" (`composer_reply_line`) with the digit hint at its end; under a question card, a quiet text line instead (`composer_reply_link`, R7.7). On focus the full field, never faded | "Reply — the request stays open" (R7.7) | **Secondary**: the decision card owns the Primary. Its tooltip says replying leaves the request pending |
 | `Disabled` (offline, busy) | `border_strong` | `wash.yielded` | the connection's words | disabled |
 
 - **Send slot:** Send (`system::composer_send_state(can_send, deciding)`), Queue (a Primary split button while the agent works and there is a draft; its menu holds Send now and After this turn) or Stop · Esc (Destructive while the agent works and nothing is drafted). One slot, one place.
@@ -395,7 +395,7 @@ Each entry gives:
 
 ### Table
 
-- **Purpose:** dense rows: Jobs, Machines, History, the Fleet table.
+- **Purpose:** dense rows: Jobs, Machines, History, the Fleet table. R7.6: **one** table style, `system::table` (see [Table](#table-systemtable-srcuisystemtablers) under R7.6); `page_table*` are its aliases.
 - **Anatomy:** a `page_table` (surface, hairline, clipped) holding a `page_table_head` (on `base`, 12/600 secondary) and `page_table_row`s. The cells come from `Col::{Fixed, Keep, End, Flex, Auto}` widths in `pages()`. `Col::End` is a fixed width right-aligned, for numbers and times: its header sits over its values' right edge (History's "Last active"). The status column is a **fixed slot** holding a StatusCell. The actions column is a **fixed slot**: `action_slots(vec![action_slot(width, Option<control>)…])`, with `slot_button` for buttons whose label swaps.
 - **States:** row Rest and Hover (add `.id` plus a hover fill). Empty slots keep their width.
 - **API:**
@@ -452,7 +452,7 @@ Each entry gives:
 ### PageShell
 
 - **Purpose:** the page templates. **There are exactly two (R6.5):**
-  - **Centred form** (`PageWidth::Form`, `pages().form` 880, centred): Settings, Agent setup, New session, Session details, Model, Handoff, Pull request.
+  - **Form** (`PageWidth::Form`, body `pages().form` 880, left-aligned under the full-width header, R7.6): Settings, Agent setup, Session details, Model, Handoff, Pull request. New session is the welcome's centred composer (`PageWidth::Composer`).
   - **Full-width table** (`PageWidth::Wide`, `pages().wide` 1240): Projects, Jobs, History, Machines, Scratch, Changes. Fleet's tile grid is the same template at the grid's cap (`PageWidth::Grid`, 1440).
 - **Anatomy:** the page scroller (`Workspace::page_view`) gives every page the same top offset and gutter. `page_header` contains:
   - the back link, **only on drill-in pages** (Session details, Model, Changes…). The sidebar's destinations (Projects, Jobs, History, Machines, Scratch, Settings, Fleet, New session) have none: the sidebar is the navigation, and Esc still returns to the conversation. `page_back_v2` returns `None` for them.
@@ -461,7 +461,7 @@ Each entry gives:
   - the actions in **one** right slot
 
   The body follows, `space.xxl` below. The header and the body share one width rule.
-- **Widths:** see the two templates above. `page_shell` centres a Form column; New session's centred composer sits in that template (the composer owns how it looks).
+- **Widths:** see [One page, one table, one composer](#one-page-one-table-one-composer-r76). The header always takes the page frame; only the body is capped.
 - **Header actions:** one right slot. Refresh (Tertiary, `Concept::Refresh`) comes first; the page's main action (Add…, New job) is last and **Secondary on every page**, so a pending decision on the page can own the one Primary.
 - **Pages on it (r5-shell):** every feature page (`feature_page_v2`), Projects, Settings, New session, the Changes page (stretched to the window: `.flex_1().min_h_0()` on the shell) and Fleet. Session history keeps its rows as the scroller's own children (`page_list`) for the keyboard cursor, under the same header width and spacing.
 - **Repeated facts go to the group header (R6.5).** A folder row inside a Projects group shows only what is live there (needs you, working); the group's head carries the totals (scratch files to run, sessions). On Machines, an offline machine with nothing to offer is named once above the links table, not as a muted row under every project.
@@ -494,6 +494,89 @@ Each entry gives:
 - **Anatomy:** a 12 mono label in a hairline box (`kbd`). A **hint** (`keycap_hint`) trails a control: tertiary with a faint edge, or the label colour with no box on a Primary fill.
 - **API:** `primitives::kbd(label, &p)`, `keycap_hint(key, on_fill, &p)`. In tooltips, spaces in the shortcut separate the keycaps (`tooltip_view(label, Some("g n"), &p)`; `tooltip_view_keys` takes an owned shortcut).
 - **Don't:** tint a keycap, or join keycaps without gaps.
+
+## One page, one table, one composer (R7.6)
+
+Round 7 leaves one rule for each of these. Each is one component; a page,
+table or composer that does not use it is a bug.
+
+### Page template (`system::page_shell`, `src/ui/system/page.rs`)
+
+Every top-level page (Projects, History, Jobs, Machines, Scratch, Settings,
+Agent setup) and every drill-in page has the same header in the same place:
+
+| Part | Rule |
+|---|---|
+| Frame | The page scroller (`page_view`) gives every page the same top offset and side gutter. No page adds its own |
+| Header | Title (24/600) and its one-line purpose at the frame's left edge; actions in **one** slot at the frame's right edge. The header always spans the frame (`PageWidth::frame`, `pages().wide` 1240), whatever the body's width, so titles and actions never move between pages |
+| Back link | Only on drill-in pages. Sidebar destinations and Agent setup have none (`top_level_page`) |
+| Body | `space.xxl` below the header, left-aligned, at one of two widths |
+
+| Body width | `PageWidth` | Pages |
+|---|---|---|
+| Form, 880 (`pages().form`) | `Form` | Settings, Agent setup, Session details, Model, Handoff, Pull request |
+| Full width (`pages().wide`) | `Wide` | Projects, Jobs, History, Machines, Scratch, Changes |
+| Fleet's grid cap | `Grid` | Fleet (header on the grid's edge) |
+| Composer width, centred | `Composer` | New session only: it is the welcome |
+
+Nothing else. A form is never centred under a left-aligned header.
+
+### Table (`system::table`, `src/ui/system/table.rs`)
+
+One table style for History, Jobs, Machines (both its tables) and the Fleet
+table:
+
+- **Frame:** `table(&p)`: the card surface, a hairline `card_border` edge,
+  `radius.panel`, clipped.
+- **Head:** `table_head(columns, &p)`: the first child, on `base`, 12/600
+  secondary, `layout.row_height` tall, no edge above.
+- **Rows:** `table_row(&p)`: `pages().row` tall at least, `cell_x` padding,
+  a hairline (`border`) above, the `space.lg` cell gap. Hover fill
+  `roles.hover`; the keyboard cursor's row `selected`.
+- **Group rows:** `table_band(&p)`: a row on `base`, 14/600, inside the same
+  frame (History's projects). Never a heading floating between tables.
+- **Columns:** `primitives::page_cell(Col)` (`Fixed`, `Keep`, `End`, `Flex`,
+  `Auto`), shared by head and rows so they line up.
+- **List-built tables:** where each row must be the scroller's own child
+  (History, for the keyboard cursor), wrap each item in
+  `table_part(TablePart::of(i, len), &p)`. The slices draw the same frame:
+  `Head` closes the top, `Body` the sides, `Foot` the bottom.
+- `primitives::page_table`, `page_table_head` and `page_table_row` are thin
+  aliases of these, kept for existing call sites.
+
+### Composer width (`system::composer_width`)
+
+The composer is one width everywhere: `pages().form`, 880, the
+Comfortable reading width.
+
+- **Welcome:** the welcome column is capped at it (headline, composer,
+  starters, agent checklist).
+- **New session:** `PageWidth::Composer`, the same centred column.
+- **Conversation:** the dock caps the composer at it, centred, even when the
+  reading width is Wide or Full (the transcript widens; the composer does
+  not).
+
+### Conversation details that go with these (R7.6, R7.8)
+
+- **Short conversations read from the top.** The transcript list is
+  bottom-aligned (it follows the tail). While following, the room it would
+  leave above the first row goes under the last row instead
+  (`short_pad`, `settle_short_pad`), and shrinks to nothing once the rows
+  fill the viewport.
+- **Subagent view:** one "Back to parent", the labelled button on the
+  read-only bar. The header has no back arrow and labels Refresh; the
+  "parent is waiting" line only says so.
+- **Wake strip:** opaque canvas with a hairline under it. No fade under it.
+- **Jump-to-latest fade:** two reading lines tall, the lower line solid
+  canvas, so a line the viewport cuts is hidden whole, never sliced.
+- **Stop and Queue:** typing in a running session keeps Stop (Bordered
+  destructive) beside Queue (Primary).
+- **Inline code:** `system::inline_code_bg(&p)`, a `wash.tone_rest` wash of
+  the text colour over its surface, in prose, decision headlines and saved
+  rules. The contrast gate checks text on it and the chip against every
+  surface.
+- **"Changes +N −M"** loads when a session is selected
+  (`sync_change_summary`), not only once the panel opens.
 
 ---
 

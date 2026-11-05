@@ -103,6 +103,10 @@ fn project_read(command: &Command) -> bool {
                     | Request::ScratchPending
                     | Request::InspectProject { .. }
                     | Request::BrowseFolders { .. }
+                    // r7-pages (R7.8): the selected session's change count,
+                    // read in the background for the toolbar.
+                    | Request::Changes { .. }
+                    | Request::DiffSet { .. }
             )
     )
 }

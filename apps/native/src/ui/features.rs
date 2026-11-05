@@ -2554,6 +2554,9 @@ impl Workspace {
                     | Screen::Hosts
                     | Screen::Scratch
                     | Screen::Fleet
+                    // r7-pages (R7.6): Agent setup is a top-level page
+                    // too (the welcome's "Set up agents"): no back link.
+                    | Screen::Setup
             )
     }
 

@@ -852,8 +852,10 @@ fn table(p: &Palette) -> Div {
     section("Table", p)
         .debug_selector(|| "gallery-table".into())
         .child(
-            prim::page_table(p)
-                .child(prim::page_table_head(&cols, p))
+            // r7-pages (R7.6): the one table style, a group row in its frame.
+            super::table(p)
+                .child(super::table_head(&cols, p))
+                .child(super::table_band(p).child("This workspace"))
                 .children(
                     rows.into_iter()
                         .enumerate()
@@ -1199,7 +1201,7 @@ fn composers(p: &Palette) -> Div {
         .child(specimen(
             "gallery-composer-yielded",
             ComposerState::Yielded,
-            "Reply instead — the request stays pending",
+            "Reply — the request stays open",
             true,
             true,
             true,
@@ -1211,12 +1213,27 @@ fn composers(p: &Palette) -> Div {
                 .flex_col()
                 .gap(px(t.space.xs))
                 .child(super::composer_reply_line(
-                    "Reply instead…",
+                    "Reply — the request stays open",
                     Some(super::decision_keys_hint(3, p).into_any_element()),
                     p,
                 ))
                 .child(caption(
                     "A decision waits, composer unfocused: one line that expands on focus; the hint says the digits answer the request",
+                    p,
+                )),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.xs))
+                .child(super::composer_reply_link(
+                    "Reply — the request stays open",
+                    Some(super::decision_keys_hint(3, p).into_any_element()),
+                    p,
+                ))
+                .child(caption(
+                    "R7.7: under a question card (which holds the one input) the composer folds to a quiet text line, not a second field",
                     p,
                 )),
         )

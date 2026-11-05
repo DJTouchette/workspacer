@@ -479,6 +479,9 @@ impl Workspace {
         } else if self.design().is_v2() {
             items.push(self.recent_head_v2().into_any_element());
         }
+        // r7-pages (R7.6): the head, bands and rows are one table frame,
+        // drawn in slices because each row is the scroller's own child.
+        let table_from = items.len().saturating_sub(1);
         let mut row_ix = 0;
         for (g, group) in page.groups.iter().enumerate() {
             let collapsed = !page.searching && self.extras.recent.collapsed.contains(&group.key);
@@ -571,6 +574,15 @@ impl Workspace {
                         )
                         .into_any_element(),
                 );
+            }
+        }
+        if self.design().is_v2() && !(page.groups.is_empty() && !loading) {
+            let len = items.len() - table_from;
+            for (i, item) in items.iter_mut().skip(table_from).enumerate() {
+                let inner = std::mem::replace(item, div().into_any_element());
+                *item = system::table_part(system::TablePart::of(i, len), &p)
+                    .child(inner)
+                    .into_any_element();
             }
         }
         if !page.searching && self.history_next().is_some() {
@@ -1280,12 +1292,8 @@ impl Workspace {
 
     fn recent_head_v2(&self) -> Div {
         let p = self.palette();
-        let t = p.tokens;
         primitives::page_table_head(&self.recent_columns(), &p)
             .debug_selector(|| "history-head".into())
-            .border_t_0()
-            .rounded(px(t.radius.control))
-            .mt(px(t.space.sm))
     }
 
     fn render_recent_group_v2(
@@ -1310,58 +1318,54 @@ impl Workspace {
             GroupKind::Worktrees => format!("{} · worktrees", group.path),
             GroupKind::Project | GroupKind::Folder => group.path.clone(),
         };
-        let s = primitives::table_style(&p);
-        chrome::interactive_control(div().id(("history-group", g)), p, !searching)
-            .debug_selector(move || format!("history-group-{g}"))
-            .mt(px(if g > 0 { t.space.lg } else { t.space.xs }))
-            .h(px(t.pages().row))
-            .px(px(s.cell_x))
-            .rounded(px(t.radius.control))
-            .flex()
-            .items_center()
-            .gap(px(t.space.md))
-            .when(!searching, |d| {
-                d.hover(move |s| s.bg(rgb(p.roles.hover)))
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_recent_group(&key, cx)))
+        chrome::interactive_control(
+            system::table_band(&p).id(("history-group", g)),
+            p,
+            !searching,
+        )
+        .debug_selector(move || format!("history-group-{g}"))
+        .when(!searching, |d| {
+            d.hover(move |s| s.bg(rgb(p.roles.hover)))
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_recent_group(&key, cx)))
+        })
+        .child(
+            Icon::new(if collapsed {
+                IconName::ChevronRight
+            } else {
+                IconName::ChevronDown
             })
-            .child(
-                Icon::new(if collapsed {
-                    IconName::ChevronRight
-                } else {
-                    IconName::ChevronDown
-                })
-                .size(px(t.icon.sm))
-                .text_color(rgb(p.roles.text_tertiary)),
-            )
-            .child(self.project_mark(project, &group.path, t.layout.avatar))
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .max_w(px(t.pages().when))
-                    .truncate()
-                    .text_size(px(t.text.body))
-                    .font_weight(FontWeight(t.weight.semibold))
-                    .text_color(rgb(p.text))
-                    .child(group.name.clone()),
-            )
-            .child(tabular(
-                div()
-                    .flex_shrink_0()
-                    .text_size(px(t.text.meta))
-                    .text_color(rgb(p.roles.text_tertiary))
-                    .debug_selector(move || format!("history-count-{g}"))
-                    .child(count),
-            ))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .font_family(mono_font())
-                    .text_size(px(t.text.meta))
-                    .text_color(rgb(p.roles.text_tertiary))
-                    .child(hint),
-            )
+            .size(px(t.icon.sm))
+            .text_color(rgb(p.roles.text_tertiary)),
+        )
+        .child(self.project_mark(project, &group.path, t.layout.avatar))
+        .child(
+            div()
+                .flex_shrink_0()
+                .max_w(px(t.pages().when))
+                .truncate()
+                .text_size(px(t.text.body))
+                .font_weight(FontWeight(t.weight.semibold))
+                .text_color(rgb(p.text))
+                .child(group.name.clone()),
+        )
+        .child(tabular(
+            div()
+                .flex_shrink_0()
+                .text_size(px(t.text.meta))
+                .text_color(rgb(p.roles.text_tertiary))
+                .debug_selector(move || format!("history-count-{g}"))
+                .child(count),
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .font_family(mono_font())
+                .text_size(px(t.text.meta))
+                .text_color(rgb(p.roles.text_tertiary))
+                .child(hint),
+        )
     }
 
     fn render_recent_row_v2(
@@ -1397,8 +1401,6 @@ impl Workspace {
             .group(ROW_GROUP)
             .debug_selector(move || format!("recent-row-{ix}"))
             .relative()
-            .rounded(px(t.radius.control))
-            .border_t_0()
             .when(connected, |d| {
                 d.cursor_pointer()
                     .on_click(cx.listener(move |this, _, window, cx| {

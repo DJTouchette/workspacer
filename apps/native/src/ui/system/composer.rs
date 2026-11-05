@@ -12,6 +12,14 @@
 use super::super::primitives::{self as prim, ButtonSize, ButtonVariant, ControlState};
 use super::*;
 
+/// r7-pages (R7.6): the composer's one width, on the welcome, New session
+/// and in the conversation: the form measure (880), which is also the
+/// Comfortable reading width. A wider reading column (Wide, Full) keeps the
+/// composer at this width, centred under it.
+pub(crate) fn composer_width(p: &Palette) -> f32 {
+    p.tokens.pages().form
+}
+
 /// The composer's states (`docs/design-system.md`, TextField / Composer).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ComposerState {
@@ -150,6 +158,47 @@ pub(crate) fn composer_reply_line(
             .child(div().min_w_0().truncate().child(label.into()))
             .children(hint),
     )
+}
+
+/// r7-pages (R7.7): the composer folded under a question card. The card
+/// holds the one input, so the composer is not a second field: it is a
+/// quiet text line ("Reply — the request stays open") that opens the full
+/// composer on click, with the digit hint at its end.
+pub(crate) fn composer_reply_link(
+    label: impl Into<SharedString>,
+    hint: Option<AnyElement>,
+    p: &Palette,
+) -> Div {
+    let t = p.tokens;
+    div()
+        .w_full()
+        .h(px(t.layout.control_height))
+        .px(px(t.space.lg + t.space.xs))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(t.space.md))
+        .rounded(px(t.radius.control))
+        .text_size(px(t.text.meta))
+        .text_color(rgb(p.roles.text_tertiary))
+        .hover(|s| {
+            s.bg(rgb(p.roles.hover))
+                .text_color(rgb(p.roles.text_secondary))
+        })
+        .child(
+            div()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(px(t.space.sm))
+                .child(
+                    Icon::new(IconName::Undo2)
+                        .size(px(t.icon.sm))
+                        .flex_shrink_0(),
+                )
+                .child(div().min_w_0().truncate().child(label.into())),
+        )
+        .children(hint)
 }
 
 /// R6.3: where the digit keys go. "1–3 answer the request" while the

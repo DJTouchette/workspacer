@@ -342,7 +342,7 @@ impl Workspace {
             prose: Some(ProseColors {
                 strong: rgb(p.text).into(),
                 code: rgb(p.text).into(),
-                code_background: rgb(p.code_inline).into(),
+                code_background: system::inline_code_bg(&p),
                 marker: rgb(p.roles.text_tertiary).into(),
                 muted: rgb(p.roles.text_secondary).into(),
                 rule: rgb(p.border).into(),

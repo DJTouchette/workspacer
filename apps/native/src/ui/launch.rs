@@ -2152,7 +2152,7 @@ impl Workspace {
         });
         // R6.4 on the r6-surfaces form template: the welcome's centred
         // question is the page's title and the composer its body, in the one
-        // centred form column (`PageWidth::Form`), held near the window's
+        // centred composer column (`PageWidth::Composer`), held near the window's
         // middle like the welcome while it fits.
         let headline = div()
             .debug_selector(|| "launch-title".into())
@@ -2201,7 +2201,7 @@ impl Workspace {
                 headline,
                 None,
                 body,
-                system::PageWidth::Form,
+                system::PageWidth::Composer,
                 &p,
             ));
         div()

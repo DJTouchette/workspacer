@@ -836,7 +836,7 @@ impl Workspace {
         div()
             .debug_selector(move || key.into())
             .w_full()
-            .max_w(px(t.layout.chat_width))
+            .max_w(px(system::composer_width(&p)))
             .flex()
             .flex_col()
             .items_center()

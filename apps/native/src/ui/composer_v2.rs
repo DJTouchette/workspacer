@@ -6,7 +6,7 @@
 //! - One primary per region. The composer's send is the primary until a
 //!   decision is open; then the decision card owns the primary and the
 //!   composer stays a visible, bordered field (R5.4, `system::composer_field`)
-//!   whose placeholder says "Reply instead — the request stays pending" and
+//!   whose placeholder says "Reply — the request stays open" and
 //!   whose Send is Secondary (`system::composer_send_state`).
 //! - One primary button in one place whose label says what it does:
 //!   "Send" when idle; "Queue" while the agent works and there is a draft
@@ -304,11 +304,13 @@ pub(super) const AFTER_TURN_COPY: &str =
 
 /// R6.3: the one line the composer folds to while a decision waits and it
 /// is not in use.
-pub(super) const REPLY_LINE: &str = "Reply instead…";
+/// r7-pages (R7.7): it says the consequence: replying leaves the request
+/// open.
+pub(super) const REPLY_LINE: &str = "Reply — the request stays open";
 
 /// The composer's placeholder while a decision waits (R5.4: the field
 /// stays, only its words change).
-pub(super) const REPLY_INSTEAD: &str = "Reply instead — the request stays pending";
+pub(super) const REPLY_INSTEAD: &str = "Reply — the request stays open";
 
 /// The composer's placeholder while a decision waits on the user (the
 /// default otherwise). It never repeats the card.
@@ -681,7 +683,15 @@ impl Workspace {
                         .debug_selector(|| "decision-keys-hint".into())
                         .into_any_element()
                 });
-            let line = system::composer_reply_line(REPLY_LINE, hint, &p)
+            // r7-pages (R7.7): a question card holds the one input, so the
+            // composer under it folds to a quiet line, not a second field.
+            let question = decisions.first() == Some(&Decision::Questions);
+            let line = if question {
+                system::composer_reply_link(REPLY_LINE, hint, &p)
+            } else {
+                system::composer_reply_line(REPLY_LINE, hint, &p)
+            };
+            let line = line
                 .id("floating-composer")
                 .debug_selector(|| "chat-composer".into())
                 .cursor_text()
@@ -822,6 +832,10 @@ impl Workspace {
             self.composer_ui.send_menu = false;
         }
         let send = self.render_send_control(slot, enabled, can_send && draft, deciding, cx);
+        // r7-pages (R7.8): typing in a running session never hides Stop;
+        // Queue appears beside it, in the primary's place at the end.
+        let stop_beside = (slot == SendSlot::Queue && working)
+            .then(|| self.render_send_control(SendSlot::Stop, enabled, false, false, cx));
 
         let mut leading = vec![attach.into_any_element()];
         leading.extend(folder.map(IntoElement::into_any_element));
@@ -832,6 +846,7 @@ impl Workspace {
             .into_iter()
             .map(IntoElement::into_any_element)
             .collect();
+        trailing.extend(stop_beside);
         trailing.push(send);
         let toolbar = system::composer_toolbar(leading, trailing, &p);
 
