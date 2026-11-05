@@ -242,12 +242,15 @@ impl Ask {
     }
 }
 
+/// A question's options: (label, description).
+pub(super) type Options = Vec<(String, Option<String>)>;
+
 /// The question a tile answers itself: exactly one, single choice, not
 /// secret and not an MCP form. (headline, options).
 pub(super) fn answerable(
     questions: &Value,
     elicitation: Option<&str>,
-) -> Option<(String, Vec<(String, Option<String>)>)> {
+) -> Option<(String, Options)> {
     if elicitation.is_some() {
         return None;
     }
@@ -1034,14 +1037,14 @@ impl Workspace {
                     .take_while(|t| t.bucket == Bucket::NeedsYou)
                     .count();
                 let mut cards: Vec<AnyElement> = Vec::new();
-                for n in 0..waiting {
-                    cards.push(self.render_fleet_tile(n, &tiles[n], n == focus, cx));
+                for (n, tile) in tiles.iter().enumerate().take(waiting) {
+                    cards.push(self.render_fleet_tile(n, tile, n == focus, cx));
                 }
                 for (ix, job) in jobs.iter().enumerate() {
                     cards.push(self.render_fleet_job(ix, job, &all_jobs, cx));
                 }
-                for n in waiting..tiles.len() {
-                    cards.push(self.render_fleet_tile(n, &tiles[n], n == focus, cx));
+                for (n, tile) in tiles.iter().enumerate().skip(waiting) {
+                    cards.push(self.render_fleet_tile(n, tile, n == focus, cx));
                 }
                 system::tile_grid(cols as u16, &p)
                     .debug_selector(|| "fleet-grid".into())
