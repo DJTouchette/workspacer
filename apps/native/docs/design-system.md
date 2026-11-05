@@ -312,22 +312,22 @@ The table itself, its seven glyphs and the words, are in [Status and vocabulary 
 |---|---|---|---|---|
 | `Rest` | `border_strong` | full | "Ask anything, or describe a task…" | Primary, disabled until there is a draft |
 | `Focus` | `focus` | full | as Rest | Primary when there is a draft |
-| `Yielded` (a decision waits) | `border_strong` | R6.3: unfocused and empty, **one bordered line** "Reply — the request stays open" (`composer_reply_line`) with the digit hint at its end; under a question card, a quiet text line instead (`composer_reply_link`, R7.7). On focus the full field, never faded | "Reply — the request stays open" (R7.7) | **Secondary**: the decision card owns the Primary. Its tooltip says replying leaves the request pending |
+| `Yielded` (a decision waits) | — | R8.4: **hidden**. While an approval, a plan or a structured question waits, the conversation's composer does not draw at all; its input moves into the card (see "Decision and reply" below). `Yielded` remains for a usage limit, which does not take the slot | "Reply — the request stays open" | **Secondary**: the decision card owns the Primary |
 | `Disabled` (offline, busy) | `border_strong` | `wash.yielded` | the connection's words | disabled |
 
 - **Send slot:** Send (`system::composer_send_state(can_send, deciding)`), Queue (a Primary split button while the agent works and there is a draft; its menu holds Send now and After this turn) or Stop · Esc (Destructive while the agent works and nothing is drafted). One slot, one place.
-- **Where digit keys go (R6.3):** digits answer the keyed decision only while no text field has focus (`ComposerUi::digits_to_card`, set once per frame by the dock). Then the decision shows its keycaps and the one-line composer ends with `decision_keys_hint` ("1–4 answer the request"). While the composer has focus, digits type: the keycaps and the hint go. Esc leaves the composer and hands the digits back.
+- **Where digit keys go (R6.3):** digits answer the keyed decision only while no text field has focus (`ComposerUi::digits_to_card`, set once per frame by the dock). Then the decision shows its keycaps; the card is the only place they appear (R8.2). While the card's reply has focus, digits type there. Esc closes the reply and hands the digits back. A folded card (below) takes no digits.
 - **Access chip (R6.4):** `access_chip` sits beside the model chip ("Sonnet · Ask first"): the mode in force, or its default until the agent reports one. It opens `access_option` rows that apply at once (no Apply). Full access shows a warning glyph and its word in the warning hue, `roles.caution`. One word per mode everywhere, `Permission::word()`: Ask first, Can edit, Plan only, Full access. The model popover follows the same rule for all three of its choices: a model, an effort or an access picked there applies at once, with no Apply button; the header's access chip uses the same words and the same warning hue. Its lists share one selection idiom: a leading check in a fixed slot (models and access alike), and Full access reads in the warning hue there too.
 - **New session is the welcome (R6.4):** the centred 24/600 question, then this composer (`launch_task_box_v2`) with machine, project, agent, model and access chips and Start (Primary) inside it. A chip opens its choices in one card below; context window and name fold under "More options".
-- **Slash menu:** a `menu` of `list_row`s anchored above the composer (`anchored_menu`, `MenuAnchor::AboveStart`). While a decision waits it sits in the dock's flow above the composer instead, pushing the decision up (the dock's cards shrink and scroll), so it never covers the request.
+- **Slash menu:** a `menu` of `list_row`s anchored above the composer (`anchored_menu`, `MenuAnchor::AboveStart`). In a card's reply it hangs above the reply's input, inside the card's own space.
 - **API** (`src/ui/system/composer.rs`):
   - `composer_field(state, &p) -> Div`, then `composer_body(state, compact, &p)` holding `composer_text(min_lines, &p)` (the input) and `composer_toolbar(leading, trailing, &p)`.
   - `composer_specimen(id, state, text, placeholder, deciding, can_send, &p)` draws a static composer (the gallery: the live one needs an `InputState`).
 - **Do:**
-  - Change only the placeholder, the one-line fold and Send's tier while a decision waits.
+  - Hide the composer while a decision holds its slot, and reply from the card (R8.4).
   - Use `composer_send_state`; never pick Send's tier locally.
 - **Don't:**
-  - Hide or fade the field while a decision waits (it folds to its bordered line, never away).
+  - Fold the composer to a line under a card, or show a second input beside the card's reply.
   - Build a second composer, or style a task box locally.
   - Let the slash menu (or any menu) cover a pending decision.
 
@@ -633,6 +633,15 @@ One word per concept, everywhere:
 - `system::key_hint(keys, label, &p)` and `system::key_hints(hints, &p)` draw every keyboard hint footer: faint keycaps, then plain words ("↑ ↓ Move · ↵ Open"). The Fleet and Projects footers use them; no footer spells shortcuts out in prose.
 - `format::EMPTY` ("—", an em dash) is the one empty-cell mark.
 
+### Meta lines: three items, one emphasised (R8.2)
+
+Every meta line (a turn's work line, an event row, a subagent row in the transcript) shows **at most three items, one of them emphasised** (medium weight, the line's first item). The rest go to the hover or to Details. Status badges and actions on the right are not meta items.
+
+- **Turn meta line** (`transcript_v2::work_meta`, a `MetaLine`): **"Worked 5m 12s"** · "6 tools" · one extra, the most urgent of a failure ("1 failed", red), a recovery ("1 failed, then passed") and the subagents ("1 subagent"; never "delegated", R8.6). The skill it used and any other extra are on the row's hover.
+- **Event row** (`event_row`): the verb (emphasised) counts one, the target one per item ("Explore · Haiku 4.5" is two, `meta_items`), the scope and diff one. What room is left takes the facts in order of urgency: a fault (always shown), then the result, then the duration (`keep_facts`). Facts that do not fit are the hover of the facts that do (`event-facts-hover`), or of the verb.
+- **Subagent row:** the task (emphasised), then what it is doing now or, when idle, its role, then its time. The role, model, tools, tokens and cost are on the row's hover.
+- **Don't:** add a fourth item to a line, or emphasise two.
+
 ### A calm sidebar (R7.5)
 
 - Rows that want the user (Needs you, Ready for review, a fault) are semibold in the primary text colour. The selected row is primary, regular. Every other row is regular in `text_secondary`.
@@ -685,6 +694,29 @@ See Page anatomy. The same rules apply inside cards and panels: one line, tertia
 
 ---
 
+## Decision and reply: one area (R8.4)
+
+The conversation column is three parts: the header, the transcript, then one decision-and-reply area.
+
+### Decision and reply (`system::card_reply`, `src/ui/system/composer.rs`)
+
+- **One component, one input.** While an approval, a plan or a structured question waits, the decision card and the reply are one component and the composer is **hidden, not folded** (`Workspace::composer_hidden`).
+- **Reply instead.** The card's quiet row carries "Reply instead", a Text action with no key (`Decision::reply`; a question card puts it at the end of its footer). It opens the card's one input, last in the card (`Decision::reply_field`): a divider, the composer's own `Input` (a draft survives; Enter sends as in the composer; Esc cancels), a tertiary line "The request stays open until you answer it" (with "1 file attached" when there is one), then Cancel (Tertiary) and **"Send to Claude"** (Secondary, arrow-up): the send names where the text goes. The card keeps the one Filled button.
+- **Opening.** "Reply instead", Ctrl+L (focus the composer), or a draft already there opens the reply (`settle_reply`, once per frame). It stays open for that decision (`ComposerUi::reply_open`, keyed by session and card). A note (Deny with note, Keep planning) closes it: one input at a time.
+- **API:** `card_reply(input, note, actions, &p) -> Div`.
+
+### The folded card (`system::decision_line`)
+
+- When the reader scrolls up through the transcript (not following) and is not writing in the card, the card folds to **one line**: the attention frame, "● Needs you · Run cargo test in native? · Open" (`decision_line(summary, action, &p)`, `Workspace::decision_summary`). Open goes back to the latest and unfolds the card.
+- A folded card takes no digit keys.
+- **Jump to latest never covers text.** It sits in its own band in the gutter above the dock (the transcript's viewport ends above it). While the folded card shows, the line replaces it: there is no separate pill.
+
+### Updates chip (`system::updates_chip`, `update_row`, `updates_popover`)
+
+- Other sessions' wakes never sit in the transcript. They are one chip in the conversation header, after the title: "2 updates" (R8.6: never "from other sessions"), led by the worst state's glyph (Needs you, else a failure) or a quiet inbox icon.
+- The chip opens a popover anchored below it (`MenuAnchor::BelowStart`): **one row per event** (each agent a wake reports on), **failures first**, then what needs you, then the rest, newest first. Each row is its state glyph, what happened in words (the full line on hover), and its own **Open** jump link when that session can be opened from here.
+- Opening the popover never moves the reading position.
+
 ## Decisions: one key map and three tiers
 
 R7.1 and R7.2. One rule each, enforced in code and by tests.
@@ -709,7 +741,7 @@ The rules:
 - **One verb pair.** Every approval says "Allow / Deny", job proposals included.
 - **Deny with note is a visible Text button** on slot 4 (`Decision::deny_note`), never a menu item. On a Fleet tile or row it opens the session with the note field ready.
 - **Keycaps show only on the focused decision.** Unfocused tiles and rows show none.
-- **The hint lists exactly the keys on the card.** Both the composer's hint (`system::decision_keys_hint(&caps)`) and the Fleet footer (`fleet-hint-answer`) list them, for example "1 2 4 answer the request".
+- **The hint lists exactly the keys on the card.** The Fleet footer (`fleet-hint-answer`) lists them (R8.2: the composer has no keycap row; the card is the only place keycaps appear), for example "1 2 4 answer the request".
 - **Question cards are the one exception.** An option list is the answer itself, so its options are numbered as listed.
 - **Enforcement.** `Decision::key_map()` reports every key a decision draws and what it answers. `decision::audit` records every decision drawn in a test. The test `every_decision_keeps_the_one_key_map` (`tests/fleet.rs`) walks the focus over every Fleet card in Grid and Table, then the dock's approval and plan, then Jobs, and holds each one to `slot_map_problems`.
 
@@ -742,7 +774,7 @@ The rules:
 - **Three lines of metadata.** The headline, the reason, then one line with the risk chip and where it runs (`decision-meta`). A long command shows whole in its mono block, which is the request itself and not metadata.
 - **Details** (`Decision::detail_rows`) shows the whole command, the agent's stated reason, the access mode (`decision::access_line`: "Ask first · Asks before it runs a command or edits a file.") and, in words, what each Always allow would let through, with the provider's exact rule. After those come the rest of the request (the tool and other arguments). The folder and host are already on the card, so Details leaves them out.
 - **Verification (R7.3).** Under the meta line, the session's latest test result (`Decision::verification`, `system::verification_line`). A Fleet tile carries the same line under its status (`fleet-verification-{n}`), with or without an ask.
-- **Composer.** While a decision waits, the composer's folded line and placeholder read "Reply — the request stays open".
+- **Composer.** While a decision waits, the composer is hidden; the card's "Reply instead" opens its one input (R8.4).
 - **Fleet table.** A job proposal's Needs cell names the command it would run ("Run git branch --merged … | xargs git branch -d") with its risk chip. An approval row carries its chip in the same cell.
 
 ## Contrast

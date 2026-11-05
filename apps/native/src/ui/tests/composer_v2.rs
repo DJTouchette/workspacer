@@ -100,13 +100,10 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
     assert!(inside(&mut visual, "approve", "approval-card"));
     assert!(inside(&mut visual, "headline-code", "approval-card"));
     assert!(inside(&mut visual, "waiting-context", "approval-card"));
-    // The composer is still a bordered field, under the card (R6.3: one
-    // line until it has focus).
-    let (card, composer) = (
-        visual.debug_bounds("approval-card").unwrap(),
-        visual.debug_bounds("chat-composer").unwrap(),
-    );
-    assert!(composer.top() >= card.bottom());
+    // R8.4: the composer is hidden, not folded: the card holds the one
+    // way to reply.
+    assert!(visual.debug_bounds("chat-composer").is_none());
+    assert!(inside(&mut visual, "reply-instead", "approval-card"));
     workspace.read_with(&visual, |this, _| {
         assert_eq!(
             this.composer_ui.placeholder,
@@ -189,12 +186,12 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
         [Action::DenyWithNote(note, Some(card))] if note == "only the session tests" && card == "req-1"));
 }
 
-/// R6.3: while a decision waits, the unfocused, empty composer is one
-/// bordered line ("Reply instead…") whose end says where the digits go
-/// ("1–4 answer the request"); focused, it is the full field with its chips
-/// and Send, the digits type, and the hint and the card's keycaps go.
+/// R8.4: while a decision waits the composer is hidden and the card and
+/// the reply are one component. "Reply instead" opens one input inside the
+/// card whose send names where the text goes; digits type there, Cancel
+/// closes it, and scrolled up the card folds to one line.
 #[gpui::test]
-fn the_composer_folds_to_one_line_under_a_decision(cx: &mut TestAppContext) {
+fn the_card_holds_the_one_reply_while_a_decision_waits(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.simulate_resize(size(px(1200.), px(800.)));
     v2(&workspace, &mut visual);
@@ -203,35 +200,53 @@ fn the_composer_folds_to_one_line_under_a_decision(cx: &mut TestAppContext) {
     focus_root(&workspace, &mut visual);
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
-    let line = visual.debug_bounds("chat-composer").unwrap();
-    let t = wks_native::tokens::Tokens::V2;
-    assert!(
-        f32::from(line.size.height) <= t.layout.control_height + 2. * t.stroke.hairline + 0.5,
-        "one line: {:?}",
-        line.size
-    );
-    assert!(visual.debug_bounds("composer-model").is_none());
-    assert!(inside(&mut visual, "decision-keys-hint", "chat-composer"));
+    assert!(visual.debug_bounds("chat-composer").is_none());
+    assert!(visual.debug_bounds("card-reply").is_none());
     workspace.read_with(&visual, |this, _| assert!(this.composer_ui.digits_to_card));
-    tap(&mut visual, "chat-composer");
-    // (debug_bounds keeps what was last painted, so the hint's absence is
-    // read from the state that draws it.)
-    assert!(inside(&mut visual, "composer-model", "chat-composer"));
-    assert!(inside(&mut visual, "composer-access", "chat-composer"));
-    assert!(inside(&mut visual, "composer-send", "chat-composer"));
-    workspace.read_with(&visual, |this, _| assert!(!this.composer_ui.digits_to_card));
+    tap(&mut visual, "reply-instead");
+    assert!(inside(&mut visual, "card-reply", "approval-card"));
+    assert!(inside(&mut visual, "card-reply-send", "approval-card"));
+    assert!(visual.debug_bounds("chat-composer").is_none());
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.reply_active());
+        assert!(!this.composer_ui.digits_to_card);
+        assert_eq!(this.reply_target(), "Claude");
+    });
     visual.simulate_keystrokes("2");
-    assert!(
-        acts(&mut commands).is_empty(),
-        "digits type in the composer"
-    );
-    // R6.4: the access chip beside the model applies a choice at once.
-    tap(&mut visual, "composer-access");
-    assert!(visual.debug_bounds("composer-access-menu").is_some());
-    tap(&mut visual, "composer-access-Full access");
-    assert!(matches!(acts(&mut commands).as_slice(),
-        [Action::SetPermission { label, .. }] if label == "Full access"));
-    workspace.read_with(&visual, |this, _| assert!(!this.composer_ui.access_menu));
+    assert!(acts(&mut commands).is_empty(), "digits type in the reply");
+    workspace.read_with(&visual, |this, cx| {
+        assert_eq!(this.composer.read(cx).value().as_ref(), "2")
+    });
+    tap(&mut visual, "card-reply-cancel");
+    workspace.read_with(&visual, |this, cx| {
+        assert!(!this.reply_active());
+        assert!(this.composer.read(cx).value().is_empty());
+    });
+    // Scrolled up through the transcript, the card folds to one line; its
+    // Open goes back to the latest with the card open.
+    visual.update(|_, cx| {
+        workspace.update(cx, |this, cx| {
+            this.follow = false;
+            cx.notify()
+        })
+    });
+    visual.update(|window, _| window.refresh());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("decision-line").is_some());
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.decision_collapsed());
+        let s = this.selected_session().unwrap();
+        assert_eq!(this.decision_summary(s), "Run cargo test in workspacer?");
+    });
+    // A folded card takes no digits.
+    focus_root(&workspace, &mut visual);
+    visual.simulate_keystrokes("1");
+    assert!(acts(&mut commands).is_empty());
+    tap(&mut visual, "decision-line-open");
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.follow);
+        assert!(!this.decision_collapsed());
+    });
     workspace.read_with(&visual, |this, _| {
         assert_eq!(
             this.composer_ui.placeholder,

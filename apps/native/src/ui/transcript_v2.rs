@@ -96,34 +96,117 @@ pub(super) fn inline_output(
     }
 }
 
-/// A work block's one line (r3-transcript): "Worked 5m 40s · 6 tools"
-/// (`format::worked_summary`), "Working · 3 tools" while it runs.
-pub(super) fn work_line(running: bool, duration_ms: Option<i64>, tools: usize) -> String {
-    match duration_ms {
-        _ if running => format!("Working · {}", plural(tools, "tool", "tools")),
-        Some(ms) if ms >= 1000 => format::worked_summary(ms, tools),
-        _ => format!("Worked · {}", plural(tools, "tool", "tools")),
+/// R8.2: a turn's meta line, at most three items with the first one
+/// emphasised ("**Worked 5m 12s** · 6 tools · 1 subagent"). What does not
+/// fit (the skill it used, a second extra) goes to the line's hover.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct MetaLine {
+    /// The emphasised item: the run and its duration.
+    pub lead: String,
+    /// The quiet items after it (one or two).
+    pub rest: Vec<String>,
+    /// A failure count, drawn as the row's fault (one of the three).
+    pub fault: Option<String>,
+    /// What the hover says instead.
+    pub hidden: Vec<String>,
+}
+
+impl MetaLine {
+    /// The hidden items as one line, for a tooltip.
+    pub(super) fn hover(&self) -> Option<String> {
+        (!self.hidden.is_empty()).then(|| format::meta(&self.hidden))
+    }
+
+    /// Every shown item, in order (tests and the gallery).
+    #[cfg(test)]
+    pub(super) fn shown(&self) -> String {
+        format::meta(
+            std::iter::once(self.lead.clone())
+                .chain(self.rest.iter().cloned())
+                .chain(self.fault.clone()),
+        )
     }
 }
 
-/// R6.6: a turn's one meta line: the skill it used, the run, and how many
-/// subagents it delegated ("Used skill code-review · Worked 5m 12s · 6 tools
-/// · 1 delegated").
-/// r7-pages (R7.8): joined by `format::meta`, so a part that already holds
-/// separators or spaces ("3 tools  · 1 failed") never leaves a stray dot or
-/// a double space.
-pub(super) fn meta_line(skill: Option<&str>, work: &str, delegated: usize) -> String {
-    let skill = skill
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| format!("Used skill {}", s.trim()));
-    let delegated = (delegated > 0).then(|| format!("{delegated} delegated"));
-    // The run's own facts, each re-joined with the one separator.
-    let work = format::meta(work.split('·'));
-    format::meta([
-        skill.unwrap_or_default(),
-        work,
-        delegated.unwrap_or_default(),
-    ])
+/// "1 subagent", "3 subagents" (R8.6: never "delegated").
+pub(super) fn subagents_word(n: usize) -> String {
+    plural(n, "subagent", "subagents")
+}
+
+/// R8.2: the work run's meta line. Shown: the run ("Worked 5m 12s",
+/// emphasised), its tool count, then one extra, the most urgent of a
+/// failure ("1 failed"), a recovery ("1 failed, then passed") and its
+/// subagents ("1 subagent"). The skill it used and any other extra go to
+/// the hover.
+pub(super) fn work_meta(
+    skill: Option<&str>,
+    running: bool,
+    duration_ms: Option<i64>,
+    tools: usize,
+    fault: Option<String>,
+    recovered: Option<String>,
+    subagents: usize,
+) -> MetaLine {
+    let lead = match duration_ms {
+        _ if running => "Working".to_owned(),
+        Some(ms) if ms >= 1000 => format!("Worked {}", format::duration(ms)),
+        _ => "Worked".to_owned(),
+    };
+    let mut hidden: Vec<String> = skill
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("Used skill {s}"))
+        .into_iter()
+        .collect();
+    let mut extras: Vec<(String, bool)> = Vec::new();
+    extras.extend(fault.map(|f| (f, true)));
+    extras.extend(recovered.map(|r| (r, false)));
+    if subagents > 0 {
+        extras.push((subagents_word(subagents), false));
+    }
+    let mut rest = vec![plural(tools, "tool", "tools")];
+    let mut fault = None;
+    let mut extras = extras.into_iter();
+    match extras.next() {
+        Some((f, true)) => fault = Some(f),
+        Some((extra, false)) => rest.push(extra),
+        None => {}
+    }
+    hidden.extend(extras.map(|(e, _)| e));
+    MetaLine {
+        lead,
+        rest,
+        fault,
+        hidden,
+    }
+}
+
+/// How many meta items a run of text holds ("Explore · Haiku 4.5" is two).
+pub(super) fn meta_items(text: &str) -> usize {
+    text.split('·').filter(|s| !s.trim().is_empty()).count()
+}
+
+/// R8.2: which of an event row's trailing facts show, given the room the
+/// verb, target and scope left of the three. Item counts in, keep flags
+/// out, as `(summary, duration, fault)`. A fault is always kept (and
+/// counted first), then the result, then the duration.
+pub(super) fn keep_facts(
+    room: usize,
+    summary: Option<usize>,
+    duration: Option<usize>,
+    fault: Option<usize>,
+) -> (bool, bool, bool) {
+    let mut left = room.saturating_sub(fault.unwrap_or(0));
+    let mut take = |n: Option<usize>| match n {
+        Some(n) if n <= left => {
+            left -= n;
+            true
+        }
+        _ => false,
+    };
+    let keep_summary = take(summary);
+    let keep_duration = take(duration);
+    (keep_summary, keep_duration, fault.is_some())
 }
 
 /// Whether a run of calls ended well although some failed: its last
@@ -244,13 +327,10 @@ pub(super) fn unseen(seen: Option<&(String, usize)>, session: &str, rows: usize)
 /// How far back from the transcript's end the strip looks for wakes.
 const WAKE_SCAN: usize = 400;
 
-/// The strip's line for several wakes (R6.6).
-pub(super) fn wake_strip_label(n: usize) -> String {
-    plural(
-        n,
-        "update from other sessions",
-        "updates from other sessions",
-    )
+/// The header chip's label for other sessions' wakes (R8.4, R8.6: "2
+/// updates", never "from other sessions").
+pub(super) fn updates_label(n: usize) -> String {
+    plural(n, "update", "updates")
 }
 
 /// One wake at a glance ([`Workspace::fleet_glance`]).
@@ -455,6 +535,41 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
         p.roles.text_tertiary
     };
     let mono = row.mono.clone();
+    // R8.2: three items at most (the verb the emphasised one); a fact that
+    // does not fit goes to the hover of the facts that do (or the verb's).
+    let used = 1
+        + row.target.as_ref().map_or(0, |t| meta_items(t).max(1))
+        + usize::from(row.scope.is_some() || row.diff != (0, 0));
+    let duration = match &row.end {
+        EventEnd::Quiet(label) => Some(label.clone()),
+        _ => None,
+    };
+    let (keep_summary, keep_duration, _) = keep_facts(
+        3usize.saturating_sub(used),
+        row.summary.as_ref().map(|s| meta_items(s)),
+        duration.as_deref().map(meta_items),
+        row.fault.as_ref().map(|s| meta_items(s)),
+    );
+    let mut hidden: Vec<String> = Vec::new();
+    let summary = match row.summary {
+        Some(s) if !keep_summary => {
+            hidden.push(s.to_string());
+            None
+        }
+        s => s,
+    };
+    let duration = match duration {
+        Some(d) if !keep_duration => {
+            hidden.push(d.to_string());
+            None
+        }
+        d => d,
+    };
+    let hidden = (!hidden.is_empty()).then(|| format::meta(&hidden));
+    let facts_shown = summary.is_some() || duration.is_some() || row.fault.is_some();
+    let verb_tip = hidden.clone().filter(|_| !facts_shown);
+    let facts_tip = hidden.filter(|_| facts_shown);
+    let row_id = row.id.clone();
     let meta = |text: SharedString, color: u32| {
         div()
             .flex_shrink_0()
@@ -479,6 +594,7 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
         .child(glyph_box(row.glyph, glyph_color, &p))
         .child(
             div()
+                .id(SharedString::from(format!("{row_id}-verb")))
                 .flex_shrink_0()
                 .text_size(px(t.text.body))
                 .font_weight(FontWeight(if row.quiet {
@@ -488,6 +604,9 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
                 }))
                 // R5.4: activity is the middle level, under the prose.
                 .text_color(rgb(p.roles.text_secondary))
+                .when_some(verb_tip, |d, tip| {
+                    d.tooltip(primitives::tooltip_view(tip, None, &p))
+                })
                 .child(row.verb),
         )
         .when_some(row.target, |d, target| {
@@ -514,36 +633,36 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
         // r7-pages (R7.8): the trailing facts share one run, each led by
         // the one separator (`format::SEP`), so the row's gap never adds a
         // second space before a dot ("3 tools  · 1 failed").
-        .when(
-            row.summary.is_some() || matches!(row.end, EventEnd::Quiet(_)) || row.fault.is_some(),
-            |d| {
-                let fact = |text: &str| -> SharedString { format!("{}{text}", format::SEP).into() };
-                d.child(
-                    div()
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .ml(px(-t.space.md))
-                        .whitespace_nowrap()
-                        .when_some(row.summary, |d, summary| {
-                            d.child(meta(fact(&summary), p.roles.text_tertiary))
-                        })
-                        .map(|d| match &row.end {
-                            EventEnd::Quiet(label) => d.child(
-                                primitives::tabular(meta(fact(label), p.roles.text_tertiary))
-                                    .debug_selector(|| "event-duration".into()),
-                            ),
-                            _ => d,
-                        })
-                        .when_some(row.fault, |d, fault| {
-                            d.child(
-                                meta(fact(&fault), fault_color)
-                                    .debug_selector(|| "event-fault".into()),
-                            )
-                        }),
-                )
-            },
-        )
+        .when(facts_shown, |d| {
+            let fact = |text: &str| -> SharedString { format!("{}{text}", format::SEP).into() };
+            d.child(
+                div()
+                    .id(SharedString::from(format!("{row_id}-facts")))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .ml(px(-t.space.md))
+                    .whitespace_nowrap()
+                    .when_some(facts_tip, |d, tip| {
+                        d.debug_selector(|| "event-facts-hover".into())
+                            .tooltip(primitives::tooltip_view(tip, None, &p))
+                    })
+                    .when_some(summary, |d, summary| {
+                        d.child(meta(fact(&summary), p.roles.text_tertiary))
+                    })
+                    .when_some(duration, |d, label| {
+                        d.child(
+                            primitives::tabular(meta(fact(&label), p.roles.text_tertiary))
+                                .debug_selector(|| "event-duration".into()),
+                        )
+                    })
+                    .when_some(row.fault, |d, fault| {
+                        d.child(
+                            meta(fact(&fault), fault_color).debug_selector(|| "event-fault".into()),
+                        )
+                    }),
+            )
+        })
         .when_some(row.disclosure, |d, open| {
             d.child(
                 div()
@@ -1083,6 +1202,16 @@ impl Workspace {
                 .flatten()
                 .map(|badge| badge.kind)
                 .filter(|kind| failed == 0 && !in_progress && *kind != StatusKind::Done);
+            // R8.2: three items, the run emphasised; the rest on hover.
+            let line = work_meta(
+                skill.as_deref(),
+                in_progress,
+                summary.duration_ms,
+                steps,
+                (failed > 0).then(|| format!("{failed} failed")),
+                settled_recovered.then(|| recovered_line(summary.failed.max(1))),
+                delegated.as_ref().map_or(0, Vec::len),
+            );
             let mut event = EventRow::new(
                 format!("{card_key}-header"),
                 if settled_recovered && child_kind.is_none() {
@@ -1098,17 +1227,9 @@ impl Workspace {
                         StatusKind::Done
                     })
                 },
-                work_line(in_progress, summary.duration_ms, steps),
+                line.lead.clone(),
             );
-            if settled_recovered {
-                event.summary = Some(recovered_line(summary.failed.max(1)).into());
-            }
-            event.verb = meta_line(
-                skill.as_deref(),
-                &work_line(in_progress, summary.duration_ms, steps),
-                delegated.as_ref().map_or(0, Vec::len),
-            )
-            .into();
+            event.summary = Some(format::meta(&line.rest).into());
             if let Some(badge) = delegated
                 .is_some()
                 .then(|| children_badge(&delegated_views))
@@ -1117,23 +1238,23 @@ impl Workspace {
             {
                 event.end = EventEnd::Badge(badge);
             }
-            event.quiet = true;
             event.disclosure = Some(open);
             event.reveal = true;
             // The glyph carries the state; a failure is also named inline.
-            event.fault = (failed > 0).then(|| format!("{failed} failed").into());
+            event.fault = line.fault.clone().map(Into::into);
+            let toggle_tip = if open {
+                "Hide tools · every block:"
+            } else {
+                "Show tools · every block:"
+            };
+            let toggle_tip = match line.hover() {
+                Some(hidden) => format!("{hidden} · {toggle_tip}"),
+                None => toggle_tip.to_owned(),
+            };
             card = card.child(
                 event_row(event, &p)
                     .debug_selector(|| "work-card-toggle".into())
-                    .tooltip(primitives::tooltip_view(
-                        if open {
-                            "Hide tools · every block:"
-                        } else {
-                            "Show tools · every block:"
-                        },
-                        Some("Ctrl O"),
-                        &p,
-                    ))
+                    .tooltip(primitives::tooltip_view(toggle_tip, Some("Ctrl O"), &p))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.chat.expand_all {
                             // Leaving "show everything" from one block: it
@@ -1969,149 +2090,117 @@ impl Workspace {
         wakes
     }
 
-    /// R6.6: cross-session notices leave the transcript for one slim strip
-    /// above it. One wake is its own quiet line ("From other sessions ·
-    /// Release checklist needs you · Go to Release checklist"); several are
-    /// one line ("2 updates from other sessions · Go to Release checklist")
-    /// that opens into each wake's line. The conversation's own column then
+    /// R6.6: cross-session notices leave the transcript. r8-conversation
+    /// (R8.4): they are one chip in the conversation header ("2 updates"),
+    /// led by the worst state's glyph. It opens a popover with one row per
+    /// event, failures first (then what needs you, then the rest, newest
+    /// first), each with its own Open. The conversation's own column then
     /// holds only this session's work.
-    pub(super) fn render_wake_strip_v2(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Div> {
+    pub(super) fn render_updates_chip(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let wakes = self.strip_wakes();
         if wakes.is_empty() {
             return None;
         }
         let p = self.palette();
-        let t = p.tokens;
         let owner = self.chat_owner();
-        let key_of = |row: &Row| format!("live:{owner}:{}", row.key);
-        let strip = self
-            .reading_column()
-            .debug_selector(|| "wake-strip".into())
-            .flex()
-            .flex_col()
-            .pb(px(t.space.xs));
-        if wakes.len() == 1 {
-            let (row, fleet) = wakes.into_iter().next()?;
-            let key = key_of(&row);
-            let line = self.render_fleet_card_v2(&key, fleet, row.copy_text(), true, window, cx);
-            return Some(strip.child(line));
-        }
         let glances: Vec<FleetGlance> = wakes.iter().map(|(_, f)| self.fleet_glance(f)).collect();
         let worst = [StatusKind::NeedsYou, StatusKind::Failed]
             .into_iter()
             .find(|kind| glances.iter().any(|g| g.worst == Some(*kind)));
-        // r7-qa (R7.3): the worst child's state reaches the header named
-        // ("2 updates from other sessions · Queue priority ordering
-        // failed"), so its glyph is never a bare red cross. A Needs-you
-        // child is already named by the header's "Go to …".
-        let worst_line = worst.filter(|k| *k == StatusKind::Failed).and_then(|kind| {
-            glances.iter().rev().find_map(|g| {
-                g.words
-                    .iter()
-                    .find(|(_, k)| *k == kind)
-                    .map(|(line, _)| line.split(": ").next().unwrap_or(line).to_owned())
-            })
-        });
-        // The one button: the newest wake whose session waits on you, else
-        // the newest that can be opened at all.
-        let go = (0..wakes.len())
-            .rev()
-            .find(|&i| {
-                glances[i].worst == Some(StatusKind::NeedsYou) && glances[i].target.is_some()
-            })
-            .or_else(|| {
-                (0..wakes.len())
-                    .rev()
-                    .find(|&i| glances[i].target.is_some())
-            })
-            .map(|i| {
-                let key = key_of(&wakes[i].0);
-                self.fleet_go_button(
-                    &key,
-                    &wakes[i].1,
-                    &glances[i].names,
-                    glances[i].target.unwrap_or_default(),
-                    cx,
-                )
-            });
         let open_key = format!("wake-strip:{owner}");
         let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
+        let label = updates_label(wakes.len());
+        let tip = format!("{label} from other sessions");
         let toggle = open_key.clone();
-        let line = div()
-            .id("wake-strip-header")
-            .debug_selector(|| "wake-strip-header".into())
-            .group("event-row")
-            .h(px(t.transcript().tool_row))
-            .mx(px(-t.space.sm))
-            .px(px(t.space.sm))
-            .rounded(px(t.radius.control))
-            .flex()
-            .items_center()
-            .gap(px(t.space.md))
-            .min_w_0()
-            .cursor_pointer()
-            .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
-            .text_size(px(t.text.meta))
-            .text_color(rgb(p.roles.text_tertiary))
-            .child(match worst {
-                Some(kind) => glyph_box(Glyph::Status(kind), p.roles.text_tertiary, &p),
-                None => glyph_box(Glyph::Named(IconName::Inbox), p.roles.text_tertiary, &p),
-            })
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .font_weight(FontWeight(t.weight.medium))
-                    .child(wake_strip_label(wakes.len())),
-            )
-            .when_some(worst.zip(worst_line), |d, (kind, line)| {
-                d.child(div().flex_shrink_0().child("·")).child(
-                    div()
-                        .debug_selector(|| "wake-strip-worst".into())
-                        .min_w_0()
-                        .truncate()
-                        .text_color(rgb(kind.color(&p)))
-                        .child(line),
-                )
-            })
-            .child(
-                div().flex_shrink_0().child(
-                    Icon::new(if open {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    })
-                    .size(px(t.icon.xs)),
-                ),
-            )
-            .child(div().flex_1())
-            // Open, each wake's line carries its own Go.
-            .when(!open, |d| d.children(go))
-            .on_click(
-                cx.listener(move |this, _, _, cx| this.toggle_open(toggle.clone(), false, cx)),
-            );
-        let mut strip = strip.child(line);
-        if open {
-            let mut list = event_guide(&p).debug_selector(|| "wake-strip-list".into());
-            for (row, fleet) in wakes {
-                let key = key_of(&row);
-                // The header already says "from other sessions"; each line
-                // leads with its news (r6-qa).
-                list = list.child(self.render_fleet_card_v2(
-                    &key,
-                    fleet,
-                    row.copy_text(),
-                    false,
-                    window,
-                    cx,
-                ));
+        let chip = system::updates_chip("updates-chip", worst, label, &p)
+            .debug_selector(|| "updates-chip".into())
+            .occlude()
+            .tooltip(primitives::tooltip_view(tip, None, &p))
+            // Not `toggle_open`: that pauses the transcript's follow (a row
+            // opening in place); the chip leaves the reading position be.
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let open = this.chat.open.entry(toggle.clone()).or_insert(false);
+                *open = !*open;
+                cx.notify();
+            }));
+        let popover = open.then(|| {
+            // One row per event: each agent a wake reports on, with its
+            // state, its words and its own Open.
+            let mut events: Vec<(usize, usize)> = Vec::new();
+            for i in (0..wakes.len()).rev() {
+                for e in 0..wakes[i].1.entries.len() {
+                    events.push((i, e));
+                }
             }
-            strip = strip.child(list);
-        }
-        Some(strip)
+            let rank = |kind: StatusKind| match kind {
+                StatusKind::Failed => 0,
+                StatusKind::NeedsYou => 1,
+                _ => 2,
+            };
+            // Newest first, then a stable sort: failures lead.
+            events.sort_by_key(|&(i, e)| rank(glances[i].words[e].1));
+            let rows: Vec<AnyElement> = events
+                .into_iter()
+                .enumerate()
+                .map(|(n, (i, e))| {
+                    let g = &glances[i];
+                    let (text, kind) = g.words[e].clone();
+                    let id = wakes[i].1.entries[e].session_id.clone();
+                    let pending = self
+                        .view
+                        .sessions
+                        .iter()
+                        .any(|s| s.id == id && (s.approval.is_some() || s.questions.is_some()));
+                    let openable = self.view.connected
+                        && ((kind == StatusKind::NeedsYou && pending)
+                            || self.fleet_openable(&owner, &id));
+                    let link = openable.then(|| {
+                        let name = super::status::short_title(&g.names[e], 32);
+                        let owner = owner.clone();
+                        let close = open_key.clone();
+                        primitives::button(
+                            SharedString::from(format!("update-open-{n}")),
+                            "Open",
+                            Some(IconName::ArrowRight),
+                            ButtonVariant::Tertiary,
+                            ButtonSize::Small,
+                            true,
+                            &p,
+                        )
+                        .debug_selector(move || format!("update-open-{n}"))
+                        .tooltip(primitives::tooltip_view(format!("Go to {name}"), None, &p))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.chat.open.insert(close.clone(), false);
+                            if this.view.selected.as_deref() == Some(owner.as_str())
+                                && this.view.connected
+                            {
+                                this.command(Command::Select(id.clone()), cx);
+                            }
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    });
+                    system::update_row(
+                        SharedString::from(format!("update-row-{n}")),
+                        Some(kind),
+                        text.clone(),
+                        link,
+                        &p,
+                    )
+                    .debug_selector(move || format!("update-row-{n}"))
+                    .tooltip(primitives::tooltip_view(text, None, &p))
+                    .into_any_element()
+                })
+                .collect();
+            system::updates_popover(rows, &p)
+                .debug_selector(|| "updates-popover".into())
+                .occlude()
+        });
+        Some(
+            system::anchored_menu(chip, popover, system::MenuAnchor::BelowStart, &p)
+                .into_any_element(),
+        )
     }
 
     /// What one wake says at a glance: each agent's name and state in
@@ -2700,9 +2789,13 @@ impl Workspace {
                 Glyph::Status(view.kind),
                 primary,
             );
-            event.quiet = true;
-            event.target = (!context.is_empty()).then(|| context.into());
+            // R8.2: the task (emphasised), then what it is doing now or
+            // else its role, then its time; the model and the rest are on
+            // the row's hover.
+            let role = context.split('·').next().unwrap_or("").trim().to_owned();
+            event.target = (last_tool.is_none() && !role.is_empty()).then(|| role.into());
             event.summary = last_tool.map(Into::into);
+            let hover = wks_native::format::meta([context, child_details(child, managed)]);
             event.end = match view.kind {
                 _ if view.stalled => {
                     EventEnd::Badge(StatusBadge::new(view.kind).label(view.word.clone()))
@@ -2858,11 +2951,7 @@ impl Workspace {
                         "open-provider-subagent".into()
                     }
                 })
-                .tooltip(primitives::tooltip_view(
-                    child_details(child, managed),
-                    None,
-                    &p,
-                ))
+                .tooltip(primitives::tooltip_view(hover, None, &p))
                 .child(div().debug_selector(move || {
                     if managed {
                         "workspacer-child-icon".into()
@@ -2932,7 +3021,7 @@ impl Workspace {
             Glyph::Named(IconName::Bot),
             // R5.4: this block knows one turn's delegations; the sidebar
             // counts the whole tree. Say which this is.
-            format!("{total} delegated this turn"),
+            format!("{} this turn", subagents_word(total)),
         );
         event.disclosure = Some(open);
         event.end = match children_badge(&views) {
@@ -3309,21 +3398,65 @@ mod tests {
         assert_eq!(context, "Explore · Haiku 4.5");
     }
 
-    // R6.6: one meta line per turn; R6.2: a recovered run says so in words.
+    // R8.2: a turn's meta line holds three items at most, the run first
+    // (emphasised); R6.2: a recovered run says so in words.
     #[test]
     fn a_turn_has_one_meta_line_and_recovery_reads_in_words() {
-        assert_eq!(
-            meta_line(Some("code-review"), "Worked 5m 12s · 6 tools", 1),
-            "Used skill code-review · Worked 5m 12s · 6 tools · 1 delegated"
+        let line = work_meta(Some("code-review"), false, Some(312_000), 6, None, None, 1);
+        assert_eq!(line.lead, "Worked 5m 12s");
+        assert_eq!(line.shown(), "Worked 5m 12s · 6 tools · 1 subagent");
+        assert_eq!(line.hover().as_deref(), Some("Used skill code-review"));
+        let line = work_meta(None, false, Some(300), 2, None, None, 0);
+        assert_eq!(line.shown(), "Worked · 2 tools");
+        assert_eq!(line.hover(), None);
+        let line = work_meta(Some(""), true, None, 2, None, None, 3);
+        assert_eq!(line.shown(), "Working · 2 tools · 3 subagents");
+        // A failure takes the third place; the subagents go to the hover.
+        let line = work_meta(
+            Some("code-review"),
+            false,
+            Some(300_000),
+            3,
+            Some("1 failed".into()),
+            None,
+            1,
         );
-        assert_eq!(meta_line(None, "Worked · 2 tools", 0), "Worked · 2 tools");
+        assert_eq!(line.shown(), "Worked 5m · 3 tools · 1 failed");
+        assert_eq!(line.fault.as_deref(), Some("1 failed"));
         assert_eq!(
-            meta_line(Some(""), "Worked · 2 tools", 3),
-            "Worked · 2 tools · 3 delegated"
+            line.hover().as_deref(),
+            Some("Used skill code-review · 1 subagent")
         );
+        let line = work_meta(
+            None,
+            false,
+            Some(5_000),
+            4,
+            None,
+            Some(recovered_line(1)),
+            0,
+        );
+        assert_eq!(line.shown(), "Worked 5s · 4 tools · 1 failed, then passed");
         assert_eq!(recovered_line(1), "1 failed, then passed");
-        assert_eq!(wake_strip_label(2), "2 updates from other sessions");
-        assert_eq!(wake_strip_label(1), "1 update from other sessions");
+        assert_eq!(updates_label(2), "2 updates");
+        assert_eq!(updates_label(1), "1 update");
+    }
+
+    // R8.2: an event row keeps three items: the verb, then what fits.
+    #[test]
+    fn event_rows_keep_three_items_and_hover_the_rest() {
+        assert_eq!(meta_items("Explore · Haiku 4.5"), 2);
+        assert_eq!(meta_items("42 lines"), 1);
+        // Verb and target: room for one fact, the result before the time.
+        assert_eq!(keep_facts(1, Some(1), Some(1), None), (true, false, false));
+        // A fault is always kept, first.
+        assert_eq!(
+            keep_facts(1, Some(1), Some(1), Some(1)),
+            (false, false, true)
+        );
+        // A verb alone: the result and the time.
+        assert_eq!(keep_facts(2, Some(1), Some(1), None), (true, true, false));
+        assert_eq!(keep_facts(0, Some(1), None, None), (false, false, false));
     }
 
     #[test]
@@ -3336,18 +3469,18 @@ mod tests {
             Some("Wrote")
         );
         assert_eq!(tool_verb("custom_tool", "Tool", false), None);
-        // r7-pages (R7.8): one separator, no stray dot or double space.
         assert_eq!(
-            meta_line(Some("code-review"), "Worked 5m · 3 tools  · 1 failed", 1),
-            "Used skill code-review · Worked 5m · 3 tools · 1 failed · 1 delegated"
-        );
-        assert_eq!(meta_line(None, "· 3 tools ·", 0), "3 tools");
-        assert_eq!(
-            work_line(false, Some(340_000), 6),
+            work_meta(None, false, Some(340_000), 6, None, None, 0).shown(),
             "Worked 5m 40s · 6 tools"
         );
-        assert_eq!(work_line(true, None, 3), "Working · 3 tools");
-        assert_eq!(work_line(false, Some(300), 1), "Worked · 1 tool");
+        assert_eq!(
+            work_meta(None, true, None, 3, None, None, 0).shown(),
+            "Working · 3 tools"
+        );
+        assert_eq!(
+            work_meta(None, false, Some(300), 1, None, None, 0).shown(),
+            "Worked · 1 tool"
+        );
     }
 
     #[test]

@@ -1246,18 +1246,48 @@ fn composers(p: &Palette) -> Div {
             true,
             "A decision waits: still a bordered field; Send is Secondary",
         ))
+        // r8-conversation (R8.4): the decision-and-reply area's parts.
         .child(
             div()
                 .flex()
                 .flex_col()
                 .gap(px(t.space.xs))
-                .child(super::composer_reply_line(
-                    "Reply — the request stays open",
-                    Some(super::decision_keys_hint(&["1".into(), "2".into(), "3".into(), "4".into()], p).into_any_element()),
+                .child(super::card_reply(
+                    super::edge(
+                        div()
+                            .w_full()
+                            .px(px(t.space.md))
+                            .py(px(t.space.xs))
+                            .rounded(px(t.radius.control))
+                            .text_color(rgb(p.text))
+                            .child("Run only the UI tests first"),
+                        super::Side::All,
+                        super::EdgeTone::Strong,
+                        p,
+                    ),
+                    "The request stays open until you answer it",
+                    [
+                        prim::button_specimen(
+                            "Cancel",
+                            ButtonVariant::Tertiary,
+                            ButtonSize::Small,
+                            ControlState::Rest,
+                            p,
+                        )
+                        .into_any_element(),
+                        prim::button_specimen(
+                            "Send to Claude",
+                            ButtonVariant::Secondary,
+                            ButtonSize::Small,
+                            ControlState::Rest,
+                            p,
+                        )
+                        .into_any_element(),
+                    ],
                     p,
                 ))
                 .child(caption(
-                    "A decision waits, composer unfocused: one line that expands on focus; the hint says the digits answer the request",
+                    "R8.4: the card's reply (last in the card; the composer is hidden). Its send names where the text goes",
                     p,
                 )),
         )
@@ -1266,13 +1296,67 @@ fn composers(p: &Palette) -> Div {
                 .flex()
                 .flex_col()
                 .gap(px(t.space.xs))
-                .child(super::composer_reply_link(
-                    "Reply — the request stays open",
-                    Some(super::decision_keys_hint(&["1".into(), "2".into()], p).into_any_element()),
+                .child(super::decision_line(
+                    "Run cargo test in native?",
+                    prim::button_specimen(
+                        "Open",
+                        ButtonVariant::Secondary,
+                        ButtonSize::Small,
+                        ControlState::Rest,
+                        p,
+                    ),
                     p,
                 ))
                 .child(caption(
-                    "R7.7: under a question card (which holds the one input) the composer folds to a quiet text line, not a second field",
+                    "R8.4: the card folded to one line while reading back; it replaces Jump to latest",
+                    p,
+                )),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.xs))
+                .child(
+                    div().flex().child(super::updates_chip(
+                        "gallery-updates-chip",
+                        Some(prim::StatusKind::NeedsYou),
+                        "2 updates",
+                        p,
+                    )),
+                )
+                .child(super::updates_popover(
+                    [
+                        super::update_row(
+                            "gallery-update-0",
+                            Some(prim::StatusKind::Failed),
+                            "Queue priority ordering failed: credit balance is too low",
+                            None,
+                            p,
+                        )
+                        .into_any_element(),
+                        super::update_row(
+                            "gallery-update-1",
+                            Some(prim::StatusKind::NeedsYou),
+                            "Release checklist for 0.9 needs you",
+                            Some(
+                                prim::button_specimen(
+                                    "Open",
+                                    ButtonVariant::Tertiary,
+                                    ButtonSize::Small,
+                                    ControlState::Rest,
+                                    p,
+                                )
+                                .into_any_element(),
+                            ),
+                            p,
+                        )
+                        .into_any_element(),
+                    ],
+                    p,
+                ))
+                .child(caption(
+                    "R8.4: other sessions' news, a header chip; its popover is one row per event, failures first",
                     p,
                 )),
         )
