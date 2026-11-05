@@ -269,8 +269,8 @@ def shots():
         [("design", [], [("click", 1348, 910), ("sleep", 0.5)])])  # r6-integration: re-measured (880 column)
     add("approvals-fleet-needs-you", "Fleet: the Needs you filter, only the tiles that wait on the user",
         fleet + [("design", [("click", 1350, 78)], [("click", 1350, 43)]), ("sleep", 0.5)])  # r6-integration: v2's filters share the title row (v1 never opens Fleet; its click is kept)
-    add("approvals-fleet-details", "Fleet: the approval tile's Details open in place",
-        fleet + [("design", [("click", 530, 342)], [("click", 460, 337)]), ("sleep", 0.5)])  # r7-int: v2 re-measured (one-line quiet row)  # r6-integration: v1 keeps its click
+    add("approvals-fleet-details", "Fleet: the approval tile's Details open in the side sheet",
+        fleet + [("design", [("click", 530, 342)], [("click", 512, 398)]), ("sleep", 0.5)])  # r8-decisions: v2 re-measured (Needs-you band, Details at the right, side sheet)  # r6-integration: v1 keeps its click
     # r5-system (R5.3): the component gallery (`wks-native --gallery`, dev
     # builds only) in every built-in theme. Taller window: one frame holds
     # every component in every state.

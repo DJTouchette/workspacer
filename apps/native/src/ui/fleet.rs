@@ -2318,13 +2318,13 @@ impl Workspace {
         let slots = primitives::action_slots_width(4, &p);
         let cols = [
             ("Status", Col::Keep(pg.status)),
-            ("Session", Col::Flex),
+            // r8-decisions (R8.5): the Session at a fixed measure and what a
+            // row is doing folded into the one flexible column, so Needs
+            // (what you are asked, else what it is doing) is the widest.
+            ("Session", Col::Fixed(pg.when)),
             ("Project", Col::Fixed(pg.machine)),
             ("Waiting", Col::Fixed(pg.age)),
-            // r8-decisions (R8.5): Doing at a fixed measure, so the Needs
-            // column (what you are asked) takes the widest share.
-            ("Doing", Col::Fixed(pg.when)),
-            ("Needs", Col::Flex),
+            ("Needs · doing", Col::Flex),
             ("", Col::Keep(slots)),
         ];
         let enabled = self.view.connected && !self.view.busy;
@@ -2380,16 +2380,10 @@ impl Workspace {
                 )
                 .child(primitives::page_cell(cols[3].1))
                 .child(
-                    primitives::page_cell(cols[4].1)
-                        .id(SharedString::from(format!("fleet-job-doing-{ix}")))
-                        .debug_selector(move || format!("fleet-job-doing-{ix}"))
-                        .child(text("Job proposal".into(), p.roles.text_secondary)),
-                )
-                .child(
                     // Its risk ("Deletes branches") and the ask, then (R7.1)
                     // what it would run, whole, on every row (R8.4).
                     // r7-qa: who proposed it is in the tooltip.
-                    primitives::page_cell(cols[5].1)
+                    primitives::page_cell(cols[4].1)
                         .id(SharedString::from(format!("fleet-job-need-{ix}")))
                         .debug_selector(move || format!("fleet-job-need-{ix}"))
                         .child(
@@ -2414,6 +2408,7 @@ impl Workspace {
                                 )
                                 .child(
                                     whole(need, p.roles.text_secondary)
+                                        .debug_selector(move || format!("fleet-job-doing-{ix}"))
                                         .font_family(super::mono_font())
                                         .text_size(px(t.text.mono)),
                                 ),
@@ -2429,7 +2424,7 @@ impl Workspace {
                             },
                         ),
                 )
-                .child(primitives::page_cell(cols[6].1).child(decision.render(&p)))
+                .child(primitives::page_cell(cols[5].1).child(decision.render(&p)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.fleet.focus = Some(focus.clone());
                     cx.notify();
@@ -2648,6 +2643,7 @@ impl Workspace {
                     self.session_verification(session),
                 )
             });
+            let quiet_row = need.is_empty() && review.is_none() && !doing.is_empty();
             let answer_field = match &tile.ask {
                 Some(Ask::Question { options, .. }) if options.is_empty() => {
                     self.fleet_answer_field(n, &tile.id, cx)
@@ -2689,9 +2685,8 @@ impl Workspace {
                         .debug_selector(move || format!("fleet-row-waiting-{n}"))
                         .child(text(wait, p.roles.text_secondary)),
                 ))
-                .child(primitives::page_cell(cols[4].1).child(text(doing, p.roles.text_secondary)))
                 .child(
-                    primitives::page_cell(cols[5].1)
+                    primitives::page_cell(cols[4].1)
                         .flex()
                         .items_center()
                         .gap(px(t.space.xs))
@@ -2703,6 +2698,15 @@ impl Workspace {
                                     .min_w_0()
                                     .flex()
                                     .flex_col()
+                                    // Nothing asked: what it is doing, quiet.
+                                    .when(quiet_row, |d| {
+                                        d.child(
+                                            text(doing, p.roles.text_secondary)
+                                                .debug_selector(move || {
+                                                    format!("fleet-row-doing-{n}")
+                                                }),
+                                        )
+                                    })
                                     .when(!need.is_empty(), |d| d.child(whole(need, p.text)))
                                     // R8.5: a Review row says what waits and
                                     // its newest test result.
@@ -2751,7 +2755,7 @@ impl Workspace {
                             )
                         }),
                 )
-                .child(primitives::page_cell(cols[6].1).child(actions))
+                .child(primitives::page_cell(cols[5].1).child(actions))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let tiles = this.fleet_tiles(cx);
                     if let Some(tile) = tiles.iter().find(|t| t.index == index) {

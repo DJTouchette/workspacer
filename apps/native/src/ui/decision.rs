@@ -1100,7 +1100,17 @@ impl Decision {
                 // R8.4: Details last, at the right, as on every card.
                 .children(details_toggle.filter(|_| !noting));
         }
-        let answer = (pair.is_some() || !alternates.is_empty()).then(|| {
+        // R8.4: Details at the right. With nothing else for the quiet row
+        // (no grant, no Deny with note), it ends the answer row instead of
+        // sitting alone on a line of its own.
+        let answers = pair.is_some() || !alternates.is_empty();
+        let lone = !noting && self.grants.is_empty() && deny_note.is_none() && answers;
+        let (answer_details, details_toggle) = if lone {
+            (details_toggle, None)
+        } else {
+            (None, details_toggle)
+        };
+        let answer = answers.then(|| {
             let lead = self.runs_alternate();
             let (first, rest): (Vec<_>, Vec<_>) = alternates
                 .into_iter()
@@ -1110,6 +1120,7 @@ impl Decision {
                 .children(first.into_iter().map(|(_, c)| c))
                 .children(pair)
                 .children(rest.into_iter().map(|(_, c)| c))
+                .children(answer_details.map(|d| div().ml_auto().flex_shrink_0().child(d)))
         });
         // Then the quiet row: each grant with its exact rule and scope,
         // Deny with note, and Details (it decides nothing) at the end.
