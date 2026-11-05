@@ -52,7 +52,7 @@ LANDMARKS_V2 = {
     "END_SESSION": lambda shot: (1024, 637),        # r3-integration: the form column's "End session..."
     "NEW_TASK_FIELD": lambda shot: (600, 190),      # r5-conversation: the task text in the shared composer
     "HOSTS_DETAILS": lambda shot: (1520, 207),      # r3-pages: Machines' first "Details" (table row)
-    "JOB_OVERFLOW": lambda shot: (1549, 516),       # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal)
+    "JOB_OVERFLOW": lambda shot: (1549, 552),       # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal; r5-integration re-measured)
     "REVIEW_DOCK_MORE": lambda shot: (1535, 30),    # r3-pages: Changes dock header "..."
     "REVIEW_DOCK_EXPAND_ITEM": lambda shot: (1440, 166),  # r3-pages: its "Open full page" item
 }
@@ -62,7 +62,7 @@ SETTINGS_SECTIONS_V2 = ["Appearance", "Typography", "Workspace", "Remote",
 
 
 # r5-system: the gallery shots' window height (logical px).
-GALLERY_HEIGHT = 2000  # r5-fleet: room for the DecisionCard specimens
+GALLERY_HEIGHT = 2600  # r5-fleet: room for the DecisionCard specimens (r5-integration: 2000 clipped them)
 
 
 def nav(letter):
@@ -249,7 +249,7 @@ def shots():
     fleet = [("key", "ctrl+shift+f"), ("sleep", 1.5)]
     add("fleet-grid", "Fleet: the live sessions as a grid, focus moved to a working tile",
         fleet + [("key", "Down"), ("sleep", 0.5)])
-    add("fleet-focused-approval", "Fleet: the approval tile focused, Allow 1 / Always allow 2 / Deny 3", fleet)
+    add("fleet-focused-approval", "Fleet: the approval tile focused, Allow 1 / Deny 2 / Always allow 3", fleet)
     add("fleet-all-clear", "Fleet: nothing waits on the user, only working tiles", fleet, fixture="clear")
     add("fleet-light", "Fleet, Light theme", fleet, theme="light")
     # r4-approvals (R4.3, R4.7): the one decision component. Details expands
@@ -492,12 +492,14 @@ LANDMARKS = {
     # (r3-integration: re-measured after the header strip.)
     # (r4-truth: the job proposal row joins Needs you; re-measured.)
     # (r4-calm: one-line rows and a two-row nav; re-measured.)
-    "SIDEBAR_ROW_BUS": lambda shot: (110, 573 if shot.get("v2") else 468),
+    # (r5-integration: the nav rows (New session … Scratch) sit above the
+    # groups; v2 re-measured.)
+    "SIDEBAR_ROW_BUS": lambda shot: (110, 739 if shot.get("v2") else 468),
     # The fixture's question (Release checklist for 0.9): v2 groups it under
     # Needs you; v1 lists it after Bus fan-out.
-    "SIDEBAR_ROW_QUESTION": lambda shot: (110, 318 if shot.get("v2") else 532),
+    "SIDEBAR_ROW_QUESTION": lambda shot: (110, 477 if shot.get("v2") else 532),  # r5-integration re-measured
     # v1 "Inspect transcript parsing"; v2 the child nested under Needs you.
-    "SIDEBAR_ROW_CHILD": lambda shot: (110, 253 if shot.get("v2") else 212),
+    "SIDEBAR_ROW_CHILD": lambda shot: (110, 419 if shot.get("v2") else 212),  # r5-integration re-measured
     # The title pill grows when hovered (context meter appears), so hover it
     # first; these two are the chips' positions once it has grown.
     "TITLE_PILL": lambda shot: (900, 30),
@@ -514,13 +516,14 @@ LANDMARKS = {
     "APPROVAL_DENY_NOTE": lambda shot: (588, 861) if shot["v2"] else (1030, 797),  # r5-fleet re-measured
     "APPROVAL_DENY_MENU": lambda shot: (750, 822),  # r3-composer: Deny's chevron (v2; r5-fleet re-measured: Allow and Deny side by side)
     "COMPOSER_REPLY": lambda shot: (700, 922),       # r5-conversation: the composer field under the card (v2: always a field)
-    "QUESTION_ANSWER": lambda shot: (900, 884),      # r3-composer: the release question's answer field (v2)
+    "QUESTION_ANSWER": lambda shot: (900, 813),      # r3-composer: the release question's answer field (v2; r5-integration re-measured)
     "COMPOSER_SEND_MENU": lambda shot: (1333, 960),  # r3-composer: Queue's chevron while working (v2; r3-integration re-measured)
     # (r4-integration: v2 re-measured; the first tile centres at y 179.)
     "RAIL_FIRST_MARK": lambda shot: (35, 179 if shot.get("v2") else 219),  # first session in the rail
     # (r4-integration: v2 re-measured after the decision gained its where line.)
-    "README_LINK": lambda shot: (630, 668) if shot["v2"] else (591, 497),  # README.md link, last assistant message
-    "TALL_README_LINK": lambda shot: (210, 1268) if shot["v2"] else (169, 1097),  # same link, 1000x1600 tall layout
+    # (r5-integration: v2 re-measured; the decision card is shorter.)
+    "README_LINK": lambda shot: (630, 520) if shot["v2"] else (591, 497),  # README.md link, last assistant message
+    "TALL_README_LINK": lambda shot: (210, 1121) if shot["v2"] else (169, 1097),  # r5-integration: v2 re-measured  # same link, 1000x1600 tall layout
     "TASK_ROW_DEV": lambda shot: (1200, 85),        # the fixture hub task in the tasks panel
     # The failed cargo test task: v2 its "Open log" button, v1 its row.
     # (r4-integration: v1 re-measured; the fixture's passing run now lists first.)
