@@ -293,3 +293,37 @@ fn v1_has_no_fleet(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("fleet-page").is_none());
     assert!(visual.debug_bounds("nav-fleet").is_none());
 }
+
+/// r4-integration: one tile per tree, as the sidebar and the filter counts
+/// have it. A working session nested under the approval lives on its
+/// root's tile, never on a second tile of its own.
+#[gpui::test]
+fn a_nested_session_has_no_tile_of_its_own(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands) = open_fleet(cx);
+    let mut view = fleet_view();
+    let mut sessions = (*view.sessions).clone();
+    sessions.push(row(
+        "child",
+        "Review session creation",
+        "responding",
+        json!({"parentSessionId":"ask","lastToolName":"Read","lastToolSummary":"src/launch.rs"}),
+    ));
+    view.sessions = Arc::new(sessions);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+    });
+    refresh(&mut visual);
+    workspace.read_with(&visual, |this, cx| {
+        let nested = this
+            .fleet_sessions(cx)
+            .into_iter()
+            .any(|(ix, depth, _)| depth > 0 && this.view.sessions[ix].id == "child");
+        assert!(nested, "the child nests under its parent");
+        let ids: Vec<String> = this.fleet_tiles(cx).into_iter().map(|t| t.id).collect();
+        assert!(!ids.iter().any(|id| id == "child"), "{ids:?}");
+        let counts = this.attention_counts(cx);
+        use crate::ui::attention::Bucket;
+        let active = counts[Bucket::NeedsYou.index()] + counts[Bucket::Working.index()];
+        assert_eq!(ids.len(), active, "the Active count is the tiles shown");
+    });
+}

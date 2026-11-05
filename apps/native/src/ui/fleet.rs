@@ -241,13 +241,16 @@ impl Workspace {
             .collect()
     }
 
-    /// The tiles on screen, in grid order.
+    /// The tiles on screen, in grid order: one per top-level tree.
     pub(super) fn fleet_tiles(&self, cx: &App) -> Vec<Tile> {
         let now = timing::now_ms();
         let all = self.fleet_sessions(cx);
         all.iter()
             .enumerate()
-            .filter(|(_, (_, _, bucket))| shown(*bucket, self.fleet.filter))
+            // r4-integration: one tile per tree, as the sidebar and the
+            // filter counts have it; a nested session lives on its root's
+            // tile (the subagents line), not on a second tile of its own.
+            .filter(|(_, (_, depth, bucket))| *depth == 0 && shown(*bucket, self.fleet.filter))
             .map(|(at, &(ix, depth, _))| {
                 // The session and the sessions nested under it.
                 let subtree: Vec<(usize, usize)> = std::iter::once((ix, depth))
