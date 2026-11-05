@@ -307,37 +307,43 @@ impl Workspace {
                     })
                     .children(failed_actions),
             )
-            .child(
+            // r4-pages (R4.5): two fixed slots, Copy then Stop (or the
+            // chevron), each kept when empty: the copy icon sits at one x
+            // on running, finished and failed rows alike.
+            .child({
+                let state = if task.running() {
+                    Some(self.render_stop_control_v2(&task.id, confirming, "task-stop", ix, cx))
+                } else if opens && !failed {
+                    Some(
+                        div()
+                            .size(px(t.layout.icon_button))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                Icon::new(IconName::ChevronRight)
+                                    .size(px(t.icon.sm))
+                                    .text_color(rgb(p.roles.text_tertiary)),
+                            )
+                            .into_any_element(),
+                    )
+                } else {
+                    None
+                };
                 div()
                     .flex_shrink_0()
                     .flex()
                     .items_center()
                     .gap(px(t.space.xxs))
-                    .children(copy)
-                    .when(task.running(), |d| {
-                        d.child(self.render_stop_control_v2(
-                            &task.id,
-                            confirming,
-                            "task-stop",
-                            ix,
-                            cx,
-                        ))
-                    })
-                    .when(opens && !task.running() && !failed, |d| {
-                        d.child(
-                            div()
-                                .size(px(t.layout.icon_button))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(
-                                    Icon::new(IconName::ChevronRight)
-                                        .size(px(t.icon.sm))
-                                        .text_color(rgb(p.roles.text_tertiary)),
-                                ),
-                        )
-                    }),
-            )
+                    .child(primitives::action_slot(
+                        t.layout.icon_button,
+                        copy.map(IntoElement::into_any_element),
+                    ))
+                    .child(primitives::action_slot(
+                        t.pages().action_slot_compact,
+                        state,
+                    ))
+            })
             .into_any_element()
     }
 

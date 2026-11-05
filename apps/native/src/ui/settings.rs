@@ -2161,7 +2161,7 @@ impl Workspace {
                 .child(self.settings_section_v2(current, entries));
         }
         let header = primitives::page_header(
-            None,
+            self.page_back_v2(cx),
             "Settings",
             Some("Saved on this device, unless a setting says it is shared.".into()),
             vec![search.into_any_element()],

@@ -260,3 +260,73 @@ fn about_says_an_offline_check_plainly(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("update-offline").is_some());
     assert!(visual.debug_bounds("check-updates").is_some());
 }
+
+/// R4.5: one page template. Every page, New session included, carries the
+/// back link, and its title starts at one left edge.
+#[gpui::test]
+fn every_page_shares_one_header_and_left_edge(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    open_v2(&workspace, &mut visual, 900., |_, _, _| {});
+    let mut edge = None;
+    for (screen, new_session) in [
+        (Screen::Projects, false),
+        (Screen::Settings, false),
+        (Screen::Recent, false),
+        (Screen::Jobs, false),
+        (Screen::Hosts, false),
+        (Screen::Scratch, false),
+        (Screen::Setup, false),
+        (Screen::Fleet, false),
+        (Screen::Changes, false),
+        (Screen::Conversation, true),
+    ] {
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                this.screen = screen;
+                this.new_session = new_session;
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        let title = visual.debug_bounds("page-title").unwrap();
+        let back = visual
+            .debug_bounds("feature-back")
+            .unwrap_or_else(|| panic!("{screen:?} has the back link"));
+        assert!(back.bottom() <= title.top(), "{screen:?}: back sits above");
+        let left = f32::from(title.left());
+        let edge = *edge.get_or_insert(left);
+        assert!(
+            (left - edge).abs() <= 1.,
+            "{screen:?} (new session {new_session}) title at {left}, others at {edge}"
+        );
+    }
+}
+
+/// R4.5: table actions sit in fixed slots. Pause and Resume share a width,
+/// so Run now lines up on every job row.
+#[gpui::test]
+fn job_actions_hold_fixed_slots(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    open_v2(&workspace, &mut visual, 900., |this, window, cx| {
+        this.open_feature(Screen::Jobs, window, cx)
+    });
+    request_state(
+        &workspace,
+        &mut visual,
+        Request::Jobs,
+        1,
+        json!({"jobs":[
+            {"id":"a","name":"On","enabled":true,"trigger":{"kind":"interval","everyMinutes":240},
+             "action":{"kind":"shell","shell":{"command":"true"}}},
+            {"id":"b","name":"Off","enabled":false,"trigger":{"kind":"interval","everyMinutes":240},
+             "action":{"kind":"shell","shell":{"command":"true"}}}
+        ]}),
+    );
+    let pause = visual.debug_bounds("job-pause-0").unwrap();
+    let resume = visual.debug_bounds("job-pause-1").unwrap();
+    assert_eq!(pause.size.width, resume.size.width, "Pause and Resume");
+    assert_eq!(pause.left(), resume.left());
+    let run0 = visual.debug_bounds("job-run-0").unwrap();
+    let run1 = visual.debug_bounds("job-run-1").unwrap();
+    assert_eq!(run0.left(), run1.left(), "Run now aligns");
+}

@@ -1932,7 +1932,14 @@ impl Workspace {
                     this.job_action(JobAction::Save(approval.clone()), cx);
                 }))
             });
-            return row.child(reject).child(approve);
+            // r4-pages (R4.5): fixed slots, so every row's actions align.
+            let slot = |b: Stateful<Div>| {
+                primitives::action_slot(
+                    t.pages().action_slot,
+                    Some(primitives::slot_button(b, &p).into_any_element()),
+                )
+            };
+            return primitives::action_slots(vec![slot(reject), slot(approve)], &p);
         }
         if confirming {
             // The second step names what goes: the job and its history.
@@ -2015,11 +2022,26 @@ impl Workspace {
                 this.remove_job(&remove_id, false, cx);
             }))
         });
-        row.child(pause).child(run).child(self.page_overflow(
-            format!("job-{ix}"),
-            vec![remove.into_any_element()],
-            cx,
-        ))
+        // r4-pages (R4.5): Pause and Resume share one slot width, so Run
+        // now and the overflow sit at the same x on every row.
+        let slot = |b: Stateful<Div>| {
+            primitives::action_slot(
+                t.pages().action_slot,
+                Some(primitives::slot_button(b, &p).into_any_element()),
+            )
+        };
+        primitives::action_slots(
+            vec![
+                slot(pause),
+                slot(run),
+                div().flex_shrink_0().child(self.page_overflow(
+                    format!("job-{ix}"),
+                    vec![remove.into_any_element()],
+                    cx,
+                )),
+            ],
+            &p,
+        )
     }
 }
 

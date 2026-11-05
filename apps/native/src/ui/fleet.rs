@@ -661,6 +661,7 @@ impl Workspace {
         let current = self.fleet.filter;
         let all = current == Filter::All;
         let needs = counts[Bucket::NeedsYou.index()];
+        let back = self.page_back_v2(cx);
         let filter = |id: &'static str, label: &'static str, on: Filter, n: usize| {
             primitives::segment(id, label, current == on, &p)
                 .debug_selector(move || id.into())
@@ -677,7 +678,7 @@ impl Workspace {
                 }))
         };
         let header = primitives::page_header(
-            None,
+            back,
             "Fleet",
             Some(summary(counts).into()),
             vec![

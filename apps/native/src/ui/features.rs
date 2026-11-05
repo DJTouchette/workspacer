@@ -940,7 +940,13 @@ impl Workspace {
             // Every feature page shares one frame under v2: the shared page
             // header (back link, title, description, actions) in the shared
             // page width (`docs/design-v2.md`, "Migrating a screen").
-            return self.feature_page_v2(title.to_owned(), description, notice, body, cx);
+            // R4.5: a short form page drops below the shared top.
+            let top = if self.screen == Screen::Setup {
+                primitives::short_page_top(f32::from(window.viewport_size().height), &p)
+            } else {
+                0.
+            };
+            return self.feature_page_v2(title.to_owned(), description, notice, body, top, cx);
         }
         let header = self.page_header(
             Some(back),
@@ -2526,6 +2532,35 @@ impl Workspace {
         }
     }
 
+    /// R4.5: the back link every v2 page header carries ("Back to chat", or
+    /// "Back to new session" when the page was opened from that form). One
+    /// id on every page: only one page shows at a time.
+    pub(super) fn page_back_v2(&self, cx: &mut Context<Self>) -> AnyElement {
+        self.page_back_v2_enabled(true, cx)
+    }
+
+    /// [`Self::page_back_v2`], disabled while the page cannot be left (New
+    /// session while it starts).
+    pub(super) fn page_back_v2_enabled(&self, enabled: bool, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.palette();
+        primitives::back_link_enabled(
+            "feature-back",
+            if self.extras.return_launch {
+                "Back to new session"
+            } else {
+                "Back to chat"
+            },
+            enabled,
+            &p,
+        )
+        .debug_selector(|| "feature-back".into())
+        .tooltip(primitives::tooltip_view("Go back", Some("Esc"), &p))
+        .when(enabled, |d| {
+            d.on_click(cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)))
+        })
+        .into_any_element()
+    }
+
     /// Every feature page under v2: back link, title, one-line description
     /// and right-aligned actions over the body, in the shared page width.
     pub(super) fn feature_page_v2(
@@ -2534,30 +2569,15 @@ impl Workspace {
         description: Option<SharedString>,
         notice: Option<Div>,
         body: Div,
+        top: f32,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.palette();
         let t = p.tokens;
-        let back = primitives::back_link(
-            "feature-back",
-            if self.extras.return_launch {
-                "Back to new session"
-            } else {
-                "Back to chat"
-            },
-            &p,
-        )
-        .debug_selector(|| "feature-back".into())
-        .on_click(cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)));
+        let back = self.page_back_v2(cx);
         let actions = self.feature_actions_v2(cx);
-        let header = primitives::page_header(
-            Some(back.into_any_element()),
-            title,
-            description,
-            actions,
-            &p,
-        )
-        .debug_selector(|| "page-header".into());
+        let header = primitives::page_header(back, title, description, actions, &p)
+            .debug_selector(|| "page-header".into());
         let header = match self.selected_session() {
             Some(s) if self.screen == Screen::Session => div()
                 .flex()
@@ -2570,9 +2590,11 @@ impl Workspace {
         // r3-pages: forms keep a readable measure, left-aligned under the
         // shared header, while tables use the page's width.
         let body = match self.screen {
-            Screen::Model | Screen::Session | Screen::Handoff | Screen::PullRequest => {
-                div().w_full().max_w(px(t.pages().form)).child(body)
-            }
+            Screen::Model
+            | Screen::Session
+            | Screen::Handoff
+            | Screen::PullRequest
+            | Screen::Setup => div().w_full().max_w(px(t.pages().form)).child(body),
             _ => body,
         };
         if self.screen == Screen::Recent {
@@ -2594,6 +2616,7 @@ impl Workspace {
             t.pages().wide,
             false,
             div()
+                .pt(px(top))
                 .flex()
                 .flex_col()
                 .gap(px(t.space.xxl))

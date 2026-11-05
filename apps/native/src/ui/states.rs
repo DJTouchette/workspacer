@@ -752,17 +752,11 @@ impl Workspace {
         let t = p.tokens;
         let first_run = self.view.sessions.is_empty();
         let connected = self.view.connected;
-        let can_start = connected && !self.demo && !self.spawn_pending && !self.view.creating;
-        let projects: Vec<KnownProject> = self
-            .known_projects()
-            .into_iter()
-            .filter(|p| !p.worktree)
-            .take(4)
-            .collect();
+        let busy = self.spawn_pending || self.view.creating;
+        let can_start = connected && !self.demo && !busy;
         let chosen = self.welcome_project().unwrap_or_default();
-        let project_name = projects
-            .iter()
-            .find(|p| wks_native::projects::same_dir(&p.path, &chosen))
+        let project_name = self
+            .known_project(&chosen)
             .map(|p| p.title().to_owned())
             .or_else(|| {
                 std::path::Path::new(&chosen)
@@ -773,24 +767,6 @@ impl Workspace {
             Some(name) => format!("What should we work on in {name}?"),
             None => "What should we work on?".to_owned(),
         };
-        // The composer: the task, then where and with whom it runs.
-        let agents = primitives::segmented(&p)
-            .debug_selector(|| "welcome-agent".into())
-            .children(
-                [("claude", "Claude"), ("codex", "Codex")].map(|(id, name)| {
-                    primitives::segment(
-                        SharedString::from(format!("welcome-agent-{id}")),
-                        name,
-                        self.provider == id,
-                        &p,
-                    )
-                    .debug_selector(move || format!("welcome-agent-{id}"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.choose_provider(id, window, cx);
-                        cx.notify();
-                    }))
-                }),
-            );
         let start = primitives::button(
             "welcome-start",
             "Start",
@@ -813,81 +789,13 @@ impl Workspace {
         .when(can_start, |d| {
             d.on_click(cx.listener(|this, _, window, cx| this.start_from_welcome(window, cx)))
         });
-        let composer = div()
-            .debug_selector(|| "welcome-composer".into())
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.md))
-            .p(px(t.space.lg))
-            .bg(rgb(p.surface))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.border_strong))
-            .rounded(px(t.radius.composer))
-            .shadow(primitives::elevation(&p, t.elevation.floating))
-            .child(
-                div()
-                    .px(px(t.space.xs))
-                    .text_size(px(t.text.subheading))
-                    .child(Input::new(&self.prompt).appearance(false)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(t.space.md))
-                    .child(agents)
-                    .child(start),
-            );
-
-        // Projects: the recent ones as chips, then any other folder.
-        let project_row = div()
-            .debug_selector(|| "welcome-projects".into())
-            .w_full()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(t.space.sm))
-            .child(
-                div()
-                    .mr(px(t.space.xs))
-                    .text_size(px(t.text.meta))
-                    .text_color(rgb(p.roles.text_tertiary))
-                    .child("Project"),
-            )
-            .children(projects.into_iter().enumerate().map(|(ix, project)| {
-                let path = project.path.clone();
-                primitives::chip(
-                    ("welcome-project", ix),
-                    project.title().to_owned(),
-                    wks_native::projects::same_dir(&project.path, &chosen),
-                    true,
-                    &p,
-                )
-                .debug_selector(move || format!("welcome-project-{ix}"))
-                .tooltip(primitives::tooltip_view(project.path.clone(), None, &p))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.seed_project(&path, cx);
-                    cx.notify();
-                }))
-            }))
-            .child(
-                primitives::chip(
-                    "welcome-project-other",
-                    "Other folder…",
-                    false,
-                    !self.demo,
-                    &p,
-                )
-                .debug_selector(|| "welcome-project-other".into())
-                .when(!self.demo, |d| {
-                    d.on_click(cx.listener(|this, _, window, cx| {
-                        this.show_new_session(window, cx);
-                        this.open_project_picker(window, cx);
-                    }))
-                }),
-            );
+        // r4-pages (R4.5): one New-session flow. The welcome draws New
+        // session's own task box; its chips (machine, project, agent,
+        // model) open New session at that choice, and Start launches what
+        // the chips show, through the same form.
+        let composer = self
+            .launch_task_box_v2(None, busy, true, start.into_any_element(), &p, cx)
+            .debug_selector(|| "welcome-composer".into());
 
         let starters = div()
             .debug_selector(|| "welcome-starters".into())
@@ -941,7 +849,6 @@ impl Workspace {
                             .child(headline),
                     )
                     .child(composer)
-                    .child(project_row)
                     .child(starters),
             )
             .child(self.render_agent_checklist(first_run, cx))
