@@ -30,7 +30,7 @@ pub(super) const DEFINE_SCRATCH_FILE: &str = "Scratch file: a script or note an 
 /// Window-local state of the v2 shell.
 pub(super) struct ShellUi {
     /// Folded groups, by `Bucket::index`. Ended starts folded.
-    pub(super) folded: [bool; 4],
+    pub(super) folded: [bool; 5],
     /// The keyboard cheat sheet (`?`, Ctrl+/).
     pub(super) shortcuts: bool,
     /// The model, effort and access popover under the title's model chip.
@@ -75,7 +75,7 @@ pub(super) struct ShellUi {
 impl Default for ShellUi {
     fn default() -> Self {
         Self {
-            folded: [false, false, false, true],
+            folded: [false, false, false, false, true],
             shortcuts: false,
             model_popover: false,
             model_anchor: gpui::Bounds::default(),
@@ -176,6 +176,17 @@ pub(super) fn neutral_glyph(provider: &str, size: f32, p: Palette) -> AnyElement
 }
 
 /// The brand mark and the "Workspacer" wordmark beside it.
+/// r7-status (R7.3): a Ready-for-review row's line: "3 files changed ·
+/// +48 −12".
+pub(super) fn review_reason(c: wks_native::model::ChangeCounts) -> String {
+    let files = if c.files == 1 {
+        "1 file changed".to_owned()
+    } else {
+        format!("{} files changed", c.files)
+    };
+    wks_native::format::meta([files, format!("+{} −{}", c.added, c.removed)])
+}
+
 pub(super) fn wordmark(p: Palette) -> Div {
     let t = p.tokens;
     div()
@@ -389,7 +400,34 @@ impl Workspace {
                     .native_children(session)
                     .iter()
                     .any(|c| c.running() && !attention::child_stalled(c, now)),
+            // r7-status (R7.3): a finished turn's uncommitted changes wait
+            // for review (design v2 only: v1 keeps its four groups).
+            review: self.design().is_v2()
+                && !stopped
+                && session.uncommitted.is_some_and(|c| !c.is_empty()),
         }
+    }
+
+    /// r7-status (R7.3): the session's latest test run, for the
+    /// verification line on decision cards and Fleet tiles
+    /// ([`super::status::verification`]). The open conversation's latest
+    /// reply is checked for a pass claimed after a recorded failure.
+    pub(super) fn session_verification(
+        &self,
+        session: &Session,
+    ) -> Option<super::status::Verification> {
+        let claim = (self.view.selected.as_deref() == Some(session.id.as_str()))
+            .then(|| {
+                self.view
+                    .transcript
+                    .rows
+                    .iter()
+                    .rev()
+                    .find(|row| row.role == "Assistant")
+                    .map(|row| row.text.as_str())
+            })
+            .flatten();
+        super::status::verification(&session.tasks, claim)
     }
 
     /// r4-truth (R4.1): the one status of a session, for every surface.
@@ -442,7 +480,12 @@ impl Workspace {
         };
         let mut rows = Vec::new();
         let needs_empty = !groups.iter().any(|(b, _)| *b == Bucket::NeedsYou);
-        if needs_empty && !searching && (!visible.is_empty() || !proposals.is_empty()) {
+        // r7-status (R7.3): work waiting for review is not All clear.
+        let review_waits = groups.iter().any(|(b, _)| *b == Bucket::Review);
+        if needs_empty
+            && !searching
+            && (!proposals.is_empty() || (!visible.is_empty() && !review_waits))
+        {
             let folded = self.shell.folded[Bucket::NeedsYou.index()] && !proposals.is_empty();
             rows.push(ShellRow::Group {
                 bucket: Bucket::NeedsYou,
@@ -557,9 +600,9 @@ impl Workspace {
     /// Top-level trees in each group, `Bucket::index` order, with job
     /// proposals counted in Needs you: the one set of counts the sidebar's
     /// headers and the Fleet show.
-    pub(super) fn attention_counts(&self, cx: &App) -> [usize; 4] {
+    pub(super) fn attention_counts(&self, cx: &App) -> [usize; 5] {
         let visible = self.visible_sessions(cx);
-        let mut counts = [0usize; 4];
+        let mut counts = [0usize; 5];
         for (bucket, members) in self.attention_groups(&visible, timing::now_ms()) {
             counts[bucket.index()] += members.iter().filter(|(_, depth)| *depth == 0).count();
         }
@@ -760,13 +803,16 @@ impl Workspace {
         }
     }
 
-    /// Sessions waiting on the user (or stalled, or failing), among those
-    /// listed.
+    /// Sessions waiting on the user (or stalled, or failing, or ready for
+    /// review: r7-status, R7.3), among those listed. Alt+N cycles these.
     pub(super) fn needing_you(&self, cx: &App) -> Vec<usize> {
         let now = timing::now_ms();
         self.visible_sessions(cx)
             .into_iter()
-            .filter(|&ix| self.session_bucket(&self.view.sessions[ix], now) == Bucket::NeedsYou)
+            .filter(|&ix| {
+                self.session_bucket(&self.view.sessions[ix], now)
+                    .wants_you()
+            })
             .collect()
     }
 
@@ -801,6 +847,7 @@ impl Workspace {
         };
         // Its group may be folded: open it.
         self.shell.folded[Bucket::NeedsYou.index()] = false;
+        self.shell.folded[Bucket::Review.index()] = false;
         if let Some(position) = self.nav_sessions(cx).iter().position(|&ix| ix == next) {
             self.reveal_sidebar_row(position, cx);
         }
@@ -1424,9 +1471,10 @@ impl Workspace {
                 .items_center()
                 .gap(px(t.space.xs))
                 .text_size(px(t.text.meta))
-                .font_weight(FontWeight(t.weight.semibold))
-                // r4-calm: the count beside it is the group's one amber.
-                .text_color(rgb(p.roles.text_secondary))
+                // r7-status (R7.5): group labels sit a level under the rows
+                // (tertiary, medium); the Needs-you count is the one amber.
+                .font_weight(FontWeight(t.weight.medium))
+                .text_color(rgb(p.roles.text_tertiary))
                 .hover(move |s| s.bg(rgb(p.roles.hover)))
                 .tooltip(tooltip_view(
                     if folded {
@@ -1574,7 +1622,7 @@ impl Workspace {
             .gap(px(t.space.sm))
             .child(status_indicator(StatusKind::NeedsYou, &p))
             .child(
-                self.row_title(title.clone(), None, false, "")
+                self.row_title(title.clone(), None, true, "")
                     .when(!two_lines, |d| d.flex_initial()),
             )
             .when(!two_lines, |d| {
@@ -1726,10 +1774,12 @@ impl Workspace {
                     .truncate()
                     .text_size(px(t.text.body))
                     .line_height(px(t.text.body + t.space.xs))
+                    // r7-status (R7.5): only rows that want the user are
+                    // strong; the rest sit in regular weight.
                     .font_weight(FontWeight(if strong {
                         t.weight.semibold
                     } else {
-                        t.weight.medium
+                        t.weight.regular
                     }))
                     .child(highlighted(title, query, &p)),
             )
@@ -1807,6 +1857,7 @@ impl Workspace {
             InboxAction::Allow => format!("{} · review the request in its session", reason.text),
             InboxAction::Answer => "Open the session at its question".to_owned(),
             InboxAction::Open => "Open the session".to_owned(),
+            InboxAction::Review => format!("{} · open the session to review them", reason.text),
         };
         primitives::button(
             SharedString::from(format!("sidebar-inbox-{ix}")),
@@ -1869,9 +1920,16 @@ impl Workspace {
         let status = self.session_status(session, now);
         let kind = status.kind;
         let project = self.project_name(&session.cwd);
-        let reason = (bucket == Bucket::NeedsYou)
-            .then(|| self.inbox_reason(session, now))
-            .flatten();
+        let reason = match bucket {
+            Bucket::NeedsYou => self.inbox_reason(session, now),
+            // r7-status (R7.3): what waits for review, in a few words.
+            Bucket::Review if depth == 0 => session.uncommitted.map(|c| Reason {
+                text: review_reason(c),
+                action: InboxAction::Review,
+                fault: false,
+            }),
+            _ => None,
+        };
         let working = kind == StatusKind::Working;
         // What a working session is doing: the row's tooltip says it.
         let activity = working
@@ -1914,6 +1972,10 @@ impl Workspace {
             }
             if let Some(activity) = &activity {
                 lines.push(activity.clone());
+            }
+            // r7-status (R7.3): the latest test run, as cards and tiles say it.
+            if let Some(v) = self.session_verification(session) {
+                lines.push(v.text(now));
             }
             let provider = match session.provider_id() {
                 "claude" => "Claude",
@@ -1994,13 +2056,18 @@ impl Workspace {
             Some(verb) => self.row_trailing_verb(group.clone(), time, verb, active),
             None => self.row_trailing(group.clone(), time, actions),
         };
-        let title_el = self.row_title(title, tag, active, query).text_color(rgb(
-            if session.stopped() && !self.paused(session) {
-                p.roles.text_secondary
-            } else {
+        // r7-status (R7.5): a calm list. Rows that want the user (Needs
+        // you, Ready for review, a fault) are strong and primary; the
+        // selected row is primary; everything else is regular and
+        // secondary.
+        let loud = kind.wants_you() || bucket.wants_you();
+        let title_el = self
+            .row_title(title, tag, loud, query)
+            .text_color(rgb(if loud || active {
                 p.text
-            },
-        ));
+            } else {
+                p.roles.text_secondary
+            }));
         let marks = div()
             .flex()
             .flex_shrink_0()
@@ -2460,8 +2527,8 @@ impl Workspace {
         let t = p.tokens;
         div()
             .debug_selector(|| "sidebar-footer".into())
-            // r4-calm: one line per account says what its share is, so two
-            // accounts stack and the footer grows past its one row.
+            // r7-status (R7.5): one usage line (the account nearest its
+            // limit) beside the gear; the rest are in its tooltip.
             .min_h(px(t.layout.footer_height))
             .flex_shrink_0()
             .px(px(t.space.sm))
@@ -2560,7 +2627,7 @@ impl Workspace {
             .filter(|&ix| {
                 matches!(
                     self.session_bucket(&self.view.sessions[ix], now),
-                    Bucket::NeedsYou | Bucket::Working
+                    Bucket::NeedsYou | Bucket::Review | Bucket::Working
                 )
             })
             .collect();

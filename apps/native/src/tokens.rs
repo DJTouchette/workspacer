@@ -986,6 +986,16 @@ pub struct SystemTokens {
     /// How far a Destructive label moves toward the text colour while the
     /// button is hovered or pressed, so it keeps ≥ 4.5:1 on the wash.
     pub danger_lift: f32,
+    /// r7-status (R7.8): the one count badge: its height, its narrowest
+    /// width (a single figure stays round) and its side padding.
+    pub badge_height: f32,
+    pub badge_min: f32,
+    pub badge_pad: f32,
+    /// r7-status (R7.8): a meter's bar (usage, context, machine pressure).
+    pub meter_height: f32,
+    /// r7-status (R7.4): the share from which a meter takes the warning hue
+    /// (its only other colour), as a whole percent.
+    pub meter_warn_pct: f32,
 }
 
 impl Tokens {
@@ -1005,6 +1015,11 @@ impl Tokens {
             overlay_width: 640.,
             tile_min: 280.,
             danger_lift: 0.55,
+            badge_height: 16.,
+            badge_min: 18.,
+            badge_pad: 4.,
+            meter_height: 4.,
+            meter_warn_pct: 80.,
         }
     }
 }

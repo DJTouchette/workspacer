@@ -733,22 +733,14 @@ impl Workspace {
             .then(|| exit_code(&tool.output))
             .flatten()
             .map(|code| format!("exit code {code}"));
-        // R5.4: a failure the run later recovered from keeps a muted mark
-        // (tertiary "Failed · exit code 1"), never red.
-        let muted = tool.is_error && recovered;
-        if muted {
-            event.summary = Some(
-                code.map_or_else(|| "Failed".to_owned(), |c| format!("Failed · {c}"))
-                    .into(),
-            );
-        } else {
-            event.fault = code.map(Into::into);
-        }
-        event.failed = tool.is_error && !muted;
+        // r7-status (R7.3): a failed row reads as a failure (red), even in
+        // a run that later recovered; the turn's summary line says it
+        // recovered ("1 failed, then passed").
+        let _ = recovered;
+        event.fault = code.map(Into::into);
+        event.failed = tool.is_error;
         event.disclosure = Some(expanded);
-        event.end = if muted {
-            duration.map_or(EventEnd::Nothing, EventEnd::Quiet)
-        } else if tool.is_error {
+        event.end = if tool.is_error {
             EventEnd::Badge(StatusBadge::new(StatusKind::Failed))
         } else if running {
             EventEnd::Badge(StatusBadge::new(StatusKind::Working))
@@ -762,13 +754,8 @@ impl Workspace {
             );
         let mut step = div().flex().flex_col().child(header);
         if let Some((lines, before)) = inline.filter(|_| !expanded) {
-            step = step.child(self.inline_output_v2(
-                &element_key,
-                lines,
-                before,
-                tool.is_error && !muted,
-                cx,
-            ));
+            step =
+                step.child(self.inline_output_v2(&element_key, lines, before, tool.is_error, cx));
         }
         if expanded {
             let mut details = self
@@ -1065,15 +1052,26 @@ impl Workspace {
             // R6.2: a recovered run is neither a green check nor red: a
             // neutral retry glyph and its count in words.
             let settled_recovered = recovered && !in_progress;
+            // r7-status (R7.3): one status per element. While a delegated
+            // subagent is still at work (or stalled), the run's glyph is
+            // that worst child's, never a check beside a spinner.
+            let child_kind = delegated
+                .is_some()
+                .then(|| children_badge(&delegated_views))
+                .flatten()
+                .map(|badge| badge.kind)
+                .filter(|kind| failed == 0 && !in_progress && *kind != StatusKind::Done);
             let mut event = EventRow::new(
                 format!("{card_key}-header"),
-                if settled_recovered {
+                if settled_recovered && child_kind.is_none() {
                     Glyph::Asset("lucide/rotate-ccw.svg")
                 } else {
                     Glyph::Status(if failed > 0 {
                         StatusKind::Failed
                     } else if in_progress {
                         StatusKind::Working
+                    } else if let Some(kind) = child_kind {
+                        kind
                     } else {
                         StatusKind::Done
                     })
@@ -2735,7 +2733,7 @@ impl Workspace {
                         primitives::with_tooltip(
                             primitives::button(
                                 SharedString::from(format!("{child_key}-nudge")),
-                                "Nudge",
+                                wks_native::format::NUDGE,
                                 None,
                                 ButtonVariant::Secondary,
                                 ButtonSize::Small,

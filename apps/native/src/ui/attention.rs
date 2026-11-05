@@ -8,6 +8,9 @@ use wks_native::model::Session;
 pub(crate) enum Bucket {
     /// An approval or a question is waiting on the user.
     NeedsYou,
+    /// r7-status (R7.3): a finished turn left uncommitted changes. A
+    /// Needs-you state with its own band, under Needs you.
+    Review,
     /// Starting or mid-turn.
     Working,
     /// Ready for the next message, or paused (resumable).
@@ -17,11 +20,24 @@ pub(crate) enum Bucket {
 }
 
 impl Bucket {
-    pub(crate) const ALL: [Self; 4] = [Self::NeedsYou, Self::Working, Self::Idle, Self::Ended];
+    pub(crate) const ALL: [Self; 5] = [
+        Self::NeedsYou,
+        Self::Review,
+        Self::Working,
+        Self::Idle,
+        Self::Ended,
+    ];
+
+    /// r7-status (R7.3): the groups that ask for the user: Needs you and
+    /// Ready for review. "All clear" means neither has a member.
+    pub(crate) fn wants_you(self) -> bool {
+        matches!(self, Self::NeedsYou | Self::Review)
+    }
 
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::NeedsYou => "Needs you",
+            Self::Review => "Ready for review",
             Self::Working => "Working",
             Self::Idle => "Idle",
             Self::Ended => "Ended",
@@ -36,6 +52,7 @@ impl Bucket {
     pub(crate) fn slug(self) -> &'static str {
         match self {
             Self::NeedsYou => "needs-you",
+            Self::Review => "review",
             Self::Working => "working",
             Self::Idle => "idle",
             Self::Ended => "ended",
@@ -97,7 +114,7 @@ pub(crate) fn group(
         .1
         .sort_by_key(|(since, _, _)| since.unwrap_or(i64::MAX));
     // r2-shell: Idle and Ended put the most recent first (unknown last).
-    for quiet in [Bucket::Idle, Bucket::Ended] {
+    for quiet in [Bucket::Review, Bucket::Idle, Bucket::Ended] {
         groups[quiet.index()]
             .1
             .sort_by_key(|(_, latest, _)| std::cmp::Reverse(latest.unwrap_or(i64::MIN)));
@@ -162,6 +179,8 @@ pub(crate) enum InboxAction {
     Answer,
     /// Open the session (plans, stalls, failures).
     Open,
+    /// r7-status (R7.3): open a finished session to review its changes.
+    Review,
 }
 
 impl InboxAction {
@@ -170,6 +189,7 @@ impl InboxAction {
             Self::Allow => "Review",
             Self::Answer => "Answer",
             Self::Open => "Open",
+            Self::Review => "Review",
         }
     }
 }

@@ -92,6 +92,23 @@ fn fraction(used: Option<u64>, of: Option<u64>) -> String {
     format!("{}/{}", part(used), part(of))
 }
 
+/// "1 of 4 agent slots in use"; unknown parts read "—".
+fn slot_words(used: Option<u64>, of: Option<u64>, what: &str) -> String {
+    let part = |v: Option<u64>| v.map_or_else(|| UNKNOWN.to_owned(), |v| v.to_string());
+    let plural = if of == Some(1) { "slot" } else { "slots" };
+    format!("{} of {} {what} {plural} in use", part(used), part(of))
+}
+
+/// r7-status (R7.4): a queue item's wait reason in plain words ("no free
+/// agent slot" reads "every agent slot is busy").
+pub fn plain_wait(reason: &str) -> String {
+    match reason.trim() {
+        "no free agent slot" => "every agent slot is busy".into(),
+        "no free shell slot" => "every command slot is busy".into(),
+        other => other.to_owned(),
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Gate {
     pub open: bool,
@@ -203,6 +220,17 @@ impl Resources {
     /// `"0/2 shell"`.
     pub fn shell_line(&self) -> String {
         format!("{} shell", fraction(self.shell_running, self.shell_slots))
+    }
+
+    /// r7-status (R7.4): the slots in plain words, for design v2: "1 of 4
+    /// agent slots in use".
+    pub fn agent_words(&self) -> String {
+        slot_words(self.agents_running, self.agent_slots, "agent")
+    }
+
+    /// r7-status (R7.4): "0 of 2 command slots in use" (not "0/2 shell").
+    pub fn shell_words(&self) -> String {
+        slot_words(self.shell_running, self.shell_slots, "command")
     }
 
     /// `"3 queued"`, `"— queued"`.

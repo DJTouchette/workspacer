@@ -75,25 +75,62 @@ impl StatusCell {
     }
 }
 
+/// r7-status (R7.3): the verification line, for decision cards and Fleet
+/// tiles: the latest test run as one StatusCell ("✕ Tests failed 4m ago ·
+/// cargo test"), red when it failed. A pass claimed after the failure adds
+/// "the reply says they pass" to the detail. Selector:
+/// `verification-line`. Get the data from `Workspace::session_verification`
+/// (or `status::verification` for a task list).
+pub(crate) fn verification_line(
+    v: &super::super::status::Verification,
+    now: i64,
+    p: &Palette,
+) -> Div {
+    let detail = wks_native::format::meta([
+        v.command.as_str(),
+        if v.contradicted {
+            super::super::status::CONTRADICTED
+        } else {
+            ""
+        },
+    ]);
+    StatusCell::new(v.kind())
+        .label(v.headline(now))
+        .detail(detail)
+        .render(p)
+        .debug_selector(|| "verification-line".into())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::super::primitives::{STATUS_TABLE, StatusKind};
+    use super::super::super::primitives::{MAX_STATUS_GLYPHS, STATUS_TABLE, StatusKind};
 
-    // r6-surfaces (R6.2)
+    // r6-surfaces (R6.2), r7-status (R7.3)
     #[test]
-    fn the_status_table_has_one_row_per_state_each_with_its_own_glyph() {
+    fn the_status_table_has_one_row_per_state_and_at_most_seven_glyphs() {
         assert_eq!(STATUS_TABLE.len(), StatusKind::ALL.len());
         for (row, kind) in STATUS_TABLE.iter().zip(StatusKind::ALL) {
             assert_eq!(row.kind, kind, "the table is in StatusKind::ALL order");
             assert_eq!(kind.row().kind, kind);
+            assert!(kind.has_glyph(), "{kind:?} draws its glyph everywhere");
         }
+        let distinct = STATUS_TABLE
+            .iter()
+            .enumerate()
+            .filter(|(i, r)| STATUS_TABLE[..*i].iter().all(|o| o.shape != r.shape))
+            .count();
+        assert!(distinct <= MAX_STATUS_GLYPHS, "{distinct} glyphs");
+        // A glyph is shared only within one colour: the word tells the
+        // states apart, the shape and hue never contradict.
         for (i, a) in STATUS_TABLE.iter().enumerate() {
             for b in &STATUS_TABLE[i + 1..] {
-                assert_ne!(
-                    a.shape, b.shape,
-                    "{:?} and {:?} share a glyph",
-                    a.kind, b.kind
-                );
+                if a.shape == b.shape {
+                    assert_eq!(a.tone, b.tone, "{:?} and {:?}", a.kind, b.kind);
+                }
+                // Needs you and Ready for review never share a glyph.
+                if matches!(a.kind, StatusKind::NeedsYou | StatusKind::Review) {
+                    assert_ne!(a.shape, b.shape, "{:?} and {:?}", a.kind, b.kind);
+                }
                 assert_ne!(
                     a.label, b.label,
                     "{:?} and {:?} share a word",

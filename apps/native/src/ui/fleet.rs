@@ -212,16 +212,19 @@ pub(crate) enum Filter {
 /// Whether a group shows under `filter`: Needs you only; the default
 /// keeps what matters (Needs you and Working); All adds Idle and Ended.
 pub(crate) fn shown(bucket: Bucket, filter: Filter) -> bool {
+    // r7-status (R7.3): Ready for review needs you too.
     match filter {
-        Filter::NeedsYou => bucket == Bucket::NeedsYou,
-        Filter::Active => matches!(bucket, Bucket::NeedsYou | Bucket::Working),
+        Filter::NeedsYou => bucket.wants_you(),
+        Filter::Active => bucket.wants_you() || bucket == Bucket::Working,
         Filter::All => true,
     }
 }
 
-/// The header's one-line count of the fleet: "2 need you · 3 working ·
-/// 5 idle · 20 ended" (empty groups left out).
-pub(crate) fn summary(counts: [usize; 4]) -> String {
+/// The header's one-line count of the fleet: "2 need you · 1 to review ·
+/// 3 working · 5 idle · 20 ended" (empty groups left out). Each number is
+/// the count of a group of top-level sessions, job proposals in Needs you:
+/// the filters' counts are sums of these ([`filter_tip`]).
+pub(crate) fn summary(counts: [usize; 5]) -> String {
     let parts: Vec<String> = Bucket::ALL
         .iter()
         .zip(counts)
@@ -229,13 +232,26 @@ pub(crate) fn summary(counts: [usize; 4]) -> String {
         .map(|(bucket, n)| match bucket {
             Bucket::NeedsYou if n == 1 => "1 needs you".to_owned(),
             Bucket::NeedsYou => format!("{n} need you"),
+            Bucket::Review => format!("{n} to review"),
             other => format!("{n} {}", other.label().to_lowercase()),
         })
         .collect();
     if parts.is_empty() {
         "No sessions yet".into()
     } else {
-        parts.join(" · ")
+        wks_native::format::meta(parts)
+    }
+}
+
+/// r7-status (R7.4): what a filter's count counts, in the summary line's
+/// own words, for its tooltip.
+pub(crate) fn filter_tip(filter: Filter) -> &'static str {
+    match filter {
+        Filter::NeedsYou => {
+            "Needs you: sessions waiting on an answer or a fix, plus those ready for review and job proposals"
+        }
+        Filter::Active => "Active: the Needs you count plus the sessions working now",
+        Filter::All => "All: every session listed, idle and ended included",
     }
 }
 
@@ -1118,7 +1134,7 @@ impl Workspace {
         let groups = self.fleet_sessions(cx);
         let counts = self.attention_counts(cx);
         let all_count: usize = counts.iter().sum();
-        let needs = counts[Bucket::NeedsYou.index()];
+        let needs = counts[Bucket::NeedsYou.index()] + counts[Bucket::Review.index()];
         let active = needs + counts[Bucket::Working.index()];
         let quiet = all_count - active;
         let tiles = self.fleet_tiles(cx);
@@ -1140,6 +1156,7 @@ impl Workspace {
                 .selected(current == on)
                 .render(&p)
                 .debug_selector(move || id.into())
+                .tooltip(primitives::tooltip_view(filter_tip(on), None, &p))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.fleet.filter = on;
                     window.focus(&this.focus);
@@ -1497,6 +1514,7 @@ impl Workspace {
                         Bucket::Ended => "Ended",
                         Bucket::Working => "Starting…",
                         Bucket::NeedsYou => "Waiting for you",
+                        Bucket::Review => "Ready for review",
                         Bucket::Idle => "Ready for your next message",
                     })
                     .into_any_element(),
@@ -2324,11 +2342,13 @@ mod tests {
     #[test]
     fn the_summary_counts_in_the_lexicon() {
         assert_eq!(
-            summary([2, 3, 5, 20]),
-            "2 need you · 3 working · 5 idle · 20 ended"
+            summary([2, 1, 3, 5, 20]),
+            "2 need you · 1 to review · 3 working · 5 idle · 20 ended"
         );
-        assert_eq!(summary([1, 0, 0, 0]), "1 needs you");
-        assert_eq!(summary([0, 0, 0, 0]), "No sessions yet");
+        assert_eq!(summary([1, 0, 0, 0, 0]), "1 needs you");
+        assert_eq!(summary([0, 0, 0, 0, 0]), "No sessions yet");
+        assert!(shown(Bucket::Review, Filter::NeedsYou));
+        assert!(shown(Bucket::Review, Filter::Active));
     }
 
     #[test]
