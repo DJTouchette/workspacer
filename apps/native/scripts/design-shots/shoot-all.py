@@ -111,8 +111,8 @@ def shots():
     add("deny-with-note", "Approval dock: Deny with note",
         [("design", [("click", "APPROVAL_DENY_NOTE")],
           [("click", "APPROVAL_DENY_MENU"), ("sleep", 0.5), ("click", "APPROVAL_DENY_NOTE"),
-           # r3-integration: focus the note field before typing.
-           ("sleep", 0.5), ("click", 851, 877)]),
+           # r3-integration: v2's menu click leaves the note unfocused; click it.
+           ("sleep", 0.5), ("click", 851, 877), ("sleep", 0.5)]),
          ("sleep", 0.5), ("type", "Run only the session tests, not the whole suite.")])
     add("file-viewer", "File viewer with README.md open from a transcript link",
         [("click", "README_LINK"), ("sleep", 2)])
