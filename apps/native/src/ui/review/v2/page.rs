@@ -154,7 +154,7 @@ impl Workspace {
                 let messages = notice.is_some()
                     || self.has_feature_message("changes")
                     || self.has_feature_message("git-action");
-                super::super::system::page_shell(
+                super::super::system::page_shell_fill(
                     header,
                     messages.then(|| {
                         div()

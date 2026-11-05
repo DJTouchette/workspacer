@@ -185,6 +185,9 @@ impl LineWrapper {
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
+        // Workspacer patch: the typographic apostrophe (U+2019) as well as the
+        // ASCII one, so `you’re` never wraps as `you` / `’re`.
+        matches!(c, '\u{2019}') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
@@ -648,6 +651,9 @@ mod tests {
         assert_word("a=1");
         assert_word("Self::is_word_char");
         assert_word("more⋯");
+        // Workspacer patch: both apostrophes keep a contraction whole.
+        assert_word("I'm");
+        assert_word("you\u{2019}re");
 
         // Space
         assert_not_word("foo bar");

@@ -53,11 +53,11 @@ SETTINGS_SECTIONS = ["Appearance", "Typography", "Workspace", "Remote",
                      "Agents", "Chat", "Keyboard", "About"]
 # area-pages: controls design v2 moved (used when --setting design_v2=true).
 LANDMARKS_V2 = {
-    "END_SESSION": lambda shot: (1324, 637),        # r3-integration: the form column's "End session..." (r6-integration: re-measured)
+    "END_SESSION": lambda shot: (1143, 636),        # r7-int: the left-aligned form page's "End session..." (r3-integration; r6-integration)
     "NEW_TASK_FIELD": lambda shot: (720, 455),      # r6-conversation: the task text in the centred composer (New session is the welcome)
     "WAKE_STRIP": lambda shot: (640, 62),           # r6-conversation: the "2 updates from other sessions" strip above the transcript
     "HOSTS_DETAILS": lambda shot: (1520, 173),      # r3-pages: Machines' first "Details" (table row; r6-integration: studio, this machine)
-    "JOB_OVERFLOW": lambda shot: (1548, 549),       # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal; r6-qa: under the risk chip)
+    "JOB_OVERFLOW": lambda shot: (1548, 523),       # r7-int: re-measured (one page template)  # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal; r6-qa: under the risk chip)
     "REVIEW_DOCK_MORE": lambda shot: (1535, 30),    # r3-pages: Changes dock header "..."
     "REVIEW_DOCK_EXPAND_ITEM": lambda shot: (1440, 166),  # r3-pages: its "Open full page" item
 }
@@ -214,7 +214,7 @@ def shots():
     add("slash-menu", "Composer `/` menu over the draft", [("key", "ctrl+l"), ("sleep", 0.8), ("type", "/")])
     # Integration: v2 folds Chat into Appearance; its reading width found by search.
     add("settings-reading-width", "Settings search: the transcript's reading width",
-        nav("s") + [("design", [("click", 1360, 76)], [("click", 1250, 43)]),  # r6-integration: v2's search sits on the title row
+        nav("s") + [("design", [("click", 1360, 76)], [("click", 1422, 43)]),  # r7-int: re-measured (page template)  # r6-integration: v2's search sits on the title row
                     ("sleep", 0.5), ("type", "reading width"), ("sleep", 0.8)])
     # area-fixture (round 2): the fleet's story states, each on screen.
     add("conversation-tool-rows", "A run of tool calls: Grep, Read, Edit, Write, Bash with results",
@@ -566,7 +566,7 @@ LANDMARKS = {
     "settings_section": lambda shot, index: (570, 114 + round(index * 37.7)),
     # area-pages: the design v2 rail (Chat folds into Appearance).
     # (r3-integration: the rail sits left of the wide page column.)
-    "settings_section_v2": lambda shot, index: (570, 128 + index * 34),  # r6-integration: re-measured
+    "settings_section_v2": lambda shot, index: (420, 128 + index * 34),  # r7-int: the rail under the page template  # r6-integration: re-measured
 }
 
 

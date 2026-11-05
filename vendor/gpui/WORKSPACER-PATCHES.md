@@ -59,3 +59,16 @@ Test support only, for text-selection UI tests (2026-10-06):
   called from outside the crate: it returns a crate-private type.)
 
 Used by `island_controls_do_not_select_the_transcript_under_them` (apps/native).
+
+`src/text_system/line_wrapper.rs`, `LineWrapper::is_word_char`: the
+typographic apostrophe U+2019 (’) is a word character, like the ASCII `'`
+upstream already lists (2026-11-05). Upstream broke a line between `you` and
+`’re`, leaving a lone `’re` at the start of the next line. This changes
+wrapping only in lines with a ’ at a wrap point. Pinned by `test_is_word_char`
+(this crate) and `a_contraction_never_wraps_at_its_apostrophe` (apps/native UI
+tests; fails against upstream 0.2.2).
+
+Not patched: `wrap_line` returns a boundary before it updates `prev_c`, so the
+word right after the space a line overflowed on is never a break candidate.
+That word is force-broken by character if it does not fit, wherever it
+overflows, apostrophe or not. Upstream 0.2.2 behaviour; left as is.

@@ -70,6 +70,30 @@ pub(crate) fn page_shell(
     width: PageWidth,
     p: &Palette,
 ) -> Div {
+    shell(header, notice, body, width, false, p)
+}
+
+/// r7-int: [`page_shell`] for a page whose body fills the window and
+/// scrolls inside itself (Changes: the diff list). The body slot stretches
+/// to the column's height, so a `flex_1` body keeps it.
+pub(crate) fn page_shell_fill(
+    header: impl IntoElement,
+    notice: Option<AnyElement>,
+    body: impl IntoElement,
+    width: PageWidth,
+    p: &Palette,
+) -> Div {
+    shell(header, notice, body, width, true, p)
+}
+
+fn shell(
+    header: impl IntoElement,
+    notice: Option<AnyElement>,
+    body: impl IntoElement,
+    width: PageWidth,
+    fill: bool,
+    p: &Palette,
+) -> Div {
     let t = p.tokens;
     // The column has a definite width (the frame), capped by its parent
     // when the parent's is definite: inside a column sized by its content
@@ -91,6 +115,7 @@ pub(crate) fn page_shell(
                 .debug_selector(|| "page-body".into())
                 .w_full()
                 .max_w(px(width.max(p)))
+                .when(fill, |d| d.flex_1().min_h_0())
                 .flex()
                 .flex_col()
                 .child(body),

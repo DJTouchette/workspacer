@@ -55,7 +55,7 @@ pub(crate) use icon_button::IconButton;
 pub(crate) use menu::{MenuAnchor, anchored_menu};
 pub(crate) use nav::NavItem;
 pub(crate) use overlay::{Placement, overlay};
-pub(crate) use page::{PageWidth, page_shell};
+pub(crate) use page::{PageWidth, page_shell, page_shell_fill};
 pub(crate) use segmented::{Segment, segmented_control};
 pub(crate) use status_cell::{StatusCell, verification_line};
 pub(crate) use table::{TablePart, table, table_band, table_head, table_part, table_row};

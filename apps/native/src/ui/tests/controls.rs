@@ -473,3 +473,41 @@ fn theme_picker_offers_all_eight_palettes_within_a_narrow_window(cx: &mut TestAp
         })
     });
 }
+
+/// Workspacer's GPUI patch (`vendor/gpui/WORKSPACER-PATCHES.md`): a
+/// typographic apostrophe is a word character, so "you’re" never wraps
+/// as "you" / "’re". The test text system gives every character one
+/// advance, so sweeping the width finds every candidate break. Widths too
+/// narrow for a whole word break it by character (between two letters);
+/// those are skipped. The contraction leads the line: upstream's wrapper
+/// skips the word right after a space it overflowed on (`prev_c` is not
+/// updated on that path), which force-breaks that word anywhere.
+#[gpui::test]
+fn a_contraction_never_wraps_at_its_apostrophe(cx: &mut TestAppContext) {
+    let text = "you\u{2019}re done";
+    let curly = text.find('\u{2019}').unwrap();
+    let letter = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    cx.update(|cx| {
+        let mut wrapper = cx.text_system().line_wrapper(gpui::font("Inter"), px(10.));
+        let mut checked = 0;
+        for width in 1..400 {
+            let fragments = [gpui::LineFragment::text(text)];
+            let starts: Vec<usize> = wrapper
+                .wrap_line(&fragments, px(width as f32))
+                .map(|b| b.ix)
+                .collect();
+            // Too narrow for a whole word: every word breaks by character.
+            if starts.iter().any(|&ix| {
+                letter(text[..ix].chars().next_back()) && letter(text[ix..].chars().next())
+            }) {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                !starts.contains(&curly),
+                "a line starts at the apostrophe at width {width}: {starts:?}"
+            );
+        }
+        assert!(checked > 0, "some width fits a whole word");
+    });
+}

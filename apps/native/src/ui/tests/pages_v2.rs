@@ -318,6 +318,16 @@ fn every_page_shares_one_header_and_left_edge(cx: &mut TestAppContext) {
             );
             continue;
         }
+        // r7-int: Changes' body fills the window (its diff scrolls inside
+        // it), not just its first rows.
+        if screen == Screen::Changes {
+            let body = visual.debug_bounds("page-body").unwrap();
+            let view = visual.debug_bounds("review-view").unwrap();
+            assert!(
+                f32::from(body.bottom()) >= f32::from(view.bottom()) - 64.,
+                "the Changes body fills the page: {body:?} in {view:?}"
+            );
+        }
         if matches!(screen, Screen::Settings | Screen::Setup) {
             let body = visual.debug_bounds("page-body").unwrap();
             assert!(
