@@ -211,7 +211,8 @@ fn the_composer_folds_to_one_line_under_a_decision(cx: &mut TestAppContext) {
         line.size
     );
     assert!(visual.debug_bounds("composer-model").is_none());
-    assert!(inside(&mut visual, "decision-keys-hint", "chat-composer"));
+    // R8.2: no keycap row in the composer; the card is the only place.
+    assert!(visual.debug_bounds("decision-keys-hint").is_none());
     workspace.read_with(&visual, |this, _| assert!(this.composer_ui.digits_to_card));
     tap(&mut visual, "chat-composer");
     // (debug_bounds keeps what was last painted, so the hint's absence is

@@ -1172,6 +1172,17 @@ impl Stall {
         super::status::stalled_child_reason(&self.name, self.since.map_or(0, |at| now - at))
     }
 
+    /// r8-decisions (R8.5): the subagent as a button names it ("Stop Trace
+    /// session"): its first two words.
+    pub(super) fn target(&self) -> String {
+        let words: Vec<&str> = self.name.split_whitespace().take(2).collect();
+        if words.is_empty() {
+            "subagent".to_owned()
+        } else {
+            words.join(" ")
+        }
+    }
+
     /// The decision's headline: "Trace session restore paths is not
     /// responding".
     pub(super) fn headline(&self) -> String {
@@ -1368,7 +1379,7 @@ impl Workspace {
             "View output",
             "Open what it has done so far",
         ));
-        decision.keys = true;
+        decision.keys = self.keycaps(true);
         decision
     }
 

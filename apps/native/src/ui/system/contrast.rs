@@ -226,6 +226,7 @@ fn check(theme: Appearance) -> Vec<String> {
             ButtonVariant::Secondary,
             ButtonVariant::Tertiary,
             ButtonVariant::Destructive,
+            ButtonVariant::Danger,
         ] {
             for state in [
                 ControlState::Rest,
@@ -251,6 +252,8 @@ fn check(theme: Appearance) -> Vec<String> {
             bg,
             if dark_label { LIGHT_FILL } else { NON_TEXT },
         );
+        // r8-decisions (R8.2): the armed confirm's red fill stands out.
+        g.at_least(&format!("Danger fill on {name}"), p.error, bg, NON_TEXT);
         // Focus ring.
         g.at_least(&format!("focus ring on {name}"), r.focus, bg, NON_TEXT);
         // CountBadge (fills are opaque or washes of text).
@@ -463,11 +466,17 @@ fn the_scrim_dims_45_to_55_percent_in_every_theme() {
 fn destructive_is_never_brand_blue() {
     for theme in Appearance::ALL {
         let p = theme.palette_for(Design::V2);
-        for state in ControlState::ALL {
-            let (fill, label, _) = button_paint(ButtonVariant::Destructive, state, &p);
-            assert_ne!(label, p.primary, "{theme:?} {state:?}");
-            assert_ne!(label, p.accent, "{theme:?} {state:?}");
-            assert_ne!(composite(fill, p.surface), p.primary, "{theme:?} {state:?}");
+        for variant in [ButtonVariant::Destructive, ButtonVariant::Danger] {
+            for state in ControlState::ALL {
+                let (fill, label, _) = button_paint(variant, state, &p);
+                assert_ne!(label, p.primary, "{theme:?} {variant:?} {state:?}");
+                assert_ne!(label, p.accent, "{theme:?} {variant:?} {state:?}");
+                assert_ne!(
+                    composite(fill, p.surface),
+                    p.primary,
+                    "{theme:?} {variant:?} {state:?}"
+                );
+            }
         }
     }
 }

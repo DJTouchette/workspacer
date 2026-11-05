@@ -230,6 +230,11 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // r8-decisions (R8.3, R8.5): Esc cancels an armed "Press again to
+        // delete", then closes the Fleet's menu or Details sheet.
+        if self.escape_decision(cx) {
+            return;
+        }
         if self.close_peek(window, cx) {
             return;
         }
@@ -485,6 +490,8 @@ impl Workspace {
 
     fn workspace_actions(&self, shell: Div, cx: &mut Context<Self>) -> Div {
         shell
+            // r8-decisions (R8.2): keycaps show only after keyboard use.
+            .capture_any_mouse_up(cx.listener(Self::note_pointer_input))
             // area-composer: number keys on a v2 approval strip.
             .on_key_down(cx.listener(Self::decision_keys))
             // r6-decisions: number keys on Jobs' proposal and a stalled subagent.
