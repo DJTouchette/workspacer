@@ -205,6 +205,19 @@ pub(super) fn wordmark(p: Palette) -> Div {
         )
 }
 
+/// r8-attention (R8.7): the one signature brand moment: the brace-and-
+/// cursor mark, title-sized, alone and quiet, at the top of the welcome
+/// screen and of the empty states that have no state of their own to
+/// show. Selector: `brand-moment`.
+pub(super) fn brand_moment(p: Palette) -> Div {
+    let t = p.tokens;
+    div()
+        .debug_selector(|| "brand-moment".into())
+        .flex()
+        .justify_center()
+        .child(brand_mark(t.text.title, p))
+}
+
 /// `text` with every match of `query` drawn in the full text colour and
 /// semibold (the rest keeps the parent's colour).
 pub(super) fn highlighted(text: String, query: &str, p: &Palette) -> StyledText {
@@ -1098,7 +1111,9 @@ impl Workspace {
             ),
             (
                 NavItem::new(id("nav-fleet", "fleet-rail"), primitives::Concept::Fleet, "Fleet")
-                    .hint("Fleet · every live session at a glance, as cards")
+                    // r8-attention (R8.6): the tooltip says what the
+                    // page's subtitle says.
+                    .hint(format!("Fleet · {}", super::fleet::FLEET_DESCRIPTION))
                     .shortcut(key("⌘ Shift F", "Ctrl Shift F"))
                     .selected(open(Screen::Fleet)),
                 Some(Screen::Fleet),
@@ -1142,7 +1157,7 @@ impl Workspace {
                 vim_key(
                     "g o",
                     NavItem::new(id("nav-hosts", "hosts-rail"), primitives::Concept::Machines, "Machines")
-                        .hint("Machines · the computers that run your agents")
+                        .hint(format!("Machines · {}", super::hosts::HOSTS_DESCRIPTION))
                         .selected(open(Screen::Hosts)),
                 ),
                 Some(Screen::Hosts),
@@ -1158,9 +1173,12 @@ impl Workspace {
                             "Scratch",
                         )
                         .hint(if pending > 0 {
-                            "Scratch · files agents wrote for you to review and run; some are waiting"
+                            format!(
+                                "Scratch · {} Some are waiting for you.",
+                                super::scratch::SCRATCH_DESCRIPTION_V2
+                            )
                         } else {
-                            "Scratch · files agents wrote for you to review and run"
+                            format!("Scratch · {}", super::scratch::SCRATCH_DESCRIPTION_V2)
                         })
                         .count(pending, primitives::CountTone::Neutral),
                         "scratch-pending-badge",
@@ -1486,12 +1504,38 @@ impl Workspace {
                     &p,
                 ))
                 .child(bucket.label())
+                // r8-attention (R8.2): one count badge style, right after
+                // the label: amber only for Needs you, the review hue for
+                // To review, a quiet wash for the rest.
                 .when(!needs && count > 0, |d| {
+                    d.child(primitives::count_badge(
+                        primitives::count_text(count),
+                        match bucket {
+                            Bucket::Review => primitives::CountTone::Review,
+                            _ => primitives::CountTone::Neutral,
+                        },
+                        &p,
+                    ))
+                })
+                .when(needs, |d| {
                     d.child(
-                        div()
-                            .font_weight(FontWeight(t.weight.regular))
-                            .text_color(rgb(p.roles.text_tertiary))
-                            .child(count.to_string()),
+                        chrome::interactive_control(div().id("sidebar-next-needs-you"), p, true)
+                            .debug_selector(|| "sidebar-next-needs-you".into())
+                            .rounded(px(t.radius.full))
+                            .tooltip(tooltip_view(
+                                "Open the next session that needs you",
+                                Some(if self.vim() { "g n" } else { "Alt N" }),
+                                &p,
+                            ))
+                            .child(primitives::count_badge(
+                                primitives::count_text(count),
+                                primitives::CountTone::NeedsYou,
+                                &p,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.next_needs_you(window, cx)
+                            })),
                     )
                 })
                 .group(SharedString::from(format!("group-{slug}")))
@@ -1515,27 +1559,6 @@ impl Workspace {
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.toggle_group(bucket, cx))),
             )
-            .when(needs, |d| {
-                d.child(
-                    chrome::interactive_control(div().id("sidebar-next-needs-you"), p, true)
-                        .debug_selector(|| "sidebar-next-needs-you".into())
-                        .mb(px(t.space.xs))
-                        .rounded(px(t.radius.full))
-                        .tooltip(tooltip_view(
-                            "Open the next session that needs you",
-                            Some(if self.vim() { "g n" } else { "Alt N" }),
-                            &p,
-                        ))
-                        .child(primitives::count_badge(
-                            primitives::count_text(count),
-                            primitives::CountTone::NeedsYou,
-                            &p,
-                        ))
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.next_needs_you(window, cx)),
-                        ),
-                )
-            })
             .into_any_element()
     }
 
@@ -1596,7 +1619,8 @@ impl Workspace {
         };
         let verb = primitives::button(
             SharedString::from(format!("sidebar-proposal-review-{id}")),
-            "Review",
+            // r8-attention (R8.1): every want-you row's verb is "Open".
+            "Open",
             None,
             ButtonVariant::Secondary,
             ButtonSize::Small,
@@ -1973,16 +1997,15 @@ impl Workspace {
             if let Some(activity) = &activity {
                 lines.push(activity.clone());
             }
+            // r8-attention (R8.1): the row's bare "23m" says what it is.
+            if !working && let Some(at) = session.telemetry.last_activity_ms {
+                lines.push(wks_native::format::last_active(at, now));
+            }
             // r7-status (R7.3): the latest test run, as cards and tiles say it.
             if let Some(v) = self.session_verification(session) {
                 lines.push(v.text(now));
             }
-            let provider = match session.provider_id() {
-                "claude" => "Claude",
-                "codex" => "Codex",
-                "" => "Agent",
-                other => other,
-            };
+            let provider = wks_native::format::agent_name(session.provider_id());
             lines.push(format!(
                 "{provider} · {} · {}",
                 wks_native::format::model_name(&session.display_model()),
@@ -2283,15 +2306,15 @@ impl Workspace {
                 .into_any_element(),
             );
         }
+        // r8-attention (R8.2): a subagent row is the session row's height,
+        // indented and lighter; its note is the word alone so the title
+        // keeps its room (how long it has been quiet is in the tooltip).
         let note = if stalled {
-            let quiet = child
-                .telemetry
-                .last_activity_ms
-                .or(child.telemetry.started_at_ms)
-                .map(|at| attention::quiet_for(now - at))
-                .unwrap_or_default();
             // r4-calm: the red clock glyph is the one signal.
-            Some((format!("Not responding · {quiet}"), p.roles.text_secondary))
+            Some((
+                wks_native::format::NOT_RESPONDING.to_owned(),
+                p.roles.text_tertiary,
+            ))
         } else {
             None
         };
@@ -2310,13 +2333,13 @@ impl Workspace {
                     .text_color(rgb(p.roles.text_tertiary))
                     .child(model.clone()),
             });
-        let title_el =
-            self.row_title(title, None, viewing, query)
-                .text_color(rgb(if child.settled() {
-                    p.roles.text_secondary
-                } else {
-                    p.text
-                }));
+        let title_el = self
+            .row_title(title, None, viewing, query)
+            .text_color(rgb(if viewing {
+                p.text
+            } else {
+                p.roles.text_secondary
+            }));
         let trailing = self.row_trailing(group.clone(), None, actions);
         let control = chrome::interactive_control(
             div().id(SharedString::from(format!(
@@ -2339,7 +2362,18 @@ impl Workspace {
             d.hover(move |s| s.bg(rgb(p.roles.hover)))
         })
         .tooltip(tooltip_view(
-            format!("Subagent · {model} · open its conversation"),
+            match stalled.then(|| {
+                child
+                    .telemetry
+                    .last_activity_ms
+                    .or(child.telemetry.started_at_ms)
+            }) {
+                Some(Some(at)) => format!(
+                    "Subagent · {model} · not responding for {} · open its conversation",
+                    attention::quiet_for(now - at)
+                ),
+                _ => format!("Subagent · {model} · open its conversation"),
+            },
             None,
             &p,
         ))
@@ -2457,8 +2491,9 @@ impl Workspace {
             return None;
         }
         // R2.3: the one setup source the welcome and Setup read too.
-        let notes: Vec<String> = [("claude", "Claude Code"), ("codex", "Codex")]
+        let notes: Vec<String> = ["claude", "codex"]
             .into_iter()
+            .map(|id| (id, wks_native::format::agent_name(id)))
             .filter_map(|(id, name)| match self.agent_setup(id) {
                 super::states::AgentSetup::Missing => Some(format!("Install {name}")),
                 super::states::AgentSetup::NeedsSignIn => Some(format!("Sign in to {name}")),
@@ -2555,6 +2590,9 @@ impl Workspace {
                     )
                     .child(div().flex_1()),
                 // The usage takes the room; the gear keeps its own.
+                // r8-attention (R8.6): not before the first session (the
+                // welcome screen asks for one; a limit means nothing yet).
+                None if self.view.sessions.is_empty() => d.child(div().flex_1()),
                 None => match self.render_usage_compact(cx) {
                     Some(usage) => d.child(usage.flex_1()),
                     None => d.child(div().flex_1()),
@@ -2800,15 +2838,19 @@ impl Workspace {
         let title = self.session_title(s);
         let kind = self.session_kind(s, now);
         let reason = self.inbox_reason(s, now);
-        let age = s
-            .telemetry
-            .last_activity_ms
-            .map(|at| format!(" · {}", wks_native::format::age(at, now)))
-            .unwrap_or_default();
+        let project = self.project_name(&s.cwd);
+        // r8-attention (R8.1, R8.6): the hover card says the project in
+        // full and the recency in the one format.
         let meta: Vec<String> = reason
             .iter()
             .map(|reason| reason.text.to_string())
-            .chain([format!("{}{age}", self.project_name(&s.cwd))])
+            .chain([wks_native::format::meta([
+                project.clone(),
+                s.telemetry
+                    .last_activity_ms
+                    .map(|at| wks_native::format::last_active(at, now))
+                    .unwrap_or_default(),
+            ])])
             .filter(|line| !line.is_empty())
             .collect();
         let size = t.layout.rail_session;
@@ -2822,8 +2864,11 @@ impl Workspace {
             .flex()
             .items_center()
             .justify_center()
-            .child(primitives::avatar_with_status(
+            // r8-attention (R8.6): the project's colour, the session's two
+            // letters, the status glyph at the corner.
+            .child(primitives::avatar_with_status_keyed(
                 &title,
+                &project,
                 size,
                 Some(kind),
                 p.base,

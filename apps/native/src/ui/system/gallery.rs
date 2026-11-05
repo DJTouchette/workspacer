@@ -673,6 +673,7 @@ fn statuses(p: &Palette) -> Div {
                 command: "cargo test".into(),
                 at: Some(0),
                 contradicted: true,
+                earlier: None,
             },
             4 * 60_000,
             p,

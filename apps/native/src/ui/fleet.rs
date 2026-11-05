@@ -189,11 +189,13 @@ pub(crate) fn step(at: usize, count: usize, columns: usize, dir: Move) -> usize 
     }
 }
 
-/// The Fleet's filter (R4.7): Needs you only for a burst of asks, Active
-/// (Needs you and Working, the default) or All.
+/// The Fleet's filter (R4.7): Needs you only for a burst of asks, To
+/// review (r8-attention, R8.1: its own filter, never folded into Needs
+/// you), Active (both, and Working: the default) or All.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Filter {
     NeedsYou,
+    Review,
     #[default]
     Active,
     All,
@@ -202,40 +204,42 @@ pub(crate) enum Filter {
 /// Whether a group shows under `filter`: Needs you only; the default
 /// keeps what matters (Needs you and Working); All adds Idle and Ended.
 pub(crate) fn shown(bucket: Bucket, filter: Filter) -> bool {
-    // r7-status (R7.3): Ready for review needs you too.
+    // r8-attention (R8.1): two want-you states, each its own filter.
     match filter {
-        Filter::NeedsYou => bucket.wants_you(),
+        Filter::NeedsYou => bucket == Bucket::NeedsYou,
+        Filter::Review => bucket == Bucket::Review,
         Filter::Active => bucket.wants_you() || bucket == Bucket::Working,
         Filter::All => true,
     }
 }
 
-/// The header's one-line count of the fleet: "3 need you (1 to review) ·
+/// r8-attention (R8.6): what the Fleet is for, in a newcomer's words: the
+/// page's subtitle leads with it and the nav item's tooltip says it.
+pub(crate) const FLEET_DESCRIPTION: &str = "Every live session at once";
+
+/// The header's one-line count of the fleet: "3 need you · 1 to review ·
 /// 3 working · 5 idle · 20 ended" (empty groups left out). Each number is
 /// the count of a group of top-level sessions, job proposals in Needs you.
-/// r7-qa (R7.4): Ready for review is a Needs-you state, so its sessions
-/// count in the first number, as they do in the Needs you filter: the
-/// filters' counts are sums of these numbers ([`filter_tip`]).
+/// r8-attention (R8.1): the two want-you numbers are the sidebar's, in
+/// the same words (`attention::Wants`); neither folds into the other. The
+/// filters' counts are these numbers or sums of them ([`filter_tip`]).
 pub(crate) fn summary(counts: [usize; 5]) -> String {
-    let [asks, review, rest @ ..] = counts;
-    let wants = asks + review;
-    let needs = match (wants, review) {
-        (0, _) => None,
-        (1, 0) => Some("1 needs you".to_owned()),
-        (1, _) => Some("1 needs you (to review)".to_owned()),
-        (n, 0) => Some(format!("{n} need you")),
-        (n, r) => Some(format!("{n} need you ({r} to review)")),
-    };
-    let parts: Vec<String> = needs
-        .into_iter()
-        .chain(
-            Bucket::ALL[2..]
-                .iter()
-                .zip(rest)
-                .filter(|(_, n)| *n > 0)
-                .map(|(bucket, n)| format!("{n} {}", bucket.label().to_lowercase())),
-        )
-        .collect();
+    let [_, _, rest @ ..] = counts;
+    let wants = super::attention::Wants::of(&counts);
+    let parts: Vec<String> = [
+        super::attention::needs_you_words(wants.needs_you),
+        super::attention::review_words(wants.to_review),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .chain(
+        Bucket::ALL[2..]
+            .iter()
+            .zip(rest)
+            .filter(|(_, n)| *n > 0)
+            .map(|(bucket, n)| format!("{n} {}", bucket.label().to_lowercase())),
+    )
+    .collect();
     if parts.is_empty() {
         "No sessions yet".into()
     } else {
@@ -248,9 +252,10 @@ pub(crate) fn summary(counts: [usize; 5]) -> String {
 pub(crate) fn filter_tip(filter: Filter) -> &'static str {
     match filter {
         Filter::NeedsYou => {
-            "Needs you: sessions waiting on an answer or a fix, plus those ready for review and job proposals"
+            "Needs you: sessions blocked on an answer, an approval or a fix, and job proposals"
         }
-        Filter::Active => "Active: the Needs you count plus the sessions working now",
+        Filter::Review => "To review: sessions that finished with changes for you to look at",
+        Filter::Active => "Active: Needs you, To review and the sessions working now",
         Filter::All => "All: every session listed, idle and ended included",
     }
 }
@@ -1193,8 +1198,9 @@ impl Workspace {
         let groups = self.fleet_sessions(cx);
         let counts = self.attention_counts(cx);
         let all_count: usize = counts.iter().sum();
-        let needs = counts[Bucket::NeedsYou.index()] + counts[Bucket::Review.index()];
-        let active = needs + counts[Bucket::Working.index()];
+        let needs = counts[Bucket::NeedsYou.index()];
+        let to_review = counts[Bucket::Review.index()];
+        let active = needs + to_review + counts[Bucket::Working.index()];
         let quiet = all_count - active;
         let tiles = self.fleet_tiles(cx);
         let jobs = self.fleet_jobs();
@@ -1251,7 +1257,9 @@ impl Workspace {
         let header = primitives::page_header(
             back,
             "Fleet",
-            Some(summary(counts).into()),
+            // r8-attention (R8.6): the subtitle says what the page is for,
+            // then the counts in the sidebar's words.
+            Some(wks_native::format::meta([FLEET_DESCRIPTION.to_owned(), summary(counts)]).into()),
             vec![
                 div()
                     .flex()
@@ -1280,6 +1288,12 @@ impl Workspace {
                                 needs,
                             ))
                             .child(filter(
+                                "fleet-filter-review",
+                                "To review",
+                                Filter::Review,
+                                to_review,
+                            ))
+                            .child(filter(
                                 "fleet-filter-active",
                                 "Active",
                                 Filter::Active,
@@ -1303,6 +1317,14 @@ impl Workspace {
                     "All clear",
                     format!("Nothing is waiting on you. {}.", summary(counts)),
                 )
+            } else if current == Filter::Review {
+                (
+                    "Nothing to review",
+                    format!(
+                        "No finished session has changes waiting. {}.",
+                        summary(counts)
+                    ),
+                )
             } else {
                 (
                     "All clear",
@@ -1313,7 +1335,8 @@ impl Workspace {
                 )
             };
             // The way out of an empty filter: the next wider one.
-            let (wider, label) = if current == Filter::NeedsYou && active > 0 {
+            let narrow = matches!(current, Filter::NeedsYou | Filter::Review);
+            let (wider, label) = if narrow && active > 0 {
                 (Filter::Active, format!("Show active {active}"))
             } else {
                 (Filter::All, format!("Show all {all_count}"))
@@ -2571,22 +2594,22 @@ mod tests {
         // R4.7: Needs you only, for a burst of asks.
         assert!(shown(Bucket::NeedsYou, Filter::NeedsYou));
         assert!(!shown(Bucket::Working, Filter::NeedsYou));
+        // r8-attention (R8.1): To review is its own filter.
+        assert!(!shown(Bucket::Review, Filter::NeedsYou));
+        assert!(shown(Bucket::Review, Filter::Review));
+        assert!(!shown(Bucket::NeedsYou, Filter::Review));
     }
 
     #[test]
     fn the_summary_counts_in_the_lexicon() {
-        // r7-qa: the first number is the Needs you filter's count.
+        // r8-attention (R8.1): two numbers, the sidebar's words.
         assert_eq!(
             summary([2, 1, 3, 5, 20]),
-            "3 need you (1 to review) · 3 working · 5 idle · 20 ended"
+            "2 need you · 1 to review · 3 working · 5 idle · 20 ended"
         );
         assert_eq!(summary([1, 0, 0, 0, 0]), "1 needs you");
-        assert_eq!(
-            summary([0, 1, 2, 0, 0]),
-            "1 needs you (to review) · 2 working"
-        );
+        assert_eq!(summary([0, 1, 2, 0, 0]), "1 to review · 2 working");
         assert_eq!(summary([0, 0, 0, 0, 0]), "No sessions yet");
-        assert!(shown(Bucket::Review, Filter::NeedsYou));
         assert!(shown(Bucket::Review, Filter::Active));
     }
 

@@ -1384,7 +1384,20 @@ impl Workspace {
         let open = s.clone();
         let connected = self.view.connected;
         let place = recent_place(&s.cwd, group, self.worktree_root());
-        let age = history::age(entry.updated_at, now);
+        // r8-attention (R8.1): "Last active" is the sidebar's fact in the
+        // sidebar's units: a live session's last activity, "23m ago".
+        let at = self
+            .view
+            .sessions
+            .iter()
+            .find(|live| live.id == s.id)
+            .and_then(|live| live.telemetry.last_activity_ms)
+            .unwrap_or(entry.updated_at);
+        let age = if at > 0 {
+            wks_native::format::ago(at, now)
+        } else {
+            wks_native::format::EMPTY.to_owned()
+        };
         let hidden = self.history_hidden(&s.id, None);
         let confirming = self.extras.recent.confirm_delete.as_deref() == Some(s.id.as_str());
         let live = connected && !s.stopped();
@@ -1466,7 +1479,7 @@ impl Workspace {
                         .text_size(px(t.text.meta))
                         .text_color(rgb(p.roles.text_tertiary))
                         .child(if place.is_empty() {
-                            "—".to_owned()
+                            wks_native::format::EMPTY.to_owned()
                         } else {
                             place
                         }),

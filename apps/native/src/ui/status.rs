@@ -217,6 +217,10 @@ pub(crate) struct Verification {
     pub at: Option<i64>,
     /// The transcript claims a pass after this recorded failure.
     pub contradicted: bool,
+    /// r8-attention (R8.1): the run before this one ended the other way
+    /// (its outcome), so the line says so: "earlier run passed". The
+    /// newest run always wins the headline.
+    pub earlier: Option<TestOutcome>,
 }
 
 impl Verification {
@@ -233,10 +237,7 @@ impl Verification {
     /// The words before the command: "Tests failed 4m ago", "Tests passed
     /// just now", "Tests running".
     pub(crate) fn headline(&self, now: i64) -> String {
-        let when = self.at.map(|at| match wks_native::format::age(at, now) {
-            age if age == "now" => "just now".to_owned(),
-            age => format!("{age} ago"),
-        });
+        let when = self.at.map(|at| wks_native::format::ago(at, now));
         let word = match self.outcome {
             TestOutcome::Running => return "Tests running".into(),
             TestOutcome::Passed => "Tests passed",
@@ -248,18 +249,30 @@ impl Verification {
         }
     }
 
-    /// The whole line: "Tests failed 4m ago · cargo test", plus the flag
-    /// when the transcript claims otherwise.
+    /// The whole line: "Tests failed 4m ago · cargo test", plus what
+    /// disagrees with it ([`Self::disagreement`]).
     pub(crate) fn text(&self, now: i64) -> String {
         wks_native::format::meta([
             self.headline(now),
             self.command.clone(),
-            if self.contradicted {
-                CONTRADICTED.to_owned()
-            } else {
-                String::new()
-            },
+            self.disagreement().to_owned(),
         ])
+    }
+
+    /// r8-attention (R8.1): what disagrees with the newest run, in a few
+    /// words: the transcript's claim first ("the reply says they pass"),
+    /// else an earlier run that ended the other way ("earlier run
+    /// passed"). Empty when nothing disagrees. At most one, so the line
+    /// keeps three parts.
+    pub(crate) fn disagreement(&self) -> &'static str {
+        if self.contradicted {
+            return CONTRADICTED;
+        }
+        match self.earlier {
+            Some(TestOutcome::Passed) => "earlier run passed",
+            Some(TestOutcome::Failed) => "earlier run failed",
+            _ => "",
+        }
     }
 }
 
@@ -322,20 +335,31 @@ pub(crate) fn claims_pass(text: &str) -> bool {
 /// text when known, which flags a pass claimed after a recorded failure.
 /// `None` when it has run no tests.
 pub(crate) fn verification(tasks: &[Task], claim: Option<&str>) -> Option<Verification> {
-    let latest = tasks
+    let mut runs: Vec<&Task> = tasks
         .iter()
         .filter(|t| is_test_command(&t.title()))
-        .max_by_key(|t| (t.ended_at.or(t.started_at), t.started_at))?;
-    let outcome = if latest.running() {
-        TestOutcome::Running
-    } else if latest.failed() {
-        TestOutcome::Failed
-    } else if latest.status == "completed" {
-        TestOutcome::Passed
-    } else {
-        // Killed or stopped: no result to report.
-        return None;
+        .collect();
+    runs.sort_by_key(|t| std::cmp::Reverse((t.ended_at.or(t.started_at), t.started_at)));
+    let latest = *runs.first()?;
+    let ended = |t: &Task| {
+        if t.running() {
+            Some(TestOutcome::Running)
+        } else if t.failed() {
+            Some(TestOutcome::Failed)
+        } else if t.status == "completed" {
+            Some(TestOutcome::Passed)
+        } else {
+            // Killed or stopped: no result to report.
+            None
+        }
     };
+    let outcome = ended(latest)?;
+    // r8-attention (R8.1): the newest run wins; the run before it that
+    // reached a result is named only when it ended the other way.
+    let earlier = runs[1..]
+        .iter()
+        .find_map(|t| ended(t).filter(|o| *o != TestOutcome::Running))
+        .filter(|o| outcome != TestOutcome::Running && *o != outcome);
     Some(Verification {
         outcome,
         command: wks_native::format::failed_label(&latest.title(), 40)
@@ -343,6 +367,7 @@ pub(crate) fn verification(tasks: &[Task], claim: Option<&str>) -> Option<Verifi
             .to_owned(),
         at: latest.ended_at.or(latest.started_at),
         contradicted: outcome == TestOutcome::Failed && claim.is_some_and(claims_pass),
+        earlier,
     })
 }
 
@@ -621,7 +646,7 @@ mod tests {
         };
         let s = derive(f);
         assert_eq!((s.kind, s.bucket), (StatusKind::Review, Bucket::Review));
-        assert_eq!(s.label(), "Ready for review");
+        assert_eq!(s.label(), "To review");
         // Still working: one status, Working.
         let s = derive(Facts { working: true, ..f });
         assert_eq!(s.kind, StatusKind::Working);
@@ -665,8 +690,21 @@ mod tests {
         );
         // A later pass is the latest result; the claim is then true.
         let passed = task("b", "completed", "cargo test --locked", 5_000);
-        let v = verification(&[failed, passed], Some("tests pass")).expect("a run");
+        let v = verification(&[failed.clone(), passed.clone()], Some("tests pass")).expect("a run");
         assert_eq!((v.outcome, v.contradicted), (TestOutcome::Passed, false));
+        // r8-attention (R8.1): the newest run wins, and an older run that
+        // disagrees is named.
+        assert_eq!(
+            v.text(5_010 + 60_000),
+            "Tests passed 1m ago · cargo test · earlier run failed"
+        );
+        let refailed = task("d", "failed", "cargo test", 9_000);
+        let v = verification(&[failed, passed, refailed], None).expect("a run");
+        assert_eq!(v.outcome, TestOutcome::Failed);
+        assert_eq!(
+            v.text(9_010 + 4 * 60_000),
+            "Tests failed 4m ago · cargo test · earlier run passed"
+        );
         // Other commands are not test runs.
         let build = task("c", "failed", "cargo build --release", 9_000);
         assert!(verification(&[build], None).is_none());

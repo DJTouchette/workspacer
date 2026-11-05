@@ -116,6 +116,13 @@ pub struct Roles {
     /// The five status roles. Colour AND shape encode status; nothing else
     /// may borrow these hues (blue/accent means "interactive" only).
     pub status: StatusRoles,
+    /// r8-attention (R8.1, R8.7): the To-review hue, the second of the two
+    /// want-you states (finished, with changes). A violet, tuned per theme
+    /// and kept apart from amber, red, green, the warning hue and the
+    /// accent (`ui::system::contrast`'s separation test); readable as text
+    /// (≥ 4.5:1) and as a badge fill under `p.base`. Never amber. v1: the
+    /// warning colour (v1 never draws the state).
+    pub review: u32,
 }
 
 /// The status roles of `design-v2-direction.md` R2.1, as 0xRRGGBB. Each
@@ -128,6 +135,14 @@ pub struct StatusRoles {
     /// Blocked on the user: approval, question, plan, a failure needing a
     /// decision. Amber. Also readable as text (≥ 4.5:1 in Light).
     pub attention: u32,
+    /// r8-attention (R8.7): amber as a mark (the Needs-you dot, the
+    /// attention bar, the count badge's fill). Dark themes: `attention`.
+    /// Light themes: a brighter amber at ≥ 3:1 (non-text), because the
+    /// text amber that reads at 4.5:1 turns muddy brown as a dot or bar.
+    pub attention_fill: u32,
+    /// The label on an `attention_fill` badge, ≥ 4.5:1 (`p.base` in dark
+    /// themes, the text colour, deepened as needed, in light ones).
+    pub on_attention: u32,
     /// Failed, stalled ("Not responding"), offline, error. Red.
     pub fault: u32,
     /// Actively running. v2 (r4-calm): neutral secondary grey, the turning
@@ -187,16 +202,18 @@ fn toggle_edge(border_strong: u32, text: u32, on: &[u32]) -> u32 {
 pub const AVATAR_TONES: usize = 6;
 
 /// The avatar hues in OKLCH degrees, each with its share of the mode's
-/// chroma: blue, sky, teal, green, a warm stone and a blue-grey slate.
+/// chroma: blue, sky, teal, green, a neutral grey and a blue-grey slate.
 /// r4-calm (R4.4): the olive, sand and clay that read as mud on dark rails
-/// are gone. No purple (280–335°), which v2 retires. r6-qa: no rose
-/// either; a red-brown tile read as an error beside the fault red.
+/// are gone. No purple (280–335°): violet is To review's (R8.1). r6-qa: no
+/// rose either; a red-brown tile read as an error beside the fault red.
+/// r8-attention (R8.6): the warm stone went too; beside the rail's amber
+/// it read as a second attention colour.
 const AVATAR_HUES: [(f32, f32); AVATAR_TONES] = [
     (258., 1.),
     (226., 1.),
     (192., 1.),
     (152., 1.),
-    (60., 0.3),
+    (60., 0.),
     (250., 0.3),
 ];
 
@@ -248,11 +265,14 @@ impl Roles {
         segment_selected: 0,
         status: StatusRoles {
             attention: 0,
+            attention_fill: 0,
+            on_attention: 0,
             fault: 0,
             working: 0,
             done: 0,
             idle: 0,
         },
+        review: 0,
     };
 
     /// The v1 mapping: every role is an existing palette colour.
@@ -278,11 +298,14 @@ impl Roles {
             segment_selected: p.selected,
             status: StatusRoles {
                 attention: p.warning,
+                attention_fill: p.warning,
+                on_attention: p.base,
                 fault: p.error,
                 working: p.busy,
                 done: p.success,
                 idle: p.disabled,
             },
+            review: p.warning,
         }
     }
 }
@@ -323,6 +346,11 @@ struct V2Colors {
     /// Working status is `secondary` (neutral), so `working` (cyan/teal,
     /// distinct from the accent) is now only `busy` and the info tone.
     attention: u32,
+    /// r8-attention (R8.7): the amber of marks in light themes (see
+    /// `StatusRoles::attention_fill`); `None` uses `attention`.
+    attention_fill: Option<u32>,
+    /// r8-attention (R8.1): the To-review violet (`Roles::review`).
+    review: u32,
     fault: u32,
     done: u32,
     working: u32,
@@ -520,11 +548,20 @@ impl Appearance {
             // is moving), so amber and red are the only hues a status adds.
             status: StatusRoles {
                 attention: c.attention,
+                attention_fill: c.attention_fill.unwrap_or(c.attention),
+                on_attention: match c.attention_fill {
+                    None => c.base,
+                    Some(fill) => (0..=50)
+                        .map(|step| mix(c.text, 0x000000, step as f32 * 0.02))
+                        .find(|&label| contrast(label, fill) >= 4.55)
+                        .unwrap_or(0x000000),
+                },
                 fault: c.fault,
                 working: c.secondary,
                 done: c.done,
                 idle: c.tertiary,
             },
+            review: c.review,
         };
         p
     }
@@ -553,6 +590,8 @@ impl Appearance {
                 primary: 0x2563d8,
                 on_primary: 0xffffff,
                 attention: 0xe9b464,
+                attention_fill: None,
+                review: 0xbe9df7,
                 fault: 0xf27a7a,
                 done: 0x72b48c,
                 working: 0x45c4c8,
@@ -583,6 +622,8 @@ impl Appearance {
                 primary: 0x2563eb,
                 on_primary: 0xffffff,
                 attention: 0x8a5800,
+                attention_fill: Some(0xb97200),
+                review: 0x6e3ead,
                 fault: 0xc81e1e,
                 done: 0x2c734a,
                 working: 0x0d7a80,
@@ -612,7 +653,9 @@ impl Appearance {
                 accent: 0x88c0d0,
                 primary: 0x88c0d0,
                 on_primary: 0x1b1f27,
-                attention: 0xebcb8b,
+                attention: 0xeec46e,
+                attention_fill: None,
+                review: 0xc2adf3,
                 fault: 0xe8a4aa,
                 done: 0xa3be8c,
                 working: 0x8fbcbb,
@@ -639,6 +682,8 @@ impl Appearance {
                 primary: 0x7aa2f7,
                 on_primary: 0x16161e,
                 attention: 0xe0af68,
+                attention_fill: None,
+                review: 0xbe9df7,
                 fault: 0xf7768e,
                 done: 0x9ece6a,
                 working: 0x73daca,
@@ -664,7 +709,9 @@ impl Appearance {
                 accent: 0x89b4fa,
                 primary: 0x89b4fa,
                 on_primary: 0x1e1e2e,
-                attention: 0xf9e2af,
+                attention: 0xf8c970,
+                attention_fill: None,
+                review: 0xd0aafc,
                 fault: 0xf38ba8,
                 done: 0x8fc48b,
                 working: 0x94e2d5,
@@ -691,6 +738,8 @@ impl Appearance {
                 primary: 0x7daea3,
                 on_primary: 0x1d2021,
                 attention: 0xd8a657,
+                attention_fill: None,
+                review: 0xc4a2ed,
                 fault: 0xf88070,
                 done: 0xa9b665,
                 working: 0x89b482,
@@ -718,6 +767,8 @@ impl Appearance {
                 primary: 0x7fbbb3,
                 on_primary: 0x232a2e,
                 attention: 0xdbbc7f,
+                attention_fill: None,
+                review: 0xc4acf2,
                 fault: 0xf39fa4,
                 done: 0xa7c080,
                 working: 0x83c092,
@@ -744,6 +795,8 @@ impl Appearance {
                 primary: 0x1a5fe8,
                 on_primary: 0xffffff,
                 attention: 0x7c5800,
+                attention_fill: Some(0xac6b00),
+                review: 0x6b3baa,
                 fault: 0xba0f2c,
                 done: 0x346932,
                 working: 0x157f86,

@@ -116,7 +116,8 @@ pub(super) fn meta_line(skill: Option<&str>, work: &str, delegated: usize) -> St
     let skill = skill
         .filter(|s| !s.trim().is_empty())
         .map(|s| format!("Used skill {}", s.trim()));
-    let delegated = (delegated > 0).then(|| format!("{delegated} delegated"));
+    // r8-attention (R8.6): "subagent", the one word, never "delegated".
+    let delegated = (delegated > 0).then(|| plural(delegated, "subagent", "subagents"));
     // The run's own facts, each re-joined with the one separator.
     let work = format::meta(work.split('·'));
     format::meta([
@@ -246,11 +247,8 @@ const WAKE_SCAN: usize = 400;
 
 /// The strip's line for several wakes (R6.6).
 pub(super) fn wake_strip_label(n: usize) -> String {
-    plural(
-        n,
-        "update from other sessions",
-        "updates from other sessions",
-    )
+    // r8-attention (R8.6): "2 updates"; the strip itself says whose.
+    plural(n, "update", "updates")
 }
 
 /// One wake at a glance ([`Workspace::fleet_glance`]).
@@ -2587,9 +2585,12 @@ pub(super) fn child_names(child: &ChildAgent, parent_title: Option<&str>) -> (St
         parent_title.is_some_and(|t| !a.is_empty() && t.trim().eq_ignore_ascii_case(a.trim()))
     };
     let model = format::model_name(&child.model);
+    // r8-attention (R8.6): built-in roles in plain words ("Explore" reads
+    // "Reading code").
     let role = [child.agent_type.as_str(), child.label.as_str()]
         .into_iter()
         .find(|r| !r.is_empty() && !same(r) && *r != child.description)
+        .map(wks_native::format::subagent_role)
         .unwrap_or("")
         .to_owned();
     let task = if same(&child.description) {
@@ -2932,7 +2933,7 @@ impl Workspace {
             Glyph::Named(IconName::Bot),
             // R5.4: this block knows one turn's delegations; the sidebar
             // counts the whole tree. Say which this is.
-            format!("{total} delegated this turn"),
+            format!("{} this turn", plural(total, "subagent", "subagents")),
         );
         event.disclosure = Some(open);
         event.end = match children_badge(&views) {
@@ -3306,7 +3307,7 @@ mod tests {
         };
         let (primary, context) = child_names(&explore, None);
         assert_eq!(primary, "Audit settings search");
-        assert_eq!(context, "Explore · Haiku 4.5");
+        assert_eq!(context, "Reading code · Haiku 4.5");
     }
 
     // R6.6: one meta line per turn; R6.2: a recovered run says so in words.
@@ -3314,16 +3315,16 @@ mod tests {
     fn a_turn_has_one_meta_line_and_recovery_reads_in_words() {
         assert_eq!(
             meta_line(Some("code-review"), "Worked 5m 12s · 6 tools", 1),
-            "Used skill code-review · Worked 5m 12s · 6 tools · 1 delegated"
+            "Used skill code-review · Worked 5m 12s · 6 tools · 1 subagent"
         );
         assert_eq!(meta_line(None, "Worked · 2 tools", 0), "Worked · 2 tools");
         assert_eq!(
             meta_line(Some(""), "Worked · 2 tools", 3),
-            "Worked · 2 tools · 3 delegated"
+            "Worked · 2 tools · 3 subagents"
         );
         assert_eq!(recovered_line(1), "1 failed, then passed");
-        assert_eq!(wake_strip_label(2), "2 updates from other sessions");
-        assert_eq!(wake_strip_label(1), "1 update from other sessions");
+        assert_eq!(wake_strip_label(2), "2 updates");
+        assert_eq!(wake_strip_label(1), "1 update");
     }
 
     #[test]
@@ -3339,7 +3340,7 @@ mod tests {
         // r7-pages (R7.8): one separator, no stray dot or double space.
         assert_eq!(
             meta_line(Some("code-review"), "Worked 5m · 3 tools  · 1 failed", 1),
-            "Used skill code-review · Worked 5m · 3 tools · 1 failed · 1 delegated"
+            "Used skill code-review · Worked 5m · 3 tools · 1 failed · 1 subagent"
         );
         assert_eq!(meta_line(None, "· 3 tools ·", 0), "3 tools");
         assert_eq!(

@@ -1042,7 +1042,7 @@ impl Workspace {
             InputState::new(window, cx)
                 .multi_line(true)
                 .rows(3)
-                .placeholder("What would you like to work on? (optional)")
+                .placeholder(states::PROMPT_PLACEHOLDER_V1)
         });
         let project_path = cx
             .new(|cx| InputState::new(window, cx).placeholder("Absolute folder path on this hub"));
@@ -1341,6 +1341,7 @@ impl Workspace {
         self.appearance = appearance;
         configure_theme(appearance, self.design(), Some(window), cx);
         self.apply_typography(cx);
+        self.sync_prompt_placeholder(window, cx);
         cx.notify();
     }
 
@@ -1378,6 +1379,7 @@ impl Workspace {
         self.design_override = None;
         configure_theme(self.appearance, self.design(), Some(window), cx);
         self.apply_typography(cx);
+        self.sync_prompt_placeholder(window, cx);
         self.save_settings(cx);
         window.refresh();
     }

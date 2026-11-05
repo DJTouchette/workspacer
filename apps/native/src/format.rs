@@ -128,6 +128,51 @@ pub fn age(at: i64, now: i64) -> String {
     }
 }
 
+// r8-attention (R8.1): one time format per meaning, everywhere.
+/// Recency in a sentence or a cell: "23m ago", "just now" (under 10s),
+/// with [`age`]'s thresholds, so a sidebar row's "23m" and History's
+/// "23m ago" are the same fact in the same units.
+pub fn ago(at: i64, now: i64) -> String {
+    match age(at, now).as_str() {
+        "now" => "just now".into(),
+        age => format!("{age} ago"),
+    }
+}
+
+/// Recency with its meaning named: "Last active 23m ago".
+pub fn last_active(at: i64, now: i64) -> String {
+    format!("Last active {}", ago(at, now))
+}
+
+/// How long something ran: "Ran 3m 31s" ([`duration`]).
+pub fn ran(milliseconds: i64) -> String {
+    format!("Ran {}", duration(milliseconds))
+}
+
+/// r8-attention (R8.6): one name per agent, everywhere an agent (not an
+/// account's usage) is named: "Claude Code", "Codex CLI". Unknown ids keep
+/// their own name; none reads "Agent".
+pub fn agent_name(provider: &str) -> &str {
+    match provider {
+        "claude" => "Claude Code",
+        "codex" => "Codex CLI",
+        "" => "Agent",
+        other => other,
+    }
+}
+
+/// r8-attention (R8.6): a subagent's built-in role in plain words: Claude
+/// Code's "Explore" reads "Reading code", "Plan" reads "Planning", and the
+/// catch-all "general-purpose" says nothing. Other roles keep their name.
+pub fn subagent_role(role: &str) -> &str {
+    match role.trim() {
+        "Explore" | "explore" => "Reading code",
+        "Plan" | "plan" => "Planning",
+        "general-purpose" => "",
+        other => other,
+    }
+}
+
 // r2-systems
 /// What a stalled agent says instead of "Working": a fault, never also
 /// running (`docs/design-v2-direction.md` R2.1).
@@ -286,6 +331,26 @@ pub fn window_name(label: &str) -> &str {
     }
 }
 
+/// r8-attention (R8.6): the sidebar's usage line, said in full: "Codex ·
+/// 93% of 5h limit used" (the window's short name). [`resets_in`] follows
+/// it.
+pub fn usage_words(account: &str, window: &str, pct: f64) -> String {
+    format!(
+        "{account} · {}% of {} limit used",
+        pct.max(0.).round() as u64,
+        window_name(window)
+    )
+}
+
+/// "resets in 2h 13m", "resets now".
+pub fn resets_in(milliseconds: i64) -> String {
+    if milliseconds <= 0 {
+        "resets now".into()
+    } else {
+        format!("resets in {}", countdown(milliseconds))
+    }
+}
+
 /// The sidebar's usage line names its window (R7.4): "Claude · 5h limit
 /// 42%".
 pub fn usage_short(account: &str, window: &str, pct: f64) -> String {
@@ -352,6 +417,13 @@ mod tests {
         assert_eq!(meta(["Worked 2m", "3 tools  ·"]), "Worked 2m · 3 tools");
         assert_eq!(meta(Vec::<String>::new()), "");
         assert_eq!(usage_short("Claude", "5h", 41.6), "Claude · 5h limit 42%");
+        // r8-attention (R8.6)
+        assert_eq!(
+            usage_words("Codex", "5h", 92.6),
+            "Codex · 93% of 5h limit used"
+        );
+        assert_eq!(resets_in(2 * 3_600_000), "resets in 2h 0m");
+        assert_eq!(resets_in(0), "resets now");
         assert_eq!(
             usage_short("Codex", "Week", 12.),
             "Codex · Weekly limit 12%"
@@ -427,6 +499,16 @@ mod tests {
         assert_eq!(age(now - 5 * 3_600_000, now), "5h");
         assert_eq!(age(now - 3 * 86_400_000, now), "3d");
         assert_eq!(age(now - 30 * 86_400_000, now), "4w");
+    }
+
+    // r8-attention (R8.1)
+    #[test]
+    fn one_time_format_per_meaning() {
+        let now = 1_000_000_000_000;
+        assert_eq!(ago(now - 3_000, now), "just now");
+        assert_eq!(ago(now - 23 * 60_000, now), "23m ago");
+        assert_eq!(last_active(now - 23 * 60_000, now), "Last active 23m ago");
+        assert_eq!(ran(211_000), "Ran 3m 31s");
     }
 
     #[test]

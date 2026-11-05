@@ -18,7 +18,9 @@ use wks_native::{jobs, timing::now_ms, tool_preview};
 
 pub(super) const SCRATCH_DESCRIPTION: &str = "Personal files kept outside git and shared by every worktree: harnesses, repros and SQL meant to be run by hand.";
 // r3-pages (R3.5): what scratch is, in a newcomer's words.
-pub(super) const SCRATCH_DESCRIPTION_V2: &str = "Notes, scripts and repro steps your agents keep for you outside git, shared by every worktree. Workspacer never runs them; you do.";
+// r8-attention (R8.6): one line, the same in the nav item's tooltip.
+pub(super) const SCRATCH_DESCRIPTION_V2: &str =
+    "Notes and scripts your agents keep for you outside git. You run them, not Workspacer.";
 /// The Scratch page's scope covering every project: what the sidebar's
 /// count adds up, so the page's counts match it.
 pub(super) const ALL_SCRATCH: &str = "all:";

@@ -34,6 +34,10 @@ const QUIET_TRACK: f64 = 2.0;
 const STATUS_APART: (f64, f64) = (0.10, 30.);
 /// The warning hue vs amber and vs red.
 const WARNING_APART: (f64, f64) = (0.06, 15.);
+/// r8-attention (R8.1): the To-review violet vs the accent blue. Hue is
+/// what tells them apart (both are mid-light), so the angle is the full
+/// 30° and the distance the warning's.
+const REVIEW_ACCENT_APART: (f64, f64) = (0.06, 30.);
 /// The least a selected segment's fill stands off its track.
 const SEGMENT: f64 = 1.15;
 /// The scrim's band, as a share of the shadow colour.
@@ -254,7 +258,12 @@ fn check(theme: Appearance) -> Vec<String> {
         // Focus ring.
         g.at_least(&format!("focus ring on {name}"), r.focus, bg, NON_TEXT);
         // CountBadge (fills are opaque or washes of text).
-        for tone in [CountTone::Neutral, CountTone::NeedsYou, CountTone::Failed] {
+        for tone in [
+            CountTone::Neutral,
+            CountTone::NeedsYou,
+            CountTone::Review,
+            CountTone::Failed,
+        ] {
             let (fill, label) = match tone {
                 CountTone::Neutral => (
                     composite(
@@ -263,7 +272,8 @@ fn check(theme: Appearance) -> Vec<String> {
                     ),
                     r.text_secondary,
                 ),
-                CountTone::NeedsYou => (r.status.attention, p.base),
+                CountTone::NeedsYou => (r.status.attention_fill, r.status.on_attention),
+                CountTone::Review => (r.review, p.base),
                 CountTone::Failed => (r.status.fault, p.base),
             };
             g.at_least(&format!("{tone:?} count on {name}"), label, fill, TEXT);
@@ -441,6 +451,66 @@ fn needs_you_fault_and_warning_stay_apart_in_every_theme() {
                     p.roles.caution,
                     s.fault,
                     WARNING_APART,
+                ),
+                // r8-attention (R8.7): the brighter amber of marks keeps
+                // the same distances as the text amber.
+                separation(
+                    theme,
+                    "needs-you mark vs fault red",
+                    s.attention_fill,
+                    s.fault,
+                    STATUS_APART,
+                ),
+                separation(
+                    theme,
+                    "warning vs needs-you mark",
+                    p.roles.caution,
+                    s.attention_fill,
+                    WARNING_APART,
+                ),
+                // r8-attention (R8.1): To review has its own hue, apart
+                // from every other status hue, the warning and the accent.
+                separation(
+                    theme,
+                    "to-review vs needs-you amber",
+                    p.roles.review,
+                    s.attention,
+                    STATUS_APART,
+                ),
+                separation(
+                    theme,
+                    "to-review vs needs-you mark",
+                    p.roles.review,
+                    s.attention_fill,
+                    STATUS_APART,
+                ),
+                separation(
+                    theme,
+                    "to-review vs fault red",
+                    p.roles.review,
+                    s.fault,
+                    STATUS_APART,
+                ),
+                separation(
+                    theme,
+                    "to-review vs done green",
+                    p.roles.review,
+                    s.done,
+                    STATUS_APART,
+                ),
+                separation(
+                    theme,
+                    "to-review vs warning",
+                    p.roles.review,
+                    p.roles.caution,
+                    STATUS_APART,
+                ),
+                separation(
+                    theme,
+                    "to-review vs accent",
+                    p.roles.review,
+                    p.accent,
+                    REVIEW_ACCENT_APART,
                 ),
             ]
             .into_iter()

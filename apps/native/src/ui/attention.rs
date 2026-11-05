@@ -37,7 +37,7 @@ impl Bucket {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::NeedsYou => "Needs you",
-            Self::Review => "Ready for review",
+            Self::Review => "To review",
             Self::Working => "Working",
             Self::Idle => "Idle",
             Self::Ended => "Ended",
@@ -57,6 +57,58 @@ impl Bucket {
             Self::Idle => "idle",
             Self::Ended => "ended",
         }
+    }
+}
+
+/// r8-attention (R8.1): the two want-you numbers every surface shows
+/// (sidebar groups, the Fleet summary and filters, the rail, the title bar,
+/// Projects), read from one place (`Workspace::attention_counts`), with one
+/// set of words. Neither number ever folds into the other.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Wants {
+    /// Blocked on the user (amber): approvals, questions, plans, stalls and
+    /// job proposals.
+    pub needs_you: usize,
+    /// Finished with changes to look at (the review hue).
+    pub to_review: usize,
+}
+
+impl Wants {
+    /// The two numbers out of a per-group count (`Bucket::index` order).
+    pub(crate) fn of(counts: &[usize; 5]) -> Self {
+        Self {
+            needs_you: counts[Bucket::NeedsYou.index()],
+            to_review: counts[Bucket::Review.index()],
+        }
+    }
+
+    pub(crate) fn any(self) -> bool {
+        self.needs_you + self.to_review > 0
+    }
+
+    /// "3 need you · 1 to review", empty parts left out ("" when neither).
+    pub(crate) fn words(self) -> String {
+        wks_native::format::meta([
+            needs_you_words(self.needs_you),
+            review_words(self.to_review),
+        ])
+    }
+}
+
+/// "1 needs you", "3 need you"; "" for none.
+pub(crate) fn needs_you_words(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => "1 needs you".into(),
+        n => format!("{n} need you"),
+    }
+}
+
+/// "1 to review"; "" for none.
+pub(crate) fn review_words(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        n => format!("{n} to review"),
     }
 }
 
@@ -172,8 +224,8 @@ pub(crate) fn child_stalled(child: &wks_native::child_agents::ChildAgent, now: i
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InboxAction {
     /// A tool waits for permission (the request is named in the reason).
-    /// r3-shell: its verb is "Review", which opens the session at the
-    /// request; the sidebar never allows an unseen command blind.
+    /// It opens the session at the request; the sidebar never allows an
+    /// unseen command blind.
     Allow,
     /// Open the session at its question.
     Answer,
@@ -184,13 +236,11 @@ pub(crate) enum InboxAction {
 }
 
 impl InboxAction {
+    /// r8-attention (R8.1): one row verb for every want-you row, "Open".
+    /// The card it opens says what to do (Allow, Answer, Review the diff);
+    /// "Review" stays the To-review state's name, never a button.
     pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Allow => "Review",
-            Self::Answer => "Answer",
-            Self::Open => "Open",
-            Self::Review => "Review",
-        }
+        "Open"
     }
 }
 

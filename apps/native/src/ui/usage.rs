@@ -265,7 +265,13 @@ impl Workspace {
     /// for accounts whose token has expired. Unknown install state never nags.
     pub(super) fn usage_notes(&self, accounts: &[Account]) -> Vec<(IconName, String)> {
         let installed = |provider: &str| self.view.installed.get(provider).copied();
-        let mut notes: Vec<(IconName, String)> = [("claude", "Claude Code"), ("codex", "Codex")]
+        // r8-attention (R8.6): v2 names each agent one way ("Codex CLI").
+        let codex = if self.design().is_v2() {
+            wks_native::format::agent_name("codex")
+        } else {
+            "Codex"
+        };
+        let mut notes: Vec<(IconName, String)> = [("claude", "Claude Code"), ("codex", codex)]
             .into_iter()
             .filter(|(id, _)| installed(id) == Some(false))
             .map(|(_, name)| (IconName::ArrowDown, format!("Install {name}")))
@@ -456,51 +462,80 @@ impl Workspace {
                             .text_color(rgb(p.roles.text_tertiary)),
                     )
                 })
-                // r7-status (R7.5): one footer line, the account nearest its
-                // limit; every account's sentence is in the tooltip and the
-                // details open on click.
+                // r7-status (R7.5): one footer entry, the account nearest
+                // its limit; every account's sentence is in the tooltip and
+                // the details open on click.
                 .children(top.iter().map(|(a, w)| {
-                    // r6-surfaces (R6.5), r7-status (R7.4): the meter names
-                    // its window ("Claude · 5h limit ▬ 42%").
+                    // r8-attention (R8.6): said in full, "Codex · 93% of 5h
+                    // limit used", the meter under it with when it resets.
                     let selector = format!("sidebar-usage-row-{}", a.provider);
                     let level = wks_native::format::level(w.pct);
                     let tone = super::primitives::level_color(level, &p);
                     let pct = w.pct.max(0.).round() as u64;
+                    let resets = w
+                        .resets_at
+                        .map(|at| wks_native::format::resets_in((at - now) * 1000));
                     div()
                         .debug_selector(move || selector.clone())
                         .w_full()
                         .min_w_0()
                         .flex()
-                        .items_center()
-                        .gap(px(t.space.sm))
-                        .child(super::shell::neutral_glyph(&a.provider, t.icon.sm, p))
+                        .flex_col()
+                        .gap(px(t.space.xxs))
                         .child(
                             div()
-                                .flex_shrink_0()
-                                .text_color(rgb(p.roles.text_secondary))
-                                .font_weight(FontWeight(t.weight.medium))
-                                .child(format!(
-                                    "{} · {} limit",
-                                    a.title,
-                                    wks_native::format::window_name(w.label)
-                                )),
+                                .w_full()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap(px(t.space.sm))
+                                .child(super::shell::neutral_glyph(&a.provider, t.icon.sm, p))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_color(rgb(p.roles.text_secondary))
+                                        .child(format!("{} · ", a.title))
+                                        .child(super::primitives::tabular(
+                                            div()
+                                                .text_color(rgb(
+                                                    tone.unwrap_or(p.roles.text_secondary)
+                                                ))
+                                                .font_weight(FontWeight(t.weight.medium))
+                                                .child(format!("{pct}%")),
+                                        ))
+                                        .child(format!(
+                                            " of {} limit used",
+                                            wks_native::format::window_name(w.label)
+                                        ))
+                                        .flex()
+                                        .whitespace_nowrap(),
+                                ),
                         )
                         .child(
-                            super::primitives::meter(
-                                (w.pct / 100.) as f32,
-                                super::primitives::level_intent(level),
-                                &p,
-                            )
-                            .flex_1()
-                            .min_w(px(t.shell().meter_width)),
-                        )
-                        .child(super::primitives::tabular(
                             div()
-                                .flex_shrink_0()
-                                .text_color(rgb(tone.unwrap_or(p.roles.text_secondary)))
-                                .font_weight(FontWeight(t.weight.medium))
-                                .child(format!("{pct}%")),
-                        ))
+                                .w_full()
+                                .min_w_0()
+                                .pl(px(t.icon.sm + t.space.sm))
+                                .flex()
+                                .items_center()
+                                .gap(px(t.space.sm))
+                                .child(
+                                    super::primitives::meter(
+                                        (w.pct / 100.) as f32,
+                                        super::primitives::level_intent(level),
+                                        &p,
+                                    )
+                                    .flex_1()
+                                    .min_w(px(t.shell().meter_width)),
+                                )
+                                .children(resets.map(|resets| {
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_color(rgb(p.roles.text_tertiary))
+                                        .child(resets)
+                                })),
+                        )
                 }))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.usage_open = true;

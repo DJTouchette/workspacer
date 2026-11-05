@@ -86,14 +86,7 @@ pub(crate) fn verification_line(
     now: i64,
     p: &Palette,
 ) -> Div {
-    let detail = wks_native::format::meta([
-        v.command.as_str(),
-        if v.contradicted {
-            super::super::status::CONTRADICTED
-        } else {
-            ""
-        },
-    ]);
+    let detail = wks_native::format::meta([v.command.as_str(), v.disagreement()]);
     StatusCell::new(v.kind())
         .label(v.headline(now))
         .detail(detail)

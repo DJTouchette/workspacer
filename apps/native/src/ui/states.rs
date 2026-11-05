@@ -398,6 +398,14 @@ pub(super) struct EmptyV2 {
     pub prompt_focused: bool,
 }
 
+/// The task box's placeholder in v1 (welcome and New session).
+pub(super) const PROMPT_PLACEHOLDER_V1: &str = "What would you like to work on? (optional)";
+
+/// r8-attention (R8.6): v2's task box placeholder. The hero above it asks
+/// the question; this says what the box takes and what an empty Start does.
+pub(super) const PROMPT_PLACEHOLDER_V2: &str =
+    "Describe a task, or leave this empty to start a blank session";
+
 /// Three starter tasks under the welcome composer: each fills the task.
 pub(super) const STARTERS: [(&str, &str); 3] = [
     (
@@ -493,6 +501,19 @@ impl AgentSetup {
 impl Workspace {
     /// Whether the welcome's task field has focus: its send keys start the
     /// agent rather than reaching a composer that is not there.
+    /// r8-attention (R8.6): the task box's placeholder for the design in
+    /// use (v1 keeps its own words).
+    pub(super) fn sync_prompt_placeholder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let placeholder = if self.design().is_v2() {
+            PROMPT_PLACEHOLDER_V2
+        } else {
+            PROMPT_PLACEHOLDER_V1
+        };
+        self.prompt.update(cx, |input, cx| {
+            input.set_placeholder(placeholder, window, cx)
+        });
+    }
+
     pub(super) fn welcome_prompt_focused(&self, window: &Window, cx: &App) -> bool {
         self.design().is_v2()
             && !self.new_session
@@ -597,7 +618,14 @@ impl Workspace {
             "state-child-empty" => IconName::Bot,
             _ => IconName::Inbox,
         };
-        let mark = if state.animated {
+        // r8-attention (R8.7): an empty state with nothing of its own to
+        // say (no error, no ending, no subagent) carries the brand mark.
+        let branded = matches!(icon, IconName::Inbox);
+        let mark = if branded && !state.animated {
+            super::shell::brand_moment(p)
+                .size(px(t.icon.xl + t.space.xl))
+                .items_center()
+        } else if state.animated {
             div()
                 .size(px(t.icon.xl + t.space.xl))
                 .flex()
@@ -849,6 +877,8 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .gap(px(t.space.lg))
+                    // r8-attention (R8.7): the brand's one moment.
+                    .child(super::shell::brand_moment(p))
                     .child(
                         div()
                             .debug_selector(|| "welcome-headline".into())
@@ -873,7 +903,7 @@ impl Workspace {
     fn render_agent_checklist(&self, first_run: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
-        let agents = [("claude", "Claude Code"), ("codex", "Codex CLI")];
+        let agents = ["claude", "codex"].map(|id| (id, wks_native::format::agent_name(id)));
         let setups = agents.map(|(id, _)| self.agent_setup(id));
         let ready = setups
             .iter()

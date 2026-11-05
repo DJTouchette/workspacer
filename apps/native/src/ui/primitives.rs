@@ -745,6 +745,8 @@ pub(crate) fn badge(label: impl Into<SharedString>, intent: Intent, p: &Palette)
 pub(crate) enum CountTone {
     Neutral,
     NeedsYou,
+    /// r8-attention (R8.1): a To-review count, filled with its own hue.
+    Review,
     Failed,
 }
 
@@ -756,7 +758,11 @@ pub(crate) fn count_badge(label: impl Into<SharedString>, tone: CountTone, p: &P
     let sys = t.system();
     let (bg, fg) = match tone {
         CountTone::Neutral => (tonal(p, t.wash.pressed), p.roles.text_secondary),
-        CountTone::NeedsYou => (Hsla::from(rgb(p.roles.status.attention)), p.base),
+        CountTone::NeedsYou => (
+            Hsla::from(rgb(p.roles.status.attention_fill)),
+            p.roles.status.on_attention,
+        ),
+        CountTone::Review => (Hsla::from(rgb(p.roles.review)), p.base),
         CountTone::Failed => (Hsla::from(rgb(p.roles.status.fault)), p.base),
     };
     // r7-status (R7.8): every measure from `system()` badge tokens.
@@ -1260,6 +1266,9 @@ pub(crate) const MAX_STATUS_GLYPHS: usize = 7;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StatusTone {
     Attention,
+    /// r8-attention (R8.1): To review's own hue (`roles.review`), never
+    /// amber.
+    Review,
     Fault,
     Working,
     Done,
@@ -1310,9 +1319,9 @@ pub(crate) const STATUS_TABLE: [StatusRow; 13] = [
     },
     StatusRow {
         kind: StatusKind::Review,
-        label: "Ready for review",
+        label: "To review",
         shape: StatusShape::Half,
-        tone: StatusTone::Attention,
+        tone: StatusTone::Review,
         words: StatusWords::Hue,
         also: "Finished with uncommitted changes",
     },
@@ -1429,11 +1438,14 @@ impl StatusKind {
         self.row().label
     }
 
-    /// The glyph's colour: one of the palette's five status roles.
+    /// The glyph's colour: one of the palette's status roles. r8-attention
+    /// (R8.7): Needs you's mark is `attention_fill` (a brighter amber in
+    /// light themes), To review's is `roles.review`.
     pub(crate) fn color(self, p: &Palette) -> u32 {
         let r = p.roles.status;
         match self.row().tone {
-            StatusTone::Attention => r.attention,
+            StatusTone::Attention => r.attention_fill,
+            StatusTone::Review => p.roles.review,
             StatusTone::Fault => r.fault,
             StatusTone::Working => r.working,
             StatusTone::Done => r.done,
@@ -1445,6 +1457,9 @@ impl StatusKind {
     /// hue (amber blocked on you, red broke); the rest are neutral text.
     pub(crate) fn text_color(self, p: &Palette) -> u32 {
         match self.row().words {
+            StatusWords::Hue if self.row().tone == StatusTone::Attention => {
+                p.roles.status.attention
+            }
             StatusWords::Hue => self.color(p),
             StatusWords::Secondary => p.roles.text_secondary,
             StatusWords::Tertiary => p.roles.text_tertiary,
@@ -1454,7 +1469,10 @@ impl StatusKind {
     /// Whether the user has to act (attention or fault): these belong in
     /// Needs you.
     pub(crate) fn needs_attention(self) -> bool {
-        matches!(self.row().tone, StatusTone::Attention | StatusTone::Fault)
+        matches!(
+            self.row().tone,
+            StatusTone::Attention | StatusTone::Review | StatusTone::Fault
+        )
     }
 
     /// Whether this state draws a glyph. r7-status (R7.3): every state
@@ -1973,6 +1991,21 @@ pub(crate) fn avatar_with_status(
     under: u32,
     p: &Palette,
 ) -> Div {
+    avatar_with_status_keyed(name, name, size, status, under, p)
+}
+
+/// r8-attention (R8.6): [`avatar_with_status`] whose fill comes from `key`
+/// (the session's project, on the rail) while the letters stay `name`'s,
+/// so a project's sessions share a colour and their letters tell them
+/// apart.
+pub(crate) fn avatar_with_status_keyed(
+    name: &str,
+    key: &str,
+    size: f32,
+    status: Option<StatusKind>,
+    under: u32,
+    p: &Palette,
+) -> Div {
     let sig = p.tokens.signals();
     let disc = sig.glyph + 2. * sig.badge_ring;
     let out = -sig.badge_ring - p.tokens.stroke.hairline;
@@ -1980,7 +2013,7 @@ pub(crate) fn avatar_with_status(
         .relative()
         .size(px(size))
         .flex_shrink_0()
-        .child(avatar_tile_sized(name, size, p))
+        .child(avatar_tile_keyed(name, key, size, p))
         .children(status.and_then(|kind| status_glyph(kind, p)).map(|glyph| {
             div()
                 .debug_selector(|| "avatar-status".into())
@@ -1999,10 +2032,15 @@ pub(crate) fn avatar_with_status(
 
 /// [`avatar_tile`] at another size (`layout.avatar_lg` on cards).
 pub(crate) fn avatar_tile_sized(name: &str, size: f32, p: &Palette) -> Div {
+    avatar_tile_keyed(name, name, size, p)
+}
+
+/// [`avatar_tile_sized`] filled by `key`'s colour, lettered by `name`.
+pub(crate) fn avatar_tile_keyed(name: &str, key: &str, size: f32, p: &Palette) -> Div {
     use wks_native::format::monogram;
     let t = p.tokens;
     // r3-foundation: one of the theme's six curated, equal-lightness fills.
-    let fill = p.avatar_fill(name);
+    let fill = p.avatar_fill(key);
     div()
         .size(px(size))
         .flex_shrink_0()
@@ -3007,7 +3045,7 @@ pub(crate) fn attention_frame(radius: f32, p: &Palette) -> Div {
 pub(crate) fn attention_bar(radius: f32, p: &Palette) -> Div {
     let t = p.tokens;
     let bar = t.signals().attention_bar;
-    let color = Hsla::from(rgb(p.roles.status.attention));
+    let color = Hsla::from(rgb(p.roles.status.attention_fill));
     let edge = t.stroke.hairline;
     div()
         .absolute()

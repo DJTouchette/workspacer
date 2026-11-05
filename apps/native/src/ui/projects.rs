@@ -1881,11 +1881,15 @@ use gpui::AnyElement;
 impl Workspace {
     /// r2 integration: what runs in `folders`, counted the way the sidebar
     /// groups it (`session_bucket`): working sessions only (idle ones are
-    /// not "working"), and the sessions the sidebar's Needs you holds
-    /// (r7-int: Review, its own band under Needs you, counts too).
-    fn fleet_in(&self, folders: &[String]) -> (usize, usize) {
+    /// not "working"). r8-attention (R8.1): the two want-you numbers apart,
+    /// Needs you and To review, in the sidebar's words
+    /// (`attention::Wants`), top-level sessions only, as the sidebar
+    /// counts them.
+    fn fleet_in(&self, folders: &[String]) -> (usize, super::attention::Wants) {
+        use super::attention::Bucket;
         let now = timing::now_ms();
-        let (mut working, mut needs) = (0, 0);
+        let mut working = 0;
+        let mut wants = super::attention::Wants::default();
         for session in self.view.sessions.iter() {
             if !folders
                 .iter()
@@ -1893,13 +1897,23 @@ impl Workspace {
             {
                 continue;
             }
+            let nested = !session.parent_session_id.is_empty()
+                && self
+                    .view
+                    .sessions
+                    .iter()
+                    .any(|parent| parent.id == session.parent_session_id);
+            if nested {
+                continue;
+            }
             match self.session_bucket(session, now) {
-                super::attention::Bucket::Working => working += 1,
-                super::attention::Bucket::NeedsYou | super::attention::Bucket::Review => needs += 1,
+                Bucket::Working => working += 1,
+                Bucket::NeedsYou => wants.needs_you += 1,
+                Bucket::Review => wants.to_review += 1,
                 _ => {}
             }
         }
-        (working, needs)
+        (working, wants)
     }
 
     pub(super) fn render_projects_v2(&self, window: &Window, cx: &mut Context<Self>) -> Div {
@@ -2240,14 +2254,20 @@ impl Workspace {
                         // r7-qa: one join, "2 needs you · 2 working · 2
                         // folders · 22 sessions", never bare gaps.
                         system::meta_row(
-                            (needs > 0)
+                            (needs.needs_you > 0)
                                 .then(|| {
                                     StatusBadge::new(StatusKind::NeedsYou)
-                                        .label(format!("{needs} needs you"))
+                                        .label(super::attention::needs_you_words(needs.needs_you))
                                         .render(&p)
                                         .into_any_element()
                                 })
                                 .into_iter()
+                                .chain((needs.to_review > 0).then(|| {
+                                    StatusBadge::new(StatusKind::Review)
+                                        .label(super::attention::review_words(needs.to_review))
+                                        .render(&p)
+                                        .into_any_element()
+                                }))
                                 .chain((live > 0).then(|| {
                                     StatusBadge::new(StatusKind::Working)
                                         .label(format!("{live} working"))
@@ -2400,15 +2420,14 @@ impl Workspace {
         // already totals (ended sessions, scratch files to run) is not
         // repeated on every folder row; a row keeps only what is live.
         let mut facts = Vec::new();
-        if needs > 0 {
-            facts.push(format!("{needs} needs you"));
-        }
+        facts.push(needs.words());
         if live > 0 {
             facts.push(format!("{live} working"));
         }
         if ended > 0 && !nested {
             facts.push(format!("{ended} ended"));
         }
+        facts.retain(|fact| !fact.is_empty());
         let activity = if facts.is_empty() && project.sessions == 0 {
             "No sessions yet".to_owned()
         } else {
