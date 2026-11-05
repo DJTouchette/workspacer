@@ -719,6 +719,14 @@ mod failure_tests {
 
 fn refresh(path: &Path, state: &mut State) {
     state.blocked = false;
+    // Stat BEFORE reading. Another client writes this file in place
+    // (truncate, then write), so a read can see an empty or partial file
+    // while a stat taken after it already describes the finished one; that
+    // stamp would pin the half-read contents (or the seeded defaults) and
+    // `get` would keep serving them while `save` re-reads the real file. A
+    // stamp from before the read can only be older than the bytes, which
+    // costs at most one extra read on the next `get`.
+    let observed = stamp(path);
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -740,7 +748,7 @@ fn refresh(path: &Path, state: &mut State) {
                 }
             }
             state.loaded = true;
-            state.stamp = stamp(path);
+            state.stamp = observed;
             return;
         }
         Err(e) => {
@@ -748,7 +756,7 @@ fn refresh(path: &Path, state: &mut State) {
             state.blocked = true;
             state.loaded = true;
             state.current = defaults();
-            state.stamp = stamp(path);
+            state.stamp = observed;
             return;
         }
     };
@@ -779,7 +787,7 @@ fn refresh(path: &Path, state: &mut State) {
             state.blocked = true;
             state.loaded = true;
             state.current = defaults();
-            state.stamp = stamp(path);
+            state.stamp = observed;
             return;
         }
     };
@@ -823,7 +831,7 @@ fn refresh(path: &Path, state: &mut State) {
     }
     state.current = merged;
     state.loaded = true;
-    state.stamp = stamp(path);
+    state.stamp = observed;
 }
 
 fn write_config(path: &Path, value: &Value) -> Result<()> {
