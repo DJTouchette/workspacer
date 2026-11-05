@@ -364,7 +364,9 @@ impl Workspace {
             .open_failures(session)
             .first()
             .map(|task| wks_native::format::failed_label(&task.title(), 32));
-        attention::reason(session, self.stalled_for(session, now), failure)
+        let reason = attention::reason(session, self.stalled_for(session, now), failure);
+        // r6-decisions (R6.2): a stalled subagent's reason names it.
+        self.child_stall_reason(session, now, reason)
     }
 
     /// r4-truth: what [`super::status::derive`] reads for `session`.
@@ -377,7 +379,9 @@ impl Workspace {
             paused: self.paused(session),
             needs_you: !stopped && attention::needs_you(session),
             failed: !self.open_failures(session).is_empty(),
-            stalled: !streaming && self.stalled_for(session, now).is_some(),
+            // r6-decisions (R6.2): its own silence; a subagent's is Needs you.
+            stalled: !streaming && self.own_stall(session, now),
+            child_stalled: self.stalled_child(session, now).is_some(),
             streaming,
             working: !stopped && (session.working() || session.starting()),
             children_working: !stopped

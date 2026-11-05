@@ -30,6 +30,7 @@ mod menu;
 mod nav;
 mod overlay;
 mod page;
+mod segmented;
 mod status_cell;
 mod toggle;
 
@@ -39,7 +40,9 @@ mod contrast;
 mod lint;
 
 pub(crate) use actions::{composer_send_state, send_state, stop_variant};
-pub(crate) use card::{tile, tile_frame, tile_grid, waiting_tile};
+pub(crate) use card::{
+    even_tile_grid, tile, tile_frame, tile_grid, waiting_tile, waiting_tile_focused,
+};
 pub(crate) use composer::{
     ComposerState, composer_body, composer_field, composer_specimen, composer_text,
     composer_toolbar,
@@ -51,6 +54,7 @@ pub(crate) use menu::{MenuAnchor, anchored_menu};
 pub(crate) use nav::NavItem;
 pub(crate) use overlay::{Placement, overlay};
 pub(crate) use page::{PageWidth, page_shell};
+pub(crate) use segmented::{Segment, segmented_control};
 pub(crate) use status_cell::StatusCell;
 // The re-exports are the system's API: some are only used by the
 // migration still to come (R5.4) or by the tests.

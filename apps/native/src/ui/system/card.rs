@@ -22,6 +22,18 @@ pub(crate) fn waiting_tile(p: &Palette) -> Div {
         .child(attention_bar(t.radius.panel, p))
 }
 
+/// r6-decisions (R6.3): a waiting tile that has the keyboard focus. One
+/// accent per card: the focus ring (from [`tile_frame`]) carries it, so
+/// the attention bar steps aside; the content keeps its inset, so nothing
+/// moves as the focus arrives.
+pub(crate) fn waiting_tile_focused(p: &Palette) -> Div {
+    let t = p.tokens;
+    tile(p)
+        .relative()
+        .border_color(rgb(p.roles.border_strong))
+        .pl(px(t.space.xl + t.signals().attention_bar))
+}
+
 /// r5-fleet: the frame a tile sits in, so keyboard focus shows *outside*
 /// the tile (and its attention bar): the 2px `focus` ring when `focused`,
 /// a transparent one of the same width otherwise, so nothing moves.
@@ -55,4 +67,16 @@ pub(crate) fn tile_grid(columns: u16, p: &Palette) -> Div {
         .grid_cols(columns.max(1))
         .gap(px(p.tokens.space.lg))
         .items_start()
+}
+
+/// r6-decisions (R6.7): a grid whose tiles in one row share its height
+/// (the tallest tile's), so a row reads as one band and never leaves a hole
+/// under a short tile. Each tile keeps its content at the top (the decision
+/// first); the extra room falls below it. Give the tiles `.h_full()`.
+pub(crate) fn even_tile_grid(columns: u16, p: &Palette) -> Div {
+    div()
+        .w_full()
+        .grid()
+        .grid_cols(columns.max(1))
+        .gap(px(p.tokens.space.lg))
 }

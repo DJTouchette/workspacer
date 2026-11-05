@@ -487,6 +487,8 @@ impl Workspace {
         shell
             // area-composer: number keys on a v2 approval strip.
             .on_key_down(cx.listener(Self::decision_keys))
+            // r6-decisions: number keys on Jobs' proposal and a stalled subagent.
+            .on_key_down(cx.listener(Self::page_decision_keys))
             .on_key_down(cx.listener(Self::shell_keys))
             // r3-fleet
             .map(|shell| self.fleet_actions(shell, cx))

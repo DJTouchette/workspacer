@@ -852,6 +852,8 @@ pub struct Workspace {
     chat: transcript::ChatUi,
     links: link_menu::LinkUi,
     child_ui: children::ChildUi,
+    /// r6-decisions: the destructive request a first Allow armed.
+    arming: decision::Arming,
     tasks: tasks::TasksUi,
     queue: queue::QueueUi,
     async_questions: async_questions::AsyncQuestionUi,
@@ -1191,6 +1193,7 @@ impl Workspace {
             chat: transcript::ChatUi::default(),
             links: Default::default(),
             child_ui: children::ChildUi::default(),
+            arming: decision::Arming::default(),
             tasks: tasks::TasksUi::default(),
             queue,
             async_questions: Default::default(),
@@ -2172,6 +2175,7 @@ impl Render for Workspace {
         self.loop_ticker
             .arm(window, cx, |this| &mut this.loop_ticker);
         self.track_orientation(window);
+        self.track_fleet_rail(); // r6-decisions (R6.7)
         self.settle_peek(window, cx);
         self.fit_composer_rows(window, cx);
         let portrait = self.portrait(window);

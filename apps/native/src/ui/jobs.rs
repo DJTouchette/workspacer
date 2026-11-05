@@ -1578,15 +1578,19 @@ impl Workspace {
     /// (and, for a change, the job as it is now).
     fn job_proposal_v2(&self, ix: usize, job: &Job, all: &[Job], cx: &mut Context<Self>) -> Div {
         let p = self.palette();
-        self.job_proposal_decision(
+        let mut decision = self.job_proposal_decision(
             ix,
             job,
             all,
             "job",
             super::decision::Frame::Card { compact: false },
             cx,
-        )
-        .render(&p)
+        );
+        // R6.3: the first proposal takes the number keys (1 Approve,
+        // 2 Reject: `page_decision_keys`) and shows them; the others wait
+        // their turn below it.
+        decision.keys = ix == 0;
+        decision.render(&p)
     }
 
     /// r5-fleet (R5.4): a job proposal as the DecisionCard, in Jobs (a card,

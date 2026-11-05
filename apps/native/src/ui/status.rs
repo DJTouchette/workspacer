@@ -4,7 +4,15 @@
 //! state from [`derive`], with one priority order:
 //!
 //! Failed (unacknowledged, actionable) > Needs you > Not responding >
-//! Working > Paused / Offline > Idle > Done.
+//! Needs you (a stalled subagent) > Working > Paused / Offline > Idle >
+//! Done.
+//!
+//! r6-decisions (R6.2): a session whose own turn is healthy but one of
+//! whose subagents has stopped answering is **Needs you**, not "Not
+//! responding": the parent is fine, the user has to nudge, stop or look at
+//! the child. Its reason names the child ([`stalled_child_reason`]: "Trace
+//! session… not responding · 7m"). The child gets no entry of its own: the
+//! parent's one status is the one source.
 //!
 //! Pure: `Workspace::session_status` gathers the [`Facts`] and the surfaces
 //! draw what comes back. No surface decides a session's state on its own.
@@ -27,9 +35,10 @@ pub(crate) struct Facts {
     /// Background work failed and no later run of it passed (nor was it
     /// dismissed): [`open_failures`] is not empty.
     pub failed: bool,
-    /// It, or one of its running subagents, has gone quiet past the
-    /// heartbeat threshold.
+    /// It has itself gone quiet past the heartbeat threshold mid-turn.
     pub stalled: bool,
+    /// One of its running subagents has gone quiet past the threshold.
+    pub child_stalled: bool,
     /// Output is arriving now: never "Not responding".
     pub streaming: bool,
     /// Mid-turn or starting.
@@ -85,6 +94,9 @@ fn kind(f: &Facts) -> StatusKind {
         StatusKind::NeedsYou
     } else if f.stalled && !f.streaming {
         StatusKind::NotResponding
+    } else if f.child_stalled {
+        // R6.2: a stalled subagent asks for the user (nudge, stop, view).
+        StatusKind::NeedsYou
     } else if f.working || f.streaming || f.children_working {
         StatusKind::Working
     } else {
@@ -115,6 +127,7 @@ pub(crate) fn derive(f: Facts) -> Status {
             connected: true,
             failed: false,
             stalled: false,
+            child_stalled: false,
             streaming: false,
             ..f
         };
@@ -180,6 +193,24 @@ pub(crate) fn failure_label(task: &Task, owner: &str, max: usize) -> String {
     } else {
         format!("{failed} · {owner}")
     }
+}
+
+/// r6-decisions (R6.2): why a parent with a stalled subagent needs you:
+/// the subagent's name, cut short with an ellipsis, then how long it has
+/// been silent ("Trace session… not responding · 7m").
+pub(crate) fn stalled_child_reason(name: &str, quiet_ms: i64) -> String {
+    const NAME: usize = 16;
+    let name = name.trim();
+    let short = short_title(name, NAME);
+    let short = if short.chars().count() < name.chars().count() && !short.ends_with('…') {
+        format!("{short}…")
+    } else {
+        short
+    };
+    format!(
+        "{short} not responding · {}",
+        super::attention::quiet_for(quiet_ms)
+    )
 }
 
 /// A title cut at a word boundary to at most `max` characters ("Restore
@@ -287,6 +318,41 @@ mod tests {
         };
         assert_eq!(derive(f).kind, StatusKind::Working);
         assert_eq!(derive(f).bucket, Bucket::Working);
+    }
+
+    #[test]
+    fn a_stalled_subagent_puts_its_parent_in_needs_you() {
+        let f = Facts {
+            child_stalled: true,
+            children_working: true,
+            working: true,
+            ..live()
+        };
+        let s = derive(f);
+        assert_eq!((s.kind, s.bucket), (StatusKind::NeedsYou, Bucket::NeedsYou));
+        // Its own silence is the louder state.
+        let s = derive(Facts { stalled: true, ..f });
+        assert_eq!(s.kind, StatusKind::NotResponding);
+        // A decision outranks it (the same group either way).
+        let s = derive(Facts {
+            needs_you: true,
+            ..f
+        });
+        assert_eq!(s.kind, StatusKind::NeedsYou);
+        // Offline keeps the group its own state puts it in.
+        let away = derive(Facts {
+            connected: false,
+            ..f
+        });
+        assert_eq!(away.bucket, Bucket::Working);
+        assert_eq!(
+            stalled_child_reason("Trace session restore paths", 7 * 60_000),
+            "Trace session… not responding · 7m"
+        );
+        assert_eq!(
+            stalled_child_reason("Trace", 60_000),
+            "Trace not responding · 1m"
+        );
     }
 
     #[test]

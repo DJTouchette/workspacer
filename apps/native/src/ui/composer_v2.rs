@@ -1198,14 +1198,24 @@ impl Workspace {
         let note = self.deny_note_offered() && !self.extras.deny_open;
         let keys = strip_keys(always.len(), note);
         let number = |key: &StripKey| keys.iter().position(|k| k == key).map(|ix| ix + 1);
+        // r6-decisions (R6.3): a request that deletes files takes a
+        // second press.
+        let risk = super::decision::risk(approval, &cwd);
+        let confirm = super::decision::confirm_key(
+            session.map(|s| s.id.as_str()).unwrap_or(""),
+            card.as_deref(),
+        );
         let allow = {
             let card = card.clone();
+            let confirm = confirm.clone();
             Choice::new("approve", "Allow")
                 .key(number(&StripKey::Allow))
                 .tooltip("Allow this once")
                 .enabled(enabled)
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.act(Action::Approve(true, card.clone()), cx)
+                    if this.confirm_allow(&confirm, risk, cx) {
+                        this.act(Action::Approve(true, card.clone()), cx)
+                    }
                 }))
         };
         // One grant per option the card offers, each with its exact rule
@@ -1303,7 +1313,8 @@ impl Workspace {
         // While a note is being written, sending it is the primary.
         decision.allow_primary = !self.extras.deny_open;
         decision.grants = grants;
-        decision.risk = super::decision::risk(approval, &cwd);
+        decision.risk = risk;
+        decision.armed = self.armed(&confirm);
         decision.deny = Some(deny);
         decision.deny_note = deny_note;
         decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval));
@@ -1477,7 +1488,13 @@ impl Workspace {
         self.composer_ui.deny_menu = false;
         let card = session.card();
         match key {
-            StripKey::Allow => self.act(Action::Approve(true, card), cx),
+            StripKey::Allow => {
+                let confirm = super::decision::confirm_key(&session.id, card.as_deref());
+                let risk = super::decision::risk(approval, &session.cwd);
+                if self.confirm_allow(&confirm, risk, cx) {
+                    self.act(Action::Approve(true, card), cx)
+                }
+            }
             StripKey::Deny => self.act(Action::Approve(false, card), cx),
             StripKey::DenyWithNote => self.open_deny_note(card, window, cx),
             StripKey::Always(ix) => {

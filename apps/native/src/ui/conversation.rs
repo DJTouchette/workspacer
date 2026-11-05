@@ -565,6 +565,8 @@ impl Workspace {
                 },
             )
             .children(parent_line)
+            // r6-decisions (R6.2): a stalled subagent's Nudge / Stop / View output.
+            .children(self.render_stall_bar(cx))
             .children(self.render_child_bar(cx))
             // Closest to the composer: what will be sent from it next.
             .children(selected.and_then(|session| {
