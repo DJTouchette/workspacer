@@ -256,7 +256,7 @@ def shots():
     # the full request in place (conversation and a Fleet tile); the Fleet's
     # "Needs you" filter for a burst of asks. Design v2 only.
     add("approvals-details-open", "Approval: Details expanded to the full request (tool, command, folder, host)",
-        [("design", [], [("click", 1300, 921), ("sleep", 0.5)])])  # r5-fleet: re-measured
+        [("design", [], [("click", 1300, 858), ("sleep", 0.5)])])  # r5-fleet: re-measured
     add("approvals-fleet-needs-you", "Fleet: the Needs you filter, only the tiles that wait on the user",
         fleet + [("click", 1350, 78), ("sleep", 0.5)])
     add("approvals-fleet-details", "Fleet: the approval tile's Details open in place",
@@ -511,8 +511,8 @@ LANDMARKS = {
     "APPROVAL_DETAILS": lambda shot: (1289, 805) if shot["v2"] else (1361, 749),  # r2-systems: the approval is a card above the composer
     # r3-composer: v2's Deny with note is the first item of Deny's menu.
     # (r3-integration: v1's moved right when the fixture's grant label grew.)
-    "APPROVAL_DENY_NOTE": lambda shot: (588, 924) if shot["v2"] else (1030, 797),  # r5-fleet re-measured
-    "APPROVAL_DENY_MENU": lambda shot: (750, 885),  # r3-composer: Deny's chevron (v2; r5-fleet re-measured: Allow and Deny side by side)
+    "APPROVAL_DENY_NOTE": lambda shot: (588, 861) if shot["v2"] else (1030, 797),  # r5-fleet re-measured
+    "APPROVAL_DENY_MENU": lambda shot: (750, 822),  # r3-composer: Deny's chevron (v2; r5-fleet re-measured: Allow and Deny side by side)
     "COMPOSER_REPLY": lambda shot: (700, 922),       # r5-conversation: the composer field under the card (v2: always a field)
     "QUESTION_ANSWER": lambda shot: (900, 884),      # r3-composer: the release question's answer field (v2)
     "COMPOSER_SEND_MENU": lambda shot: (1333, 960),  # r3-composer: Queue's chevron while working (v2; r3-integration re-measured)

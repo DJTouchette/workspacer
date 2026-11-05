@@ -511,7 +511,7 @@ impl Decision {
         for grant in &self.grants {
             if !grant.exact.is_empty() && grant.exact != grant.rule {
                 rows.push((
-                    "Always allow saves".to_owned(),
+                    "Rule".to_owned(),
                     format!("{} · {}", grant.exact, grant.scope),
                     true,
                 ));
