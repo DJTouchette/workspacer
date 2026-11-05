@@ -11,11 +11,13 @@ use super::super::primitives::{
 };
 use super::*;
 
-const VARIANTS: [ButtonVariant; 4] = [
+const VARIANTS: [ButtonVariant; 5] = [
     ButtonVariant::Primary,
     ButtonVariant::Secondary,
     ButtonVariant::Tertiary,
     ButtonVariant::Destructive,
+    // r8-decisions (R8.2): the armed confirm.
+    ButtonVariant::Danger,
 ];
 
 impl Workspace {

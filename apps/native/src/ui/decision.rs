@@ -424,8 +424,12 @@ impl Workspace {
 
     /// Esc on a decision's own step, before anything else takes it: R8.3
     /// cancels an armed destructive confirm; R8.5 closes the Fleet's sort
-    /// menu, then its Details sheet. Whether it took the Esc.
+    /// menu, then its Details sheet; a job's "Remove job and history".
+    /// Design v2 only. Whether it took the Esc.
     pub(crate) fn escape_decision(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.design().is_v2() {
+            return false;
+        }
         let fleet = self.screen == Screen::Fleet;
         let took = self.arming.armed.take().is_some()
             || (self.screen == Screen::Jobs && self.extras.job_confirm_remove.take().is_some())
