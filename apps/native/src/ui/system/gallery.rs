@@ -1205,6 +1205,21 @@ fn composers(p: &Palette) -> Div {
             true,
             "A decision waits: still a bordered field; Send is Secondary",
         ))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.xs))
+                .child(super::composer_reply_line(
+                    "Reply instead…",
+                    Some(super::decision_keys_hint(3, p).into_any_element()),
+                    p,
+                ))
+                .child(caption(
+                    "A decision waits, composer unfocused: one line that expands on focus; the hint says the digits answer the request",
+                    p,
+                )),
+        )
         .child(specimen(
             "gallery-composer-disabled",
             ComposerState::Disabled,

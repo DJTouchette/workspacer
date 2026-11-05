@@ -501,7 +501,20 @@ impl Fixture {
                 "before": "start();",
                 "after": "restore_workspace();\nstart();",
             }),
-            "git.numstat" => json!({"files": [{"path": "src/main.rs", "added": 2, "deleted": 1}]}),
+            // R6.6: the branch's counts, the same as the `git.diff` hunks
+            // below and the transcript's `git diff --stat`, so the Changes
+            // panel, the dock and the turn card never disagree on a file.
+            "git.numstat" => {
+                if params["staged"].as_bool() == Some(true) {
+                    json!({"files": [{"path": "README.md", "added": 3, "deleted": 1}]})
+                } else {
+                    json!({"files": [
+                        {"path": "src/main.rs", "added": 6, "deleted": 3},
+                        {"path": "src/workspace.rs", "added": 4, "deleted": 1},
+                        {"path": "tests/session.rs", "added": 8, "deleted": 0},
+                    ]})
+                }
+            }
             "git.status" => json!({
                 "branch": "feature/native-basics",
                 "upstream": "origin/feature/native-basics",
@@ -510,6 +523,7 @@ impl Fixture {
                 "root": params["cwd"],
                 "files": [
                     {"path": "src/main.rs", "staged": " ", "unstaged": "M"},
+                    {"path": "src/workspace.rs", "staged": " ", "unstaged": "M"},
                     {"path": "README.md", "staged": "M", "unstaged": " "},
                     {"path": "tests/session.rs", "staged": "?", "unstaged": "?"},
                 ],
@@ -531,13 +545,16 @@ impl Fixture {
             // Changes view (design v2) has several files and hunks to show.
             "git.diff" => match params["path"].as_str().unwrap_or_default() {
                 "README.md" => {
-                    json!({"diff": "diff --git a/README.md b/README.md\nindex 3b18e51..9f2c4d0 100644\n--- a/README.md\n+++ b/README.md\n@@ -12,6 +12,8 @@ ## Running\n Start the hub, then the native client:\n \n     cargo run --bin wks-native\n+\n+Sessions you had open come back where you left them.\n \n ## Themes\n \n"})
+                    json!({"diff": "diff --git a/README.md b/README.md\nindex 3b18e51..9f2c4d0 100644\n--- a/README.md\n+++ b/README.md\n@@ -12,6 +12,8 @@ ## Running\n Start the hub, then the native client:\n \n-    cargo run --bin wks-native\n+    cargo run --release --bin wks-native\n+\n+Sessions you had open come back where you left them.\n \n ## Themes\n \n"})
                 }
                 "tests/session.rs" => {
-                    json!({"diff": "diff --git a/tests/session.rs b/tests/session.rs\nnew file mode 100644\n--- /dev/null\n+++ b/tests/session.rs\n@@ -0,0 +1,9 @@\n+use wks_native::workspace::Workspace;\n+\n+#[test]\n+fn restores_the_last_workspace() {\n+    let workspace = Workspace::open_last().expect(\"a saved workspace\");\n+    assert_eq!(workspace.sessions().len(), 3);\n+    assert!(workspace.selected().is_some());\n+}\n+\n"})
+                    json!({"diff": "diff --git a/tests/session.rs b/tests/session.rs\nnew file mode 100644\n--- /dev/null\n+++ b/tests/session.rs\n@@ -0,0 +1,8 @@\n+use wks_native::workspace::Workspace;\n+\n+#[test]\n+fn restores_the_last_workspace() {\n+    let workspace = Workspace::open_last().expect(\"a saved workspace\");\n+    assert_eq!(workspace.sessions().len(), 3);\n+    assert!(workspace.selected().is_some());\n+}\n"})
+                }
+                "src/workspace.rs" => {
+                    json!({"diff": "diff --git a/src/workspace.rs b/src/workspace.rs\nindex 3333333..4444444 100644\n--- a/src/workspace.rs\n+++ b/src/workspace.rs\n@@ -20,4 +20,7 @@ use crate::settings;\n \n impl Workspace {\n-    // TODO: open the last workspace\n+    pub fn open_last() -> Result<Self> {\n+        Self::open(&settings::path())\n+    }\n+\n     pub fn open(path: &Path) -> Result<Self> {\n"})
                 }
                 _ => {
-                    json!({"diff": "diff --git a/src/main.rs b/src/main.rs\nindex 1111111..2222222 100644\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }\n@@ -48,9 +49,11 @@ fn restore_workspace() {\n     let saved = settings::load(&path)?;\n     for session in saved.sessions {\n-        open(session.id, false);\n+        open(session.id, session.focused);\n     }\n-    let theme = Theme::default();\n+    let theme = saved.theme.unwrap_or_default();\n     apply(theme);\n+    log::info!(\"restored {} sessions\", saved.sessions.len());\n+    Ok(())\n }\n"})
+                    json!({"diff": "diff --git a/src/main.rs b/src/main.rs\nindex 1111111..2222222 100644\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }\n@@ -48,9 +49,11 @@ fn restore_workspace() {\n     let saved = settings::load(&path)?;\n+    log::info!(\"restoring {} sessions\", saved.sessions.len());\n     for session in saved.sessions {\n-        open(session.id, false);\n+        open(session.id, session.focused);\n     }\n-    let theme = Theme::default();\n+    let theme = saved.theme.unwrap_or_default();\n     apply(theme);\n+    Ok(())\n }\n"})
                 }
             },
             // A fixture brief path: nothing is written and no provider runs;
@@ -1225,7 +1242,7 @@ pub fn rich_items() -> Vec<Value> {
         tool(
             "edit-open-last",
             "Edit",
-            json!({"file_path":"src/workspace.rs","old_string":"impl Workspace {","new_string":"impl Workspace {\n    pub fn open_last() -> Result<Self> {\n        Self::open(&settings::path())\n    }\n"}),
+            json!({"file_path":"src/workspace.rs","old_string":"    // TODO: open the last workspace\n","new_string":"    pub fn open_last() -> Result<Self> {\n        Self::open(&settings::path())\n    }\n\n"}),
         ),
         result(
             "edit-open-last",
@@ -1285,7 +1302,7 @@ pub fn rich_items() -> Vec<Value> {
         tool(
             "edit-4",
             "Edit",
-            json!({"file_path":"README.md","old_string":"    cargo run --bin wks-native\n","new_string":"    cargo run --bin wks-native\n\nSessions you had open come back where you left them.\n"}),
+            json!({"file_path":"README.md","old_string":"    cargo run --bin wks-native\n","new_string":"    cargo run --release --bin wks-native\n\nSessions you had open come back where you left them.\n"}),
         ),
         result("edit-4", "The file README.md has been updated."),
         tool(
@@ -1313,7 +1330,7 @@ pub fn rich_items() -> Vec<Value> {
         ),
         result(
             "bash-4",
-            " README.md        |  2 ++\n src/main.rs      | 10 ++++++++++\n tests/session.rs |  8 ++++++++\n 3 files changed, 20 insertions(+)",
+            " README.md        | 4 +++-\n src/main.rs      | 9 ++++++---\n src/workspace.rs | 5 ++++-\n tests/session.rs | 8 ++++++++\n 4 files changed, 21 insertions(+), 5 deletions(-)",
         ),
         text(
             "## Ready for review\n\nOpen sessions now come back on launch, and the one you were in keeps focus. Clippy is clean and the session test passes.\n\nSee [README.md](README.md:12) or the [session tests](tests/session.rs). Next I’ll run the full test suite before committing.",

@@ -1071,9 +1071,10 @@ impl Workspace {
         };
         // R4.3: keycaps only while the number keys answer this question
         // (no approval or plan above it takes them).
-        let keyed = self.selected_session().is_some_and(|s| {
-            self.keyed_decision(s) == Some(super::composer_v2::Decision::Questions)
-        });
+        let keyed = self.composer_ui.digits_to_card
+            && self.selected_session().is_some_and(|s| {
+                self.keyed_decision(s) == Some(super::composer_v2::Decision::Questions)
+            });
         let key_hint = (v2 && keyed && option_ix < 9).then(|| {
             div()
                 .flex_shrink_0()

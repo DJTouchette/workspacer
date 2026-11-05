@@ -100,13 +100,13 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
     assert!(inside(&mut visual, "approve", "approval-card"));
     assert!(inside(&mut visual, "headline-code", "approval-card"));
     assert!(inside(&mut visual, "waiting-context", "approval-card"));
-    // The composer is still the field, under the card.
+    // The composer is still a bordered field, under the card (R6.3: one
+    // line until it has focus).
     let (card, composer) = (
         visual.debug_bounds("approval-card").unwrap(),
         visual.debug_bounds("chat-composer").unwrap(),
     );
     assert!(composer.top() >= card.bottom());
-    assert!(visual.debug_bounds("composer-model").is_some());
     workspace.read_with(&visual, |this, _| {
         assert_eq!(
             this.composer_ui.placeholder,
@@ -114,6 +114,11 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
         )
     });
     // Always allow says its scope (this session); Deny's menu holds the note.
+    // R6.3: the keycaps follow where the digits go; settle the focus (and
+    // so the buttons' widths) before clicking by position.
+    focus_root(&workspace, &mut visual);
+    visual.update(|window, _| window.refresh());
+    visual.run_until_parked();
     tap(&mut visual, "deny-menu");
     assert!(visual.debug_bounds("deny-with-note").is_some());
     tap(&mut visual, "deny-with-note");
@@ -159,13 +164,10 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
     ));
     visual.simulate_keystrokes("9");
     assert!(acts(&mut commands).is_empty(), "no fifth action");
-    // An empty composer passes the digit to the strip; a draft keeps it.
+    // R6.3: in the composer digits type, even while it is empty.
     draft(&workspace, &mut visual, "");
     visual.simulate_keystrokes("1");
-    assert!(matches!(
-        acts(&mut commands).as_slice(),
-        [Action::Approve(true, _)]
-    ));
+    assert!(acts(&mut commands).is_empty());
     draft(&workspace, &mut visual, "step ");
     visual.simulate_keystrokes("1");
     assert!(acts(&mut commands).is_empty());
@@ -185,11 +187,12 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
         [Action::DenyWithNote(note, Some(card))] if note == "only the session tests" && card == "req-1"));
 }
 
-/// R5.4: while a decision waits the composer never collapses: unfocused and
-/// empty it is still the bordered field with its chips and Send, and its
-/// placeholder says replying leaves the request pending.
+/// R6.3: while a decision waits, the unfocused, empty composer is one
+/// bordered line ("Reply instead…") whose end says where the digits go
+/// ("1–4 answer the request"); focused, it is the full field with its chips
+/// and Send, the digits type, and the hint and the card's keycaps go.
 #[gpui::test]
-fn the_composer_stays_a_field_under_a_decision(cx: &mut TestAppContext) {
+fn the_composer_folds_to_one_line_under_a_decision(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.simulate_resize(size(px(1200.), px(800.)));
     v2(&workspace, &mut visual);
@@ -198,10 +201,32 @@ fn the_composer_stays_a_field_under_a_decision(cx: &mut TestAppContext) {
     focus_root(&workspace, &mut visual);
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
-    assert!(visual.debug_bounds("chat-composer").is_some());
-    assert!(visual.debug_bounds("composer-reply").is_none());
+    let line = visual.debug_bounds("chat-composer").unwrap();
+    let t = wks_native::tokens::Tokens::V2;
+    assert!(
+        f32::from(line.size.height) <= t.layout.control_height + 2. * t.stroke.hairline + 0.5,
+        "one line: {:?}",
+        line.size
+    );
+    assert!(visual.debug_bounds("composer-model").is_none());
+    assert!(inside(&mut visual, "decision-keys-hint", "chat-composer"));
+    workspace.read_with(&visual, |this, _| assert!(this.composer_ui.digits_to_card));
+    tap(&mut visual, "chat-composer");
+    // (debug_bounds keeps what was last painted, so the hint's absence is
+    // read from the state that draws it.)
     assert!(inside(&mut visual, "composer-model", "chat-composer"));
+    assert!(inside(&mut visual, "composer-access", "chat-composer"));
     assert!(inside(&mut visual, "composer-send", "chat-composer"));
+    workspace.read_with(&visual, |this, _| assert!(!this.composer_ui.digits_to_card));
+    visual.simulate_keystrokes("2");
+    assert!(acts(&mut commands).is_empty(), "digits type in the composer");
+    // R6.4: the access chip beside the model applies a choice at once.
+    tap(&mut visual, "composer-access");
+    assert!(visual.debug_bounds("composer-access-menu").is_some());
+    tap(&mut visual, "composer-access-Full access");
+    assert!(matches!(acts(&mut commands).as_slice(),
+        [Action::SetPermission { label, .. }] if label == "Full access"));
+    workspace.read_with(&visual, |this, _| assert!(!this.composer_ui.access_menu));
     workspace.read_with(&visual, |this, _| {
         assert_eq!(
             this.composer_ui.placeholder,

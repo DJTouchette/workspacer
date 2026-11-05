@@ -645,9 +645,15 @@ pub struct TranscriptTokens {
     /// Steps a work card shows before folding the rest behind "n earlier steps".
     pub visible_steps: usize,
     /// Vertical room around one transcript row (half above, half below).
+    /// v2 (R6.6): the rhythm's middle step, between related blocks (16).
     pub row_gap: f32,
-    /// Extra room above a user turn: the turn boundary.
+    /// v1: extra room above a user turn. v2 (R6.6): the whole gap between
+    /// turns (32), the row gap included.
     pub turn_gap: f32,
+    /// R6.6: the transcript's fixed 8/16/32 rhythm. `group_gap` is inside
+    /// one group (a block's line and what it holds), `row_gap` between
+    /// related blocks, `turn_gap` between turns and sections.
+    pub group_gap: f32,
     /// Tallest an opened tool's input/output gets before it scrolls.
     pub details_max: f32,
     /// A long dispatch brief's folded height.
@@ -694,6 +700,7 @@ impl Tokens {
                 visible_steps: 6,
                 row_gap: 8.,
                 turn_gap: 0.,
+                group_gap: 8.,
                 details_max: 520.,
                 brief_max: 132.,
                 prose_line_height: 1.6,
@@ -715,15 +722,17 @@ impl Tokens {
                 user_max: 0.7,
                 tool_row: 28.,
                 visible_steps: 4,
-                row_gap: 6.,
-                // R5.4: turns sit 32-40 apart (32 plus the row gap).
+                // R6.6: the fixed 8/16/32 rhythm: 16 between blocks, 32
+                // between turns, 8 inside a group.
+                row_gap: 16.,
                 turn_gap: 32.,
+                group_gap: 8.,
                 details_max: 480.,
                 brief_max: 120.,
                 prose_line_height: 1.6,
                 paragraph_gap: 0.7,
-                // r3-transcript: the 8px rhythm (16 between paragraphs,
-                // 32 above a heading, 12 below it).
+                // r3-transcript; R6.6: the 8/16/32 rhythm (16 between
+                // paragraphs, 32 above a heading, 8 below it).
                 paragraph_space: 16.,
                 // r3-transcript: headings from the type scale over the 15px
                 // reading size (`lead`): h1 20 (`title_short`), h2 17
@@ -734,10 +743,10 @@ impl Tokens {
                 // r2-transcript; r3-transcript: one capped column for
                 // prose, tool rows, cards, tables and code.
                 reading_min: 680.,
-                reading_max: 800.,
+                reading_max: 880.,
                 reading_wide: 1100.,
                 heading_space: 32.,
-                heading_gap: 12.,
+                heading_gap: 8.,
                 event_icon: 16.,
                 inset_row: 36.,
             },
@@ -1091,8 +1100,10 @@ mod tests {
         assert_eq!(t.text.lead + v2.heading_steps[1], t.text.heading);
         assert_eq!(
             (v2.heading_space, v2.heading_gap, v2.paragraph_space),
-            (32., 12., 16.)
+            (32., 8., 16.)
         );
+        // R6.6: the transcript's rhythm is 8/16/32 and nothing else.
+        assert_eq!((v2.group_gap, v2.row_gap, v2.turn_gap), (8., 16., 32.));
         assert!((1.5..=1.7).contains(&v2.prose_line_height));
         assert!(v2.reading_min < v2.reading_max && v2.reading_max < v2.reading_wide);
     }

@@ -106,6 +106,21 @@ pub(super) fn work_line(running: bool, duration_ms: Option<i64>, tools: usize) -
     }
 }
 
+/// R6.6: a turn's one meta line: the skill it used, the run, and how many
+/// subagents it delegated ("Used skill code-review · Worked 5m 12s · 6 tools
+/// · 1 delegated").
+pub(super) fn meta_line(skill: Option<&str>, work: &str, delegated: usize) -> String {
+    let mut parts = Vec::new();
+    if let Some(skill) = skill.filter(|s| !s.is_empty()) {
+        parts.push(format!("Used skill {skill}"));
+    }
+    parts.push(work.to_owned());
+    if delegated > 0 {
+        parts.push(format!("{delegated} delegated"));
+    }
+    parts.join(" · ")
+}
+
 /// Whether a run of calls ended well although some failed: its last
 /// finished call succeeded (a failed `cargo test`, fixed, then passing).
 /// The run is then coloured by that final outcome, never red (R5.4).
@@ -129,6 +144,12 @@ pub(super) fn recovered<'a>(rows: impl IntoIterator<Item = &'a Row>) -> bool {
         }
     }
     any
+}
+
+/// R6.2/R6.6: a run that recovered says so in words at the turn level
+/// ("1 failed, then passed"): never a green check, never red.
+pub(super) fn recovered_line(failed: usize) -> String {
+    format!("{failed} failed, then passed")
 }
 
 /// A response card action in plain words (r2-transcript: no "Prefill").
@@ -213,6 +234,23 @@ pub(super) fn unseen(seen: Option<&(String, usize)>, session: &str, rows: usize)
         Some((owner, at)) if owner == session => rows.saturating_sub(*at),
         _ => 0,
     }
+}
+
+/// How far back from the transcript's end the strip looks for wakes.
+const WAKE_SCAN: usize = 400;
+
+/// The strip's line for several wakes (R6.6).
+pub(super) fn wake_strip_label(n: usize) -> String {
+    plural(n, "update from other sessions", "updates from other sessions")
+}
+
+/// One wake at a glance ([`Workspace::fleet_glance`]).
+pub(super) struct FleetGlance {
+    pub names: Vec<String>,
+    pub words: Vec<(String, StatusKind)>,
+    pub target: Option<usize>,
+    pub worst: Option<StatusKind>,
+    pub eyebrow: String,
 }
 
 fn plural(n: usize, one: &str, many: &str) -> String {
@@ -997,23 +1035,64 @@ impl Workspace {
             .w_full()
             .flex()
             .flex_col();
+        // R6.6: one meta line per turn. A skill used just before the run
+        // and the subagents it delegated join the run's own line.
+        let skill = (span.start > 0 && self.folded_skill(rows, span.start - 1))
+            .then(|| rows[span.start - 1].tool.as_ref().map(|t| t.target()))
+            .flatten();
+        let delegated = self
+            .folded_overview(rows, span.end - 1)
+            .then(|| self.child_ui.overview.get(&(span.end - 1)).cloned())
+            .flatten();
+        let delegated_views: Vec<ChildView> = delegated
+            .iter()
+            .flatten()
+            .map(|c| child_view(c, self.view.connected, timing::now_ms()))
+            .collect();
+        let delegated_settled = delegated
+            .as_ref()
+            .is_none_or(|children| children.iter().all(ChildAgent::settled));
         if steps > 1 {
             // r3-transcript: "Worked 5m 40s · 6 tools ›", nothing more: the
             // diff counts belong to the turn's Changed line, the breakdown to
             // the rows inside.
             let toggle_key = card_key.clone();
             let default_open = in_progress || failed > 0;
+            // R6.2: a recovered run is neither a green check nor red: a
+            // neutral retry glyph and its count in words.
+            let settled_recovered = recovered && !in_progress;
             let mut event = EventRow::new(
                 format!("{card_key}-header"),
-                Glyph::Status(if failed > 0 {
-                    StatusKind::Failed
-                } else if in_progress {
-                    StatusKind::Working
+                if settled_recovered {
+                    Glyph::Asset("lucide/rotate-ccw.svg")
                 } else {
-                    StatusKind::Done
-                }),
+                    Glyph::Status(if failed > 0 {
+                        StatusKind::Failed
+                    } else if in_progress {
+                        StatusKind::Working
+                    } else {
+                        StatusKind::Done
+                    })
+                },
                 work_line(in_progress, summary.duration_ms, steps),
             );
+            if settled_recovered {
+                event.summary = Some(recovered_line(summary.failed.max(1)).into());
+            }
+            event.verb = meta_line(
+                skill.as_deref(),
+                &work_line(in_progress, summary.duration_ms, steps),
+                delegated.as_ref().map_or(0, Vec::len),
+            )
+            .into();
+            if let Some(badge) = delegated
+                .is_some()
+                .then(|| children_badge(&delegated_views))
+                .flatten()
+                .filter(|_| failed == 0 && !in_progress)
+            {
+                event.end = EventEnd::Badge(badge);
+            }
             event.quiet = true;
             event.disclosure = Some(open);
             event.reveal = true;
@@ -1088,6 +1167,18 @@ impl Workspace {
             }
             card = card.child(list);
         }
+        // The delegated subagents' rows, under the line while any works or
+        // while the run is open.
+        if let Some(children) = delegated.filter(|_| open || !delegated_settled) {
+            let first = children.first().map(|c| c.id.clone()).unwrap_or_default();
+            let key = format!("overview:{session}:{first}:{delegated_settled}");
+            card = card.child(
+                event_guide(&p)
+                    .debug_selector(|| "subagent-overview".into())
+                    .pb(px(t.space.xs))
+                    .child(self.render_children_v2(&session, &key, &children, None, window, cx)),
+            );
+        }
         card
     }
 
@@ -1104,7 +1195,8 @@ impl Workspace {
         let key = row.key;
         div()
             .debug_selector(move || format!("work-note-{key}"))
-            .py(px(t.space.sm))
+            // R6.6: inside the group, on the rhythm's smallest step.
+            .py(px(t.transcript().group_gap))
             .child(self.render_markdown(
                 &format!("work-note:{session}:{key}"),
                 &row.text,
@@ -1345,6 +1437,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         let t = self.tokens();
+        if !continued && self.wake_in_strip(row, namespace) {
+            // R6.6: the strip above the transcript carries it.
+            return div();
+        }
         if row.role == "You"
             && !continued
             && let Some(fleet) = wks_native::transcript::fleet(&row.text)
@@ -1359,10 +1455,15 @@ impl Workspace {
         }
         let owner = self.chat_owner();
         let has_meta = duration.is_some() || timestamp.is_some();
-        content.child(
+        // R6.6: the hover actions (copy, time) float in the gap under the
+        // prose, so they never add to the 8/16/32 rhythm.
+        let meta_h = t.space.xl + t.space.xs;
+        content.relative().child(
             div()
-                .h(px(t.space.xl + t.space.xs))
-                .mt(px(t.space.xxs))
+                .absolute()
+                .right_0()
+                .bottom(px(-(t.transcript().row_gap + meta_h) / 2.))
+                .h(px(meta_h))
                 .flex()
                 .items_center()
                 .justify_end()
@@ -1574,7 +1675,8 @@ impl Workspace {
         let shown = files.len().min(tt.visible_steps);
         div()
             .debug_selector(|| "turn-changes-card".into())
-            .mt(px(t.space.xs))
+            // R6.6: its own block, one row gap under the reply.
+            .mt(px(tt.row_gap))
             .w_full()
             .flex()
             .flex_col()
@@ -1743,37 +1845,210 @@ impl Workspace {
 // ----- Fleet and supervisor wakes ------------------------------------------------
 
 impl Workspace {
-    /// A fleet or supervisor wake (r3-transcript): another session's news,
-    /// so never a card here. One line per agent in the shared lexicon
-    /// ("Release checklist for 0.9 needs you · Go", "Usage meter rounding ·
-    /// Done", "Queue priority ordering · Failed · Credit balance is too
-    /// low"), no internal ids. Clicking a line opens what the wake carried
-    /// (last reply, results, why it was raised) on a guide beneath.
-    pub(super) fn render_fleet_card_v2(
+    /// The number of calls in a work span (its notes excluded).
+    fn span_steps(rows: &std::collections::VecDeque<Arc<Row>>, span: &Range<usize>) -> usize {
+        rows.range(span.clone())
+            .filter(|r| r.tool.is_some())
+            .count()
+    }
+
+    /// R6.6: whether the Skill call at `ix` folds into the work line that
+    /// follows it ("Used skill code-review · Worked 5m · 6 tools"): a
+    /// finished, unopened skill directly before a run of several calls.
+    pub(super) fn folded_skill(&self, rows: &std::collections::VecDeque<Arc<Row>>, ix: usize) -> bool {
+        let Some(row) = rows.get(ix) else {
+            return false;
+        };
+        let Some(tool) = row.tool.as_ref() else {
+            return false;
+        };
+        self.design().is_v2()
+            && tool.category() == "Skill"
+            && tool.complete
+            && !tool.is_error
+            && !row.truncated
+            && !self
+                .tool_expansion
+                .get(&tools::identity(row))
+                .copied()
+                .unwrap_or(false)
+            && !self.child_ui.overview.contains_key(&ix)
+            && self
+                .work_span(rows, ix + 1)
+                .is_some_and(|span| span.start == ix + 1 && Self::span_steps(rows, &span) > 1)
+    }
+
+    /// R6.6: whether the subagents pinned at `ix` fold into the work line
+    /// ending there ("… · 6 tools · 1 delegated"), their rows beneath it.
+    pub(super) fn folded_overview(
+        &self,
+        rows: &std::collections::VecDeque<Arc<Row>>,
+        ix: usize,
+    ) -> bool {
+        self.design().is_v2()
+            && self.child_ui.overview.contains_key(&ix)
+            && self
+                .work_span(rows, ix)
+                .is_some_and(|span| span.end == ix + 1 && Self::span_steps(rows, &span) > 1)
+    }
+
+    /// Whether a transcript row is another session's wake that the strip
+    /// above the transcript carries instead (R6.6): the live conversation
+    /// only, never a subagent's view.
+    pub(super) fn wake_in_strip(&self, row: &Row, namespace: &str) -> bool {
+        namespace == "live"
+            && self.view.child.is_none()
+            && row.role == "You"
+            && row.tool.is_none()
+            && wks_native::transcript::fleet(&row.text).is_some()
+    }
+
+    /// Other sessions' wakes since your last message, oldest first: what
+    /// the strip above the transcript carries.
+    pub(super) fn strip_wakes(&self) -> Vec<(Arc<Row>, Fleet)> {
+        let mut wakes = Vec::new();
+        if self.view.child.is_some() {
+            return wakes;
+        }
+        for row in self.view.transcript.rows.iter().rev().take(WAKE_SCAN) {
+            if row.role != "You" || row.tool.is_some() {
+                continue;
+            }
+            match wks_native::transcript::fleet(&row.text) {
+                Some(fleet) => wakes.push((row.clone(), fleet)),
+                None => break,
+            }
+        }
+        wakes.reverse();
+        wakes
+    }
+
+    /// R6.6: cross-session notices leave the transcript for one slim strip
+    /// above it. One wake is its own quiet line ("From other sessions ·
+    /// Release checklist needs you · Go to Release checklist"); several are
+    /// one line ("2 updates from other sessions · Go to Release checklist")
+    /// that opens into each wake's line. The conversation's own column then
+    /// holds only this session's work.
+    pub(super) fn render_wake_strip_v2(
         &mut self,
-        key: &str,
-        fleet: Fleet,
-        copy: String,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Option<Div> {
+        let wakes = self.strip_wakes();
+        if wakes.is_empty() {
+            return None;
+        }
         let p = self.palette();
         let t = p.tokens;
+        let owner = self.chat_owner();
+        let key_of = |row: &Row| format!("live:{owner}:{}", row.key);
+        let strip = self
+            .reading_column()
+            .debug_selector(|| "wake-strip".into())
+            .flex()
+            .flex_col()
+            .pb(px(t.space.xs));
+        if wakes.len() == 1 {
+            let (row, fleet) = wakes.into_iter().next()?;
+            let key = key_of(&row);
+            let line = self.render_fleet_card_v2(&key, fleet, row.copy_text(), window, cx);
+            return Some(strip.child(line));
+        }
+        let glances: Vec<FleetGlance> = wakes.iter().map(|(_, f)| self.fleet_glance(f)).collect();
+        let worst = [StatusKind::NeedsYou, StatusKind::Failed]
+            .into_iter()
+            .find(|kind| glances.iter().any(|g| g.worst == Some(*kind)));
+        // The one button: the newest wake whose session waits on you, else
+        // the newest that can be opened at all.
+        let go = (0..wakes.len())
+            .rev()
+            .find(|&i| glances[i].worst == Some(StatusKind::NeedsYou) && glances[i].target.is_some())
+            .or_else(|| (0..wakes.len()).rev().find(|&i| glances[i].target.is_some()))
+            .map(|i| {
+                let key = key_of(&wakes[i].0);
+                self.fleet_go_button(
+                    &key,
+                    &wakes[i].1,
+                    &glances[i].names,
+                    glances[i].target.unwrap_or_default(),
+                    cx,
+                )
+            });
+        let open_key = format!("wake-strip:{owner}");
+        let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
+        let toggle = open_key.clone();
+        let line = div()
+            .id("wake-strip-header")
+            .debug_selector(|| "wake-strip-header".into())
+            .group("event-row")
+            .h(px(t.transcript().tool_row))
+            .mx(px(-t.space.sm))
+            .px(px(t.space.sm))
+            .rounded(px(t.radius.control))
+            .flex()
+            .items_center()
+            .gap(px(t.space.md))
+            .min_w_0()
+            .cursor_pointer()
+            .hover(move |s| s.bg(primitives::tonal(&p, t.wash.hover)))
+            .text_size(px(t.text.meta))
+            .text_color(rgb(p.roles.text_tertiary))
+            .child(match worst {
+                Some(kind) => glyph_box(Glyph::Status(kind), p.roles.text_tertiary, &p),
+                None => glyph_box(Glyph::Named(IconName::Inbox), p.roles.text_tertiary, &p),
+            })
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .font_weight(FontWeight(t.weight.medium))
+                    .child(wake_strip_label(wakes.len())),
+            )
+            .child(
+                div().flex_shrink_0().child(
+                    Icon::new(if open {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    })
+                    .size(px(t.icon.xs)),
+                ),
+            )
+            .child(div().flex_1())
+            .children(go)
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_open(toggle.clone(), false, cx)));
+        let mut strip = strip.child(line);
+        if open {
+            let mut list = event_guide(&p).debug_selector(|| "wake-strip-list".into());
+            for (row, fleet) in wakes {
+                let key = key_of(&row);
+                list = list.child(self.render_fleet_card_v2(&key, fleet, row.copy_text(), window, cx));
+            }
+            strip = strip.child(list);
+        }
+        Some(strip)
+    }
+
+    /// What one wake says at a glance: each agent's name and state in
+    /// words, the one session "Go to" opens (the one waiting on you now,
+    /// else the first this conversation can open), and the worst state.
+    pub(super) fn fleet_glance(&self, fleet: &Fleet) -> FleetGlance {
+        let p = self.palette();
         let owner = self.view.selected.clone().unwrap_or_default();
         let lookup = |id: &str| self.view.sessions.iter().find(|s| s.id == id).cloned();
-        let states: Vec<StatusKind> = fleet
+        let labels: Vec<&'static str> = fleet
             .entries
             .iter()
             .map(|entry| {
-                let (label, _) = super::fleet_card::entry_status(
+                super::fleet_card::entry_status(
                     fleet.kind,
                     entry,
                     lookup(&entry.session_id).as_ref(),
                     p,
-                );
-                fleet_entry_kind(label)
+                )
+                .0
             })
             .collect();
+        let states: Vec<StatusKind> = labels.iter().map(|l| fleet_entry_kind(l)).collect();
         let pending = states.contains(&StatusKind::NeedsYou);
         let eyebrow = fleet_eyebrow(fleet.kind, pending, fleet.entries.len());
         let names = fleet
@@ -1786,24 +2061,14 @@ impl Workspace {
                     .unwrap_or_else(|| entry.label.clone())
             })
             .collect::<Vec<_>>();
-        let open_key = format!("{key}-v2-open");
-        let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
-        // R5.4: other sessions' news is one quiet line with one button
-        // ("Go to Release checklist"), set apart from this conversation:
-        // an inbox mark, "From other sessions", tertiary words. An ask that
-        // has since been answered reads as resolved, never as pending.
+        // R5.4: an ask that has since been answered reads as resolved,
+        // never as pending.
         let words: Vec<(String, StatusKind)> = fleet
             .entries
             .iter()
             .enumerate()
             .map(|(index, entry)| {
-                let (label, _) = super::fleet_card::entry_status(
-                    fleet.kind,
-                    entry,
-                    lookup(&entry.session_id).as_ref(),
-                    p,
-                );
-                let word = fleet_word(label);
+                let word = fleet_word(labels[index]);
                 let line = match &entry.failed {
                     Some(why) => format!("{} {word}: {why}", names[index]),
                     None => format!("{} {word}", names[index]),
@@ -1811,8 +2076,6 @@ impl Workspace {
                 (line, states[index])
             })
             .collect();
-        // The one button: the session that waits on you now (live, not the
-        // wake's say-so), else the first one this conversation can open.
         let waits = |index: usize| {
             states[index] == StatusKind::NeedsYou
                 && self.view.connected
@@ -1831,37 +2094,83 @@ impl Workspace {
                     .enumerate()
                     .any(|(i, k)| k == kind && (*kind != StatusKind::NeedsYou || waits(i)))
             });
-        let button = target.map(|index| {
-            let id = fleet.entries[index].session_id.clone();
-            let owner = owner.clone();
-            let name = super::status::short_title(&names[index], 32);
-            primitives::button(
-                SharedString::from(format!("{key}-open-{index}")),
-                format!("Go to {name}"),
-                Some(IconName::ArrowRight),
-                ButtonVariant::Tertiary,
-                ButtonSize::Small,
-                true,
-                &p,
-            )
-            .debug_selector(move || format!("fleet-entry-open-{index}"))
-            // Its label, not its padding, meets the column's right edge.
-            .mr(px(-(t.space.md + t.space.xxs)))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                let needs_you = this
-                    .view
-                    .sessions
-                    .iter()
-                    .any(|s| s.id == id && (s.approval.is_some() || s.questions.is_some()));
-                if this.view.selected.as_deref() == Some(owner.as_str())
-                    && this.view.connected
-                    && (needs_you || this.fleet_openable(&owner, &id))
-                {
-                    this.command(Command::Select(id.clone()), cx);
-                }
-            }))
-        });
+        FleetGlance {
+            names,
+            words,
+            target,
+            worst,
+            eyebrow,
+        }
+    }
+
+    /// The one Tertiary "Go to Release checklist" button for a wake's entry.
+    pub(super) fn fleet_go_button(
+        &self,
+        key: &str,
+        fleet: &Fleet,
+        names: &[String],
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = self.palette();
+        let t = p.tokens;
+        let owner = self.view.selected.clone().unwrap_or_default();
+        let id = fleet.entries[index].session_id.clone();
+        let name = super::status::short_title(&names[index], 32);
+        primitives::button(
+            SharedString::from(format!("{key}-open-{index}")),
+            format!("Go to {name}"),
+            Some(IconName::ArrowRight),
+            ButtonVariant::Tertiary,
+            ButtonSize::Small,
+            true,
+            &p,
+        )
+        .debug_selector(move || format!("fleet-entry-open-{index}"))
+        // Its label, not its padding, meets the column's right edge.
+        .mr(px(-(t.space.md + t.space.xxs)))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            let needs_you = this
+                .view
+                .sessions
+                .iter()
+                .any(|s| s.id == id && (s.approval.is_some() || s.questions.is_some()));
+            if this.view.selected.as_deref() == Some(owner.as_str())
+                && this.view.connected
+                && (needs_you || this.fleet_openable(&owner, &id))
+            {
+                this.command(Command::Select(id.clone()), cx);
+            }
+        }))
+    }
+
+    /// A fleet or supervisor wake (r3-transcript): another session's news,
+    /// so never a card here. One line per agent in the shared lexicon
+    /// ("Release checklist for 0.9 needs you · Go", "Usage meter rounding ·
+    /// Done", "Queue priority ordering · Failed · Credit balance is too
+    /// low"), no internal ids. Clicking a line opens what the wake carried
+    /// (last reply, results, why it was raised) on a guide beneath.
+    pub(super) fn render_fleet_card_v2(
+        &mut self,
+        key: &str,
+        fleet: Fleet,
+        copy: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let FleetGlance {
+            names,
+            words,
+            target,
+            worst,
+            eyebrow,
+        } = self.fleet_glance(&fleet);
+        let open_key = format!("{key}-v2-open");
+        let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
+        let button = target.map(|index| self.fleet_go_button(key, &fleet, &names, index, cx));
         let summary = words
             .iter()
             .map(|(line, _)| line.as_str())
@@ -2913,6 +3222,20 @@ mod tests {
         let (primary, context) = child_names(&explore, None);
         assert_eq!(primary, "Audit settings search");
         assert_eq!(context, "Explore · Haiku 4.5");
+    }
+
+    // R6.6: one meta line per turn; R6.2: a recovered run says so in words.
+    #[test]
+    fn a_turn_has_one_meta_line_and_recovery_reads_in_words() {
+        assert_eq!(
+            meta_line(Some("code-review"), "Worked 5m 12s · 6 tools", 1),
+            "Used skill code-review · Worked 5m 12s · 6 tools · 1 delegated"
+        );
+        assert_eq!(meta_line(None, "Worked · 2 tools", 0), "Worked · 2 tools");
+        assert_eq!(meta_line(Some(""), "Worked · 2 tools", 3), "Worked · 2 tools · 3 delegated");
+        assert_eq!(recovered_line(1), "1 failed, then passed");
+        assert_eq!(wake_strip_label(2), "2 updates from other sessions");
+        assert_eq!(wake_strip_label(1), "1 update from other sessions");
     }
 
     #[test]

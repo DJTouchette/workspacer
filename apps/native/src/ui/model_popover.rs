@@ -128,12 +128,7 @@ pub(super) fn access_consequence(permission: Permission) -> &'static str {
 /// The v2 word for an access mode, the same in the popover and on the
 /// Model page.
 pub(super) fn access_word(permission: Permission) -> &'static str {
-    match permission {
-        Permission::Ask => "Ask first",
-        Permission::AcceptEdits => "Can edit",
-        Permission::Plan => "Plan only",
-        Permission::FullAccess => "Full access",
-    }
+    permission.word()
 }
 
 impl Workspace {
@@ -354,7 +349,7 @@ impl Workspace {
                                     this.act(
                                         Action::SetPermission {
                                             mode: mode.to_owned(),
-                                            label: permission.label().to_owned(),
+                                            label: permission.word().to_owned(),
                                         },
                                         cx,
                                     );

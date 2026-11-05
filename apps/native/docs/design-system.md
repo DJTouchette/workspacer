@@ -321,19 +321,22 @@ Each entry gives:
 |---|---|---|---|---|
 | `Rest` | `border_strong` | full | "Ask anything, or describe a task…" | Primary, disabled until there is a draft |
 | `Focus` | `focus` | full | as Rest | Primary when there is a draft |
-| `Yielded` (a decision waits) | `border_strong` | full, never faded or collapsed | "Reply instead — the request stays pending" | **Secondary**: the decision card owns the Primary. Its tooltip says replying leaves the request pending |
+| `Yielded` (a decision waits) | `border_strong` | R6.3: unfocused and empty, **one bordered line** "Reply instead…" (`composer_reply_line`) with the digit hint at its end; on focus the full field, never faded | "Reply instead — the request stays pending" | **Secondary**: the decision card owns the Primary. Its tooltip says replying leaves the request pending |
 | `Disabled` (offline, busy) | `border_strong` | `wash.yielded` | the connection's words | disabled |
 
 - **Send slot:** Send (`system::composer_send_state(can_send, deciding)`), Queue (a Primary split button while the agent works and there is a draft; its menu holds Send now and After this turn) or Stop · Esc (Destructive while the agent works and nothing is drafted). One slot, one place.
+- **Where digit keys go (R6.3):** digits answer the keyed decision only while no text field has focus (`ComposerUi::digits_to_card`, set once per frame by the dock). Then the decision shows its keycaps and the one-line composer ends with `decision_keys_hint` ("1–4 answer the request"). While the composer has focus, digits type: the keycaps and the hint go. Esc leaves the composer and hands the digits back.
+- **Access chip (R6.4):** `access_chip` sits beside the model chip ("Sonnet · Ask first"): the mode in force, or its default until the agent reports one. It opens `access_option` rows that apply at once (no Apply). Full access shows a warning glyph in `roles.caution` (TODO: the warning hue once the status table adds it). One word per mode everywhere, `Permission::word()`: Ask first, Can edit, Plan only, Full access.
+- **New session is the welcome (R6.4):** the centred 24/600 question, then this composer (`launch_task_box_v2`) with machine, project, agent, model and access chips and Start (Primary) inside it. A chip opens its choices in one card below; context window and name fold under "More options".
 - **Slash menu:** a `menu` of `list_row`s anchored above the composer (`anchored_menu`, `MenuAnchor::AboveStart`). While a decision waits it sits in the dock's flow above the composer instead, pushing the decision up (the dock's cards shrink and scroll), so it never covers the request.
 - **API** (`src/ui/system/composer.rs`):
   - `composer_field(state, &p) -> Div`, then `composer_body(state, compact, &p)` holding `composer_text(min_lines, &p)` (the input) and `composer_toolbar(leading, trailing, &p)`.
   - `composer_specimen(id, state, text, placeholder, deciding, can_send, &p)` draws a static composer (the gallery: the live one needs an `InputState`).
 - **Do:**
-  - Change only the placeholder and Send's tier while a decision waits.
+  - Change only the placeholder, the one-line fold and Send's tier while a decision waits.
   - Use `composer_send_state`; never pick Send's tier locally.
 - **Don't:**
-  - Hide, collapse or fade the field while a decision waits.
+  - Hide or fade the field while a decision waits (it folds to its bordered line, never away).
   - Build a second composer, or style a task box locally.
   - Let the slash menu (or any menu) cover a pending decision.
 
@@ -509,12 +512,14 @@ Prose is above activity, and activity is above meta.
 - Prose and headings are primary.
 - Activity rows (Ran, Edited, Changed 2 files, subagents) are 13 secondary, with the verb in medium.
 - Meta is tertiary.
-- Turns are 32–40 apart (`transcript().turn_gap` 32 plus the row gap).
-- A finished turn folds into one summary row ("Worked 5m 40s · 6 tools"), coloured by its **final** outcome (`transcript_v2::recovered`: every failed call was run again, same tool and target, and passed). A failure that later recovered is not red at the turn level, and the run does not open by default; expanded, only the failed step keeps a muted mark (tertiary "Failed · exit code 1", no red badge).
+- **Rhythm (R6.6):** a fixed 8/16/32, from tokens only: `transcript().group_gap` 8 inside a group (notes between calls), `row_gap` 16 between blocks (half above and below each row), `turn_gap` 32 between turns (the row gap included) and above a heading (`heading_space`; 8 below it, `heading_gap`). A reply's hover actions (copy, time) float in the gap under it, so they never add to the rhythm. The turn's Changed block sits one `row_gap` under the reply.
+- **One meta line per turn (R6.6):** a finished skill directly before a run, and the subagents pinned at the run's end, join the run's line: "Used skill code-review · Worked 5m 12s · 6 tools · 1 delegated", the delegates' rows beneath it while any works or the run is open (`transcript_v2::meta_line`, `folded_skill`, `folded_overview`).
+- A finished turn folds into one summary row ("Worked 5m 40s · 6 tools"), coloured by its **final** outcome (`transcript_v2::recovered`: every failed call was run again, same tool and target, and passed). A recovered run says so in words, with a neutral retry glyph: "Worked 2m 07s · 3 tools · 1 failed, then passed" (`recovered_line`; never a green check, never red), and does not open by default; expanded, only the failed step keeps a muted mark (tertiary "Failed · exit code 1", no red badge).
 - One "Changed N files" per turn. A wake from another session inside a turn does not split it (`starts_turn`).
-- **Other sessions:** a fleet or supervisor wake is one quiet line, set apart from the conversation: an inbox mark (or the amber/red glyph when one waits or failed), "From other sessions", the agents' states in tertiary words, and one Tertiary button ("Go to Release checklist"). An ask that has since been answered reads "answered" / "resolved", never as pending. Clicking the line opens what the wake carried.
+- **Other sessions (R6.6):** wakes leave the transcript for **one strip above it** (`render_wake_strip_v2`, selector `wake-strip`): the wakes since your last message. One wake is its own line; several read "2 updates from other sessions" with the one Go button (the newest that waits on you), and open into each wake's line. Chosen over sidebar-only because the strip keeps the "Go to…" jump where the reader is, while the sidebar already shows each session's live state. Each wake's line is: an inbox mark (or the amber/red glyph when one waits or failed), "From other sessions", the agents' states in tertiary words, and one Tertiary button ("Go to Release checklist"). An ask that has since been answered reads "answered" / "resolved", never as pending. Clicking the line opens what the wake carried.
 - **Subagents:** every subagent state comes from `status::derive` (`children::child_status_v2` for a provider subagent), so its own header and the sidebar agree on "Not responding · 7m". A transcript block that knows one turn's delegations says so ("2 delegated this turn"); the tree's total lives in the sidebar ("4 subagents · 3 working"). A delegation rolls up its worst child.
-- The composer stays a visible bordered field, even while a decision is pending.
+- The composer stays a visible bordered field, even while a decision is pending (one line until it has focus).
+- **Change counts (R6.6):** the turn's line says "This turn"; Changes and the header say "Branch". The two scopes may differ (earlier turns are on the branch); the fixture keeps every file the turn touched on the branch with the same counts.
 
 ### Fleet card anatomy
 

@@ -54,7 +54,8 @@ SETTINGS_SECTIONS = ["Appearance", "Typography", "Workspace", "Remote",
 # area-pages: controls design v2 moved (used when --setting design_v2=true).
 LANDMARKS_V2 = {
     "END_SESSION": lambda shot: (1024, 637),        # r3-integration: the form column's "End session..."
-    "NEW_TASK_FIELD": lambda shot: (600, 190),      # r5-conversation: the task text in the shared composer
+    "NEW_TASK_FIELD": lambda shot: (720, 455),      # r6-conversation: the task text in the centred composer (New session is the welcome)
+    "WAKE_STRIP": lambda shot: (640, 62),           # r6-conversation: the "2 updates from other sessions" strip above the transcript
     "HOSTS_DETAILS": lambda shot: (1520, 207),      # r3-pages: Machines' first "Details" (table row)
     "JOB_OVERFLOW": lambda shot: (1549, 552),       # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal; r5-integration re-measured)
     "REVIEW_DOCK_MORE": lambda shot: (1535, 30),    # r3-pages: Changes dock header "..."
@@ -233,7 +234,7 @@ def shots():
     # r2-transcript: the turn's tool calls as event rows ("Worked … · n tools").
     add("transcript-tools", "Transcript: a turn's tool calls as one-line event rows",
         [("design", [("wheel", 6, 1000, 400)],
-          [("key", "Escape"), ("key", "ctrl+o"), ("sleep", 1.0), ("wheel", 14, 1000, 400)])])
+          [("key", "Escape"), ("key", "ctrl+o"), ("sleep", 1.0), ("wheel", 16, 1000, 400)])])
     # r3-composer: the decision holds the composer's slot; "Reply instead…"
     # opens it, a typed answer turns the question's Send primary, and while
     # the agent works a draft makes the primary Queue (its menu open).
@@ -283,6 +284,10 @@ def shots():
         [("key", "1"), ("sleep", 0.6)], fixture="destructive")
     add("decisions-batch", "Fleet: three sessions ask for the same cargo test in one folder; Allow all 3",
         fleet, fixture="batch")
+    # r6-conversation (R6.6): other sessions' wakes leave the transcript for
+    # one strip above it; opened, it lists each wake's line.
+    add("conversation-wake-strip-open", "Other sessions' updates: the strip above the transcript, opened",
+        [("click", "WAKE_STRIP"), ("sleep", 0.6)])
     return s
 
 
@@ -515,6 +520,7 @@ LANDMARKS = {
     # The title pill grows when hovered (context meter appears), so hover it
     # first; these two are the chips' positions once it has grown.
     "TITLE_PILL": lambda shot: (900, 30),
+    "WAKE_STRIP": lambda shot: (640, 62),           # r6-conversation: v2 only (the wake strip); harmless under v1
     # "Sonnet" chip: v1 in the hovered title pill, v2 on the composer (r2).
     # (r3-integration: the reading column is centred; the chip once the composer is open.)
     "TITLE_MODEL": lambda shot: (705, 960) if shot.get("v2") else (1005, 30),
@@ -527,7 +533,7 @@ LANDMARKS = {
     # (r3-integration: v1's moved right when the fixture's grant label grew.)
     "APPROVAL_DENY_NOTE": lambda shot: (588, 861) if shot["v2"] else (1030, 797),  # r5-fleet re-measured
     "APPROVAL_DENY_MENU": lambda shot: (750, 822),  # r3-composer: Deny's chevron (v2; r5-fleet re-measured: Allow and Deny side by side)
-    "COMPOSER_REPLY": lambda shot: (700, 922),       # r5-conversation: the composer field under the card (v2: always a field)
+    "COMPOSER_REPLY": lambda shot: (700, 964),       # r6-conversation: the one-line "Reply instead…" under the card (it expands on focus)
     "QUESTION_ANSWER": lambda shot: (900, 813),      # r3-composer: the release question's answer field (v2; r5-integration re-measured)
     "COMPOSER_SEND_MENU": lambda shot: (1333, 960),  # r3-composer: Queue's chevron while working (v2; r3-integration re-measured)
     # (r4-integration: v2 re-measured; the first tile centres at y 179.)

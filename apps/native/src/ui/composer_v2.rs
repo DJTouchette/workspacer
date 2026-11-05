@@ -29,12 +29,22 @@ use serde_json::Value;
 pub(super) struct ComposerUi {
     /// Queue's split menu (Send now / After this turn) is open.
     pub send_menu: bool,
+    /// R6.4: the access chip's menu is open.
+    pub access_menu: bool,
     /// The approval's Deny split menu (Deny with note…) is open.
     pub deny_menu: bool,
     /// The question a multi-question set's stepper shows (0-based).
     pub question_step: usize,
     /// The placeholder last given to the composer, when v2 changed it.
     pub placeholder: Option<&'static str>,
+    /// R6.3: the digit keys answer the keyed decision (no text field has
+    /// focus). Set once per frame by the dock, before its cards draw, so
+    /// keycaps and the hint show only where digits actually go.
+    pub digits_to_card: bool,
+    /// R6.3: the decision (session and card) whose one-line composer was
+    /// opened. It stays open for that decision, so a click elsewhere (which
+    /// moves the focus on press) never folds it under the pointer.
+    pub reply_open: Option<String>,
 }
 
 /// A decision the selected session is waiting on, in dock order.
@@ -292,6 +302,10 @@ pub(super) const SEND_NOW_COPY: &str =
 pub(super) const AFTER_TURN_COPY: &str =
     "Hold it until this turn ends, then send it as the next message.";
 
+/// R6.3: the one line the composer folds to while a decision waits and it
+/// is not in use.
+pub(super) const REPLY_LINE: &str = "Reply instead…";
+
 /// The composer's placeholder while a decision waits (R5.4: the field
 /// stays, only its words change).
 pub(super) const REPLY_INSTEAD: &str = "Reply instead — the request stays pending";
@@ -488,6 +502,44 @@ impl Workspace {
         out
     }
 
+    /// R6.3: how many digit keys answer the keyed decision (1 Allow, 2
+    /// Deny, then each Always allow and Deny with note; a plan's choices; a
+    /// question's options), for "1–3 answer the request".
+    pub(super) fn decision_key_count(&self, session: &Session) -> Option<usize> {
+        let n = match self.keyed_decision(session)? {
+            Decision::Approval => {
+                let approval = session.approval.as_ref()?;
+                let always = wks_native::session_controls::always_options(approval);
+                let note = self.deny_note_offered() && !self.extras.deny_open;
+                strip_keys(always.len(), note).len()
+            }
+            Decision::Plan => {
+                let (handoff, _) = self.plan_handoff(Some(session));
+                plan_keys(handoff.is_some(), true).len()
+            }
+            Decision::Questions => {
+                let list = session
+                    .questions
+                    .as_ref()
+                    .map(super::questions::question_list)
+                    .unwrap_or_default();
+                if list.is_empty() {
+                    return None;
+                }
+                let step = self.question_step(list.len());
+                list[step]["options"].as_array().map_or(0, Vec::len).min(9)
+            }
+            Decision::Limit => 0,
+        };
+        (n > 0).then_some(n)
+    }
+
+    /// R6.3: whether the digit keys answer the keyed decision now: no text
+    /// field has focus (the workspace root, or nothing, does).
+    pub(super) fn digits_free(&self, window: &Window, cx: &App) -> bool {
+        self.focus.is_focused(window) || window.focused(cx).is_none()
+    }
+
     /// Whether Deny with note is offered: Claude reads a deny's note, Codex
     /// gets it as a user message; other providers have no field for it.
     fn deny_note_offered(&self) -> bool {
@@ -596,6 +648,63 @@ impl Workspace {
         }
         let slash_rows = self.slash_menu(cx);
         let draft = !empty || !draft_files.is_empty();
+        // R6.3: while a decision waits and the composer is not in use it is
+        // one bordered line that expands on focus, with the hint that says
+        // the digit keys answer the request. Once opened for a decision it
+        // stays open for that decision.
+        let reply_key = selected
+            .as_ref()
+            .map(|s| format!("{}\0{}", s.id, s.card().unwrap_or_default()));
+        if focused && takes_slot {
+            self.composer_ui.reply_open = reply_key.clone();
+        }
+        if takes_slot
+            && enabled
+            && !focused
+            && self.composer_ui.reply_open != reply_key
+            && !draft
+            && !uploading
+            && slash_rows.is_empty()
+            // A popover or menu hanging from a chip keeps the field open.
+            && !self.shell.model_popover
+            && !self.composer_ui.access_menu
+        {
+            self.composer_ui.send_menu = false;
+            let hint = selected
+                .as_ref()
+                .filter(|_| self.composer_ui.digits_to_card)
+                .and_then(|s| self.decision_key_count(s))
+                .map(|n| {
+                    system::decision_keys_hint(n, &p)
+                        .debug_selector(|| "decision-keys-hint".into())
+                        .into_any_element()
+                });
+            let line = system::composer_reply_line(REPLY_LINE, hint, &p)
+                .id("floating-composer")
+                .debug_selector(|| "chat-composer".into())
+                .cursor_text()
+                .occlude()
+                .tooltip(primitives::tooltip_view(
+                    super::decision::REPLY_KEEPS_PENDING,
+                    None,
+                    &p,
+                ))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.composer_ui.reply_open = reply_key.clone();
+                    this.composer
+                        .update(cx, |input, cx| input.focus(window, cx));
+                    cx.notify();
+                }));
+            return div()
+                .debug_selector(|| "chat-composer-group".into())
+                .w_full()
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.md))
+                .children(self.render_cold_note(cx))
+                .child(line);
+        }
         let state = if !enabled {
             system::ComposerState::Disabled
         } else if focused {
@@ -690,6 +799,9 @@ impl Workspace {
                     ))
             })
         });
+        let access = selected
+            .as_ref()
+            .and_then(|s| self.render_access_chip_v2(s, narrow, cx));
         let meter = selected
             .as_ref()
             .filter(|_| !self.title_carries_context())
@@ -712,6 +824,7 @@ impl Workspace {
         let mut leading = vec![attach.into_any_element()];
         leading.extend(folder.map(IntoElement::into_any_element));
         leading.extend(model.map(IntoElement::into_any_element));
+        leading.extend(access.map(IntoElement::into_any_element));
         leading.extend(meter.map(IntoElement::into_any_element));
         let mut trailing: Vec<AnyElement> = status
             .into_iter()
@@ -796,6 +909,94 @@ impl Workspace {
                 )
                 .w_full(),
             )
+    }
+
+    /// R6.4: the access chip beside the model chip ("Sonnet · Ask first"):
+    /// the mode in force (its default until the agent reports one), Full
+    /// access in the caution tone. It opens the access choices; a choice
+    /// applies at once, with no Apply. Hidden on a narrow composer unless
+    /// the session runs with full access.
+    fn render_access_chip_v2(
+        &mut self,
+        session: &Session,
+        narrow: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        if !self.supported_session() {
+            self.composer_ui.access_menu = false;
+            return None;
+        }
+        let p = self.palette();
+        let provider = session.provider_id().to_owned();
+        let choices = Permission::choices(&provider);
+        let current = Permission::from_wire(&provider, session.access_mode());
+        let shown = super::model_popover::effective_access(current, choices)?;
+        let full = shown == Permission::FullAccess;
+        if narrow && !full {
+            self.composer_ui.access_menu = false;
+            return None;
+        }
+        let enabled = self.view.connected && !self.view.busy;
+        let open = self.composer_ui.access_menu && enabled;
+        let chip = system::access_chip("composer-access", shown.word(), full, enabled, &p)
+            .debug_selector(|| "composer-access".into())
+            .tooltip(primitives::tooltip_view(
+                format!("Access · {}", super::model_popover::access_consequence(shown)),
+                None,
+                &p,
+            ))
+            .when(enabled, |d| {
+                d.on_click(cx.listener(|this, _, _, cx| {
+                    this.composer_ui.access_menu = !this.composer_ui.access_menu;
+                    cx.notify();
+                }))
+            });
+        let menu = open.then(|| {
+            primitives::menu(&p)
+                .debug_selector(|| "composer-access-menu".into())
+                .occlude()
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    this.composer_ui.access_menu = false;
+                    cx.notify();
+                }))
+                .children(choices.iter().copied().map(|permission| {
+                    let id = SharedString::from(format!("composer-access-{}", permission.word()));
+                    let active = permission == shown;
+                    // The shown default can still be set while unreported.
+                    let settable = !active || current.is_none();
+                    let provider = provider.clone();
+                    system::access_option(
+                        id.clone(),
+                        permission.word(),
+                        super::model_popover::access_consequence(permission),
+                        active,
+                        permission == Permission::FullAccess,
+                        true,
+                        &p,
+                    )
+                    .debug_selector(move || id.to_string())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.composer_ui.access_menu = false;
+                        if settable && let Ok(mode) = permission.wire(&provider) {
+                            this.extras.access_switching = true;
+                            this.act(
+                                Action::SetPermission {
+                                    mode: mode.to_owned(),
+                                    label: permission.word().to_owned(),
+                                },
+                                cx,
+                            );
+                        }
+                        cx.notify();
+                    }))
+                }))
+        });
+        Some(system::anchored_menu(
+            chip,
+            menu,
+            system::MenuAnchor::AboveStart,
+            &p,
+        ))
     }
 
     // r4-truth (R4.1)
@@ -1325,7 +1526,8 @@ impl Workspace {
         decision.armed = self.armed(&confirm);
         decision.deny = Some(deny);
         decision.deny_note = deny_note;
-        decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval));
+        decision.keys = self.composer_ui.digits_to_card
+            && session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval));
         decision.render(&p)
     }
 
@@ -1447,10 +1649,9 @@ impl Workspace {
         let Ok(n) = k.key.parse::<usize>() else {
             return;
         };
-        let composer = self.composer.read(cx);
-        let free = self.focus.is_focused(window)
-            || (composer.focus_handle(cx).is_focused(window) && composer.value().is_empty());
-        if !free {
+        // R6.3: digits answer only while no text field has focus; in the
+        // composer they type (the hint and keycaps say which).
+        if !self.digits_free(window, cx) {
             return;
         }
         let Some(session) = self.selected_session().cloned() else {
@@ -1653,7 +1854,8 @@ impl Workspace {
             self.render_deny_note_v2(enabled, "Keep planning", ButtonVariant::Primary, cx)
                 .into_any_element()
         });
-        decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan));
+        decision.keys = self.composer_ui.digits_to_card
+            && session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan));
         decision.render(&p)
     }
 

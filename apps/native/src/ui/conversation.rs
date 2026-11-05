@@ -163,6 +163,19 @@ impl Workspace {
             enabled,
             working,
         };
+        // R6.6: other sessions' wakes sit in one slim strip above the
+        // transcript, never inside it.
+        let strip = (self.design().is_v2() && selected.is_some())
+            .then(|| self.render_wake_strip_v2(window, cx))
+            .flatten()
+            .map(|strip| {
+                let t = self.tokens();
+                div()
+                    .w_full()
+                    .flex_shrink_0()
+                    .pt(self.header_bounds.size.height + px(t.transcript().group_gap))
+                    .child(strip)
+            });
         let entity = cx.entity().downgrade();
         let transcript = list(self.list.clone(), move |ix, window, cx| {
             entity
@@ -171,7 +184,11 @@ impl Workspace {
         })
         .flex_1()
         .min_h_0()
-        .pt(self.header_bounds.size.height + px(16.))
+        .pt(if strip.is_some() {
+            px(0.)
+        } else {
+            self.header_bounds.size.height + px(16.)
+        })
         .map(|d| {
             if self.design().is_v2() && selected.is_some() {
                 // r4-calm (R4.4): a smaller viewport, not tail space: the
@@ -220,7 +237,9 @@ impl Workspace {
                 d.child(self.render_child_only(window, cx))
             })
             .when(!empty, |d| {
-                d.child(transcript).child(self.wheel_smoother(cx))
+                d.children(strip)
+                    .child(transcript)
+                    .child(self.wheel_smoother(cx))
             })
             // r4-integration (R4.4): while reading history the transcript's
             // viewport ends above the dock and the pill; a short fade there
@@ -523,6 +542,9 @@ impl Workspace {
     ) -> Div {
         let p = self.palette();
         let compact = layout.compact;
+        // R6.3: digits answer the decision only while no text field has
+        // focus; the cards and the composer read this as they draw.
+        self.composer_ui.digits_to_card = self.digits_free(window, cx);
         let composer_docked = selected.is_some() && self.view.child.is_none();
         let parent_line = self.render_parent_waiting(selected, cx);
         let parent_waits = self.design().is_v2() && self.view.child.is_some();

@@ -4,9 +4,11 @@
 //! [`composer_toolbar`]; nothing else draws a composer.
 //!
 //! The field is always there and always bordered. While a decision waits
-//! it does not collapse or fade: it stays a full-contrast field whose
-//! placeholder says the request stays pending, and Send drops to Secondary
-//! (the decision card owns the Primary, [`super::composer_send_state`]).
+//! it never fades: unfocused and empty it folds to one bordered line,
+//! "Reply instead…" ([`composer_reply_line`], R6.3), and on focus it is the
+//! full field whose placeholder says the request stays pending, with Send
+//! at Secondary (the decision card owns the Primary,
+//! [`super::composer_send_state`]).
 use super::super::primitives::{self as prim, ButtonSize, ButtonVariant, ControlState};
 use super::*;
 
@@ -17,9 +19,9 @@ pub(crate) enum ComposerState {
     Rest,
     /// Focused: the edge takes the `focus` colour.
     Focus,
-    /// A decision waits on the user: the same field at full contrast (never
-    /// collapsed, never faded); the caller sets the "Reply instead" text
-    /// and Send drops to Secondary.
+    /// A decision waits on the user: the field at full contrast (never
+    /// faded; one line until it has focus); the caller sets the "Reply
+    /// instead" text and Send drops to Secondary.
     Yielded,
     /// Nothing can be sent (offline, busy): the body at `wash.yielded`.
     Disabled,
@@ -122,6 +124,149 @@ pub(crate) fn composer_toolbar(
                 .items_center()
                 .gap(px(t.space.md))
                 .children(trailing),
+        )
+}
+
+/// R6.3: while a decision waits and the composer is not in use, it is one
+/// bordered line ("Reply instead…") that expands into the full composer on
+/// focus. `hint` (where the digit keys go, [`decision_keys_hint`]) sits at
+/// its trailing end. The caller makes it focus the input on click.
+pub(crate) fn composer_reply_line(
+    label: impl Into<SharedString>,
+    hint: Option<AnyElement>,
+    p: &Palette,
+) -> Div {
+    let t = p.tokens;
+    composer_field(ComposerState::Yielded, p).child(
+        div()
+            .h(px(t.layout.control_height))
+            .px(px(t.space.lg + t.space.xs))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(t.space.md))
+            .text_size(px(t.text.ui))
+            .text_color(rgb(p.roles.text_tertiary))
+            .child(div().min_w_0().truncate().child(label.into()))
+            .children(hint),
+    )
+}
+
+/// R6.3: where the digit keys go. "1–3 answer the request" while the
+/// focused decision takes them; nothing while the composer has focus
+/// (digits type there).
+pub(crate) fn decision_keys_hint(count: usize, p: &Palette) -> Div {
+    let t = p.tokens;
+    div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap(px(t.space.xxs))
+        .text_size(px(t.text.meta))
+        .text_color(rgb(p.roles.text_tertiary))
+        .child(prim::keycap_hint("1", false, p))
+        .when(count > 1, |d| {
+            d.child("–")
+                .child(prim::keycap_hint(count.min(9).to_string(), false, p))
+        })
+        .child(div().ml(px(t.space.xs)).child(if count > 1 {
+            "answer the request"
+        } else {
+            "answers the request"
+        }))
+}
+
+/// R6.4: the access chip beside the model chip ("Sonnet · Ask first"). Full
+/// access reads in the caution tone so it is never mistaken for the
+/// default. It opens the access choices, which apply at once.
+pub(crate) fn access_chip(
+    id: impl Into<gpui::ElementId>,
+    word: &'static str,
+    full: bool,
+    enabled: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    let t = p.tokens;
+    prim::toolbar_chip(
+        id,
+        full.then(|| {
+            Icon::new(IconName::TriangleAlert)
+                .size(px(t.icon.xs))
+                .into_any_element()
+        }),
+        word,
+        true,
+        enabled,
+        p,
+    )
+    // TODO(r6-surfaces): the warning hue for capacity and Full access
+    // lands with the status table; until then Full access uses the caution
+    // role (neutral-strong), never amber or red.
+    .when(full, |d| d.text_color(rgb(access_tone(true, p))))
+}
+
+/// The access word's colour: caution for Full access, else secondary.
+pub(crate) fn access_tone(full: bool, p: &Palette) -> u32 {
+    if full {
+        p.roles.caution
+    } else {
+        p.roles.text_secondary
+    }
+}
+
+/// R6.4: one access choice, in the chip's menu and on New session: a check
+/// on the mode in force, the word, and what it lets the agent do. A choice
+/// applies on click (no Apply).
+pub(crate) fn access_option(
+    id: impl Into<gpui::ElementId>,
+    word: &'static str,
+    consequence: &'static str,
+    active: bool,
+    full: bool,
+    enabled: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    let t = p.tokens;
+    prim::list_row(id, active, enabled, p)
+        .py(px(t.space.xs))
+        .items_start()
+        .child(
+            div()
+                .size(px(t.icon.sm))
+                .mt(px(t.space.xxs))
+                .flex_shrink_0()
+                .when(active, |d| {
+                    d.child(
+                        Icon::new(IconName::Check)
+                            .size(px(t.icon.sm))
+                            .text_color(rgb(p.accent)),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .font_weight(FontWeight(t.weight.medium))
+                        .text_color(rgb(if full {
+                            access_tone(true, p)
+                        } else if active {
+                            p.text
+                        } else {
+                            p.roles.text_secondary
+                        }))
+                        .child(word),
+                )
+                .child(
+                    div()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(consequence),
+                ),
         )
 }
 

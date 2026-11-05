@@ -2082,58 +2082,46 @@ pub enum LaunchPanel {
     Machine,
     Project,
     Agent,
+    /// R6.4: the access chip's choices.
+    Access,
 }
 
 impl Workspace {
+    /// R6.4: one New-session layout. New session *is* the welcome: the
+    /// centred question, then the one composer whose chips say where it
+    /// runs, in which project, with which agent, model and access, and
+    /// Start inside it. A chip opens its choices in one card below; the
+    /// rarer options (context window, a name) fold under "More options".
     fn render_new_session_v2(
         &self,
         window: &Window,
         busy: bool,
         can_create: bool,
-        wide: bool,
+        _wide: bool,
         p: Palette,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let t = p.tokens;
         let short = window.viewport_size().height < px(620.);
         let resume = self.extras.resume.is_some();
-        // r4-pages (R4.5): the one page template, back link included, on
-        // the shared page column and left edge.
-        let header = primitives::page_header(
-            self.page_back_v2_enabled(!busy, cx),
-            if resume {
-                "Continue a session"
-            } else {
-                "New session"
-            },
-            Some(if resume {
-                "Pick up where you left off, on the same agent and folder.".into()
-            } else {
-                "Say what you want done. Where it runs and which agent works on it are below the task."
-                    .into()
-            }),
-            Vec::new(),
-            &p,
-        )
-        .debug_selector(|| "launch-title".into());
+        let project = self.launch_project_title();
+        let headline = if resume {
+            "Continue where you left off".to_owned()
+        } else {
+            match &project {
+                Some(name) => format!("What should we work on in {name}?"),
+                None => "What should we work on?".to_owned(),
+            }
+        };
         // No project yet: its picker is the one thing to do first.
         let panel = if self.projects.cwd.is_empty() && self.launch_peer().is_none() {
             Some(LaunchPanel::Project)
         } else {
             self.extras.launch_panel
         };
-        let hint = div()
-            .px(px(t.space.sm))
-            .text_size(px(t.text.meta))
-            .text_color(rgb(p.roles.text_tertiary))
-            .child(if resume {
-                "Optional · sent after it resumes"
-            } else {
-                "Optional · you can start empty"
-            })
-            .into_any_element();
         let focused = self.prompt.read(cx).focus_handle(cx).is_focused(window);
-        let task = self.launch_task_box_v2(panel, busy, focused, false, hint, &p, cx);
+        let start = self.render_launch_start_v2(busy, can_create, &p, cx);
+        let task = self.launch_task_box_v2(panel, busy, focused, false, start, &p, cx);
         let panel_card = panel.and_then(|panel| {
             let body = match panel {
                 LaunchPanel::Machine => self.render_host_picker_v2(busy, cx)?,
@@ -2148,6 +2136,7 @@ impl Workspace {
                     .child(card_title("Agent", &p))
                     .child(self.render_provider_choice(busy, cx))
                     .child(self.render_model_select(busy, true, cx)),
+                LaunchPanel::Access => self.render_launch_access_v2(busy, &p, cx),
             };
             Some(
                 primitives::card(&p)
@@ -2156,32 +2145,27 @@ impl Workspace {
                     .child(body),
             )
         });
-        let form = div()
+        let headline = div()
+            .debug_selector(|| "launch-title".into())
             .w_full()
-            .max_w(px(t.pages().form))
+            .text_center()
+            .pb(px(t.space.sm))
+            .text_size(px(t.text.title))
+            .font_weight(FontWeight(t.weight.semibold))
+            .text_color(rgb(p.text))
+            .child(headline);
+        let column = div()
+            .debug_selector(|| "launch-content".into())
+            .w_full()
+            .max_w(px(t.layout.chat_width))
             .flex()
             .flex_col()
-            .gap(px(t.space.xl))
+            .gap(px(t.space.lg))
+            .child(headline)
             .child(task)
+            .child(self.render_launch_status_v2(busy, short))
             .children(panel_card)
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(t.space.lg))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.render_launch_disclosure(busy, cx)),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .max_w(px(t.pages().form / 2.))
-                            .child(self.render_launch_footer(busy, can_create, wide, short, cx)),
-                    ),
-            )
+            .child(self.render_launch_more_v2(busy, &p, cx))
             .when(resume, |d| {
                 d.child(
                     div()
@@ -2196,25 +2180,272 @@ impl Workspace {
                         ),
                 )
             });
-        // r5-system (R5.1 PageShell): the shared top and the form width
-        // rule for the header too, like every other form page.
-        let content = div()
-            .debug_selector(|| "launch-content".into())
-            .w_full()
-            .child(system::page_shell(
-                header,
-                None,
-                form,
-                system::PageWidth::Form,
-                &p,
-            ));
         div()
             .id("new-session-form")
             .flex_1()
             .min_w_0()
             .h_full()
             .flex()
-            .child(self.page_view("launch-scroll", t.pages().wide, false, content))
+            .child(
+                div()
+                    .id("launch-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .w_full()
+                            // Centred in the window like the welcome while it
+                            // fits; an open card grows it and it scrolls.
+                            .min_h(window.viewport_size().height)
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .px(px(t.space.xxl))
+                            .py(px(t.space.huge))
+                            .child(column),
+                    ),
+            )
+    }
+
+    /// The project New session would start in, by its name.
+    fn launch_project_title(&self) -> Option<String> {
+        let cwd = match self.launch_peer() {
+            Some(_) => self.extras.launch_host_cwd.clone(),
+            None => self.projects.cwd.clone(),
+        };
+        (!cwd.is_empty()).then(|| {
+            self.known_project(&cwd)
+                .map(|p| p.title().to_owned())
+                .unwrap_or_else(|| wks_native::projects::basename(&cwd).to_owned())
+        })
+    }
+
+    /// New session's Start, inside the composer as on the welcome: the one
+    /// Primary, its words saying what it does ("Queue", "Continue", "Start
+    /// anyway" after an outcome-unknown failure).
+    fn render_launch_start_v2(
+        &self,
+        busy: bool,
+        can_create: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let uncertain = wks_native::launch::uncertain_outcome(&self.spawn_error);
+        let label = if self.extras.queue_sent {
+            "Submitting…"
+        } else if busy {
+            "Starting…"
+        } else if self.queued_launch().is_some() {
+            "Queue"
+        } else if uncertain {
+            "Start anyway"
+        } else if self.extras.resume.is_some() {
+            "Continue"
+        } else {
+            "Start"
+        };
+        primitives::button(
+            "create-session",
+            label,
+            Some(IconName::ArrowUp),
+            ButtonVariant::Primary,
+            primitives::ButtonSize::Small,
+            can_create,
+            p,
+        )
+        .debug_selector(|| "launch-start".into())
+        .tooltip(primitives::tooltip_view(
+            "Start an agent on this task",
+            Some(if cfg!(target_os = "macos") {
+                "⌘ Enter"
+            } else {
+                "Ctrl Enter"
+            }),
+            p,
+        ))
+        .when(can_create, |d| {
+            d.on_click(cx.listener(|this, _, window, cx| this.create(window, cx)))
+        })
+        .into_any_element()
+    }
+
+    /// What New session is doing or why it cannot start, under the
+    /// composer: one tertiary line, or the failure in full.
+    fn render_launch_status_v2(&self, busy: bool, short: bool) -> Div {
+        let p = self.palette();
+        let t = p.tokens;
+        let uncertain = wks_native::launch::uncertain_outcome(&self.spawn_error);
+        let detailed = uncertain || self.spawn_error.chars().count() > 72;
+        let provider = if self.provider == "codex" {
+            "Codex"
+        } else {
+            "Claude"
+        };
+        let project = self.launch_project_title().unwrap_or_default();
+        let (warn, status): (bool, String) = if !self.spawn_error.is_empty() {
+            (
+                true,
+                if uncertain {
+                    "Outcome unknown".into()
+                } else if detailed {
+                    "Couldn't start the agent".into()
+                } else {
+                    self.spawn_error.clone()
+                },
+            )
+        } else if self.extras.queue_sent {
+            (false, format!("Submitting {provider} to the queue · {project}…"))
+        } else if busy {
+            (false, format!("Starting {provider} in {project}…"))
+        } else if !self.view.connected {
+            (true, "Waiting for the hub connection…".into())
+        } else if self.extras.resume.is_some() {
+            (false, "Optional · sent after it resumes".into())
+        } else {
+            (false, String::new())
+        };
+        div()
+            .debug_selector(|| "launch-footer".into())
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.md))
+            .when(detailed, |d| {
+                d.child(self.render_launch_error(uncertain, short))
+            })
+            .when(!status.is_empty(), |d| {
+                d.child(
+                    div()
+                        .id("launch-status")
+                        .debug_selector(|| "launch-status".into())
+                        .px(px(t.space.sm))
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.sm))
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(if warn {
+                            p.roles.text_secondary
+                        } else {
+                            p.roles.text_tertiary
+                        }))
+                        .when(warn, |d| {
+                            d.child(Icon::new(IconName::TriangleAlert).size(px(t.icon.sm)))
+                        })
+                        .when(busy, |d| d.child(work::spinner(t.icon.sm)))
+                        .child(div().min_w_0().truncate().child(status)),
+                )
+            })
+    }
+
+    /// R6.4: the access choices under New session's access chip. A choice
+    /// takes effect at once (there is no Apply).
+    fn render_launch_access_v2(&self, busy: bool, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let t = p.tokens;
+        div()
+            .debug_selector(|| "launch-access".into())
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xxs))
+            .child(card_title("Access", p))
+            .children(
+                Permission::choices(self.provider)
+                    .iter()
+                    .copied()
+                    .map(|permission| {
+                        system::access_option(
+                            permission.label(),
+                            permission.word(),
+                            super::model_popover::access_consequence(permission),
+                            self.permission == permission,
+                            permission == Permission::FullAccess,
+                            !busy,
+                            p,
+                        )
+                        .debug_selector(move || format!("access-{}", permission.label()))
+                        .when(!busy, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                this.permission = permission;
+                                this.extras.launch_panel = None;
+                                cx.notify();
+                            }))
+                        })
+                    }),
+            )
+    }
+
+    /// The rarer launch options, folded: the context window, a name for
+    /// the session, and Agent setup.
+    fn render_launch_more_v2(&self, busy: bool, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let t = p.tokens;
+        let open = self.launch_details_open;
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.md))
+            .child(
+                div().flex().child(
+                    primitives::button(
+                        "launch-customize",
+                        "More options",
+                        Some(if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        }),
+                        ButtonVariant::Tertiary,
+                        primitives::ButtonSize::Small,
+                        !busy,
+                        p,
+                    )
+                    .debug_selector(|| "launch-customize".into())
+                    .ml(px(-t.space.sm))
+                    .when(!busy, |d| {
+                        d.on_click(cx.listener(|this, _, window, cx| {
+                            if this.launch_details_open {
+                                window.focus(&this.focus);
+                            }
+                            this.launch_details_open = !this.launch_details_open;
+                            cx.notify();
+                        }))
+                    }),
+                ),
+            )
+            .when(open, |d| {
+                d.child(
+                    primitives::card(p)
+                        .debug_selector(|| "launch-details".into())
+                        .gap(px(t.space.lg))
+                        .child(self.render_context_choice(busy, cx))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(t.space.sm))
+                                .child(card_title("Session name", p))
+                                .child(Input::new(&self.label).disabled(busy)),
+                        )
+                        .child(
+                            div().flex().child(
+                                primitives::button(
+                                    "launch-setup",
+                                    "Agent setup",
+                                    Some(IconName::Settings2),
+                                    ButtonVariant::Tertiary,
+                                    primitives::ButtonSize::Small,
+                                    !busy,
+                                    p,
+                                )
+                                .ml(px(-t.space.sm))
+                                .when(!busy, |d| {
+                                    d.on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_feature(Screen::Setup, window, cx)
+                                    }))
+                                }),
+                            ),
+                        ),
+                )
+            })
     }
 
     /// The task box: the task, then the chips that say where, in which
@@ -2417,6 +2648,39 @@ impl Workspace {
             model,
             "Model and effort",
         ));
+        // R6.4: access beside the model ("Sonnet · Ask first"); Full access
+        // in the caution tone. On the welcome it is the default the start
+        // will use.
+        let access = if welcome {
+            self.settings.default_access(self.provider)
+        } else {
+            self.permission
+        };
+        let full = access == Permission::FullAccess;
+        let selected = open == Some(LaunchPanel::Access);
+        chips.push(
+            system::access_chip("launch-chip-access", access.word(), full, enabled, p)
+                .debug_selector(|| "launch-chip-access".into())
+                .when(selected, |d| d.bg(rgb(p.selected)).text_color(rgb(p.text)))
+                .tooltip(primitives::tooltip_view(
+                    "Access: what the agent may do without asking",
+                    None,
+                    p,
+                ))
+                .when(enabled, |d| {
+                    d.on_click(cx.listener(move |this, _, window, cx| {
+                        if welcome {
+                            this.open_launch_at(LaunchPanel::Access, window, cx);
+                            return;
+                        }
+                        this.extras.launch_panel = (this.extras.launch_panel
+                            != Some(LaunchPanel::Access))
+                        .then_some(LaunchPanel::Access);
+                        cx.notify();
+                    }))
+                })
+                .into_any_element(),
+        );
         chips
     }
 }

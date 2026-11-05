@@ -117,6 +117,43 @@ fn v2_pending_wake_is_one_line_with_go(cx: &mut TestAppContext) {
     assert!(matches!(&effect, Some(Command::Select(id)) if id == "worker-1"));
 }
 
+// R6.6: other sessions' wakes leave the transcript for one strip above it.
+#[gpui::test]
+fn v2_wakes_leave_the_transcript_for_one_strip(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _, _) = fixture(cx);
+    let mut view = wake_view(true);
+    let wake = |text: &str| Item {
+        kind: "user_message".into(),
+        text: text.into(),
+        timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        ..Default::default()
+    };
+    view.transcript.snapshot(ConversationSnapshot {
+        seq: 3,
+        first_seq: 1,
+        items: vec![
+            Item {
+                kind: "assistant_text".into(),
+                text: "Working on it.".into(),
+                ..Default::default()
+            },
+            wake(BLOCKED_WAKE),
+            wake("[fleet] Worker finished:\n- Native controls (session:worker-2, cwd /x) — last reply: Done\nReview each."),
+        ],
+    });
+    v2(&workspace, &mut visual, view);
+    let strip = visual.debug_bounds("wake-strip").unwrap();
+    let column = visual.debug_bounds("chat-content-column").unwrap();
+    assert!(strip.bottom() <= column.top() + px(1.), "above the transcript");
+    assert!(visual.debug_bounds("wake-strip-header").is_some());
+    // Folded: one line, its Go button, no wake line in the transcript.
+    assert!(visual.debug_bounds("fleet-card").is_none());
+    assert!(visual.debug_bounds("fleet-entry-open-0").is_some());
+    click(&mut visual, "wake-strip-header");
+    assert!(visual.debug_bounds("wake-strip-list").is_some());
+    assert!(visual.debug_bounds("fleet-card").is_some());
+}
+
 #[gpui::test]
 fn v2_resolved_wake_is_one_line_and_opens_its_details_on_click(cx: &mut TestAppContext) {
     let (workspace, mut visual, _, _) = fixture(cx);

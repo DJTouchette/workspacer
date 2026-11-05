@@ -331,12 +331,18 @@ impl Workspace {
             && row.role == "You"
             && row.tool.is_none()
             && content::fleet(&row.text).is_none();
+        // R6.6: a wake the strip above the transcript carries, and a skill
+        // folded into the next run's meta line, take no room.
+        let folded_skill = self.folded_skill(rows, ix);
+        let in_strip = v2 && (self.wake_in_strip(row, "live") || folded_skill);
         let mut body = div()
             .group("message")
             .w_full()
             .py_1()
-            .when(v2, |d| d.py(px(tt.row_gap / 2.)))
-            .when(turn_start, |d| d.pt(px(tt.turn_gap)))
+            // R6.6: the 8/16/32 rhythm: half the block gap above and below
+            // each row (16 between blocks), the turn gap above a turn.
+            .when(v2, |d| d.py(px(if in_strip { 0. } else { tt.row_gap / 2. })))
+            .when(turn_start, |d| d.pt(px(tt.turn_gap - tt.row_gap / 2.)))
             .when(ix + 1 == rows.len(), |d| {
                 d.debug_selector(|| "chat-content-column".into())
             });
@@ -351,7 +357,7 @@ impl Workspace {
                     ))
                 },
             );
-        } else {
+        } else if !folded_skill {
             body = body.child(self.render_message(row, "live", false, window, cx));
         }
         if !starts_turn(row, v2) && (ix + 1 == rows.len() || starts_turn(&rows[ix + 1], v2)) {
@@ -444,7 +450,13 @@ impl Workspace {
             })
         });
         // Children with no spawning call in view, pinned where they started.
-        if let Some(children) = self.child_ui.overview.get(&ix).cloned() {
+        if let Some(children) = self
+            .child_ui
+            .overview
+            .get(&ix)
+            .cloned()
+            .filter(|_| !self.folded_overview(rows, ix))
+        {
             body = body.child(self.render_overview(&session, &children, window, cx));
         }
         let earlier = (ix == 0 && self.view.transcript.has_older).then(|| self.render_earlier(cx));

@@ -358,8 +358,10 @@ fn the_model_chip_opens_a_popover_not_a_page(cx: &mut TestAppContext) {
     open_v2(&workspace, &mut visual, view, Design::V2);
     // An unknown access mode is not shown, nor offered.
     assert!(visual.debug_bounds("title-access").is_none());
-    // R5.4: "a" waits on a decision; the composer (and its model chip)
-    // stays visible under it.
+    // R6.3: "a" waits on a decision; the composer is one line under it
+    // until it has focus, then its model chip is there.
+    assert!(visual.debug_bounds("composer-model").is_none());
+    click(&mut visual, "chat-composer");
     click(&mut visual, "composer-model");
     assert!(visual.debug_bounds("model-popover").is_some());
     assert!(visual.debug_bounds("popover-access-unknown").is_none());
@@ -393,6 +395,11 @@ fn the_model_chip_opens_a_popover_not_a_page(cx: &mut TestAppContext) {
     visual.simulate_keystrokes("escape");
     visual.run_until_parked();
     workspace.read_with(&visual, |this, _| assert!(!this.shell.model_popover));
+    // R6.3: closed, the popover may hand the focus back elsewhere; the
+    // one-line composer opens again on a click.
+    if visual.debug_bounds("composer-model").is_none() {
+        click(&mut visual, "chat-composer");
+    }
     click(&mut visual, "composer-model");
     workspace.read_with(&visual, |this, _| {
         assert_eq!(this.screen, Screen::Conversation);
