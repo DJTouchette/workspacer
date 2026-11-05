@@ -2109,7 +2109,9 @@ impl Workspace {
             .find(|kind| glances.iter().any(|g| g.worst == Some(*kind)));
         let open_key = format!("wake-strip:{owner}");
         let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
-        let label = updates_label(wakes.len());
+        // One count with the popover: its rows are the events (each agent a
+        // wake reports on), so the chip counts those.
+        let label = updates_label(wakes.iter().map(|(_, f)| f.entries.len()).sum());
         let tip = format!("{label} from other sessions");
         let toggle = open_key.clone();
         let chip = system::updates_chip("updates-chip", worst, label, &p)
@@ -3421,7 +3423,7 @@ mod tests {
             None,
             1,
         );
-        assert_eq!(line.shown(), "Worked 5m · 3 tools · 1 failed");
+        assert_eq!(line.shown(), "Worked 5m 00s · 3 tools · 1 failed");
         assert_eq!(line.fault.as_deref(), Some("1 failed"));
         assert_eq!(
             line.hover().as_deref(),

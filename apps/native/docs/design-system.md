@@ -715,6 +715,7 @@ The conversation column is three parts: the header, the transcript, then one dec
 
 - Other sessions' wakes never sit in the transcript. They are one chip in the conversation header, after the title: "2 updates" (R8.6: never "from other sessions"), led by the worst state's glyph (Needs you, else a failure) or a quiet inbox icon.
 - The chip opens a popover anchored below it (`MenuAnchor::BelowStart`): **one row per event** (each agent a wake reports on), **failures first**, then what needs you, then the rest, newest first. Each row is its state glyph, what happened in words (the full line on hover), and its own **Open** jump link when that session can be opened from here.
+- The chip counts the events its popover lists (one number, one list).
 - Opening the popover never moves the reading position.
 
 ## Decisions: one key map and three tiers

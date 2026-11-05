@@ -236,7 +236,10 @@ fn the_card_holds_the_one_reply_while_a_decision_waits(cx: &mut TestAppContext) 
     workspace.read_with(&visual, |this, _| {
         assert!(this.decision_collapsed());
         let s = this.selected_session().unwrap();
-        assert_eq!(this.decision_summary(s), "Run cargo test in workspacer?");
+        assert_eq!(
+            this.decision_summary(s),
+            "Run cargo test in dev/workspacer?"
+        );
     });
     // A folded card takes no digits.
     focus_root(&workspace, &mut visual);
