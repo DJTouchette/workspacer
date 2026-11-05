@@ -109,16 +109,21 @@ pub(super) fn work_line(running: bool, duration_ms: Option<i64>, tools: usize) -
 /// R6.6: a turn's one meta line: the skill it used, the run, and how many
 /// subagents it delegated ("Used skill code-review · Worked 5m 12s · 6 tools
 /// · 1 delegated").
+/// r7-pages (R7.8): joined by `format::meta`, so a part that already holds
+/// separators or spaces ("3 tools  · 1 failed") never leaves a stray dot or
+/// a double space.
 pub(super) fn meta_line(skill: Option<&str>, work: &str, delegated: usize) -> String {
-    let mut parts = Vec::new();
-    if let Some(skill) = skill.filter(|s| !s.is_empty()) {
-        parts.push(format!("Used skill {skill}"));
-    }
-    parts.push(work.to_owned());
-    if delegated > 0 {
-        parts.push(format!("{delegated} delegated"));
-    }
-    parts.join(" · ")
+    let skill = skill
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| format!("Used skill {}", s.trim()));
+    let delegated = (delegated > 0).then(|| format!("{delegated} delegated"));
+    // The run's own facts, each re-joined with the one separator.
+    let work = format::meta(work.split('·'));
+    format::meta([
+        skill.unwrap_or_default(),
+        work,
+        delegated.unwrap_or_default(),
+    ])
 }
 
 /// Whether a run of calls ended well although some failed: its last
@@ -506,22 +511,39 @@ pub(super) fn event_row(row: EventRow, p: &Palette) -> Stateful<Div> {
         .when(row.diff.1 > 0, |d| {
             d.child(meta(format!("−{}", row.diff.1).into(), p.error))
         })
-        .when_some(row.summary, |d, summary| {
-            d.child(meta(format!("· {summary}").into(), p.roles.text_tertiary))
-        })
-        .map(|d| match &row.end {
-            EventEnd::Quiet(label) => d.child(
-                primitives::tabular(meta(format!("· {label}").into(), p.roles.text_tertiary))
-                    .debug_selector(|| "event-duration".into()),
-            ),
-            _ => d,
-        })
-        .when_some(row.fault, |d, fault| {
-            d.child(
-                meta(format!("· {fault}").into(), fault_color)
-                    .debug_selector(|| "event-fault".into()),
-            )
-        })
+        // r7-pages (R7.8): the trailing facts share one run, each led by
+        // the one separator (`format::SEP`), so the row's gap never adds a
+        // second space before a dot ("3 tools  · 1 failed").
+        .when(
+            row.summary.is_some() || matches!(row.end, EventEnd::Quiet(_)) || row.fault.is_some(),
+            |d| {
+                let fact = |text: &str| -> SharedString { format!("{}{text}", format::SEP).into() };
+                d.child(
+                    div()
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .ml(px(-t.space.md))
+                        .whitespace_nowrap()
+                        .when_some(row.summary, |d, summary| {
+                            d.child(meta(fact(&summary), p.roles.text_tertiary))
+                        })
+                        .map(|d| match &row.end {
+                            EventEnd::Quiet(label) => d.child(
+                                primitives::tabular(meta(fact(label), p.roles.text_tertiary))
+                                    .debug_selector(|| "event-duration".into()),
+                            ),
+                            _ => d,
+                        })
+                        .when_some(row.fault, |d, fault| {
+                            d.child(
+                                meta(fact(&fault), fault_color)
+                                    .debug_selector(|| "event-fault".into()),
+                            )
+                        }),
+                )
+            },
+        )
         .when_some(row.disclosure, |d, open| {
             d.child(
                 div()
@@ -1263,7 +1285,15 @@ impl Workspace {
         // R5.4: a delegation rolls up its worst child: never "Working"
         // beside a child that is not responding.
         let stalled = views.iter().any(|v| v.stalled);
-        let verb = tool_verb(&tool.name, category, running)
+        // r7-pages (R7.3): "Delegating" only while a subagent it started
+        // still runs; once every one has ended it is "Delegated", even if
+        // the call itself has not reported back.
+        let delegating = if children.is_empty() {
+            running
+        } else {
+            children.iter().any(|c| c.running())
+        };
+        let verb = tool_verb(&tool.name, category, delegating)
             .unwrap_or("Used")
             .to_owned();
         let title = if category == "Skill" || preview.description.is_empty() {
@@ -3278,6 +3308,12 @@ mod tests {
             Some("Wrote")
         );
         assert_eq!(tool_verb("custom_tool", "Tool", false), None);
+        // r7-pages (R7.8): one separator, no stray dot or double space.
+        assert_eq!(
+            meta_line(Some("code-review"), "Worked 5m · 3 tools  · 1 failed", 1),
+            "Used skill code-review · Worked 5m · 3 tools · 1 failed · 1 delegated"
+        );
+        assert_eq!(meta_line(None, "· 3 tools ·", 0), "3 tools");
         assert_eq!(
             work_line(false, Some(340_000), 6),
             "Worked 5m 40s · 6 tools"
