@@ -311,7 +311,7 @@ impl Fixture {
             let done = json!({"sessionId": self.active_id, "mode": "input",
                 "lastActivity": chrono::Utc::now().timestamp_millis()});
             let _ = socket.send(event("agent.snapshot", done)).await;
-        } else if self.remaining % 10 == 0 {
+        } else if self.remaining.is_multiple_of(10) {
             // r4-truth: a session streaming a reply is heard from; its row's
             // activity moves on as the hub's would.
             let beat = json!({"sessionId": self.active_id, "mode": "responding",
