@@ -167,7 +167,7 @@
         "services/hub-rs/tests/launch_instructions.rs",
         "services/hub-rs/tests/session_facade.rs",
         "scripts/test-generate-rust-launch-assets.py",
-        "apps/desktop/src/main/services/agentCollaborationSkills.test.ts"
+        "apps/desktop/src/main/services/agentSkillPlugins.test.ts"
       ]
     },
     "services/hub/cmd/brain/agent_collaboration_skills_generated.go": {
@@ -192,7 +192,7 @@
         "services/hub-rs/tests/launch_instructions.rs",
         "services/hub-rs/tests/session_facade.rs",
         "scripts/test-generate-rust-launch-assets.py",
-        "apps/desktop/src/main/services/agentCollaborationSkills.test.ts"
+        "apps/desktop/src/main/services/agentSkillPlugins.test.ts"
       ]
     },
     "services/hub/cmd/brain/agent_collaboration_skills_test.go": {
@@ -217,7 +217,7 @@
         "services/hub-rs/tests/launch_instructions.rs",
         "services/hub-rs/tests/session_facade.rs",
         "scripts/test-generate-rust-launch-assets.py",
-        "apps/desktop/src/main/services/agentCollaborationSkills.test.ts"
+        "apps/desktop/src/main/services/agentSkillPlugins.test.ts"
       ]
     },
     "services/hub/cmd/brain/agenthandoff.go": {
@@ -9257,8 +9257,7 @@
       "sha256": "3662b023dfefdb5cc41faf01fdfa5482f61927deac7c9e346fca278ecd12c893",
       "status": "ported",
       "tests": [
-        "services/hub-rs/src/services/jobs/docs_tests.rs",
-        "apps/desktop/src/renderer/tests/jobsPreset.test.ts"
+        "services/hub-rs/src/services/jobs/docs_tests.rs"
       ]
     },
     "services/hub/internal/jobs/scheduler.go": {
