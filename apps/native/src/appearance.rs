@@ -109,6 +109,10 @@ pub struct Roles {
     pub toggle_edge: u32,
     /// The toggle's knob, on and off: white.
     pub toggle_knob: u32,
+    /// The selected segment of a SegmentedControl (r6-surfaces): the
+    /// lightest neutral surface the theme has, so it stands up off the
+    /// track (raised in light themes, the selected fill in dark ones).
+    pub segment_selected: u32,
     /// The five status roles. Colour AND shape encode status; nothing else
     /// may borrow these hues (blue/accent means "interactive" only).
     pub status: StatusRoles,
@@ -154,6 +158,20 @@ fn toggle_on(accent: u32) -> u32 {
         .map(|step| mix(accent, 0x000000, step as f32 * 0.02))
         .find(|&track| contrast(KNOB, track) >= NON_TEXT + 0.05)
         .unwrap_or(accent)
+}
+
+/// A dark theme's selected segment: `start` moved toward `text` in 2%
+/// steps until it stands ≥ 1.15:1 off the SegmentedControl's track
+/// (`text` at `wash` over each surface in `on`), so it lifts above the
+/// track's wash. Light themes use their white raised fill.
+fn segment_selected(start: u32, text: u32, wash: f32, on: &[u32]) -> u32 {
+    (0..=50)
+        .map(|step| mix(start, text, step as f32 * 0.02))
+        .find(|&fill| {
+            on.iter()
+                .all(|&bg| contrast(fill, mix(bg, text, wash)) >= 1.15)
+        })
+        .unwrap_or(start)
 }
 
 /// `border_strong` moved toward `text` in 5% steps until it stands ≥ 3:1
@@ -226,6 +244,7 @@ impl Roles {
         toggle_on: 0,
         toggle_edge: 0,
         toggle_knob: 0,
+        segment_selected: 0,
         status: StatusRoles {
             attention: 0,
             fault: 0,
@@ -255,6 +274,7 @@ impl Roles {
             toggle_on: p.primary,
             toggle_edge: p.border,
             toggle_knob: 0xffffff,
+            segment_selected: p.selected,
             status: StatusRoles {
                 attention: p.warning,
                 fault: p.error,
@@ -485,6 +505,16 @@ impl Appearance {
                 &[c.chat, c.surface, c.base, c.raised],
             ),
             toggle_knob: KNOB,
+            segment_selected: if dark {
+                segment_selected(
+                    c.selected,
+                    c.text,
+                    p.tokens.wash.hover,
+                    &[c.chat, c.surface, c.base, c.raised],
+                )
+            } else {
+                c.raised
+            },
             // r4-calm (R4.4): working is neutral (the turning arc says it
             // is moving), so amber and red are the only hues a status adds.
             status: StatusRoles {

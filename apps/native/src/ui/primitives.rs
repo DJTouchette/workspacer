@@ -1305,7 +1305,7 @@ pub(crate) const STATUS_TABLE: [StatusRow; 12] = [
         shape: StatusShape::Dot,
         tone: StatusTone::Attention,
         words: StatusWords::Hue,
-        also: "Proposed change",
+        also: "Proposed change, a parent whose subagent stalled",
     },
     StatusRow {
         kind: StatusKind::NotResponding,

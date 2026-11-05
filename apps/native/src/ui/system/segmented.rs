@@ -1,9 +1,11 @@
 //! r6-decisions (R6.7) SegmentedControl: one choice of a few, always
 //! visible (Grid / Table, Needs you / Active / All, the Fleet's sort). The
 //! selected segment reads as selected at a glance in every theme: the
-//! `selected` fill (the NavItem's), a `border_strong` hairline, the
-//! raised shadow and the primary text, where the rest are secondary text on
-//! the track. A count beside a label follows its segment's text.
+//! `roles.segment_selected` fill (r6-surfaces: white on Light's grey
+//! track, the lighter selected fill in dark themes), a `border_strong`
+//! hairline, the raised shadow and the primary text, where the rest are
+//! secondary text on the track (`wash.hover`). A count beside a label
+//! follows its segment's text.
 //!
 //! ```ignore
 //! system::segmented_control(&p)
@@ -21,7 +23,7 @@ pub(crate) fn segmented_control(p: &Palette) -> Div {
         .gap(px(t.space.xxs))
         .p(px(t.space.xxs))
         .rounded(px(t.radius.control))
-        .bg(tonal(p, t.wash.rest))
+        .bg(tonal(p, t.wash.hover))
 }
 
 /// One segment: its label, an optional count, and whether it is the one
@@ -77,7 +79,7 @@ impl Segment {
             .text_size(px(t.text.meta))
             .text_color(rgb(fg))
             .when(selected, |d| {
-                d.bg(rgb(p.selected))
+                d.bg(rgb(p.roles.segment_selected))
                     .border_color(rgb(p.roles.border_strong))
                     .font_weight(FontWeight(t.weight.semibold))
                     .shadow(elevation(p, t.elevation.raised))
@@ -92,7 +94,7 @@ impl Segment {
                 tabular(
                     div()
                         .text_color(rgb(if selected {
-                            p.roles.text_secondary
+                            p.text
                         } else {
                             p.roles.text_tertiary
                         }))

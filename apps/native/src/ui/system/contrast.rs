@@ -34,6 +34,8 @@ const QUIET_TRACK: f64 = 2.0;
 const STATUS_APART: (f64, f64) = (0.10, 30.);
 /// The warning hue vs amber and vs red.
 const WARNING_APART: (f64, f64) = (0.06, 15.);
+/// The least a selected segment's fill stands off its track.
+const SEGMENT: f64 = 1.15;
 /// The scrim's band, as a share of the shadow colour.
 const SCRIM: (f32, f32) = (0.45, 0.55);
 
@@ -369,6 +371,21 @@ fn check(theme: Appearance) -> Vec<String> {
         p.surface,
         NON_TEXT,
     );
+
+    // SegmentedControl (r6-surfaces): the selected segment stands off its
+    // track on every surface (it also carries a hairline and a shadow), and
+    // its label (and count, in the label's colour) still reads.
+    g.at_least("segment selected label", p.text, r.segment_selected, TEXT);
+
+    for (name, bg) in surfaces(&p) {
+        let track = composite(super::super::primitives::tonal(&p, p.tokens.wash.hover), bg);
+        g.at_least(
+            &format!("segment selected on its track on {name}"),
+            r.segment_selected,
+            track,
+            SEGMENT,
+        );
+    }
 
     // Avatars.
     for &fill in &r.avatar {

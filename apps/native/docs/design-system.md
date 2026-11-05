@@ -263,7 +263,7 @@ Each entry gives:
 | State | Glyph | Colour | Word | Also shown as (same glyph) |
 |---|---|---|---|---|
 | Working | Faint ring with a turning arc | `status.working` (secondary) | Working | Running, Sending… |
-| NeedsYou | Filled dot | `attention` (amber), word in amber | Needs you | Proposed change |
+| NeedsYou | Filled dot | `attention` (amber), word in amber | Needs you | Proposed change; a parent session whose subagent stalled |
 | NotResponding | Ring with clock hands | `fault` (red), word in red | Not responding | |
 | Failed | ✕ | `fault`, word in red | Failed | Exit code 1 |
 | Idle | Hollow ring | `idle` | Idle | In the background |
@@ -276,6 +276,7 @@ Each entry gives:
 | Offline | Dash | `idle` | Offline | Not installed |
 
 - Words: amber and red states carry their hue; Working, Ready and Done are secondary; the rest tertiary.
+- A parent session with a stalled subagent reads **Needs you** (amber, in the Needs you group, its ask from `child_stall_reason`); the stalled subagent itself reads Not responding, with Nudge, Stop and View output wherever it appears.
 - Sidebar rows show an Idle session's age instead of its ring (`has_glyph`); everywhere else every state draws its glyph.
 - An ended session (`status::derive` keeps it Idle in the Ended group) shows Ended's glyph on its badge (`Status::badge`).
 - **Tokens:** `system().glyph_slot`, `signals().glyph`, `glyph_stroke`, `text.meta`.
@@ -438,8 +439,8 @@ Each entry gives:
 ### SegmentedControl
 
 - **Purpose (r6, R6.7):** one choice of a few, always visible: Grid / Table, By status / Waiting longest, Needs you / Active / All.
-- **Anatomy:** a track (a tonal wash) holding segments: a label and an optional count.
-- **States:** selected (the `selected` fill, a `border_strong` hairline, the raised shadow, 600 primary text; its count secondary), rest (secondary text on the track; count tertiary), hover (a wash, primary text). The selected one reads as selected at a glance in every theme.
+- **Anatomy:** a track (the `wash.hover` tonal wash) holding segments: a label and an optional count.
+- **States:** selected (the `roles.segment_selected` fill: white on Light's grey track, the lighter `selected` fill in dark themes; a `border_strong` hairline, the raised shadow, 600 primary text, its count too), rest (secondary text on the track; count tertiary), hover (a wash, primary text). The selected one reads as selected at a glance in every theme.
 - **API** (`system/segmented.rs`): `system::segmented_control(&p).child(system::Segment::new(id, label).count(n).selected(on).render(&p).on_click(…))`.
 - **Don't:** use count badges inside a segment, or a filter chip row for an exclusive choice.
 
@@ -556,6 +557,7 @@ See Page anatomy. The same rules apply inside cards and panels: one line, tertia
 - **The warning hue** as text on every surface and row: 4.5.
 - **Separation (R6.2,** `needs_you_fault_and_warning_stay_apart_in_every_theme`**):** in every theme, Needs-you amber and fault red are at least 0.10 apart in OKLab and 30° apart in hue; the warning hue is at least 0.06 and 15° from each.
 - **Scrim (R6.1):** 45–55% in every theme.
+- **SegmentedControl:** the selected segment's fill (`roles.segment_selected`) stands ≥ 1.15:1 off its track (`wash.hover`) on every surface, plus its hairline and shadow.
 
 ## Design lint
 
