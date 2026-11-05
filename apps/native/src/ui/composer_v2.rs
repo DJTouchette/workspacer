@@ -908,19 +908,12 @@ impl Workspace {
                 Some((StatusKind::NotResponding, label))
             }
             StatusKind::Working if !live && !session.working() && !session.starting() => {
-                let working = self
-                    .native_children(session)
-                    .iter()
-                    .filter(|c| c.running() && !super::attention::child_stalled(c, now))
-                    .count();
-                (working > 0).then(|| {
-                    let label = if working == 1 {
-                        "1 subagent working".to_owned()
-                    } else {
-                        format!("{working} subagents working")
-                    };
-                    (StatusKind::Working, label)
-                })
+                // The sidebar's own words for this tree ("4 subagents · 3
+                // working"), never a count of its own.
+                let index = self.view.sessions.iter().position(|s| s.id == session.id)?;
+                self.subagents_line(&self.subtree(index), now)
+                    .filter(|(line, _)| line.ends_with("working"))
+                    .map(|(line, _)| (StatusKind::Working, line))
             }
             _ => None,
         }

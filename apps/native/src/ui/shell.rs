@@ -662,6 +662,25 @@ impl Workspace {
     }
 
     // r4-truth
+    /// Session `index` and the sessions nested under it, `(index, depth)`.
+    pub(super) fn subtree(&self, index: usize) -> Vec<(usize, usize)> {
+        let sessions = &self.view.sessions;
+        let all: Vec<usize> = (0..sessions.len()).collect();
+        let tree = wks_native::navigation::session_tree(sessions, &all);
+        let Some(at) = tree.iter().position(|&(ix, _)| ix == index) else {
+            return vec![(index, 0)];
+        };
+        let depth = tree[at].1;
+        std::iter::once(tree[at])
+            .chain(
+                tree[at + 1..]
+                    .iter()
+                    .copied()
+                    .take_while(|&(_, d)| d > depth),
+            )
+            .collect()
+    }
+
     /// The collapsed line for a tree's subagents ("4 subagents · 3 working"),
     /// and whether it names a fault: the sidebar's summary row and the
     /// Fleet tile say the same.
@@ -1567,8 +1586,8 @@ impl Workspace {
     }
 
     // r4-truth (R4.2)
-    /// A job proposal in Needs you: one attention row, "Job proposal · Prune
-    /// merged worktrees", who proposed it, and Review (it opens Jobs, where
+    /// A job proposal in Needs you: one attention row, the job's name over
+    /// "Job proposal · from Release checklist", and Review (it opens Jobs, where
     /// the proposal is approved or rejected).
     fn render_proposal(
         &self,
@@ -1585,12 +1604,12 @@ impl Workspace {
         let title = if name.is_empty() {
             "Job proposal".to_owned()
         } else {
-            format!("Job proposal · {name}")
+            name.to_owned()
         };
         let from = if by.is_empty() {
-            "Proposed by an agent".to_owned()
+            "Job proposal · from an agent".to_owned()
         } else {
-            format!("Proposed by {by}")
+            format!("Job proposal · from {by}")
         };
         let open = |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
             this.open_feature(Screen::Jobs, window, cx)
@@ -1626,14 +1645,21 @@ impl Workspace {
             .child(self.row_trailing_verb(group.clone(), None, verb, false));
         let second = two_lines.then(|| {
             div()
-                .debug_selector(move || format!("sidebar-reason-{ix}"))
                 .w_full()
                 .min_w_0()
                 .pl(px(t.layout.status_box + t.space.sm))
-                .truncate()
+                .flex()
+                .items_center()
                 .text_size(px(t.text.meta))
                 .text_color(rgb(p.roles.text_secondary))
-                .child(from.clone())
+                .child(
+                    div()
+                        .debug_selector(move || format!("sidebar-reason-{ix}"))
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(from.clone()),
+                )
         });
         let height = if two_lines {
             t.shell().row_double

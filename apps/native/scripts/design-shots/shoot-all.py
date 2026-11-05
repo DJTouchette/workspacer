@@ -463,7 +463,8 @@ LANDMARKS = {
     # (r2: Idle rows are single-line 30px; re-measured after integration.)
     # (r3-shell: one two-line row template in every group; re-measured.)
     # (r3-integration: re-measured after the header strip.)
-    "SIDEBAR_ROW_BUS": lambda shot: (110, 588 if shot.get("v2") else 468),
+    # (r4-truth: the job proposal row joins Needs you; re-measured.)
+    "SIDEBAR_ROW_BUS": lambda shot: (110, 640 if shot.get("v2") else 468),
     # The fixture's question (Release checklist for 0.9): v2 groups it under
     # Needs you; v1 lists it after Bus fan-out.
     "SIDEBAR_ROW_QUESTION": lambda shot: (110, 378 if shot.get("v2") else 532),

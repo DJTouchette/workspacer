@@ -203,7 +203,7 @@ fn every_surface_agrees_for_each_state(cx: &mut TestAppContext) {
 
     for (id, kind, words) in [
         ("stall", StatusKind::NotResponding, "Not responding · 10m"),
-        ("kids", StatusKind::Working, "1 subagent working"),
+        ("kids", StatusKind::Working, "1 subagent · 1 working"),
     ] {
         workspace.update_in(&mut visual, |this, window, cx| {
             let mut view = (*this.view).clone();

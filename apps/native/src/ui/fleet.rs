@@ -413,8 +413,11 @@ impl Workspace {
                 .iter()
                 .filter(|t| t.kind != wks_native::background_tasks::Kind::Agent)
         };
-        if !session.stopped()
-            && let Some(failed) = shells().find(|t| t.failed())
+        // r4-truth: only a failure still open (the header chip's own).
+        if let Some(failed) = self
+            .open_failures(session)
+            .into_iter()
+            .find(|t| t.kind != wks_native::background_tasks::Kind::Agent)
         {
             faults.push(Line {
                 icon: IconName::SquareTerminal,
