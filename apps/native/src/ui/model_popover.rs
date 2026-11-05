@@ -189,6 +189,28 @@ impl Workspace {
         cx.notify();
     }
 
+    /// r6-integration (R6.4): the popover has no Apply button. A model or
+    /// effort picked there is sent at once, like an access choice; picking
+    /// what the session already uses sends nothing (and says nothing).
+    pub(super) fn apply_popover_choice(&mut self, cx: &mut Context<Self>) {
+        if !self.shell.model_popover || self.view.busy || !self.view.connected {
+            return;
+        }
+        let model = if self.model_choice == "__custom" {
+            self.model.read(cx).value().trim().to_owned()
+        } else {
+            self.model_choice.clone()
+        };
+        let (base_model, base_window, base_effort) =
+            self.extras.model_base.clone().unwrap_or_default();
+        let model_changed =
+            !model.is_empty() && (model != base_model || self.context_window != base_window);
+        let effort_changed = !self.effort.is_empty() && self.effort != base_effort;
+        if model_changed || effort_changed {
+            self.apply_model_change(cx);
+        }
+    }
+
     /// The popover's models for the selected session's provider.
     pub(super) fn popover_models(&self) -> Vec<ListedModel> {
         let provider = match self.selected_session().map(|s| s.provider_id()) {
@@ -206,7 +228,7 @@ impl Workspace {
     }
 
     /// Up/Down walk the models (then "Custom id…"), Enter picks and applies
-    /// the row the keys are on, Esc closes.
+    /// the row the keys are on (or the typed custom id), Esc closes.
     fn model_popover_key(
         &mut self,
         event: &KeyDownEvent,
@@ -234,6 +256,12 @@ impl Workspace {
                         self.context_window = model.window;
                         self.reconcile_effort(window, cx);
                         self.apply_model_change(cx);
+                        self.close_model_popover(window, cx);
+                    }
+                    None if self.model_choice == "__custom"
+                        && !self.model.read(cx).value().trim().is_empty() =>
+                    {
+                        self.apply_popover_choice(cx);
                         self.close_model_popover(window, cx);
                     }
                     None => {
@@ -454,6 +482,8 @@ impl Workspace {
                             this.context_window = window;
                             this.reconcile_effort(window_, cx);
                         }
+                        // R6.4: a pick applies at once, as access does.
+                        this.apply_popover_choice(cx);
                         cx.notify();
                     }))
                 }),
@@ -641,28 +671,15 @@ impl Workspace {
                         })),
                     )
                     .child(div().flex_1())
+                    // r6-integration (R6.4): no Apply. Model, effort and
+                    // access each apply the moment they are picked; this
+                    // says when a model or effort takes hold.
                     .child(
-                        primitives::button(
-                            "apply-model",
-                            "Apply",
-                            None,
-                            ButtonVariant::Primary,
-                            ButtonSize::Small,
-                            !busy,
-                            &p,
-                        )
-                        .debug_selector(|| "popover-apply-model".into())
-                        .tooltip(tooltip_view(
-                            "Model and effort apply from the next turn; a busy agent may queue it",
-                            None,
-                            &p,
-                        ))
-                        .when(!busy, |d| {
-                            d.on_click(cx.listener(|this, _, window, cx| {
-                                this.apply_model_change(cx);
-                                this.close_model_popover(window, cx);
-                            }))
-                        }),
+                        div()
+                            .debug_selector(|| "popover-applies-note".into())
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_tertiary))
+                            .child("Applies from the next turn"),
                     ),
             );
         // r6-surfaces (R6.1): the popover takes the keyboard, so its layer

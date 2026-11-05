@@ -1059,6 +1059,23 @@ impl Workspace {
                 }
             },
         ));
+        // R6.4: Enter in the model popover's custom-id field applies it
+        // (the popover has no Apply button).
+        focus_watch.push(cx.subscribe_in(
+            &model,
+            window,
+            |this, _, event: &gpui_component::input::InputEvent, window, cx| {
+                if matches!(
+                    event,
+                    gpui_component::input::InputEvent::PressEnter { secondary: false }
+                ) && this.shell.model_popover
+                    && this.model_choice == "__custom"
+                {
+                    this.apply_popover_choice(cx);
+                    this.close_model_popover(window, cx);
+                }
+            },
+        ));
         let model_picker_subscription = cx.subscribe_in(&model_picker, window, Self::on_model_pick);
         let effort_picker = cx.new(|cx| {
             SelectState::new(

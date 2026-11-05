@@ -413,6 +413,49 @@ fn the_model_chip_opens_a_popover_not_a_page(cx: &mut TestAppContext) {
     });
 }
 
+/// r6-integration (R6.4): the popover has no Apply button. A model picked
+/// there is sent at once, as an access choice is; the session's own model
+/// sends nothing.
+#[gpui::test]
+fn a_popover_pick_applies_at_once(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1400.), px(900.)));
+    let mut view = attention_state();
+    view.selected = Some("a".into());
+    open_v2(&workspace, &mut visual, view, Design::V2);
+    click(&mut visual, "chat-composer");
+    click(&mut visual, "composer-model");
+    assert!(visual.debug_bounds("model-popover").is_some());
+    assert!(visual.debug_bounds("popover-apply-model").is_none());
+    assert!(visual.debug_bounds("popover-applies-note").is_some());
+    let _ = effects(&mut commands);
+    // Pick a listed model that is not the session's own.
+    let current = workspace.read_with(&visual, |this, _| {
+        this.extras.model_base.clone().unwrap_or_default().0
+    });
+    let pick = workspace.read_with(&visual, |this, _| {
+        this.popover_models()
+            .iter()
+            .position(|m| m.id != current)
+            .unwrap()
+    });
+    click(
+        &mut visual,
+        &*Box::leak(format!("popover-model-{pick}").into_boxed_str()),
+    );
+    let sent: Vec<_> = effects(&mut commands)
+        .into_iter()
+        .filter_map(|c| match c {
+            Command::Act { action, .. } => Some(action),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        matches!(sent.as_slice(), [Action::SetModel { model, .. }] if *model != current),
+        "{sent:?}"
+    );
+}
+
 /// r3-shell: the title is a header strip with the transcript beneath it.
 /// r4-calm (R4.4): the session's tools are icon buttons on its right, and
 /// History, Details and Model share one "…" menu.

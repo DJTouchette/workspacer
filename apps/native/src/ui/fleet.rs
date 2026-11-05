@@ -2157,6 +2157,14 @@ impl Workspace {
                 (None, Some(stall)) => stall.reason(now),
                 _ => String::new(),
             };
+            // r6-integration (R6.2/R6.3): a row answers one ask. When a
+            // stalled subagent waits behind the approval, the Needs cell
+            // says "+1 more" and names it, so the second ask is not lost;
+            // the row (or the tile view) acts on it once the first is done.
+            let behind = match (&tile.ask, &tile.stall) {
+                (Some(Ask::Stalled(_)) | None, _) | (_, None) => None,
+                (Some(_), Some(stall)) => Some(stall.reason(now)),
+            };
             let wait = (tile.bucket == Bucket::NeedsYou)
                 .then_some(tile.since)
                 .flatten()
@@ -2193,7 +2201,30 @@ impl Workspace {
                         .child(text(wait, p.roles.text_secondary)),
                 ))
                 .child(primitives::page_cell(cols[4].1).child(text(doing, p.roles.text_secondary)))
-                .child(primitives::page_cell(cols[5].1).child(text(need, p.text)))
+                .child(
+                    primitives::page_cell(cols[5].1)
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.xs))
+                        .child(text(need, p.text))
+                        .when_some(behind, |d, behind| {
+                            d.child(
+                                div()
+                                    .id(SharedString::from(format!("fleet-row-more-{n}")))
+                                    .debug_selector(move || format!("fleet-row-more-{n}"))
+                                    .flex_shrink_0()
+                                    .text_size(px(t.text.meta))
+                                    .font_weight(FontWeight(t.weight.medium))
+                                    .text_color(rgb(p.roles.status.attention))
+                                    .tooltip(primitives::tooltip_view(
+                                        format!("Also needs you: {behind}. Open the session to Nudge or Stop it."),
+                                        None,
+                                        &p,
+                                    ))
+                                    .child("+1 more"),
+                            )
+                        }),
+                )
                 .child(primitives::page_cell(cols[6].1).child(actions))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let tiles = this.fleet_tiles(cx);

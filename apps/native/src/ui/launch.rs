@@ -118,6 +118,11 @@ impl Workspace {
             return;
         }
         self.effort = value.clone().unwrap_or_default();
+        // R6.4: in the model popover an effort applies the moment it is
+        // picked (the Model page and New session keep their own flow).
+        if self.shell.model_popover && self.design().is_v2() {
+            self.apply_popover_choice(cx);
+        }
         cx.notify();
     }
 

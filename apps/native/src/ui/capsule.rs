@@ -34,11 +34,10 @@ pub(super) fn running_words(tasks: &[bg::Task], fallback: u32) -> Option<String>
 /// The session's access mode in a word or two; "Unknown" when the provider
 /// has not reported one this app offers.
 pub(super) fn access_word(session: &Session) -> (&'static str, Option<Permission>) {
+    // r6-integration (R6.4): the one access vocabulary, `Permission::word()`
+    // ("Ask first", "Can edit", ...), the same as the composer's chip.
     match Permission::from_wire(session.provider_id(), session.access_mode()) {
-        Some(Permission::Ask) => ("Ask", Some(Permission::Ask)),
-        Some(Permission::AcceptEdits) => ("Edits", Some(Permission::AcceptEdits)),
-        Some(Permission::Plan) => ("Plan", Some(Permission::Plan)),
-        Some(Permission::FullAccess) => ("Full access", Some(Permission::FullAccess)),
+        Some(mode) => (mode.word(), Some(mode)),
         None => ("Unknown", None),
     }
 }
@@ -330,14 +329,15 @@ impl Workspace {
                             .gap(px(t.space.xs))
                             .text_size(px(t.text.meta))
                             .font_weight(FontWeight(t.weight.medium))
-                            // r4-calm: amber is only "needs you"; full
-                            // access keeps its alert glyph, in neutral text.
-                            .text_color(rgb(p.roles.text_secondary))
+                            // r4-calm: amber is only "needs you". R6.4:
+                            // full access keeps its alert glyph, in the
+                            // warning hue, as on the composer's chip.
+                            .text_color(rgb(system::access_tone(full, &p)))
                             .hover(move |s| s.bg(rgb(p.roles.hover)))
                             .tooltip(tooltip_view(
                                 format!(
                                     "Access: {} · {} · click to change",
-                                    mode.label(),
+                                    mode.word(),
                                     mode.description()
                                 ),
                                 None,

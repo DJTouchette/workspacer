@@ -695,6 +695,59 @@ fn a_stalled_subagent_asks_on_its_tile(cx: &mut TestAppContext) {
         Command::Act { session, action: Action::Stop } if session == "stuck")));
 }
 
+/// r6-integration: a table row answers one ask. When a stalled subagent
+/// waits behind the session's approval, the row says "+1 more" so the
+/// second ask is not hidden; a row with one ask says nothing more.
+#[gpui::test]
+fn a_table_row_with_two_asks_says_so(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands) = open_fleet(cx);
+    let now = timing::now_ms();
+    let mut both = approval("both", "Bus fan-out", "cargo build");
+    both.subagents = Arc::new(json!([{"id":"s1","type":"Explore",
+        "description":"Trace session restore paths","status":"running",
+        "startedAt": now - 20 * 60_000, "lastActivity": now - 7 * 60_000 - 5_000}]));
+    with_sessions(&workspace, &mut visual, vec![both]);
+    click(&mut visual, "fleet-view-table");
+    refresh(&mut visual);
+    let at = workspace.read_with(&visual, |this, cx| {
+        let tiles = this.fleet_tiles(cx);
+        let at = tiles.iter().position(|t| t.id == "both").unwrap();
+        assert!(matches!(
+            tiles[at].ask,
+            Some(crate::ui::fleet::Ask::Approval { .. })
+        ));
+        assert!(tiles[at].stall.is_some());
+        at
+    });
+    assert!(
+        visual
+            .debug_bounds(&*Box::leak(
+                format!("fleet-row-allow-{at}").into_boxed_str()
+            ))
+            .is_some()
+    );
+    let more = visual
+        .debug_bounds(&*Box::leak(format!("fleet-row-more-{at}").into_boxed_str()))
+        .expect("+1 more on the row with two asks");
+    let row = visual
+        .debug_bounds(&*Box::leak(format!("fleet-row-{at}").into_boxed_str()))
+        .unwrap();
+    assert!(row.contains(&more.center()));
+    let ask = workspace.read_with(&visual, |this, cx| {
+        this.fleet_tiles(cx)
+            .iter()
+            .position(|t| t.id == "ask")
+            .unwrap()
+    });
+    assert!(
+        visual
+            .debug_bounds(&*Box::leak(
+                format!("fleet-row-more-{ask}").into_boxed_str()
+            ))
+            .is_none()
+    );
+}
+
 /// r6-decisions (R6.3): Deny with note replaces the answer row: the note,
 /// "Deny and tell it" and Cancel, never a second Allow / Deny under it.
 #[gpui::test]

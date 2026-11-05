@@ -581,7 +581,7 @@ impl Appearance {
                 accent: 0x1f5fd6,
                 primary: 0x2563eb,
                 on_primary: 0xffffff,
-                attention: 0x7a5a18,
+                attention: 0x8a5800,
                 fault: 0xc81e1e,
                 done: 0x2c734a,
                 working: 0x0d7a80,
@@ -1482,8 +1482,10 @@ mod tests {
         // R2.2: Light amber text sits near amber-700; r5-system darkened it
         // a step so a "Needs you" word reads on a selected row; r6-surfaces
         // (R6.2) moved it toward yellow (#7A5A18), away from fault red and
-        // the warning orange.
-        assert_eq!(light.roles.status.attention, 0x7a5a18);
+        // the warning orange; r6-integration warmed it (#8A5800, OKLCH hue
+        // 71°, chroma 0.108) because #7A5A18 read olive-brown, keeping ΔE
+        // 0.15 / 44° from red, 0.067 / 26° from the warning and 4.85:1.
+        assert_eq!(light.roles.status.attention, 0x8a5800);
         // Nord: a primary that never reads as disabled, with a ≥ 4.5:1 label.
         let nord = Appearance::Nord.palette_v2();
         let (_, saturation) = hue_saturation(nord.primary);
