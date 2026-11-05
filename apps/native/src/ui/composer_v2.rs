@@ -1760,8 +1760,15 @@ impl Workspace {
         decision.pager = position_label(decisions, Decision::Approval);
         decision.details = Some(details);
         decision.note = self.extras.deny_open.then(|| {
-            self.render_deny_note_v2(enabled, "Deny and tell it", ButtonVariant::Destructive, cx)
-                .into_any_element()
+            self.render_deny_note_v2(
+                enabled,
+                "Deny and tell it",
+                // r8-qa (R8.2): a denial is the neutral Bordered tier, the
+                // same as the card's own Deny; never red, never blue.
+                system::actions::tier(system::actions::Verb::Deny),
+                cx,
+            )
+            .into_any_element()
         });
         // While a note is being written, sending it is the primary.
         decision.allow_primary = !self.extras.deny_open;
@@ -1870,8 +1877,8 @@ impl Workspace {
                 })),
             )
             .child(
-                // r5-system (R5.2): a denial is Destructive, never blue;
-                // "Keep planning" stays the Primary.
+                // r5-system (R5.2): a denial is never blue (R8.2: it is
+                // neutral Bordered); "Keep planning" stays the Primary.
                 primitives::button(
                     "deny-note-send",
                     send,

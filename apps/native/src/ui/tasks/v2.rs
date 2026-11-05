@@ -16,11 +16,18 @@ pub(super) fn task_kind(task: &bg::Task) -> StatusKind {
     }
 }
 
-/// `Shell · 12m 44s · pid 48213`: the status is the badge's to say.
+/// `Shell · 12m 44s · pid 48213`: the status is the badge's to say. r8-qa
+/// (R8.1): a finished task's time is a duration and says so, "Ran 4m 20s",
+/// never a bare "4m 20s" that reads as "4m 20s ago".
 pub(super) fn meta_v2(task: &bg::Task, now: i64, pid: bool) -> String {
     let mut parts = vec![task.kind.label().to_owned()];
     if let Some(ms) = task.elapsed_ms(now) {
-        parts.push(timing::duration_label(ms));
+        let took = timing::duration_label(ms);
+        parts.push(if task.running() {
+            took
+        } else {
+            format!("Ran {took}")
+        });
     }
     if let (Some(pid), true, true) = (task.pid, task.running(), pid) {
         parts.push(format!("pid {pid}"));

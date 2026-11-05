@@ -2157,6 +2157,15 @@ impl Workspace {
         let headline = div()
             .debug_selector(|| "launch-title".into())
             .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(t.space.lg))
+            // r8-qa (R8.7): New session is the welcome, so it carries the
+            // welcome's one brand moment above the same question (not on a
+            // short window, where the composer needs the room).
+            .when(!short && !resume, |d| {
+                d.child(super::shell::brand_moment(p))
+            })
             .child(
                 div()
                     .debug_selector(|| "page-title".into())

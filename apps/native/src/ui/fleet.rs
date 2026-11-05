@@ -533,7 +533,10 @@ impl Workspace {
         let (kind, bucket) = (status.kind, status.bucket);
         let since = self.last_heard(session);
         let time = if kind == StatusKind::Working {
+            // r8-qa (R8.1): a duration says so ("Running 23m"), beside the
+            // waiting tiles' "Waiting 3m"; a bare age is recency.
             self.working_elapsed(session, now)
+                .map(|elapsed| format!("Running {elapsed}"))
         } else if bucket == Bucket::NeedsYou {
             // R6.7: how long it has waited on you.
             since.map(|at| format!("Waiting {}", wks_native::format::age(at, now)))

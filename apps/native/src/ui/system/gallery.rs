@@ -1198,7 +1198,7 @@ fn decision(p: &Palette) -> Div {
                 "gallery-noting-send",
                 "Deny and tell it",
                 None,
-                ButtonVariant::Destructive,
+                ButtonVariant::Secondary,
                 ButtonSize::Small,
                 true,
                 p,

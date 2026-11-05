@@ -2082,6 +2082,11 @@ impl Workspace {
         let verb = reason
             .as_ref()
             .map(|reason| self.inbox_button(index, reason, ix, cx).into_any_element());
+        // r8-qa (R8.1): the row's bare time is recency, as History's "Last
+        // active" says it. A working row's clock is a different fact (how
+        // long the turn has run), so it stays in the tooltip ("Running for
+        // 23m") and the spinner says the rest.
+        let time = time.filter(|_| !working);
         let trailing = match verb {
             Some(verb) => self.row_trailing_verb(group.clone(), time, verb, active),
             None => self.row_trailing(group.clone(), time, actions),

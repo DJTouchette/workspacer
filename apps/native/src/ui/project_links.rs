@@ -974,7 +974,9 @@ impl Workspace {
 }
 
 /// r4-pages (R4.5): the links table's actions column, three fixed slots
-/// (Accept · Choose… · Unlink).
+/// (Accept · Choose… · Unlink). r8-qa: the Accept slot holds "Use this
+/// folder", wider than a slot, so the column keeps room for it rather than
+/// letting it spill over the How column's text.
 fn link_actions_width(p: &Palette) -> f32 {
-    super::primitives::action_slots_width(3, p)
+    super::primitives::action_slots_width(3, p) + p.tokens.space.xxxl
 }

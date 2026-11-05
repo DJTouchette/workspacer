@@ -23,6 +23,15 @@ pub(super) fn tool_result_meta(category: &str, name: &str, output: &str) -> Opti
     let lines = output.lines().filter(|l| !l.trim().is_empty()).count();
     let plural =
         |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    // r8-qa: a search that reports its own count ("Found 4 files", Grep's
+    // files-with-matches header) is counted by that header, never as "1
+    // match" beside it. Alone, the output already says it.
+    if category == "Search"
+        && let Some((n, unit)) = found_header(output)
+    {
+        let rest = output.lines().skip(1).any(|l| !l.trim().is_empty());
+        return rest.then(|| format!("{n} {unit}"));
+    }
     match category {
         "Read" if lines > 0 => Some(plural(lines, "line", "lines")),
         "Search" if lines == 0 => Some("No matches".into()),
@@ -31,6 +40,20 @@ pub(super) fn tool_result_meta(category: &str, name: &str, output: &str) -> Opti
         "Command" if lines > 0 => Some(plural(lines, "line of output", "lines of output")),
         _ => None,
     }
+}
+
+/// "Found 4 files" (or "Found 1 match"): a search output's own count.
+fn found_header(output: &str) -> Option<(usize, &str)> {
+    let first = output.lines().find(|l| !l.trim().is_empty())?.trim();
+    let mut words = first.strip_prefix("Found ")?.split_whitespace();
+    let n = words.next()?.parse().ok()?;
+    let unit = words.next()?;
+    (words.next().is_none()
+        && matches!(
+            unit,
+            "file" | "files" | "match" | "matches" | "line" | "lines"
+        ))
+    .then_some((n, unit))
 }
 
 /// r3-transcript: tool output this short shows inline under its row.
@@ -412,7 +435,8 @@ pub(super) fn tool_verb(name: &str, category: &str, running: bool) -> Option<&'s
             "Command" => pick("Ran", "Running"),
             "Search" => pick("Searched", "Searching"),
             "Skill" => pick("Used skill", "Using skill"),
-            "Subagent" => pick("Delegated", "Delegating"),
+            // r8-qa (R8.6): plain words, not "Delegated" / "Delegating".
+            "Subagent" => pick("Ran subagent", "Running subagent"),
             "Workflow" => pick("Ran workflow", "Running workflow"),
             _ => None,
         },
@@ -1406,9 +1430,9 @@ impl Workspace {
         // R5.4: a delegation rolls up its worst child: never "Working"
         // beside a child that is not responding.
         let stalled = views.iter().any(|v| v.stalled);
-        // r7-pages (R7.3): "Delegating" only while a subagent it started
-        // still runs; once every one has ended it is "Delegated", even if
-        // the call itself has not reported back.
+        // r7-pages (R7.3): "Running subagent" only while a subagent it
+        // started still runs; once every one has ended it is "Ran
+        // subagent", even if the call itself has not reported back.
         let delegating = if children.is_empty() {
             running
         } else {
@@ -2618,15 +2642,15 @@ pub(super) fn children_badge(views: &[ChildView]) -> Option<StatusBadge> {
     let working = count(&|v| v.kind == StatusKind::Working);
     let failed = count(&|v| v.kind == StatusKind::Failed && !v.stalled);
     let done = count(&|v| v.kind == StatusKind::Done);
-    let label = |n: usize, word: &str| {
+    // r8-qa (R8.1): a lone subagent's state is named as the subagent's
+    // ("Subagent working"), so a finished run's row never reads "Worked
+    // 5m 12s … Working" as if the session were; a batch counts its own
+    // ("2 working", "1 needs you").
+    let label = |n: usize, one: &str, many: &str| {
         if views.len() == 1 {
-            let mut w = word.to_owned();
-            if let Some(first) = w.get_mut(0..1) {
-                first.make_ascii_uppercase();
-            }
-            w
+            format!("Subagent {one}")
         } else {
-            format!("{n} {word}")
+            format!("{n} {}", if n == 1 { one } else { many })
         }
     };
     if stalled > 0 {
@@ -2641,13 +2665,19 @@ pub(super) fn children_badge(views: &[ChildView]) -> Option<StatusBadge> {
         );
     }
     if blocked > 0 {
-        return Some(StatusBadge::new(StatusKind::NeedsYou).label(label(blocked, "need you")));
+        return Some(StatusBadge::new(StatusKind::NeedsYou).label(label(
+            blocked,
+            "needs you",
+            "need you",
+        )));
     }
     if working > 0 {
-        return Some(StatusBadge::new(StatusKind::Working).label(label(working, "working")));
+        return Some(
+            StatusBadge::new(StatusKind::Working).label(label(working, "working", "working")),
+        );
     }
     if failed > 0 {
-        return Some(StatusBadge::new(StatusKind::Failed).label(label(failed, "failed")));
+        return Some(StatusBadge::new(StatusKind::Failed).label(label(failed, "failed", "failed")));
     }
     (done > 0 && done == views.len()).then(|| StatusBadge::new(StatusKind::Done))
 }
@@ -3291,6 +3321,12 @@ mod tests {
             Some("No matches")
         );
         assert_eq!(tool_result_meta("Edit", "Edit", "File updated."), None);
+        // r8-qa: Grep's own header counts; alone, it is the whole story.
+        assert_eq!(tool_result_meta("Search", "Grep", "Found 4 files"), None);
+        assert_eq!(
+            tool_result_meta("Search", "Grep", "Found 2 files\na.rs\nb.rs").as_deref(),
+            Some("2 files")
+        );
         assert_eq!(tool_result_meta("Command", "Bash", ""), None);
     }
 

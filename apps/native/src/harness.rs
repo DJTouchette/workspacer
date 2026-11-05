@@ -887,7 +887,12 @@ impl Fixture {
                 snapshot["pendingApproval"] = json!({"toolName": "Bash",
                     "toolInput": {"command": "cargo test",
                         "description": "Run the workspace tests before committing"},
-                    "requestId": format!("fixture-batch-{i}")});
+                    "requestId": format!("fixture-batch-{i}"),
+                    // r8-qa (R8.4 fixed slots): the same ask offers the same
+                    // grant, so every tile in the batch keeps Always allow.
+                    "alwaysOptions": [{"id": format!("fixture-batch-{i}:0"),
+                        "label": "Always allow Bash(cargo test:*) this session", "scope": "session",
+                        "kind": "addRules"}]});
                 snapshot["mode"] = json!("input");
                 snapshot["cwd"] = json!(catalog::live_cwd(0));
                 snapshot["lastActivity"] = json!(now - (i as i64 + 2) * 60_000);
@@ -913,6 +918,12 @@ impl Fixture {
             // while it waits).
             if catalog && i == 2 {
                 snapshot["uncommittedChanges"] = json!({"files": 3, "added": 48, "removed": 12});
+                // r8-qa (R8.5): its last test run, so a Review row and tile
+                // show the result next to what waits for review.
+                let now = chrono::Utc::now().timestamp_millis();
+                snapshot["background_task_list"] = json!([
+                    {"id":"bfanout1","taskType":"local_bash","status":"completed","description":"cargo test -p hub-rs bus::fanout","startedAt":now - 1_260_000,"endedAt":now - 1_140_000,"hasOutput":true}
+                ]);
             }
             if i == 0 && self.options.plan_and_limit {
                 let reset = std::time::SystemTime::now()

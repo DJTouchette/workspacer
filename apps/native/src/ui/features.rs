@@ -1902,7 +1902,8 @@ impl Workspace {
         } else {
             ("npm install -g @openai/codex", "codex login")
         };
-        let name = if claude { "Claude" } else { "Codex" };
+        // r8-qa (R8.6): one name per agent, the same as the welcome card.
+        let name = wks_native::format::agent_name(provider);
         let (sentence, command): (String, Option<&'static str>) = match setup {
             SetupState::NotInstalled => (
                 format!(
