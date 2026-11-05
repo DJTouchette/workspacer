@@ -148,7 +148,10 @@ mod tests {
         // Only the focused region fills.
         assert_eq!(region_variant(Verb::Allow, true), ButtonVariant::Primary);
         assert_eq!(region_variant(Verb::Allow, false), ButtonVariant::Secondary);
-        assert_eq!(region_variant(Verb::Deny, false), ButtonVariant::Destructive);
+        assert_eq!(
+            region_variant(Verb::Deny, false),
+            ButtonVariant::Destructive
+        );
     }
 
     #[test]

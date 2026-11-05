@@ -1452,7 +1452,10 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(px(t.space.xs))
-                        .children(caps.iter().map(|k| primitives::keycap_hint(k.clone(), false, &p)))
+                        .children(
+                            caps.iter()
+                                .map(|k| primitives::keycap_hint(k.clone(), false, &p)),
+                        )
                         .child(div().pl(px(t.space.xxs)).child("Answer the focused ask")),
                 )
             })
@@ -1642,6 +1645,14 @@ impl Workspace {
         let card = surface
             .flex_1()
             .child(self.fleet_tile_head(n, tile))
+            // R7.3: the session's latest test result, under its status.
+            .children(
+                self.session_verification(&self.view.sessions[index])
+                    .map(|v| {
+                        system::verification_line(&v, timing::now_ms(), &p)
+                            .debug_selector(move || format!("fleet-verification-{n}"))
+                    }),
+            )
             .children(ask)
             .when(!lines.is_empty(), |d| {
                 d.child(
@@ -2215,12 +2226,11 @@ impl Workspace {
                     }
                     // R7.1: Deny with note on the focused row (it opens
                     // the session with the note).
-                    decision.deny_note = key(StripKey::DenyWithNote)
-                        .filter(|_| focused)
-                        .map(|k| {
-                            choice(format!("fleet-row-note-{n}"), k, "Deny with note".into())
-                                .tooltip("Deny, and tell the agent what to do instead (opens the session)")
-                        });
+                    decision.deny_note = key(StripKey::DenyWithNote).filter(|_| focused).map(|k| {
+                        choice(format!("fleet-row-note-{n}"), k, "Deny with note".into()).tooltip(
+                            "Deny, and tell the agent what to do instead (opens the session)",
+                        )
+                    });
                     decision.keys = focused;
                     decision.filled = focused;
                     decision.render(&p).into_any_element()

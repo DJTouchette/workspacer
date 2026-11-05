@@ -84,8 +84,7 @@ pub(crate) const VARIANT_KEY: &str = "⇧1";
 /// report it as "!").
 pub(crate) fn is_variant_key(k: &gpui::Keystroke) -> bool {
     let m = &k.modifiers;
-    !(m.control || m.alt || m.platform || m.function)
-        && ((m.shift && k.key == "1") || k.key == "!")
+    !(m.control || m.alt || m.platform || m.function) && ((m.shift && k.key == "1") || k.key == "!")
 }
 
 /// One action of a decision.
@@ -335,8 +334,7 @@ impl Risk {
 pub(crate) const PRESS_AGAIN: &str = "Press again to delete";
 
 /// Allow's tooltip on a request that needs the second press.
-pub(crate) const CONFIRM_TIP: &str =
-    "It deletes something: press Allow (or 1) twice to allow it";
+pub(crate) const CONFIRM_TIP: &str = "It deletes something: press Allow (or 1) twice to allow it";
 
 /// R6.3: the destructive request armed by a first Allow, by its key
 /// ([`confirm_key`]). One at a time: arming another disarms it.
@@ -618,6 +616,9 @@ pub(crate) struct Decision {
     pub host: Option<String>,
     /// What the request would do that is hard to take back.
     pub risk: Option<Risk>,
+    /// R7.3: the session's latest test result
+    /// (`system::verification_line`), under the meta line.
+    pub verification: Option<AnyElement>,
     /// "2/3" while more than one waits.
     pub pager: Option<String>,
     /// A body between the head and the actions (a plan, a question's
@@ -675,6 +676,7 @@ impl Decision {
             folder: None,
             host: None,
             risk: None,
+            verification: None,
             pager: None,
             body: None,
             details: None,
@@ -957,7 +959,8 @@ impl Decision {
         // The answer: Allow and Deny side by side, never stacked; any
         // variant after them.
         let allow_variant = self.allow_variant();
-        let allow = (self.show_allow && !noting).then(|| self.allow.render(allow_variant, keys, live, p));
+        let allow =
+            (self.show_allow && !noting).then(|| self.allow.render(allow_variant, keys, live, p));
         let deny = self.deny.as_ref().filter(|_| !noting).map(|deny| {
             div()
                 .flex_shrink_0()
@@ -1018,34 +1021,36 @@ impl Decision {
                 .collect()
         };
         let details_toggle = details_toggle.filter(|_| !noting);
-        let quiet = (!grants.is_empty() || details_toggle.is_some() || deny_note.is_some()).then(|| {
-            div()
-                .w_full()
-                .min_w_0()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(t.space.sm))
-                .when(!grants.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .flex_1()
-                            // Narrower than this, Details wraps below.
-                            .min_w(px(t.system().tile_min * 0.75))
-                            .flex()
-                            .flex_col()
-                            .gap(px(t.space.xxs))
-                            .children(grants),
-                    )
-                })
-                .children(deny_note.map(|d| div().flex_shrink_0().child(d)))
-                .children(details_toggle.map(|d| div().flex_shrink_0().child(d)))
-        });
+        let quiet =
+            (!grants.is_empty() || details_toggle.is_some() || deny_note.is_some()).then(|| {
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(t.space.sm))
+                    .when(!grants.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .flex_1()
+                                // Narrower than this, Details wraps below.
+                                .min_w(px(t.system().tile_min * 0.75))
+                                .flex()
+                                .flex_col()
+                                .gap(px(t.space.xxs))
+                                .children(grants),
+                        )
+                    })
+                    .children(deny_note.map(|d| div().flex_shrink_0().child(d)))
+                    .children(details_toggle.map(|d| div().flex_shrink_0().child(d)))
+            });
 
         let content = |d: Div| {
             d.child(head)
                 .children(request)
                 .children(meta)
+                .children(self.verification)
                 .children(self.body)
                 .children(self.note)
                 .children(answer)
@@ -1131,11 +1136,11 @@ pub(crate) mod audit {
 
     pub(super) fn record(d: &Decision) {
         let noting = d.note.is_some();
-        let filled = usize::from(
-            d.show_allow && !noting && d.allow_variant() == ButtonVariant::Primary,
-        ) + usize::from(
-            !noting && d.deny.is_some() && d.deny_variant == ButtonVariant::Primary,
-        );
+        let filled =
+            usize::from(d.show_allow && !noting && d.allow_variant() == ButtonVariant::Primary)
+                + usize::from(
+                    !noting && d.deny.is_some() && d.deny_variant == ButtonVariant::Primary,
+                );
         DRAWN.with(|v| {
             v.borrow_mut().push(Drawn {
                 selector: d.selector.to_string(),

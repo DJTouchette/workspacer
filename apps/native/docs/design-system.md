@@ -656,6 +656,7 @@ The rules:
 
 - **Three lines of metadata.** The headline, the reason, then one line with the risk chip and where it runs (`decision-meta`). A long command shows whole in its mono block, which is the request itself and not metadata.
 - **Details** (`Decision::detail_rows`) shows the whole command, the agent's stated reason, the access mode (`decision::access_line`: "Ask first · Asks before it runs a command or edits a file.") and, in words, what each Always allow would let through, with the provider's exact rule. After those come the rest of the request (the tool and other arguments). The folder and host are already on the card, so Details leaves them out.
+- **Verification (R7.3).** Under the meta line, the session's latest test result (`Decision::verification`, `system::verification_line`). A Fleet tile carries the same line under its status (`fleet-verification-{n}`), with or without an ask.
 - **Composer.** While a decision waits, the composer's folded line and placeholder read "Reply — the request stays open".
 - **Fleet table.** A job proposal's Needs cell names the command it would run ("Run git branch --merged … | xargs git branch -d") with its risk chip. An approval row carries its chip in the same cell.
 

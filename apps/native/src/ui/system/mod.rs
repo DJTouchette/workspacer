@@ -40,9 +40,7 @@ mod contrast;
 mod lint;
 
 pub(crate) use actions::{composer_send_state, send_state, stop_variant};
-pub(crate) use card::{
-    tile, tile_frame, tile_grid, tile_rows, waiting_tile, waiting_tile_focused,
-};
+pub(crate) use card::{tile, tile_frame, tile_grid, tile_rows, waiting_tile, waiting_tile_focused};
 pub(crate) use composer::{
     ComposerState, access_chip, access_option, access_tone, composer_body, composer_field,
     composer_reply_line, composer_specimen, composer_text, composer_toolbar, decision_keys_hint,

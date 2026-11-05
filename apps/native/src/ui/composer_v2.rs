@@ -1566,11 +1566,19 @@ impl Workspace {
             .map(|c| c.trim().to_owned())
             .filter(|c| !c.is_empty());
         decision.access = session.map(super::decision::access_line);
+        decision.verification = self.decision_verification(session);
         decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval));
         // R6.3: the keycaps stay (no layout shift) but dim while the digits
         // type into the composer instead of answering.
         decision.keys_live = self.composer_ui.digits_to_card;
         decision.render(&p)
+    }
+
+    /// R7.3: the session's latest test result, for its decision card.
+    fn decision_verification(&self, session: Option<&Session>) -> Option<AnyElement> {
+        let v = self.session_verification(session?)?;
+        let p = self.palette();
+        Some(system::verification_line(&v, timing::now_ms(), &p).into_any_element())
     }
 
     /// The decision the number keys answer (R4.3: their keycaps show only
@@ -1909,6 +1917,7 @@ impl Workspace {
                 .into_any_element()
         });
         decision.access = session.map(super::decision::access_line);
+        decision.verification = self.decision_verification(session);
         decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan));
         decision.keys_live = self.composer_ui.digits_to_card;
         decision.render(&p)

@@ -779,7 +779,12 @@ fn every_decision_keeps_the_one_key_map(cx: &mut TestAppContext) {
         let drawn = audit::drawn();
         assert!(!drawn.is_empty(), "{id} draws its card");
         for d in drawn {
-            assert!(slot_map_problems(&d.keys).is_empty(), "{}: {:?}", d.selector, d.keys);
+            assert!(
+                slot_map_problems(&d.keys).is_empty(),
+                "{}: {:?}",
+                d.selector,
+                d.keys
+            );
             frames.push(d.frame);
         }
         audit::clear();
@@ -817,7 +822,10 @@ fn one_filled_button_per_focused_region(cx: &mut TestAppContext) {
     with_sessions(
         &workspace,
         &mut visual,
-        vec![approval("twin", "Twin", "cargo test"), approval("other", "Other", "cargo build")],
+        vec![
+            approval("twin", "Twin", "cargo test"),
+            approval("other", "Other", "cargo build"),
+        ],
     );
     with_jobs(&workspace, &mut visual);
     effects(&mut commands);
@@ -828,12 +836,18 @@ fn one_filled_button_per_focused_region(cx: &mut TestAppContext) {
         for _ in 0..4 {
             audit::clear();
             refresh(&mut visual);
-            let drawn = audit::drawn();
+            // One frame's worth: a refresh may draw twice.
+            let mut drawn = audit::drawn();
+            let mut seen = std::collections::HashSet::new();
+            drawn.retain(|d| seen.insert(d.selector.clone()));
             assert!(drawn.len() > 2, "several decisions on screen");
             let filled: usize = drawn.iter().map(|d| d.filled).sum();
             assert!(filled <= 1, "table {table}: {filled} Filled in {drawn:?}");
             let keyed = drawn.iter().filter(|d| !d.keys.is_empty()).count();
-            assert!(keyed <= 1, "keycaps only on the focused decision: {drawn:?}");
+            assert!(
+                keyed <= 1,
+                "keycaps only on the focused decision: {drawn:?}"
+            );
             visual.simulate_keystrokes(if table { "down" } else { "right" });
         }
     }
