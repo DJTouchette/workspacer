@@ -164,7 +164,7 @@ fn swatch(name: &'static str, color: u32, p: &Palette) -> Div {
 fn foundations(p: &Palette) -> Div {
     let t = p.tokens;
     let r = p.roles;
-    let swatches: [(&'static str, u32); 19] = [
+    let swatches: [(&'static str, u32); 20] = [
         ("base", p.base),
         ("chat", p.chat),
         ("surface", p.surface),
@@ -179,7 +179,8 @@ fn foundations(p: &Palette) -> Div {
         ("accent", p.accent),
         ("primary", p.primary),
         ("on primary", p.on_primary),
-        ("attention", r.status.attention),
+        ("attention", r.status.attention_fill),
+        ("to review", r.review),
         ("fault", r.status.fault),
         ("warning", r.caution),
         ("done", r.status.done),
@@ -617,6 +618,7 @@ fn navigation(p: &Palette) -> Div {
                                 .debug_selector(|| "gallery-counts".into())
                                 .child(prim::count_badge("4", CountTone::Neutral, p))
                                 .child(prim::count_badge("2", CountTone::NeedsYou, p))
+                                .child(prim::count_badge("1", CountTone::Review, p))
                                 .child(prim::count_badge("1", CountTone::Failed, p))
                                 .child(prim::count_badge(
                                     prim::count_text(120),

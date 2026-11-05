@@ -1998,8 +1998,15 @@ impl Workspace {
                 lines.push(activity.clone());
             }
             // r8-attention (R8.1): the row's bare "23m" says what it is.
-            if !working && let Some(at) = session.telemetry.last_activity_ms {
-                lines.push(wks_native::format::last_active(at, now));
+            // A working row's time is how long this turn has run, not
+            // recency: the tooltip names which.
+            match (&time, working) {
+                (Some(elapsed), true) => lines.push(format!("Running for {elapsed}")),
+                _ => {
+                    if let Some(at) = session.telemetry.last_activity_ms {
+                        lines.push(wks_native::format::last_active(at, now));
+                    }
+                }
             }
             // r7-status (R7.3): the latest test run, as cards and tiles say it.
             if let Some(v) = self.session_verification(session) {

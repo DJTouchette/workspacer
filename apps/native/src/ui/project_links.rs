@@ -630,7 +630,7 @@ impl Workspace {
             let request = set(path);
             button(
                 format!("link-accept-{row}-{col}-{ix}"),
-                "Accept",
+                "Use this folder",
                 ButtonVariant::Secondary,
                 enabled,
             )

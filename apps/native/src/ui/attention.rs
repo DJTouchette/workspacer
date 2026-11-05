@@ -82,10 +82,6 @@ impl Wants {
         }
     }
 
-    pub(crate) fn any(self) -> bool {
-        self.needs_you + self.to_review > 0
-    }
-
     /// "3 need you · 1 to review", empty parts left out ("" when neither).
     pub(crate) fn words(self) -> String {
         wks_native::format::meta([
