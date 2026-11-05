@@ -53,11 +53,11 @@ SETTINGS_SECTIONS = ["Appearance", "Typography", "Workspace", "Remote",
                      "Agents", "Chat", "Keyboard", "About"]
 # area-pages: controls design v2 moved (used when --setting design_v2=true).
 LANDMARKS_V2 = {
-    "END_SESSION": lambda shot: (1024, 637),        # r3-integration: the form column's "End session..."
+    "END_SESSION": lambda shot: (1324, 637),        # r3-integration: the form column's "End session..." (r6-integration: re-measured)
     "NEW_TASK_FIELD": lambda shot: (720, 455),      # r6-conversation: the task text in the centred composer (New session is the welcome)
     "WAKE_STRIP": lambda shot: (640, 62),           # r6-conversation: the "2 updates from other sessions" strip above the transcript
-    "HOSTS_DETAILS": lambda shot: (1520, 207),      # r3-pages: Machines' first "Details" (table row)
-    "JOB_OVERFLOW": lambda shot: (1549, 552),       # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal; r5-integration re-measured)
+    "HOSTS_DETAILS": lambda shot: (1520, 173),      # r3-pages: Machines' first "Details" (table row; r6-integration: studio, this machine)
+    "JOB_OVERFLOW": lambda shot: (1548, 518),       # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal; r6-integration re-measured)
     "REVIEW_DOCK_MORE": lambda shot: (1535, 30),    # r3-pages: Changes dock header "..."
     "REVIEW_DOCK_EXPAND_ITEM": lambda shot: (1440, 166),  # r3-pages: its "Open full page" item
 }
@@ -213,7 +213,8 @@ def shots():
     add("slash-menu", "Composer `/` menu over the draft", [("key", "ctrl+l"), ("sleep", 0.8), ("type", "/")])
     # Integration: v2 folds Chat into Appearance; its reading width found by search.
     add("settings-reading-width", "Settings search: the transcript's reading width",
-        nav("s") + [("click", 1360, 76), ("sleep", 0.5), ("type", "reading width"), ("sleep", 0.8)])
+        nav("s") + [("design", [("click", 1360, 76)], [("click", 1250, 43)]),  # r6-integration: v2's search sits on the title row
+                    ("sleep", 0.5), ("type", "reading width"), ("sleep", 0.8)])
     # area-fixture (round 2): the fleet's story states, each on screen.
     add("conversation-tool-rows", "A run of tool calls: Grep, Read, Edit, Write, Bash with results",
         # r3-transcript: v2 folds finished work; Ctrl+O opens every block.
@@ -261,11 +262,11 @@ def shots():
     # the full request in place (conversation and a Fleet tile); the Fleet's
     # "Needs you" filter for a burst of asks. Design v2 only.
     add("approvals-details-open", "Approval: Details expanded to the full request (tool, command, folder, host)",
-        [("design", [], [("click", 1300, 858), ("sleep", 0.5)])])  # r5-fleet: re-measured
+        [("design", [], [("click", 1348, 910), ("sleep", 0.5)])])  # r6-integration: re-measured (880 column)
     add("approvals-fleet-needs-you", "Fleet: the Needs you filter, only the tiles that wait on the user",
-        fleet + [("click", 1350, 78), ("sleep", 0.5)])
+        fleet + [("design", [("click", 1350, 78)], [("click", 1350, 43)]), ("sleep", 0.5)])  # r6-integration: v2's filters share the title row (v1 never opens Fleet; its click is kept)
     add("approvals-fleet-details", "Fleet: the approval tile's Details open in place",
-        fleet + [("click", 530, 342), ("sleep", 0.5)])  # r6-decisions: re-measured (rail)
+        fleet + [("design", [("click", 530, 342)], [("click", 530, 307)]), ("sleep", 0.5)])  # r6-integration: v2 re-measured (rail, one-line rows); v1 keeps its click
     # r5-system (R5.3): the component gallery (`wks-native --gallery`, dev
     # builds only) in every built-in theme. Taller window: one frame holds
     # every component in every state.
@@ -531,8 +532,8 @@ LANDMARKS = {
     "APPROVAL_DETAILS": lambda shot: (1289, 805) if shot["v2"] else (1361, 749),  # r2-systems: the approval is a card above the composer
     # r3-composer: v2's Deny with note is the first item of Deny's menu.
     # (r3-integration: v1's moved right when the fixture's grant label grew.)
-    "APPROVAL_DENY_NOTE": lambda shot: (588, 861) if shot["v2"] else (1030, 797),  # r5-fleet re-measured
-    "APPROVAL_DENY_MENU": lambda shot: (750, 822),  # r3-composer: Deny's chevron (v2; r5-fleet re-measured: Allow and Deny side by side)
+    "APPROVAL_DENY_NOTE": lambda shot: (795, 882) if shot["v2"] else (1030, 797),  # r6-integration re-measured: the menu opens right of the chevron
+    "APPROVAL_DENY_MENU": lambda shot: (710, 874),  # r6-integration: re-measured in the 880 column  # r3-composer: Deny's chevron (v2; r5-fleet re-measured: Allow and Deny side by side)
     "COMPOSER_REPLY": lambda shot: (700, 964),       # r6-conversation: the one-line "Reply instead…" under the card (it expands on focus)
     "QUESTION_ANSWER": lambda shot: (900, 874),      # r3-composer: the release question's answer field (v2; r6-conversation: above the one-line composer)
     "COMPOSER_SEND_MENU": lambda shot: (1373, 960),  # r3-composer: Queue chevron while working (v2; r6-conversation: the 880 column)
@@ -540,8 +541,8 @@ LANDMARKS = {
     "RAIL_FIRST_MARK": lambda shot: (35, 179 if shot.get("v2") else 219),  # first session in the rail
     # (r4-integration: v2 re-measured after the decision gained its where line.)
     # (r5-integration: v2 re-measured; the decision card is shorter.)
-    "README_LINK": lambda shot: (595, 534) if shot["v2"] else (591, 497),  # r6-conversation: the 880 column and 8/16/32 rhythm  # README.md link, last assistant message
-    "TALL_README_LINK": lambda shot: (210, 1121) if shot["v2"] else (169, 1097),  # r5-integration: v2 re-measured  # same link, 1000x1600 tall layout
+    "README_LINK": lambda shot: (592, 587) if shot["v2"] else (591, 497),  # r6-integration: v2 re-measured (wake strip, 8/16/32)  # r6-conversation: the 880 column and 8/16/32 rhythm  # README.md link, last assistant message
+    "TALL_README_LINK": lambda shot: (168, 1187) if shot["v2"] else (169, 1097),  # r6-integration: v2 re-measured  # r5-integration: v2 re-measured  # same link, 1000x1600 tall layout
     "TASK_ROW_DEV": lambda shot: (1200, 85),        # the fixture hub task in the tasks panel
     # The failed cargo test task: v2 its "Open log" button, v1 its row.
     # (r4-integration: v1 re-measured; the fixture's passing run now lists first.)
@@ -559,7 +560,7 @@ LANDMARKS = {
     "settings_section": lambda shot, index: (570, 114 + round(index * 37.7)),
     # area-pages: the design v2 rail (Chat folds into Appearance).
     # (r3-integration: the rail sits left of the wide page column.)
-    "settings_section_v2": lambda shot, index: (420, 162 + index * 34),
+    "settings_section_v2": lambda shot, index: (570, 128 + index * 34),  # r6-integration: re-measured
 }
 
 
