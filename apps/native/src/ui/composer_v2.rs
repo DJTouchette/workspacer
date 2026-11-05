@@ -535,9 +535,11 @@ impl Workspace {
     }
 
     /// R6.3: whether the digit keys answer the keyed decision now: no text
-    /// field has focus (the workspace root, or nothing, does).
+    /// field has focus (the workspace root, or nothing, does) and the
+    /// composer holds no draft.
     pub(super) fn digits_free(&self, window: &Window, cx: &App) -> bool {
-        self.focus.is_focused(window) || window.focused(cx).is_none()
+        (self.focus.is_focused(window) || window.focused(cx).is_none())
+            && self.composer.read(cx).value().is_empty()
     }
 
     /// Whether Deny with note is offered: Claude reads a deny's note, Codex
@@ -941,7 +943,10 @@ impl Workspace {
         let chip = system::access_chip("composer-access", shown.word(), full, enabled, &p)
             .debug_selector(|| "composer-access".into())
             .tooltip(primitives::tooltip_view(
-                format!("Access · {}", super::model_popover::access_consequence(shown)),
+                format!(
+                    "Access · {}",
+                    super::model_popover::access_consequence(shown)
+                ),
                 None,
                 &p,
             ))
@@ -1526,8 +1531,10 @@ impl Workspace {
         decision.armed = self.armed(&confirm);
         decision.deny = Some(deny);
         decision.deny_note = deny_note;
-        decision.keys = self.composer_ui.digits_to_card
-            && session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval));
+        decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval));
+        // R6.3: the keycaps stay (no layout shift) but dim while the digits
+        // type into the composer instead of answering.
+        decision.keys_live = self.composer_ui.digits_to_card;
         decision.render(&p)
     }
 
@@ -1854,8 +1861,8 @@ impl Workspace {
             self.render_deny_note_v2(enabled, "Keep planning", ButtonVariant::Primary, cx)
                 .into_any_element()
         });
-        decision.keys = self.composer_ui.digits_to_card
-            && session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan));
+        decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan));
+        decision.keys_live = self.composer_ui.digits_to_card;
         decision.render(&p)
     }
 

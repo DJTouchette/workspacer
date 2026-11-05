@@ -175,7 +175,9 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
         // (set_value leaves the cursor at the start.)
         assert_eq!(this.composer.read(cx).value().as_ref(), "1step ")
     });
-    // 4 opens the note; sending it denies with the note.
+    // 4 opens the note; sending it denies with the note. (R6.3: a draft
+    // in the composer keeps the digits there, so it goes first.)
+    draft(&workspace, &mut visual, "");
     focus_root(&workspace, &mut visual);
     visual.simulate_keystrokes("4");
     visual.update(|window, _| window.refresh());
@@ -219,7 +221,10 @@ fn the_composer_folds_to_one_line_under_a_decision(cx: &mut TestAppContext) {
     assert!(inside(&mut visual, "composer-send", "chat-composer"));
     workspace.read_with(&visual, |this, _| assert!(!this.composer_ui.digits_to_card));
     visual.simulate_keystrokes("2");
-    assert!(acts(&mut commands).is_empty(), "digits type in the composer");
+    assert!(
+        acts(&mut commands).is_empty(),
+        "digits type in the composer"
+    );
     // R6.4: the access chip beside the model applies a choice at once.
     tap(&mut visual, "composer-access");
     assert!(visual.debug_bounds("composer-access-menu").is_some());

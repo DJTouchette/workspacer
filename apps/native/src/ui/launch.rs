@@ -2295,7 +2295,10 @@ impl Workspace {
                 },
             )
         } else if self.extras.queue_sent {
-            (false, format!("Submitting {provider} to the queue · {project}…"))
+            (
+                false,
+                format!("Submitting {provider} to the queue · {project}…"),
+            )
         } else if busy {
             (false, format!("Starting {provider} in {project}…"))
         } else if !self.view.connected {

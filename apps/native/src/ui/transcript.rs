@@ -341,7 +341,9 @@ impl Workspace {
             .py_1()
             // R6.6: the 8/16/32 rhythm: half the block gap above and below
             // each row (16 between blocks), the turn gap above a turn.
-            .when(v2, |d| d.py(px(if in_strip { 0. } else { tt.row_gap / 2. })))
+            .when(v2, |d| {
+                d.py(px(if in_strip { 0. } else { tt.row_gap / 2. }))
+            })
             .when(turn_start, |d| d.pt(px(tt.turn_gap - tt.row_gap / 2.)))
             .when(ix + 1 == rows.len(), |d| {
                 d.debug_selector(|| "chat-content-column".into())

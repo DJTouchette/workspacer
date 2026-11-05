@@ -144,7 +144,10 @@ fn v2_wakes_leave_the_transcript_for_one_strip(cx: &mut TestAppContext) {
     v2(&workspace, &mut visual, view);
     let strip = visual.debug_bounds("wake-strip").unwrap();
     let column = visual.debug_bounds("chat-content-column").unwrap();
-    assert!(strip.bottom() <= column.top() + px(1.), "above the transcript");
+    assert!(
+        strip.bottom() <= column.top() + px(1.),
+        "above the transcript"
+    );
     assert!(visual.debug_bounds("wake-strip-header").is_some());
     // Folded: one line, its Go button, no wake line in the transcript.
     assert!(visual.debug_bounds("fleet-card").is_none());

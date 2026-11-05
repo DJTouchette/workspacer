@@ -241,7 +241,11 @@ const WAKE_SCAN: usize = 400;
 
 /// The strip's line for several wakes (R6.6).
 pub(super) fn wake_strip_label(n: usize) -> String {
-    plural(n, "update from other sessions", "updates from other sessions")
+    plural(
+        n,
+        "update from other sessions",
+        "updates from other sessions",
+    )
 }
 
 /// One wake at a glance ([`Workspace::fleet_glance`]).
@@ -1855,7 +1859,11 @@ impl Workspace {
     /// R6.6: whether the Skill call at `ix` folds into the work line that
     /// follows it ("Used skill code-review · Worked 5m · 6 tools"): a
     /// finished, unopened skill directly before a run of several calls.
-    pub(super) fn folded_skill(&self, rows: &std::collections::VecDeque<Arc<Row>>, ix: usize) -> bool {
+    pub(super) fn folded_skill(
+        &self,
+        rows: &std::collections::VecDeque<Arc<Row>>,
+        ix: usize,
+    ) -> bool {
         let Some(row) = rows.get(ix) else {
             return false;
         };
@@ -1962,8 +1970,14 @@ impl Workspace {
         // the newest that can be opened at all.
         let go = (0..wakes.len())
             .rev()
-            .find(|&i| glances[i].worst == Some(StatusKind::NeedsYou) && glances[i].target.is_some())
-            .or_else(|| (0..wakes.len()).rev().find(|&i| glances[i].target.is_some()))
+            .find(|&i| {
+                glances[i].worst == Some(StatusKind::NeedsYou) && glances[i].target.is_some()
+            })
+            .or_else(|| {
+                (0..wakes.len())
+                    .rev()
+                    .find(|&i| glances[i].target.is_some())
+            })
             .map(|i| {
                 let key = key_of(&wakes[i].0);
                 self.fleet_go_button(
@@ -2014,14 +2028,18 @@ impl Workspace {
                 ),
             )
             .child(div().flex_1())
-            .children(go)
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_open(toggle.clone(), false, cx)));
+            // Open, each wake's line carries its own Go.
+            .when(!open, |d| d.children(go))
+            .on_click(
+                cx.listener(move |this, _, _, cx| this.toggle_open(toggle.clone(), false, cx)),
+            );
         let mut strip = strip.child(line);
         if open {
             let mut list = event_guide(&p).debug_selector(|| "wake-strip-list".into());
             for (row, fleet) in wakes {
                 let key = key_of(&row);
-                list = list.child(self.render_fleet_card_v2(&key, fleet, row.copy_text(), window, cx));
+                list =
+                    list.child(self.render_fleet_card_v2(&key, fleet, row.copy_text(), window, cx));
             }
             strip = strip.child(list);
         }
@@ -3232,7 +3250,10 @@ mod tests {
             "Used skill code-review · Worked 5m 12s · 6 tools · 1 delegated"
         );
         assert_eq!(meta_line(None, "Worked · 2 tools", 0), "Worked · 2 tools");
-        assert_eq!(meta_line(Some(""), "Worked · 2 tools", 3), "Worked · 2 tools · 3 delegated");
+        assert_eq!(
+            meta_line(Some(""), "Worked · 2 tools", 3),
+            "Worked · 2 tools · 3 delegated"
+        );
         assert_eq!(recovered_line(1), "1 failed, then passed");
         assert_eq!(wake_strip_label(2), "2 updates from other sessions");
         assert_eq!(wake_strip_label(1), "1 update from other sessions");

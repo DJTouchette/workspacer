@@ -1071,19 +1071,21 @@ impl Workspace {
         };
         // R4.3: keycaps only while the number keys answer this question
         // (no approval or plan above it takes them).
-        let keyed = self.composer_ui.digits_to_card
-            && self.selected_session().is_some_and(|s| {
-                self.keyed_decision(s) == Some(super::composer_v2::Decision::Questions)
-            });
+        let keyed = self.selected_session().is_some_and(|s| {
+            self.keyed_decision(s) == Some(super::composer_v2::Decision::Questions)
+        });
         let key_hint = (v2 && keyed && option_ix < 9).then(|| {
             div()
                 .flex_shrink_0()
                 .mt(px((t.text.body * 1.4 - t.text.overline * 1.25) / 2.))
-                .child(primitives::keycap_hint(
-                    (option_ix + 1).to_string(),
-                    false,
-                    &p,
-                ))
+                .child(
+                    primitives::keycap_hint((option_ix + 1).to_string(), false, &p)
+                        // R6.3: dimmed while the digits type into the
+                        // composer instead of answering.
+                        .when(!self.composer_ui.digits_to_card, |d| {
+                            d.opacity(t.wash.yielded)
+                        }),
+                )
         });
         chrome::interactive_control(
             div().id(("question-option", ix * 1000 + option_ix)),

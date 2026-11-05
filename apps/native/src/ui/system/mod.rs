@@ -44,8 +44,8 @@ pub(crate) use card::{
     even_tile_grid, tile, tile_frame, tile_grid, waiting_tile, waiting_tile_focused,
 };
 pub(crate) use composer::{
-    ComposerState, access_chip, access_option, composer_body, composer_field,
-    composer_reply_line, composer_specimen, composer_text, composer_toolbar, decision_keys_hint,
+    ComposerState, access_chip, access_option, composer_body, composer_field, composer_reply_line,
+    composer_specimen, composer_text, composer_toolbar, decision_keys_hint,
 };
 pub(crate) use edge::{EdgeTone, Side, edge, floating, framed, lifted};
 pub(crate) use elevation::{Level, elevated, scrim_color};
