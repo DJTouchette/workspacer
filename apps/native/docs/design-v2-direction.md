@@ -272,3 +272,70 @@ Round 3 council (all five reviewers, average 7.3, up from 6.9) agreed on one roo
 
 ## R4.8 Light theme layering
 - Light themes separate canvas, sidebar and cards by surface tint and hairlines, not just borders.
+
+---
+
+# Round 5 addendum: make it a system
+
+Round 4 averaged 7.3 (flat). Reviewers who judge workflow went up (7.6, 7.6, ranking us first). Reviewers who judge craft held or dropped (7.1, 7.1, 7.0), and almost every defect they named is the same component drawn two ways. Round 5 stops fixing screens one at a time and builds an **enforced design system**: one written spec, one component per job, a gallery that renders every component in every theme, and tests that fail when a surface styles locally.
+
+## R5.1 The spec: `docs/design-system.md`
+This is the single source of truth, and it supersedes the token notes in `design-v2.md` wherever they disagree. It defines:
+- **Foundations:**
+  - colour roles
+  - three text levels
+  - type scale
+  - 4/8 spacing
+  - radii
+  - **elevation**: flat, raised and overlay. An overlay always has a shadow and a scrim.
+  - motion
+- **Components:**
+  - Button (tiers below)
+  - IconButton (always a tooltip with its shortcut)
+  - NavItem (icon + label)
+  - StatusCell (fixed glyph slot, label, optional detail; *every* state has a glyph, including healthy)
+  - Toggle (off is unmistakably off in every theme)
+  - TextField / Composer (one composer, used by welcome, New session and conversation)
+  - Menu (anchored to its trigger)
+  - Overlay / Dialog (shadow + scrim)
+  - Card / Tile (natural height)
+  - Table (fixed status slot, fixed action slot)
+  - DecisionCard (approval, question, plan, job proposal)
+  - PageShell (one template for every page: same top, same width rule, same header)
+  - CountBadge
+  - Keycap
+- **Patterns:**
+  - page anatomy
+  - conversation hierarchy (prose > activity > meta; a finished turn folds into one summary row coloured by its *final* outcome)
+  - Fleet card anatomy
+  - empty, loading and error states
+
+## R5.2 Button rules
+- Tiers: **Primary** (one per surface, the forward action), **Secondary**, **Tertiary**, **Destructive** (Stop, Deny, Discard: never brand blue).
+- Send is Primary only when it can send. When it can't, it is disabled, never outlined-when-active.
+- Every page header's main action uses the same tier and slot.
+
+## R5.3 Enforcement
+- A **component gallery** screen (`Screen::Gallery`, harness/dev only) renders every component in every state.
+- **Shots:** the gallery is shot in every built-in theme.
+- **Contrast test:** every component state (Primary text on fill, Toggle on/off, status glyphs, faint text on every surface) is checked in **every** theme at 4.5:1 for text and 3:1 for non-text. Nord's pale Allow and the light theme's off toggles must fail this test before they are fixed.
+- **Design-lint test:** v2 surface modules may not call raw colour, raw px sizes, or `.shadow`/`.border` outside `primitives`/`tokens`. Allowed exceptions are listed in one place with a reason.
+
+## R5.4 Then migrate every surface onto the system
+- **Shell:**
+  - labelled NavItems with distinct icons (no two folders)
+  - badges that never shift icons
+  - IconButtons with tooltips
+  - PageShell everywhere: New session and Agent setup share the top and width rule of the other pages
+- **Conversation:**
+  - three-level hierarchy, with space between turns
+  - the composer is always a visible bordered field, even while a decision is pending
+  - one subagent truth (the header and sidebar must agree on "Not responding")
+  - a recovered failure is not red at the turn level
+- **Decisions and Fleet:**
+  - one DecisionCard, with Allow and Deny side by side and a short "Always allow" whose exact rule and scope are shown
+  - grants listed in Session details and revocable
+  - keycaps on the focused card only
+  - Fleet cards at natural height, questions answerable on the card, job proposals as cards so the counts match
+  - a dense row-per-session Fleet table view
+- **Overlays:** the palette, shortcuts and menus get elevation + scrim, and menus anchor to their trigger.
