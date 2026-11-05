@@ -2582,10 +2582,17 @@ impl Workspace {
                 HostChoice::Local => "This machine".to_owned(),
                 HostChoice::Peer(peer) => peer.clone(),
             };
+            // r7-qa (systems P8): one icon per concept: the Machines
+            // server, not the Fleet's grid.
             chips.push(chip(
                 "launch-chip-machine",
                 LaunchPanel::Machine,
-                icon(IconName::LayoutDashboard),
+                Some(
+                    Icon::new(primitives::Concept::Machines)
+                        .size(px(t.icon.sm))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .into_any_element(),
+                ),
                 machine,
                 "Where it runs",
             ));

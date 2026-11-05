@@ -201,6 +201,32 @@ pub(crate) fn composer_reply_link(
         .children(hint)
 }
 
+/// r7-qa (systems P7): one keyboard hint, "↑ ↓ Move": faint keycaps, then
+/// the plain words. Every hint footer (Fleet, Projects) is a row of these
+/// ([`key_hints`]), never shortcuts spelled out in prose.
+pub(crate) fn key_hint(keys: &[&'static str], label: &'static str, p: &Palette) -> Div {
+    let t = p.tokens;
+    div()
+        .flex()
+        .items_center()
+        .gap(px(t.space.xs))
+        .children(keys.iter().map(|k| prim::keycap_hint(*k, false, p)))
+        .child(div().pl(px(t.space.xxs)).child(label))
+}
+
+/// A hint footer: [`key_hint`]s in one wrapping row, meta size, tertiary.
+pub(crate) fn key_hints(hints: impl IntoIterator<Item = Div>, p: &Palette) -> Div {
+    let t = p.tokens;
+    div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap(px(t.space.xl))
+        .text_size(px(t.text.meta))
+        .text_color(rgb(p.roles.text_tertiary))
+        .children(hints)
+}
+
 /// R6.3: where the digit keys go. R7.1: the hint lists exactly the keys
 /// the card shows ("1 2 4 answer the request"), each as a keycap; nothing
 /// while the composer has focus (digits type there).

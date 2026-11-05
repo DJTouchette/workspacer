@@ -2105,10 +2105,21 @@ impl Workspace {
                     ),
             });
         }
+        // r7-qa (systems P7): keycaps, as on the Fleet, not prose.
         let hint = if self.vim() {
-            "j / k navigate · Enter open · n new session · / filter · i add folder · Ctrl Enter pin"
+            system::key_hints(
+                [
+                    system::key_hint(&["j", "k"], "Move", &p),
+                    system::key_hint(&["↵"], "Open", &p),
+                    system::key_hint(&["n"], "New session", &p),
+                    system::key_hint(&["/"], "Filter", &p),
+                    system::key_hint(&["i"], "Add folder", &p),
+                    system::key_hint(&["Ctrl", "↵"], "Pin", &p),
+                ],
+                &p,
+            )
         } else {
-            "Click a folder to see its sessions"
+            system::key_hints([], &p).child("Click a folder to see its sessions")
         };
         // r5-shell (R5.4): the shared PageShell.
         let mut notices: Vec<AnyElement> = self
@@ -2140,12 +2151,7 @@ impl Workspace {
                 .flex_col()
                 .gap(px(t.space.xxl))
                 .child(body)
-                .child(
-                    div()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_tertiary))
-                        .child(hint),
-                ),
+                .child(hint.debug_selector(|| "projects-hints".into())),
             system::PageWidth::Wide,
             &p,
         );
@@ -2231,33 +2237,32 @@ impl Workspace {
                             }),
                     )
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(t.space.md))
-                            .min_w_0()
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .when(needs > 0, |d| {
-                                d.child(
+                        // r7-qa: one join, "2 needs you · 2 working · 2
+                        // folders · 22 sessions", never bare gaps.
+                        system::meta_row(
+                            (needs > 0)
+                                .then(|| {
                                     StatusBadge::new(StatusKind::NeedsYou)
                                         .label(format!("{needs} needs you"))
-                                        .render(&p),
-                                )
-                            })
-                            .when(live > 0, |d| {
-                                d.child(
+                                        .render(&p)
+                                        .into_any_element()
+                                })
+                                .into_iter()
+                                .chain((live > 0).then(|| {
                                     StatusBadge::new(StatusKind::Working)
                                         .label(format!("{live} working"))
-                                        .render(&p),
-                                )
-                            })
-                            .child(
-                                div()
+                                        .render(&p)
+                                        .into_any_element()
+                                }))
+                                .chain([div()
                                     .min_w_0()
                                     .truncate()
-                                    .child(wks_native::format::meta(&meta)),
-                            ),
+                                    .child(wks_native::format::meta(&meta))
+                                    .into_any_element()]),
+                            &p,
+                        )
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary)),
                     ),
             )
             .child(
@@ -2513,23 +2518,31 @@ impl Workspace {
                         )
                     }),
             )
-            .when(pending > 0 && !nested, |d| {
-                d.child(self.needs_you_link(
-                    SharedString::from(format!("project-pending-{ix}")),
-                    pending,
-                    project.path.clone(),
-                    cx,
-                ))
-            })
-            .when(!activity.is_empty(), |d| {
-                d.child(
-                    div()
-                        .flex_shrink_0()
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_secondary))
-                        .child(activity),
+            // r7-qa: the scratch link and the facts in one join ("1
+            // scratch file to run · 1 needs you · 5 ended").
+            .child(
+                system::meta_row(
+                    (pending > 0 && !nested)
+                        .then(|| {
+                            self.needs_you_link(
+                                SharedString::from(format!("project-pending-{ix}")),
+                                pending,
+                                project.path.clone(),
+                                cx,
+                            )
+                            .into_any_element()
+                        })
+                        .into_iter()
+                        .chain(
+                            (!activity.is_empty())
+                                .then(|| div().flex_shrink_0().child(activity).into_any_element()),
+                        ),
+                    &p,
                 )
-            })
+                .flex_shrink_0()
+                .text_size(px(t.text.meta))
+                .text_color(rgb(p.roles.text_secondary)),
+            )
             .child(
                 div()
                     .flex_shrink_0()

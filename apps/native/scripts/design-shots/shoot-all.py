@@ -191,7 +191,10 @@ def shots():
         [("key", "Escape"), ("keys", *(["ctrl+u"] * 12))])
     add("transcript-fleet", "Transcript: supervisor and fleet wakes, subagents",
         # (r4-integration: Ctrl+U, as above; three reach the delegation and subagents.)
-        [("design", [("wheel", 7, 1000, 400)], [("key", "Escape"), ("keys", *(["ctrl+u"] * 3))])])
+        # r7-qa: v2 moved the wakes to the strip above the transcript (R6.6),
+        # so v2 opens it; otherwise this shot repeated 04 and 71.
+        [("design", [("wheel", 7, 1000, 400)],
+          [("key", "Escape"), ("keys", *(["ctrl+u"] * 3)), ("click", "WAKE_STRIP"), ("sleep", 0.6)])])
     add("transcript-wide", "Rich conversation at the wide reading width",
         settings={"reading_width": "wide"})
     add("transcript-full", "Earlier transcript at the full reading width",
@@ -254,7 +257,7 @@ def shots():
     # approval tile focused (its Allow is the one primary, key 1), nothing
     # waiting on the user, and Light.
     fleet = [("key", "ctrl+shift+f"), ("sleep", 1.5)]
-    add("fleet-grid", "Fleet: the live sessions as a grid, focus moved to a working tile",
+    add("fleet-grid", "Fleet: the live sessions as a grid, focus moved to a tile with no ask (Ready for review)",
         fleet + [("key", "Down"), ("sleep", 0.5)])
     add("fleet-focused-approval", "Fleet: the approval tile focused, Allow 1 / Deny 2 / Always allow 3", fleet)
     add("fleet-all-clear", "Fleet: nothing waits on the user, only working tiles", fleet, fixture="clear")

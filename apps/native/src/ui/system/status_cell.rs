@@ -101,6 +101,27 @@ pub(crate) fn verification_line(
         .debug_selector(|| "verification-line".into())
 }
 
+/// r7-qa (R7.8, one join helper): a meta line whose parts are elements (a
+/// status badge, a link, plain words), joined by the same "·" that
+/// `wks_native::format::meta` puts between strings, never by bare gaps. The
+/// caller sets the text size and colour; the dots take the tertiary tone.
+pub(crate) fn meta_row(parts: impl IntoIterator<Item = AnyElement>, p: &Palette) -> Div {
+    let t = p.tokens;
+    let mut row = div().flex().items_center().gap(px(t.space.sm)).min_w_0();
+    for (i, part) in parts.into_iter().enumerate() {
+        if i > 0 {
+            row = row.child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child("·"),
+            );
+        }
+        row = row.child(part);
+    }
+    row
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::super::primitives::{MAX_STATUS_GLYPHS, STATUS_TABLE, StatusKind};

@@ -47,7 +47,7 @@ pub(crate) use code::inline_code_bg;
 pub(crate) use composer::{
     ComposerState, access_chip, access_option, access_tone, composer_body, composer_field,
     composer_reply_line, composer_reply_link, composer_specimen, composer_text, composer_toolbar,
-    composer_width, decision_keys_hint,
+    composer_width, decision_keys_hint, key_hint, key_hints,
 };
 pub(crate) use edge::{EdgeTone, Side, edge, floating, framed, lifted};
 pub(crate) use elevation::{Level, elevated, scrim_color};
@@ -57,7 +57,7 @@ pub(crate) use nav::NavItem;
 pub(crate) use overlay::{Placement, overlay};
 pub(crate) use page::{PageWidth, page_shell, page_shell_fill};
 pub(crate) use segmented::{Segment, segmented_control};
-pub(crate) use status_cell::{StatusCell, verification_line};
+pub(crate) use status_cell::{StatusCell, meta_row, verification_line};
 pub(crate) use table::{TablePart, table, table_band, table_head, table_part, table_row};
 // The re-exports are the system's API: some are only used by the
 // migration still to come (R5.4) or by the tests.

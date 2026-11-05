@@ -629,6 +629,8 @@ One word per concept, everywhere:
 ### Meta text (R7.8)
 
 - `format::meta(parts)` is the one join helper: it trims each part, drops empty parts and stray "·", and joins with `format::SEP` (" · "). Never start a line with "·" or build one with `join(" · ")` by hand in new code.
+- `system::meta_row(parts, &p)` is the same join for a line whose parts are elements (a StatusBadge, a link, then words): the parts sit between tertiary "·" dots, never bare gaps (r7-qa: Projects' group and folder rows).
+- `system::key_hint(keys, label, &p)` and `system::key_hints(hints, &p)` draw every keyboard hint footer: faint keycaps, then plain words ("↑ ↓ Move · ↵ Open"). The Fleet and Projects footers use them; no footer spells shortcuts out in prose.
 - `format::EMPTY` ("—", an em dash) is the one empty-cell mark.
 
 ### A calm sidebar (R7.5)

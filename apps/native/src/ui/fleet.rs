@@ -1443,22 +1443,9 @@ impl Workspace {
     fn fleet_hints(&self, caps: &[String], table: bool) -> Div {
         let p = self.palette();
         let t = p.tokens;
-        let hint = |keys: &[&'static str], label: &'static str| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(t.space.xs))
-                .children(keys.iter().map(|k| primitives::keycap_hint(*k, false, &p)))
-                .child(div().pl(px(t.space.xxs)).child(label))
-        };
-        div()
+        let hint = |keys: &[&'static str], label: &'static str| system::key_hint(keys, label, &p);
+        system::key_hints([], &p)
             .debug_selector(|| "fleet-hints".into())
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(t.space.xl))
-            .text_size(px(t.text.meta))
-            .text_color(rgb(p.roles.text_tertiary))
             .child(if table {
                 hint(&["↑", "↓"], "Move")
             } else {

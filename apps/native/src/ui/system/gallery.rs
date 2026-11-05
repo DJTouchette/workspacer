@@ -677,6 +677,28 @@ fn statuses(p: &Palette) -> Div {
             4 * 60_000,
             p,
         ))
+        // r7-qa: a meta line of elements, one join; a hint footer.
+        .child(
+            super::meta_row(
+                [
+                    StatusCell::new(StatusKind::NeedsYou)
+                        .label("2 needs you")
+                        .render(p)
+                        .into_any_element(),
+                    div().child("2 folders · 22 sessions").into_any_element(),
+                ],
+                p,
+            )
+            .text_size(px(p.tokens.text.meta))
+            .text_color(rgb(p.roles.text_secondary)),
+        )
+        .child(super::key_hints(
+            [
+                super::key_hint(&["j", "k"], "Move", p),
+                super::key_hint(&["↵"], "Open", p),
+            ],
+            p,
+        ))
 }
 
 fn toggles(p: &Palette) -> Div {
