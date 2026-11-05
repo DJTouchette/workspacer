@@ -2132,7 +2132,8 @@ impl Workspace {
                 "Optional · you can start empty"
             })
             .into_any_element();
-        let task = self.launch_task_box_v2(panel, busy, false, hint, &p, cx);
+        let focused = self.prompt.read(cx).focus_handle(cx).is_focused(window);
+        let task = self.launch_task_box_v2(panel, busy, focused, false, hint, &p, cx);
         let panel_card = panel.and_then(|panel| {
             let body = match panel {
                 LaunchPanel::Machine => self.render_host_picker_v2(busy, cx)?,
@@ -2220,11 +2221,14 @@ impl Workspace {
     /// project and with which agent it runs, and `trailing` on the chip
     /// row (a hint on New session, Start on the welcome). The welcome draws
     /// this same box (R4.5, one New-session flow); there a chip is a
-    /// shortcut that opens New session at that choice.
+    /// shortcut that opens New session at that choice. `focused`: the task
+    /// text has focus.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn launch_task_box_v2(
         &self,
         panel: Option<LaunchPanel>,
         busy: bool,
+        focused: bool,
         welcome: bool,
         trailing: gpui::AnyElement,
         p: &Palette,
@@ -2232,8 +2236,12 @@ impl Workspace {
     ) -> Div {
         let t = p.tokens;
         // R5.4: the one composer component, as in the conversation.
+        // r5-integration: the field takes the focus edge while its task
+        // text has focus, as the conversation's composer does.
         let state = if busy {
             system::ComposerState::Disabled
+        } else if focused {
+            system::ComposerState::Focus
         } else {
             system::ComposerState::Rest
         };

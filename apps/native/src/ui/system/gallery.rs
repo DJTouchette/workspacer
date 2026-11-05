@@ -921,12 +921,12 @@ fn decision(p: &Palette) -> Div {
     tool.risk = Some(Risk::Network);
     tool.grants = vec![Grant::new(
         Choice::new("gallery-always", "Always allow")
-            .key(Some(2))
+            .key(Some(3))
             .tooltip("Until this session ends, any command starting with “git push” runs"),
         "Always allow Bash(git push:*) this session",
         "git push origin main",
     )];
-    tool.deny = Some(Choice::new("gallery-deny", "Deny").key(Some(3)));
+    tool.deny = Some(Choice::new("gallery-deny", "Deny").key(Some(2)));
     tool.details = Some(Details::facts(
         Choice::new("gallery-details", "Details"),
         false,

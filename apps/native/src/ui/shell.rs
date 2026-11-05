@@ -2819,6 +2819,17 @@ impl Workspace {
                     ("Zoom in / out", m("Ctrl +, Ctrl -", "⌘ +, ⌘ -")),
                 ],
             ),
+            // r5-integration: decision keys follow the card's reading
+            // order (Allow and Deny side by side, the grants below), in
+            // the dock and on the focused Fleet tile alike.
+            (
+                "Decisions (the dock, the focused Fleet tile)",
+                vec![
+                    ("Allow / Deny", "1, 2"),
+                    ("Always allow, then Deny with note", "3, 4"),
+                    ("Plan: Approve / Keep planning", "1, 2"),
+                ],
+            ),
         ];
         if self.vim() {
             groups.push((

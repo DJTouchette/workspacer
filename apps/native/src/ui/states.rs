@@ -111,7 +111,7 @@ impl Workspace {
     pub(super) fn render_empty_state(
         &self,
         compact: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = self.palette();
@@ -230,6 +230,7 @@ impl Workspace {
                     ended: self.view.connected
                         && !self.view.loading
                         && self.selected_session().is_some_and(Session::stopped),
+                    prompt_focused: self.prompt.read(cx).focus_handle(cx).is_focused(window),
                 },
                 compact,
                 cx,
@@ -393,6 +394,8 @@ pub(super) struct EmptyV2 {
     pub retry: bool,
     pub first_message: bool,
     pub ended: bool,
+    /// The welcome's task field has focus (its edge takes the focus colour).
+    pub prompt_focused: bool,
 }
 
 /// Three starter tasks under the welcome composer: each fills the task.
@@ -571,9 +574,11 @@ impl Workspace {
             .flex_col()
             .items_center();
         if state.welcome && !compact {
-            return viewport
-                .justify_center()
-                .child(self.render_welcome(state.key, cx));
+            return viewport.justify_center().child(self.render_welcome(
+                state.key,
+                state.prompt_focused,
+                cx,
+            ));
         }
         let key = state.key;
         let icon = match key {
@@ -747,7 +752,7 @@ impl Workspace {
     /// First run, or nothing selected: wordmark and promise, a task composer
     /// with the project and agent to run it, three starter tasks and the
     /// agents' setup state.
-    fn render_welcome(&self, key: &'static str, cx: &mut Context<Self>) -> Div {
+    fn render_welcome(&self, key: &'static str, focused: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
         let first_run = self.view.sessions.is_empty();
@@ -794,7 +799,7 @@ impl Workspace {
         // model) open New session at that choice, and Start launches what
         // the chips show, through the same form.
         let composer = self
-            .launch_task_box_v2(None, busy, true, start.into_any_element(), &p, cx)
+            .launch_task_box_v2(None, busy, focused, true, start.into_any_element(), &p, cx)
             .debug_selector(|| "welcome-composer".into());
 
         let starters = div()

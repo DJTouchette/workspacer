@@ -1350,7 +1350,7 @@ impl Workspace {
             && let Some(fleet) = wks_native::transcript::fleet(&row.text)
         {
             let key = format!("{namespace}:{}:{}", self.chat_owner(), row.key);
-            let card = self.render_fleet_card(&key, fleet, row.copy_text(), window, cx);
+            let card = self.render_fleet_card_v2(&key, fleet, row.copy_text(), window, cx);
             return div().w_full().flex().flex_col().child(card);
         }
         let content = self.render_message_content(row, namespace, continued, window, cx);

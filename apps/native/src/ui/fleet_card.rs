@@ -150,6 +150,9 @@ impl Workspace {
             })
     }
 
+    /// The v1 card. (r5-integration: design v2 draws its own fleet card in
+    /// the v2 transcript, on the system's edges and tokens, and calls it
+    /// directly, so this file holds the v1 card only.)
     pub(super) fn render_fleet_card(
         &mut self,
         key: &str,
@@ -158,9 +161,6 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        if self.design().is_v2() {
-            return self.render_fleet_card_v2(key, fleet, copy, window, cx);
-        }
         let p = self.palette();
         let owner = self.view.selected.clone().unwrap_or_default();
         let (overline, icon, tone) = kind_face(fleet.kind, p);

@@ -664,8 +664,13 @@ impl Workspace {
         }
         let open =
             self.extras.link_choose.as_ref() == Some(&(project.path.clone(), cell.peer.clone()));
+        // r5-integration: Choose… is a row action, so it shows on the row's
+        // hover and while its list is open (the row's focus), not on every
+        // row at once.
+        let group = SharedString::from(format!("link-row-{row}-{col}"));
         if !cell.choices.is_empty() {
             let key = (project.path.clone(), cell.peer.clone());
+            let group = group.clone();
             choose_slot = Some(
                 ui::slot_button(
                     button(
@@ -675,6 +680,9 @@ impl Workspace {
                         enabled,
                     )
                     .debug_selector(move || format!("link-choose-{row}-{col}"))
+                    .when(!open, |d| {
+                        d.opacity(0.).group_hover(group, |s| s.opacity(1.))
+                    })
                     .when(enabled, |d| {
                         d.on_click(cx.listener(move |this, _, _, cx| {
                             this.extras.link_choose =
@@ -748,6 +756,7 @@ impl Workspace {
                 )
         });
         let line = ui::page_table_row(&p)
+            .group(group)
             .py(px(t.space.xs))
             // Rows of one project join under a fainter rule.
             .when(col > 0, |d| d.border_color(rgb(p.roles.card_border)))

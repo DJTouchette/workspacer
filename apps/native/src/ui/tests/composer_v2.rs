@@ -139,7 +139,8 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
     assert!(matches!(acts(&mut commands).as_slice(),
         [Action::AlwaysAllow { option, card, .. }] if option == "req-1:0" && card == "req-1"));
 
-    // 1 Allow, 2 Always allow, 3 Deny, 4 Deny with note.
+    // In reading order: 1 Allow, 2 Deny (beside it), 3 Always allow (the
+    // row below), 4 Deny with note (Deny's menu).
     focus_root(&workspace, &mut visual);
     visual.simulate_keystrokes("1");
     assert!(matches!(
@@ -149,12 +150,12 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
     visual.simulate_keystrokes("2");
     assert!(matches!(
         acts(&mut commands).as_slice(),
-        [Action::AlwaysAllow { .. }]
+        [Action::Approve(false, _)]
     ));
     visual.simulate_keystrokes("3");
     assert!(matches!(
         acts(&mut commands).as_slice(),
-        [Action::Approve(false, _)]
+        [Action::AlwaysAllow { .. }]
     ));
     visual.simulate_keystrokes("9");
     assert!(acts(&mut commands).is_empty(), "no fifth action");

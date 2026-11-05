@@ -852,3 +852,44 @@ fn worktree_workers_stay_nested_under_their_manager_when_its_project_is_open(
         })
     });
 }
+
+/// r5-integration (design v2): over a read-only subagent, the parent's
+/// pending approval is not its live card (those buttons would answer from
+/// the wrong conversation) but one line that leads back to the parent.
+#[gpui::test]
+fn a_viewed_subagent_says_the_parent_waits_instead_of_its_card(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(800.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.force_design(Some(wks_native::appearance::Design::V2));
+            let mut next = state("a");
+            let session = &mut Arc::make_mut(&mut next.sessions)[0];
+            session.subagents = Arc::new(serde_json::json!([{
+                "id": "task-1", "description": "Audit the parser", "status": "running"
+            }]));
+            session.merge(
+                &serde_json::json!({"pendingRequestId":"req-1","pendingApproval":{
+                "toolName":"Bash","toolInput":{"command":"cargo test"},"requestId":"req-1"}}),
+            );
+            next.child = Some(wks_native::controller::ChildTarget {
+                parent: "a".into(),
+                agent: "task-1".into(),
+            });
+            this.update_view(Arc::new(next), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("approval-card").is_none());
+    assert!(visual.debug_bounds("approve").is_none());
+    assert!(visual.debug_bounds("child-parent-waiting").is_some());
+    effects(&mut commands);
+    let go = visual.debug_bounds("child-parent-go").unwrap();
+    visual.simulate_click(go.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert!(
+        effects(&mut commands)
+            .iter()
+            .any(|c| matches!(c, Command::ViewChild(None)))
+    );
+}

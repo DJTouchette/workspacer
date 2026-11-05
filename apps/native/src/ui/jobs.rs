@@ -55,7 +55,38 @@ impl Workspace {
         self.request(Request::JobAction(action), cx);
     }
 
-    fn toggle_job(&mut self, id: &str, cx: &mut Context<Self>) {
+    /// r5-integration: a proposal's number keys where it takes them (the
+    /// focused Fleet card), in reading order: 1 Approve, 2 Reject. Its
+    /// Approve and Reject go through the same checks as their buttons.
+    pub(super) fn job_proposal_key(
+        &mut self,
+        job: &Job,
+        all: &[Job],
+        n: usize,
+        cx: &mut Context<Self>,
+    ) {
+        match n {
+            1 if self.job_approvable(job, all) => {
+                self.job_action(JobAction::Save(job.approval()), cx)
+            }
+            2 if self.job_decidable() => self.remove_job(&job.id, true, cx),
+            _ => {}
+        }
+    }
+
+    /// Whether a proposal can be decided now (connected, not a demo, no
+    /// write in flight).
+    fn job_decidable(&self) -> bool {
+        self.view.connected && !self.demo && !self.job_busy()
+    }
+
+    /// Whether `job` can be approved: decidable, and a change still has
+    /// the job it replaces.
+    fn job_approvable(&self, job: &Job, all: &[Job]) -> bool {
+        self.job_decidable() && (!job.change() || all.iter().any(|j| j.id == job.replaces))
+    }
+
+    pub(super) fn toggle_job(&mut self, id: &str, cx: &mut Context<Self>) {
         self.extras.job_confirm_remove = None;
         if self.extras.job_expanded.as_deref() == Some(id) {
             self.extras.job_expanded = None;
@@ -1572,12 +1603,12 @@ impl Workspace {
     ) -> super::decision::Decision {
         use super::decision::{Choice, Decision, Details};
         let p = self.palette();
-        let enabled = self.view.connected && !self.demo && !self.job_busy();
+        let enabled = self.job_decidable();
         let target = job
             .change()
             .then(|| all.iter().find(|j| j.id == job.replaces))
             .flatten();
-        let can_approve = enabled && (!job.change() || target.is_some());
+        let can_approve = self.job_approvable(job, all);
         let quoted = |name: &str| format!("\u{201c}{name}\u{201d}");
         let headline = match (job.change(), target) {
             (true, Some(current)) => format!("Change the job {}?", quoted(&current.name)),
@@ -1606,7 +1637,10 @@ impl Workspace {
             peer => peer.to_owned(),
         };
         let approval = job.approval();
+        // Keycaps show only where the keys go (`decision.keys`: the focused
+        // Fleet card); the numbers are `job_proposal_key`'s.
         let allow = Choice::new(format!("{prefix}-approve-{ix}"), "Approve")
+            .key(Some(1))
             .tooltip("Approve: it runs on its schedule from now on")
             .enabled(can_approve)
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -1615,6 +1649,7 @@ impl Workspace {
             }));
         let remove_id = job.id.clone();
         let reject = Choice::new(format!("{prefix}-remove-{ix}"), "Reject")
+            .key(Some(2))
             .tooltip("Reject the proposal; nothing runs")
             .enabled(enabled)
             .on_click(cx.listener(move |this, _, _, cx| {

@@ -871,6 +871,67 @@ impl Workspace {
     }
 
     /// Stands in for the composer: provider-native subagents take no input.
+    /// r5-integration (design v2): while a read-only subagent is shown and
+    /// its parent waits on a decision, the dock does not draw the parent's
+    /// card (its buttons would answer from the wrong conversation). One
+    /// line says so and leads back: "The parent session is waiting on you ·
+    /// Go to parent".
+    pub(super) fn render_parent_waiting(
+        &self,
+        parent: Option<&Session>,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        if !self.design().is_v2() || self.view.child.is_none() {
+            return None;
+        }
+        parent.filter(|s| s.approval.is_some() || s.questions.is_some())?;
+        let p = self.palette();
+        let t = p.tokens;
+        Some(
+            div()
+                .debug_selector(|| "child-parent-waiting".into())
+                .occlude()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(px(t.space.sm))
+                .px(px(t.space.md))
+                .child(primitives::status_mark(
+                    primitives::StatusKind::NeedsYou,
+                    t.layout.status_dot,
+                    &p,
+                ))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary))
+                        .child("The parent session is waiting on you"),
+                )
+                .child(
+                    div()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child("·"),
+                )
+                .child(
+                    primitives::button(
+                        "child-parent-go",
+                        "Go to parent",
+                        None,
+                        primitives::ButtonVariant::Tertiary,
+                        primitives::ButtonSize::Small,
+                        true,
+                        &p,
+                    )
+                    .debug_selector(|| "child-parent-go".into())
+                    .on_click(cx.listener(|this, _, _, cx| this.leave_child(cx))),
+                ),
+        )
+    }
+
     pub(super) fn render_child_bar(&self, cx: &mut Context<Self>) -> Option<Div> {
         let (_, child) = self.viewed_child()?;
         let p = self.palette();

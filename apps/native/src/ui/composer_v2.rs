@@ -420,8 +420,10 @@ pub(super) fn position_label(decisions: &[Decision], decision: Decision) -> Opti
     pager(ix, cards.len())
 }
 
-/// Number keys on the approval strip, in button order: Allow, each "Always
-/// allow" grant, Deny, then Deny with note where it is offered.
+/// Number keys on the approval strip, in reading order (r5-integration):
+/// Allow and Deny side by side on the first line, then each "Always allow"
+/// grant on the quiet row below, then Deny with note (a menu item, off the
+/// surface) where it is offered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum StripKey {
     Allow,
@@ -431,18 +433,18 @@ pub(super) enum StripKey {
 }
 
 pub(super) fn strip_keys(always: usize, note: bool) -> Vec<StripKey> {
-    let mut keys = vec![StripKey::Allow];
+    let mut keys = vec![StripKey::Allow, StripKey::Deny];
     keys.extend((0..always).map(StripKey::Always));
-    keys.push(StripKey::Deny);
     if note {
         keys.push(StripKey::DenyWithNote);
     }
     keys
 }
 
-/// Number keys on a plan review, in button order (R4.3: numbered like an
-/// approval): Approve plan, "Approve · run with Codex" while a limit
-/// applies, then Keep planning (not while its note is open).
+/// Number keys on a plan review, in reading order (R4.3: numbered like an
+/// approval): Approve plan, Keep planning beside it (not while its note is
+/// open), then "Approve · run with Codex" after the pair while a limit
+/// applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PlanKey {
     Approve,
@@ -452,11 +454,11 @@ pub(super) enum PlanKey {
 
 pub(super) fn plan_keys(handoff: bool, keep_planning: bool) -> Vec<PlanKey> {
     let mut keys = vec![PlanKey::Approve];
-    if handoff {
-        keys.push(PlanKey::Handoff);
-    }
     if keep_planning {
         keys.push(PlanKey::KeepPlanning);
+    }
+    if handoff {
+        keys.push(PlanKey::Handoff);
     }
     keys
 }
@@ -1175,9 +1177,9 @@ impl Workspace {
     /// A pending tool approval as the R4.3 decision, in the composer's slot:
     /// the request as a question ("Run `cargo test` in native?"), why, where
     /// (folder and host), a long command whole, and the numbered actions:
-    /// 1 Allow primary, 2 Always allow (its exact rule) secondary, 3 Deny as
-    /// a secondary split whose menu holds 4 Deny with note…. Details expands
-    /// the full request. Keys show while this is the decision they answer.
+    /// 1 Allow primary and 2 Deny (Destructive) side by side, 3 Always allow
+    /// (its exact rule, Tertiary) below, and Deny's menu holding the last
+    /// key, Deny with note…. Details expands the full request. Keys show while this is the decision they answer.
     pub(super) fn render_approval_strip(
         &self,
         approval: &Value,
@@ -1400,8 +1402,8 @@ impl Workspace {
             )
     }
 
-    /// Number keys on a pending approval: 1 Allow, then each "Always" grant,
-    /// Deny, Deny with note. They act only when no text field would take the
+    /// Number keys on a pending approval: 1 Allow, 2 Deny, then each
+    /// "Always" grant, then Deny with note. They act only when no text field would take the
     /// digit: nothing is focused, or the composer is focused and empty.
     pub(super) fn decision_keys(
         &mut self,
@@ -1821,8 +1823,9 @@ mod tests {
     fn plan_reviews_are_numbered_like_approvals() {
         assert_eq!(
             plan_keys(true, true),
-            [PlanKey::Approve, PlanKey::Handoff, PlanKey::KeepPlanning]
+            [PlanKey::Approve, PlanKey::KeepPlanning, PlanKey::Handoff]
         );
+        assert_eq!(plan_keys(true, false), [PlanKey::Approve, PlanKey::Handoff]);
         assert_eq!(plan_keys(false, false), [PlanKey::Approve]);
     }
 
@@ -1886,9 +1889,18 @@ mod tests {
             strip_keys(2, false),
             [
                 StripKey::Allow,
+                StripKey::Deny,
                 StripKey::Always(0),
-                StripKey::Always(1),
-                StripKey::Deny
+                StripKey::Always(1)
+            ]
+        );
+        assert_eq!(
+            strip_keys(1, true),
+            [
+                StripKey::Allow,
+                StripKey::Deny,
+                StripKey::Always(0),
+                StripKey::DenyWithNote
             ]
         );
     }

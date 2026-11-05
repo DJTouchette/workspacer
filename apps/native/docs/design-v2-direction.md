@@ -137,7 +137,7 @@ restraint**. These rules override anything above that conflicts with them.
   - secondary: subtle fill + ring
   - tertiary: text/ghost
   - destructive: red text/ghost, filled red only inside a confirm step
-  Approval chips: 1 Allow = primary; 2 Always allow = secondary; 3 Deny = destructive; 4 Deny with note = tertiary (still clearly clickable). Approve/Reject, Refresh/Check again and the rest all map to these roles.
+  Approval chips: 1 Allow = primary; 2 Always allow = secondary; 3 Deny = destructive; 4 Deny with note = tertiary (still clearly clickable). *(r5-integration: superseded by the R5.4 DecisionCard. The numbers now follow reading order, 1 Allow, 2 Deny, 3 Always allow, 4 Deny with note; see `design-system.md`.)* Approve/Reject, Refresh/Check again and the rest all map to these roles.
 - **"Waiting on you" container:** ONE shared container for approval, question, plan and limit.
   - Layout: neutral surface, amber 3px left stripe, amber 35% border, a question-style headline (e.g. "Run `cargo test` in apps/native?"), and a where/why line always visible.
   - Plan + usage limit merge into ONE card: Approve plan = primary; "Approve · run with Codex" = secondary, shown only when a limit applies; "Keep planning" = tertiary.

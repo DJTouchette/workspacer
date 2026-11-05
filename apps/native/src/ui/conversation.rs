@@ -524,6 +524,8 @@ impl Workspace {
         let p = self.palette();
         let compact = layout.compact;
         let composer_docked = selected.is_some() && self.view.child.is_none();
+        let parent_line = self.render_parent_waiting(selected, cx);
+        let parent_waits = self.design().is_v2() && self.view.child.is_some();
         // Gutters and the gap above the composer stay inside this clip, so
         // card shadows keep their room.
         let cards = self
@@ -547,13 +549,22 @@ impl Workspace {
             })
             // r2-systems: under v2 every decision, the approval included, is
             // a "waiting on you" card here, above the composer.
-            .when_some(selected.and_then(|s| s.approval.as_ref()), |d, approval| {
-                d.child(self.render_approval_card(approval, layout, window, cx))
-            })
+            // r5-integration (v2): over a read-only subagent the parent's
+            // decision is one line that leads back, not its live card.
+            .when_some(
+                selected
+                    .filter(|_| !parent_waits)
+                    .and_then(|s| s.approval.as_ref()),
+                |d, approval| d.child(self.render_approval_card(approval, layout, window, cx)),
+            )
             .children(selected.and_then(|session| self.render_limit_card(session, compact, cx)))
-            .when_some(selected.filter(|s| s.questions.is_some()), |d, session| {
-                d.child(self.render_questions(session, layout.enabled, compact, window, cx))
-            })
+            .when_some(
+                selected.filter(|s| s.questions.is_some() && !parent_waits),
+                |d, session| {
+                    d.child(self.render_questions(session, layout.enabled, compact, window, cx))
+                },
+            )
+            .children(parent_line)
             .children(self.render_child_bar(cx))
             // Closest to the composer: what will be sent from it next.
             .children(selected.and_then(|session| {

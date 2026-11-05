@@ -240,8 +240,9 @@ fn keyboard_focus_moves_between_tiles(cx: &mut TestAppContext) {
 
 /// 1 on the focused approval tile allows that tile's card: its session is
 /// selected first (the hub acts on the selected session), then the card the
-/// tile showed is approved. Allow's button does the same, 2 grants the
-/// shown "Always allow", 3 denies, and 1 on a question opens it.
+/// tile showed is approved. Allow's button does the same; in reading order
+/// 2 denies (Deny sits beside Allow) and 3 grants the shown "Always allow"
+/// (the row below); 1 on a question opens it.
 #[gpui::test]
 fn allow_on_a_focused_tile_resolves_that_tiles_approval(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands) = open_fleet(cx);
@@ -263,10 +264,6 @@ fn allow_on_a_focused_tile_resolves_that_tiles_approval(cx: &mut TestAppContext)
         Command::Act { session, action: Action::Approve(true, Some(card)) }
             if session == "ask" && card == "req-9")));
     visual.simulate_keystrokes("left 2");
-    assert!(effects(&mut commands).iter().any(|c| matches!(c,
-        Command::Act { action: Action::AlwaysAllow { option, card, .. }, .. }
-            if option == "req-9:0" && card == "req-9")));
-    visual.simulate_keystrokes("left 3");
     assert!(effects(&mut commands).iter().any(|c| matches!(
         c,
         Command::Act {
@@ -274,6 +271,10 @@ fn allow_on_a_focused_tile_resolves_that_tiles_approval(cx: &mut TestAppContext)
             ..
         }
     )));
+    visual.simulate_keystrokes("left 3");
+    assert!(effects(&mut commands).iter().any(|c| matches!(c,
+        Command::Act { action: Action::AlwaysAllow { option, card, .. }, .. }
+            if option == "req-9:0" && card == "req-9")));
 
     // r5-fleet: the grant is remembered for Session details, with the rule
     // it saves.
@@ -411,4 +412,67 @@ fn a_nested_session_has_no_tile_of_its_own(cx: &mut TestAppContext) {
         let active = counts[Bucket::NeedsYou.index()] + counts[Bucket::Working.index()];
         assert_eq!(ids.len(), active, "the Active count is the tiles shown");
     });
+}
+
+/// r5-integration: a job proposal's card takes the keyboard focus as a
+/// tile does. The arrows reach it in grid order (after the tiles that wait
+/// on you), it shows the focus ring and its keycaps, 1 approves, 2 rejects
+/// and Enter opens its Details.
+#[gpui::test]
+fn job_proposals_take_the_keyboard_focus_like_tiles(cx: &mut TestAppContext) {
+    use wks_native::features::{JobAction, Request, RequestState};
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = (*this.view).clone();
+            view.requests.insert(
+                "jobs",
+                RequestState {
+                    request: Request::Jobs,
+                    number: 1,
+                    loading: false,
+                    error: None,
+                    value: Arc::new(json!({"jobs":[
+                        {"id":"job","name":"Prune","enabled":true,
+                         "trigger":{"kind":"interval","everyMinutes":240},
+                         "action":{"kind":"shell","shell":{"command":"git worktree prune"}}},
+                        {"id":"change","name":"Prune","enabled":false,"proposedBy":"helper",
+                         "replaces":"job","trigger":{"kind":"daily","at":"03:00"},
+                         "action":{"kind":"shell","shell":{"command":"git worktree prune"}}}
+                    ]})),
+                },
+            );
+            this.update_view(Arc::new(view), window, cx);
+            this.focus.focus(window);
+        })
+    });
+    refresh(&mut visual);
+    effects(&mut commands);
+    assert!(visual.debug_bounds("fleet-job-0").is_some());
+    // Needs you: the approval, the question, then the proposal.
+    visual.simulate_keystrokes("right right");
+    assert_eq!(focused(&workspace, &visual).as_deref(), Some("job:change"));
+    refresh(&mut visual);
+    assert!(visual.debug_bounds("fleet-job-focused-0").is_some());
+    workspace.read_with(&visual, |this, cx| {
+        let tiles = this.fleet_tiles(cx);
+        assert_eq!(this.fleet_focus(&tiles), usize::MAX, "no tile has it");
+    });
+    visual.simulate_keystrokes("1");
+    assert!(
+        effects(&mut commands)
+            .iter()
+            .any(|c| matches!(c, Command::Request(Request::JobAction(JobAction::Save(_)))))
+    );
+    visual.simulate_keystrokes("2");
+    assert!(effects(&mut commands).iter().any(|c| matches!(c,
+        Command::Request(Request::JobAction(JobAction::Remove(id))) if id == "change")));
+    visual.simulate_keystrokes("enter");
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.screen == Screen::Fleet, "Enter stays on the Fleet");
+        assert_eq!(this.extras.job_expanded.as_deref(), Some("change"));
+    });
+    // Back on the tiles.
+    visual.simulate_keystrokes("left");
+    assert_eq!(focused(&workspace, &visual).as_deref(), Some("q"));
 }

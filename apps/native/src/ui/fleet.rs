@@ -652,13 +652,39 @@ impl Workspace {
         faults
     }
 
-    /// The focused tile's position among `tiles` (the first by default).
-    fn fleet_focus(&self, tiles: &[Tile]) -> usize {
-        self.fleet
+    /// The focused tile's position among `tiles` (the first card by
+    /// default); `usize::MAX` (no tile) while a job proposal has the focus.
+    pub(super) fn fleet_focus(&self, tiles: &[Tile]) -> usize {
+        match self.fleet_cursor(tiles, &self.fleet_jobs()) {
+            Cursor::Tile(n) => n,
+            Cursor::Job(_) | Cursor::None => usize::MAX,
+        }
+    }
+
+    /// r5-integration: which card has the focus, tiles and job proposals
+    /// alike (proposals take the focus as tiles do). A stale or unset focus
+    /// falls to the first card on screen.
+    fn fleet_cursor(&self, tiles: &[Tile], jobs: &[wks_native::jobs::Job]) -> Cursor {
+        let slots = fleet_slots(tiles, jobs);
+        let at = self
+            .fleet
             .focus
             .as_ref()
-            .and_then(|id| tiles.iter().position(|t| &t.id == id))
-            .unwrap_or(0)
+            .and_then(|id| slots.iter().position(|s| s == id))
+            .unwrap_or(0);
+        match slots.get(at) {
+            None => Cursor::None,
+            Some(id) => match id.strip_prefix(JOB_FOCUS) {
+                Some(job) => jobs
+                    .iter()
+                    .position(|j| j.id == job)
+                    .map_or(Cursor::None, Cursor::Job),
+                None => tiles
+                    .iter()
+                    .position(|t| &t.id == id)
+                    .map_or(Cursor::None, Cursor::Tile),
+            },
+        }
     }
 
     pub(super) fn open_fleet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -669,16 +695,18 @@ impl Workspace {
 
     fn fleet_move(&mut self, dir: Move, cx: &mut Context<Self>) {
         let tiles = self.fleet_tiles(cx);
-        if tiles.is_empty() {
+        let slots = fleet_slots(&tiles, &self.fleet_jobs());
+        if slots.is_empty() {
             return;
         }
-        let at = step(
-            self.fleet_focus(&tiles),
-            tiles.len(),
-            self.fleet.columns,
-            dir,
-        );
-        self.fleet.focus = Some(tiles[at].id.clone());
+        let from = self
+            .fleet
+            .focus
+            .as_ref()
+            .and_then(|id| slots.iter().position(|s| s == id))
+            .unwrap_or(0);
+        let at = step(from, slots.len(), self.fleet.columns, dir);
+        self.fleet.focus = Some(slots[at].clone());
         cx.notify();
     }
 
@@ -691,7 +719,7 @@ impl Workspace {
     }
 
     /// Key `n` (1-based) on tile `position`'s ask: an approval's Allow,
-    /// Always allow and Deny in button order; a question's option `n`
+    /// Deny and Always allow in reading order; a question's option `n`
     /// (sent at once), or 1 into its answer field; a plan's 1 opens the
     /// session at it.
     fn fleet_answer(
@@ -853,8 +881,13 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &FleetDown, _, cx| this.fleet_move(Move::Down, cx)))
             .on_action(cx.listener(|this, _: &FleetOpen, _, cx| {
                 let tiles = this.fleet_tiles(cx);
-                let at = this.fleet_focus(&tiles);
-                this.fleet_open(at, cx)
+                let jobs = this.fleet_jobs();
+                match this.fleet_cursor(&tiles, &jobs) {
+                    Cursor::Tile(at) => this.fleet_open(at, cx),
+                    // A proposal opens (or closes) its Details in place.
+                    Cursor::Job(ix) => this.toggle_job(&jobs[ix].id, cx),
+                    Cursor::None => {}
+                }
             }))
             .on_action(cx.listener(|this, _: &FleetKey1, window, cx| this.fleet_key(1, window, cx)))
             .on_action(cx.listener(|this, _: &FleetKey2, window, cx| this.fleet_key(2, window, cx)))
@@ -865,8 +898,15 @@ impl Workspace {
 
     fn fleet_key(&mut self, n: usize, window: &mut Window, cx: &mut Context<Self>) {
         let tiles = self.fleet_tiles(cx);
-        let at = self.fleet_focus(&tiles);
-        self.fleet_answer(at, n, window, cx);
+        let jobs = self.fleet_jobs();
+        match self.fleet_cursor(&tiles, &jobs) {
+            Cursor::Tile(at) => self.fleet_answer(at, n, window, cx),
+            Cursor::Job(ix) => {
+                let all = self.job_rows().unwrap_or_default();
+                self.job_proposal_key(&jobs[ix], &all, n, cx);
+            }
+            Cursor::None => {}
+        }
     }
 
     /// Whether the Fleet has the keys: on screen, under v2, with nothing
@@ -908,6 +948,10 @@ impl Workspace {
         let jobs = self.fleet_jobs();
         self.sync_fleet_answers(&tiles, window, cx);
         let focus = self.fleet_focus(&tiles);
+        let focused_job = match self.fleet_cursor(&tiles, &jobs) {
+            Cursor::Job(ix) => Some(ix),
+            _ => None,
+        };
         let current = self.fleet.filter;
         let all = current == Filter::All;
         let back = self.page_back_v2(cx);
@@ -1026,7 +1070,7 @@ impl Workspace {
         } else {
             let all_jobs = self.job_rows().unwrap_or_default();
             let content: AnyElement = if table {
-                self.render_fleet_table(&tiles, &jobs, &all_jobs, focus, cx)
+                self.render_fleet_table(&tiles, &jobs, &all_jobs, focus, focused_job, cx)
                     .into_any_element()
             } else {
                 // R5.4: tiles at their natural height, top-aligned: a short
@@ -1041,7 +1085,13 @@ impl Workspace {
                     cards.push(self.render_fleet_tile(n, tile, n == focus, cx));
                 }
                 for (ix, job) in jobs.iter().enumerate() {
-                    cards.push(self.render_fleet_job(ix, job, &all_jobs, cx));
+                    cards.push(self.render_fleet_job(
+                        ix,
+                        job,
+                        &all_jobs,
+                        focused_job == Some(ix),
+                        cx,
+                    ));
                 }
                 for (n, tile) in tiles.iter().enumerate().skip(waiting) {
                     cards.push(self.render_fleet_tile(n, tile, n == focus, cx));
@@ -1309,12 +1359,15 @@ impl Workspace {
     }
 
     /// A job proposal as a Fleet card (R5.4): the job, then the one
-    /// decision component inline (Approve, Reject, Details).
+    /// decision component inline (Approve, Reject, Details). It takes the
+    /// keyboard focus as a tile does (r5-integration): the focus ring, its
+    /// keycaps (1 Approve, 2 Reject), Enter for Details.
     fn render_fleet_job(
         &self,
         ix: usize,
         job: &wks_native::jobs::Job,
         all: &[wks_native::jobs::Job],
+        focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = self.palette();
@@ -1348,7 +1401,7 @@ impl Workspace {
                     .child("·")
                     .child(div().flex_shrink_0().child("Job proposal")),
             );
-        let decision = self.job_proposal_decision(
+        let mut decision = self.job_proposal_decision(
             ix,
             job,
             all,
@@ -1356,16 +1409,22 @@ impl Workspace {
             super::decision::Frame::Inline,
             cx,
         );
-        div()
-            .id(("fleet-job-card", ix))
+        decision.keys = focused;
+        let focus = format!("{JOB_FOCUS}{}", job.id);
+        system::tile_frame(("fleet-job-card", ix), focused, &p)
             .debug_selector(move || format!("fleet-job-{ix}"))
-            .w_full()
-            .min_w_0()
+            .when(focused, |d| {
+                d.child(div().debug_selector(move || format!("fleet-job-focused-{ix}")))
+            })
             .child(
                 system::waiting_tile(&p)
                     .child(head)
                     .child(decision.render(&p)),
             )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.fleet.focus = Some(focus.clone());
+                cx.notify();
+            }))
             .into_any_element()
     }
 
@@ -1615,6 +1674,7 @@ impl Workspace {
         jobs: &[wks_native::jobs::Job],
         all_jobs: &[wks_native::jobs::Job],
         focus: usize,
+        focused_job: Option<usize>,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.palette();
@@ -1784,11 +1844,20 @@ impl Workspace {
         };
         let job_row = |ix: usize, job: &wks_native::jobs::Job| {
             let (approve, reject) = job_actions[ix].clone();
+            let focused = focused_job == Some(ix);
+            let focus = format!("{JOB_FOCUS}{}", job.id);
             primitives::page_table_row(&p)
+                .id(SharedString::from(format!("fleet-job-row-{}", job.id)))
                 .debug_selector(move || format!("fleet-job-row-{ix}"))
+                .cursor_pointer()
+                .when(focused, |d| d.bg(rgb(p.selected)))
+                .when(!focused, |d| d.hover(|s| s.bg(rgb(p.roles.hover))))
                 .child(
                     primitives::page_cell(cols[0].1)
-                        .child(system::StatusCell::new(StatusKind::NeedsYou).render(&p)),
+                        .child(system::StatusCell::new(StatusKind::NeedsYou).render(&p))
+                        .when(focused, |d| {
+                            d.child(div().debug_selector(move || format!("fleet-job-focused-{ix}")))
+                        }),
                 )
                 .child(
                     primitives::page_cell(cols[1].1)
@@ -1837,6 +1906,10 @@ impl Workspace {
                         &p,
                     )),
                 )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.fleet.focus = Some(focus.clone());
+                    cx.notify();
+                }))
                 .into_any_element()
         };
         let mut rows: Vec<AnyElement> = (0..waiting).map(session_row).collect();
@@ -1847,6 +1920,34 @@ impl Workspace {
             .child(primitives::page_table_head(&cols, &p))
             .children(rows)
     }
+}
+
+/// The `fleet.focus` prefix of a job proposal's card (a tile's focus is
+/// its session id).
+const JOB_FOCUS: &str = "job:";
+
+/// The card that has the Fleet's focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cursor {
+    Tile(usize),
+    Job(usize),
+    None,
+}
+
+/// Every focusable Fleet card's focus id in on-screen order: the tiles
+/// that wait on you, the job proposals, then the rest (the grid's and the
+/// table's order), so the arrows walk what the eye reads.
+fn fleet_slots(tiles: &[Tile], jobs: &[wks_native::jobs::Job]) -> Vec<String> {
+    let waiting = tiles
+        .iter()
+        .take_while(|t| t.bucket == Bucket::NeedsYou)
+        .count();
+    tiles[..waiting]
+        .iter()
+        .map(|t| t.id.clone())
+        .chain(jobs.iter().map(|j| format!("{JOB_FOCUS}{}", j.id)))
+        .chain(tiles[waiting..].iter().map(|t| t.id.clone()))
+        .collect()
 }
 
 #[cfg(test)]

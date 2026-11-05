@@ -98,8 +98,6 @@ const ALLOWED: &[Allowed] = &[
     a("src/ui/file_viewer.rs", P, 32, MIXED),
     a("src/ui/file_viewer.rs", S, 2, MIXED),
     a("src/ui/file_viewer.rs", B, 8, MIXED),
-    a("src/ui/fleet_card.rs", P, 21, MIXED),
-    a("src/ui/fleet_card.rs", B, 4, MIXED),
     a("src/ui/gauge.rs", P, 7, MIXED),
     a("src/ui/handoff.rs", P, 13, MIXED),
     a("src/ui/handoff.rs", S, 1, MIXED),
