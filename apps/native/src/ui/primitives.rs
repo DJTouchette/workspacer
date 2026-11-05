@@ -90,6 +90,10 @@ pub(crate) enum ButtonVariant {
     /// Stops or removes something: the Secondary shape with danger text.
     /// Put irreversible ones behind a confirm step or undo.
     Destructive,
+    /// r8-decisions (R8.2): the armed second step of a destructive confirm
+    /// ("Press again to delete"): filled with the danger colour. Nothing
+    /// else is ever filled red.
+    Danger,
 }
 
 /// The two control heights (`layout.control_height_sm` / `control_height`).
@@ -141,7 +145,7 @@ fn button_colors(variant: ButtonVariant, enabled: bool, p: &Palette) -> ButtonCo
     if !enabled {
         let (bg, ring) = match variant {
             ButtonVariant::Tertiary => (clear, None),
-            ButtonVariant::Primary => (solid(p.selected), None),
+            ButtonVariant::Primary | ButtonVariant::Danger => (solid(p.selected), None),
             ButtonVariant::Secondary | ButtonVariant::Destructive => (clear, Some(p.border)),
         };
         return ButtonColors {
@@ -181,7 +185,34 @@ fn button_colors(variant: ButtonVariant, enabled: bool, p: &Palette) -> ButtonCo
             ],
             ring: Some(p.roles.border_strong),
         },
+        // r8-decisions (R8.2): the error fill under whichever of the
+        // theme's ink colours reads best on it; hover and press lean the
+        // fill toward that label.
+        ButtonVariant::Danger => {
+            let label = danger_label(p);
+            ButtonColors {
+                bg: [
+                    solid(p.error),
+                    solid(super::system::composite(wash(label, w.hover), p.error)),
+                    solid(super::system::composite(wash(label, w.pressed), p.error)),
+                ],
+                fg: [label; 2],
+                ring: None,
+            }
+        }
     }
+}
+
+/// The label on a [`ButtonVariant::Danger`] fill: white, the base or the
+/// text colour, whichever stands off the error colour most.
+pub(crate) fn danger_label(p: &Palette) -> u32 {
+    [0xffffff, p.base, p.text]
+        .into_iter()
+        .max_by(|a, b| {
+            wks_native::appearance::contrast(*a, p.error)
+                .total_cmp(&wks_native::appearance::contrast(*b, p.error))
+        })
+        .unwrap_or(0xffffff)
 }
 
 // r5-system
@@ -2503,12 +2534,22 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
 /// a hairline box of that colour. Elsewhere it is tertiary text with a
 /// hairline keycap edge in the same colour, no fill.
 pub(crate) fn keycap_hint(key: impl Into<SharedString>, on_fill: bool, p: &Palette) -> Div {
+    keycap_in(
+        key,
+        if on_fill {
+            p.on_primary
+        } else {
+            p.roles.text_tertiary
+        },
+        p,
+    )
+}
+
+/// r8-decisions: a [`keycap_hint`] in the label colour `color` of the fill
+/// it sits on (the Primary's, or the armed Danger's).
+pub(crate) fn keycap_in(key: impl Into<SharedString>, color: u32, p: &Palette) -> Div {
     let t = p.tokens;
-    let fg = if on_fill {
-        Hsla::from(rgb(p.on_primary))
-    } else {
-        Hsla::from(rgb(p.roles.text_tertiary))
-    };
+    let fg = Hsla::from(rgb(color));
     // r5-fleet (R5.4): a keycap keeps its hairline box on a Primary fill
     // too, so "Allow ①" never reads as a count beside the label.
     let edge = fg.opacity(fg.a * t.wash.attention_edge);
@@ -2543,7 +2584,7 @@ pub(crate) fn keyed_button(
     p: &Palette,
 ) -> Stateful<Div> {
     let t = p.tokens;
-    let on_fill = enabled && variant == ButtonVariant::Primary;
+    let filled = enabled && matches!(variant, ButtonVariant::Primary | ButtonVariant::Danger);
     let control = interactive_control(div().id(id.into()), *p, enabled)
         .h(px(size.height(p)))
         .pl(px(size.padding(p)))
@@ -2557,7 +2598,11 @@ pub(crate) fn keyed_button(
         .text_size(px(size.text(p)))
         .font_weight(FontWeight(t.weight.medium))
         .child(label.into())
-        .child(keycap_hint(key, on_fill, p));
+        .child(if filled {
+            keycap_in(key, button_label_color(variant, enabled, p), p)
+        } else {
+            keycap_hint(key, false, p)
+        });
     button_states(control, variant, enabled, p)
 }
 

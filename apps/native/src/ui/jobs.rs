@@ -1591,7 +1591,7 @@ impl Workspace {
         // R6.3: the first proposal takes the number keys (1 Approve,
         // 2 Reject: `page_decision_keys`) and shows them; the others wait
         // their turn below it.
-        decision.keys = ix == 0;
+        decision.keys = self.keycaps(ix == 0);
         // R7.2: one Filled per region: the first proposal's Allow.
         decision.filled = ix == 0;
         decision.render(&p)
@@ -1988,13 +1988,23 @@ impl Workspace {
             let can_approve = enabled && (!job.change() || target.is_some());
             let approval = job.approval();
             let (risk, confirm) = (job_risk(job), job_confirm_key(job));
+            // R8.3: armed, the filled red "Press again to delete".
+            let armed = self.armed(&confirm) && risk.is_some_and(super::decision::Risk::confirms);
             let approve = button(
                 job_control("approve", ix),
-                "Allow",
-                super::system::actions::region_variant(
-                    super::system::actions::Verb::Allow,
-                    ix == 0,
-                ),
+                if armed {
+                    super::decision::PRESS_AGAIN
+                } else {
+                    "Allow"
+                },
+                if armed {
+                    super::system::actions::armed_variant()
+                } else {
+                    super::system::actions::region_variant(
+                        super::system::actions::Verb::Allow,
+                        ix == 0,
+                    )
+                },
                 can_approve,
             )
             .debug_selector(move || format!("job-approve-{ix}"))
@@ -2037,7 +2047,8 @@ impl Workspace {
                     button(
                         job_control("remove", ix),
                         "Remove job and history",
-                        ButtonVariant::Destructive,
+                        // R8.2: the armed second step of a removal.
+                        super::system::actions::armed_variant(),
                         enabled,
                     )
                     .debug_selector(move || format!("job-remove-{ix}"))

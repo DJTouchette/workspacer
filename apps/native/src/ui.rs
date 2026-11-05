@@ -1191,6 +1191,8 @@ impl Workspace {
                 return;
             }
             let _ = this.update(cx, |this, cx| {
+                // r8-decisions (R8.2): keycaps show after keyboard use.
+                this.note_key_input(&event.keystroke, cx);
                 if this.viewer_modal(window) && !this.viewer_has_focus(window, cx) {
                     this.hold_viewer_focus(window, cx);
                     cx.stop_propagation();

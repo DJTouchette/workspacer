@@ -20,14 +20,20 @@ pub(crate) fn composer_send_state(can_send: bool, deciding: bool) -> (ButtonVari
     }
 }
 
-/// Stop, Deny and Discard interrupt or remove: always Destructive, never
-/// the brand-blue Primary.
+/// Stop and Discard interrupt or remove: Bordered with the danger label,
+/// never the brand-blue Primary. (R8.2: Deny is a neutral Bordered.)
 pub(crate) fn stop_variant() -> ButtonVariant {
     ButtonVariant::Destructive
 }
 
-/// R7.2 The three button tiers. Every verb has one ([`tier`]); a surface
-/// never picks a tier by hand.
+/// R8.2/R8.3: the positive answer of a destructive decision once its first
+/// press armed it ("Press again to delete"): the one filled red button.
+pub(crate) fn armed_variant() -> ButtonVariant {
+    tier(Verb::ConfirmDelete)
+}
+
+/// R7.2 The three button tiers, plus R8.2's Danger. Every verb has one
+/// ([`tier`]); a surface never picks a tier by hand.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tier {
     /// The one action a focused region exists for (`ButtonVariant::Primary`).
@@ -37,6 +43,8 @@ pub(crate) enum Tier {
     Bordered,
     /// Quiet actions (`Tertiary`).
     Text,
+    /// R8.2: filled red (`Danger`), only on an armed destructive confirm.
+    Danger,
 }
 
 /// R7.2: every verb a decision, the composer or a page header offers.
@@ -67,11 +75,16 @@ pub(crate) enum Verb {
     PageAction,
     /// Discard, Remove, End: removes something.
     Remove,
+    /// R8.2: a container's one forward action that is not an answer:
+    /// Commit, Ask agent to fix, Start.
+    Forward,
+    /// R8.3: the armed second press of a destructive decision.
+    ConfirmDelete,
 }
 
 impl Verb {
     /// Every verb, for the table in `design-system.md` and its test.
-    pub(crate) const ALL: [Verb; 12] = [
+    pub(crate) const ALL: [Verb; 14] = [
         Self::Send,
         Self::Allow,
         Self::AllowVariant,
@@ -84,12 +97,15 @@ impl Verb {
         Self::Nudge,
         Self::PageAction,
         Self::Remove,
+        Self::Forward,
+        Self::ConfirmDelete,
     ];
 
     /// The verb's tier.
     pub(crate) fn tier(self) -> Tier {
         match self {
-            Self::Send | Self::Allow => Tier::Filled,
+            Self::Send | Self::Allow | Self::Forward => Tier::Filled,
+            Self::ConfirmDelete => Tier::Danger,
             Self::AllowVariant
             | Self::Deny
             | Self::KeepPlanning
@@ -102,11 +118,12 @@ impl Verb {
 }
 
 /// R7.2: the button variant a verb draws in. A Bordered verb that stops or
-/// removes takes the red label (`Destructive`).
+/// removes takes the red label (`Destructive`); R8.2: Deny is neutral.
 pub(crate) fn tier(verb: Verb) -> ButtonVariant {
     match (verb.tier(), verb) {
         (Tier::Filled, _) => ButtonVariant::Primary,
-        (Tier::Bordered, Verb::Deny | Verb::Stop | Verb::Remove) => ButtonVariant::Destructive,
+        (Tier::Danger, _) => ButtonVariant::Danger,
+        (Tier::Bordered, Verb::Stop | Verb::Remove) => ButtonVariant::Destructive,
         (Tier::Bordered, _) => ButtonVariant::Secondary,
         (Tier::Text, _) => ButtonVariant::Tertiary,
     }
@@ -137,8 +154,21 @@ mod tests {
                     "{verb:?}"
                 ),
                 Tier::Text => assert_eq!(v, ButtonVariant::Tertiary, "{verb:?}"),
+                Tier::Danger => assert_eq!(v, ButtonVariant::Danger, "{verb:?}"),
             }
         }
+        // R8.2: Deny is a neutral Bordered; only the armed confirm is
+        // filled red; every forward action is Filled.
+        assert_eq!(tier(Verb::Deny), ButtonVariant::Secondary);
+        assert_eq!(armed_variant(), ButtonVariant::Danger);
+        assert_eq!(
+            Verb::ALL
+                .iter()
+                .filter(|v| tier(**v) == ButtonVariant::Danger)
+                .count(),
+            1
+        );
+        assert_eq!(tier(Verb::Forward), ButtonVariant::Primary);
         // The examples R7.2 names.
         assert_eq!(Verb::Send.tier(), Tier::Filled);
         assert_eq!(Verb::Allow.tier(), Tier::Filled);
@@ -148,9 +178,10 @@ mod tests {
         // Only the focused region fills.
         assert_eq!(region_variant(Verb::Allow, true), ButtonVariant::Primary);
         assert_eq!(region_variant(Verb::Allow, false), ButtonVariant::Secondary);
+        assert_eq!(region_variant(Verb::Deny, false), ButtonVariant::Secondary);
         assert_eq!(
-            region_variant(Verb::Deny, false),
-            ButtonVariant::Destructive
+            region_variant(Verb::ConfirmDelete, false),
+            ButtonVariant::Danger
         );
     }
 

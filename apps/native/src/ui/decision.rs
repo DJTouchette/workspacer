@@ -8,13 +8,16 @@
 //! - the agent's reason, the full request (a long or multi-line command,
 //!   wrapped, in mono), where it would run (folder and host) and, when one
 //!   is plain from the request, a risk cue ([`risk`]);
-//! - Allow (Primary) and Deny (Destructive) side by side on one line,
-//!   never stacked, even in a narrow Fleet tile;
+//! - Allow (Primary) and Deny (a neutral Bordered, R8.2) side by side on
+//!   one line, never stacked, even in a narrow Fleet tile; a destructive
+//!   request's Allow arms on the first press and turns into the filled red
+//!   Danger "Press again to delete" (R8.3; Esc cancels);
 //! - each "Always allow" as a short Tertiary button with the exact rule
 //!   and scope it saves beside it ([`Grant`]), then Details, which expands
 //!   *below* itself and shows only what the card does not already say;
 //! - number keys as keycaps only while this decision takes them (the top
-//!   decision in the dock, the focused Fleet tile).
+//!   decision in the dock, the focused Fleet tile), and only after the
+//!   keyboard was used (R8.2, [`Workspace::keycaps`]).
 //!
 //! Callers describe the decision and hand in click handlers; this module
 //! owns the layout, the button tiers and the keycaps. Design v2 only.
@@ -341,6 +344,9 @@ pub(crate) const CONFIRM_TIP: &str = "It deletes something: press Allow (or 1) t
 #[derive(Default)]
 pub(crate) struct Arming {
     pub(crate) armed: Option<String>,
+    /// R8.2: whether the last input was a key (keycaps show only then); a
+    /// pointer press turns it off.
+    pub(crate) keyboard: bool,
 }
 
 /// The arming key of `session`'s request `card` (or its session alone).
@@ -377,7 +383,62 @@ impl Workspace {
         let deciding = self
             .selected_session()
             .is_some_and(|s| self.decision_takes_composer(s));
-        actions::region_variant(actions::Verb::Allow, !deciding)
+        actions::region_variant(actions::Verb::Forward, !deciding)
+    }
+
+    /// R8.2: whether a decision shows its keycaps: only the `focused` one,
+    /// and only once the keyboard is in use (the last input was a key).
+    pub(crate) fn keycaps(&self, focused: bool) -> bool {
+        focused && self.arming.keyboard
+    }
+
+    /// R8.2: a key went down (seen by the window's keystroke interceptor,
+    /// before any binding takes it): keycaps may show.
+    pub(crate) fn note_key_input(&mut self, keystroke: &gpui::Keystroke, cx: &mut Context<Self>) {
+        // A bare modifier is no keyboard use of its own.
+        if matches!(
+            keystroke.key.as_str(),
+            "shift" | "control" | "alt" | "platform" | "function"
+        ) {
+            return;
+        }
+        if !self.arming.keyboard {
+            self.arming.keyboard = true;
+            cx.notify();
+        }
+    }
+
+    /// R8.2: a pointer click ended: the keycaps step back. On release, not
+    /// press, so the button under the pointer never moves mid-click.
+    pub(crate) fn note_pointer_input(
+        &mut self,
+        _: &gpui::MouseUpEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.arming.keyboard {
+            self.arming.keyboard = false;
+            cx.notify();
+        }
+    }
+
+    /// Esc on a decision's own step, before anything else takes it: R8.3
+    /// cancels an armed destructive confirm; R8.5 closes the Fleet's sort
+    /// menu, then its Details sheet; a job's "Remove job and history".
+    /// Design v2 only. Whether it took the Esc.
+    pub(crate) fn escape_decision(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.design().is_v2() {
+            return false;
+        }
+        let fleet = self.screen == Screen::Fleet;
+        let took = self.arming.armed.take().is_some()
+            || (self.screen == Screen::Jobs && self.extras.job_confirm_remove.take().is_some())
+            || (fleet && std::mem::take(&mut self.fleet.menu))
+            || (fleet && self.fleet.details.take().is_some());
+        if took {
+            cx.notify();
+        }
+        took
     }
 
     /// Whether the request `key` waits for its second press.
@@ -640,6 +701,10 @@ pub(crate) struct Decision {
     /// Variants of the positive answer ("Approve · run with Codex", "Allow
     /// all 3"): Bordered, on Shift+1 (R7.1), never a number.
     pub alternates: Vec<Choice>,
+    /// R8.3: the agent's limit is hit: the first alternate is what can run
+    /// now ("Approve · run with Codex"), so it takes the Filled tier and
+    /// leads; the positive answer, which would only wait, is Bordered.
+    pub runnable_first: bool,
     /// "Always allow" grants, each with its exact rule and scope. Only the
     /// first takes slot 3.
     pub grants: Vec<Grant>,
@@ -695,9 +760,10 @@ impl Decision {
             filled: true,
             show_allow: true,
             alternates: Vec::new(),
+            runnable_first: false,
             grants: Vec::new(),
             deny: None,
-            deny_variant: ButtonVariant::Destructive,
+            deny_variant: actions::tier(actions::Verb::Deny),
             deny_note: None,
             reply: None,
             reply_field: None,
@@ -819,12 +885,28 @@ impl Decision {
         out
     }
 
+    /// R8.3: whether the first alternate leads (the limit is hit).
+    fn runs_alternate(&self) -> bool {
+        self.runnable_first && !self.alternates.is_empty()
+    }
+
+    /// The tier of alternate `ix` as drawn: the variant's Bordered, or
+    /// (R8.3) the Filled runnable action.
+    fn alternate_variant(&self, ix: usize) -> ButtonVariant {
+        if ix == 0 && self.runs_alternate() && self.allow_primary && self.filled {
+            ButtonVariant::Primary
+        } else {
+            actions::tier(actions::Verb::AllowVariant)
+        }
+    }
+
     /// The tier of the positive answer as drawn (R7.2).
     fn allow_variant(&self) -> ButtonVariant {
         if self.armed && self.risk.is_some_and(Risk::confirms) {
-            // Armed: red, "Press again to delete".
-            ButtonVariant::Destructive
-        } else if self.allow_primary && self.filled {
+            // R8.2/R8.3 Armed: the filled red Danger, "Press again to
+            // delete", whatever the region's focus.
+            actions::armed_variant()
+        } else if self.allow_primary && self.filled && !self.runs_alternate() {
             ButtonVariant::Primary
         } else {
             ButtonVariant::Secondary
@@ -983,11 +1065,12 @@ impl Decision {
         } else {
             self.alternates
                 .iter()
-                .map(|c| c.render(actions::tier(actions::Verb::AllowVariant), keys, live, p))
+                .enumerate()
+                .map(|(ix, c)| c.render(self.alternate_variant(ix), keys, live, p))
                 .collect()
         };
         // R7.1: Deny with note, a visible Text button (slot 4).
-        let tight = self.tight && self.frame == Frame::Inline;
+        let tight = self.tight && matches!(self.frame, Frame::Inline | Frame::Row);
         let deny_note = self.deny_note.as_ref().filter(|_| !noting).map(|c| {
             if tight {
                 let mut c = c.clone();
@@ -1026,12 +1109,32 @@ impl Decision {
                 .gap(px(t.space.sm))
                 .children(pair)
                 .children(alternates)
-                .children(deny_note);
+                .children(deny_note)
+                // R8.4: Details last, at the right, as on every card.
+                .children(details_toggle.filter(|_| !noting));
         }
-        let answer = (pair.is_some() || !alternates.is_empty()).then(|| {
+        // R8.4: Details at the right. With nothing else for the quiet row
+        // (no grant, no Deny with note), it ends the answer row instead of
+        // sitting alone on a line of its own.
+        let answers = pair.is_some() || !alternates.is_empty();
+        let lone =
+            !noting && self.grants.is_empty() && deny_note.is_none() && reply.is_none() && answers;
+        let (answer_details, details_toggle) = if lone {
+            (details_toggle, None)
+        } else {
+            (None, details_toggle)
+        };
+        let answer = answers.then(|| {
+            let lead = self.runs_alternate();
+            let (first, rest): (Vec<_>, Vec<_>) = alternates
+                .into_iter()
+                .enumerate()
+                .partition(|(ix, _)| lead && *ix == 0);
             primitives::waiting_actions(p)
+                .children(first.into_iter().map(|(_, c)| c))
                 .children(pair)
-                .children(alternates)
+                .children(rest.into_iter().map(|(_, c)| c))
+                .children(answer_details.map(|d| div().ml_auto().flex_shrink_0().child(d)))
         });
         // Then the quiet row: each grant with its exact rule and scope,
         // Deny with note, and Details (it decides nothing) at the end.
@@ -1081,7 +1184,10 @@ impl Decision {
                         })
                         .children(reply.map(|d| div().flex_shrink_0().child(d)))
                         .children(deny_note.map(|d| div().flex_shrink_0().child(d)))
-                        .children(details_toggle.map(|d| div().flex_shrink_0().child(d)))
+                        .children(
+                            // R8.4: Details at the right on every surface.
+                            details_toggle.map(|d| div().ml_auto().flex_shrink_0().child(d)),
+                        )
                 },
             );
 
@@ -1166,8 +1272,16 @@ pub(crate) mod audit {
         pub selector: String,
         pub frame: Frame,
         pub keys: Vec<(String, Answer)>,
-        /// Filled (Primary) buttons it drew.
+        /// Filled (Primary or the armed Danger) buttons it drew.
         pub filled: usize,
+        /// R8.3: whether it is destructive (takes two presses) and armed.
+        pub confirms: bool,
+        pub armed: bool,
+        /// R8.2: the variant its positive answer and its Deny drew in.
+        pub allow: Option<ButtonVariant>,
+        pub deny: Option<ButtonVariant>,
+        /// R8.4: its parts, whatever its focus: (Deny with note, Details).
+        pub parts: (bool, bool),
     }
 
     thread_local! {
@@ -1176,17 +1290,23 @@ pub(crate) mod audit {
 
     pub(super) fn record(d: &Decision) {
         let noting = d.note.is_some();
-        let filled =
-            usize::from(d.show_allow && !noting && d.allow_variant() == ButtonVariant::Primary)
-                + usize::from(
-                    !noting && d.deny.is_some() && d.deny_variant == ButtonVariant::Primary,
-                );
+        let fill = |v: ButtonVariant| matches!(v, ButtonVariant::Primary | ButtonVariant::Danger);
+        let filled = usize::from(d.show_allow && !noting && fill(d.allow_variant()))
+            + usize::from(!noting && d.deny.is_some() && fill(d.deny_variant))
+            + (0..d.alternates.len())
+                .filter(|ix| !noting && fill(d.alternate_variant(*ix)))
+                .count();
         DRAWN.with(|v| {
             v.borrow_mut().push(Drawn {
                 selector: d.selector.to_string(),
                 frame: d.frame,
                 keys: d.key_map(),
                 filled,
+                confirms: d.risk.is_some_and(Risk::confirms),
+                armed: d.armed && d.risk.is_some_and(Risk::confirms),
+                allow: (d.show_allow && !noting).then(|| d.allow_variant()),
+                deny: d.deny.as_ref().map(|_| d.deny_variant),
+                parts: (d.deny_note.is_some(), d.details.is_some()),
             })
         });
     }

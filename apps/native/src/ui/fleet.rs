@@ -76,6 +76,9 @@ pub(super) struct FleetUi {
     pub(super) grants: Vec<super::grants::Granted>,
     /// r6-decisions (R6.7): the order of the tiles.
     pub(super) sort: Sort,
+    /// r8-decisions (R8.5): the header's overflow menu (it holds the sort)
+    /// is open.
+    pub(super) menu: bool,
     /// r6-decisions (R6.7): while the Fleet is on screen the sidebar is its
     /// rail; this holds whether it was collapsed before, to restore on the
     /// way out.
@@ -189,6 +192,47 @@ pub(crate) fn step(at: usize, count: usize, columns: usize, dir: Move) -> usize 
     }
 }
 
+/// r8-decisions (R8.5): [`step`] over the Fleet's two sections, each laid
+/// out in `columns` flowing columns (card `i` in column `i % columns`): the
+/// Needs-you band (`band` cards) above, the rest below. Left and Right walk
+/// the reading order; Up and Down keep the column inside a section and
+/// cross between the band's last row and the rest's first in the same
+/// column. Nothing wraps.
+pub(crate) fn step_band(at: usize, band: usize, count: usize, columns: usize, dir: Move) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let at = at.min(count - 1);
+    let band = band.min(count);
+    let cols = columns.max(1);
+    let (start, len) = if at < band {
+        (0, band)
+    } else {
+        (band, count - band)
+    };
+    let local = at - start;
+    match dir {
+        Move::Left | Move::Right => step(at, count, cols, dir),
+        Move::Down if local + cols < len => at + cols,
+        Move::Down if at < band && count > band => band + (local % cols).min(count - band - 1),
+        Move::Down => at,
+        Move::Up if local >= cols => at - cols,
+        Move::Up if at >= band && band > 0 => {
+            let col = local % cols;
+            (0..band)
+                .rev()
+                .find(|j| j % cols == col)
+                .unwrap_or(band - 1)
+        }
+        Move::Up => at,
+    }
+}
+
+/// r8-decisions (R8.6): the Fleet's one-line subtitle (and its nav item's
+/// tooltip).
+pub(crate) const FLEET_SUBTITLE: &str =
+    "Every active session on one screen. Answer requests without opening each one.";
+
 /// The Fleet's filter (R4.7): Needs you only for a burst of asks, To
 /// review (r8-attention, R8.1: its own filter, never folded into Needs
 /// you), Active (both, and Working: the default) or All.
@@ -212,10 +256,6 @@ pub(crate) fn shown(bucket: Bucket, filter: Filter) -> bool {
         Filter::All => true,
     }
 }
-
-/// r8-attention (R8.6): what the Fleet is for, in a newcomer's words: the
-/// page's subtitle leads with it and the nav item's tooltip says it.
-pub(crate) const FLEET_DESCRIPTION: &str = "Every live session at once";
 
 /// The header's one-line count of the fleet: "3 need you · 1 to review ·
 /// 3 working · 5 idle · 20 ended" (empty groups left out). Each number is
@@ -860,7 +900,8 @@ impl Workspace {
             .as_ref()
             .and_then(|id| slots.iter().position(|s| s == id))
             .unwrap_or(0);
-        let at = step(from, slots.len(), self.fleet.columns, dir);
+        let band = fleet_band(&tiles, &self.fleet_jobs());
+        let at = step_band(from, band, slots.len(), self.fleet.columns, dir);
         self.fleet.focus = Some(slots[at].clone());
         cx.notify();
     }
@@ -1228,18 +1269,49 @@ impl Workspace {
                     cx.notify();
                 }))
         };
+        // r8-decisions (R8.5): the sort lives in the header's overflow menu.
         let sort = self.fleet.sort;
         let order = |id: &'static str, label: &'static str, on: Sort| {
-            system::Segment::new(id, label)
-                .selected(sort == on)
-                .render(&p)
+            primitives::menu_item(id, label, None, false, true, &p)
                 .debug_selector(move || id.into())
+                .when(sort == on, |d| {
+                    d.child(
+                        Icon::new(IconName::Check)
+                            .size(px(t.icon.md))
+                            .text_color(rgb(p.roles.text_secondary)),
+                    )
+                })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.fleet.sort = on;
+                    this.fleet.menu = false;
                     window.focus(&this.focus);
                     cx.notify();
                 }))
         };
+        let overflow = system::anchored_menu(
+            primitives::overflow_trigger("fleet-more", &p)
+                .debug_selector(|| "fleet-more".into())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.fleet.menu = !this.fleet.menu;
+                    cx.notify();
+                })),
+            self.fleet.menu.then(|| {
+                primitives::menu(&p)
+                    .debug_selector(|| "fleet-menu".into())
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        this.fleet.menu = false;
+                        cx.notify();
+                    }))
+                    .child(order("fleet-sort-status", "Sort by status", Sort::Status))
+                    .child(order(
+                        "fleet-sort-waiting",
+                        "Sort by waiting longest",
+                        Sort::Waiting,
+                    ))
+            }),
+            system::MenuAnchor::BelowEnd,
+            &p,
+        );
         let view = |id: &'static str, label: &'static str, on: bool| {
             system::Segment::new(id, label)
                 .selected(table == on)
@@ -1257,9 +1329,7 @@ impl Workspace {
         let header = primitives::page_header(
             back,
             "Fleet",
-            // r8-attention (R8.6): the subtitle says what the page is for,
-            // then the counts in the sidebar's words.
-            Some(wks_native::format::meta([FLEET_DESCRIPTION.to_owned(), summary(counts)]).into()),
+            Some(FLEET_SUBTITLE.into()),
             vec![
                 div()
                     .flex()
@@ -1269,15 +1339,6 @@ impl Workspace {
                         system::segmented_control(&p)
                             .child(view("fleet-view-grid", "Grid", false))
                             .child(view("fleet-view-table", "Table", true)),
-                    )
-                    .child(
-                        system::segmented_control(&p)
-                            .child(order("fleet-sort-status", "By status", Sort::Status))
-                            .child(order(
-                                "fleet-sort-waiting",
-                                "Waiting longest",
-                                Sort::Waiting,
-                            )),
                     )
                     .child(
                         system::segmented_control(&p)
@@ -1301,6 +1362,7 @@ impl Workspace {
                             ))
                             .child(filter("fleet-filter-all", "All", Filter::All, all_count)),
                     )
+                    .child(overflow)
                     .into_any_element(),
             ],
             &p,
@@ -1379,9 +1441,13 @@ impl Workspace {
                     .iter()
                     .take_while(|t| t.bucket == Bucket::NeedsYou)
                     .count();
-                let mut cards: Vec<AnyElement> = Vec::new();
+                // r8-decisions (R8.5): what needs you (sessions, then job
+                // proposals) is a full-width band at the top; everything
+                // else is compact tiles below it. Both flow down their
+                // columns (masonry), so a tall card leaves no hole.
+                let mut band: Vec<AnyElement> = Vec::new();
                 for (n, tile) in tiles.iter().enumerate().take(waiting) {
-                    cards.push(self.render_fleet_tile(
+                    band.push(self.render_fleet_tile(
                         n,
                         tile,
                         n == focus,
@@ -1390,7 +1456,7 @@ impl Workspace {
                     ));
                 }
                 for (ix, job) in jobs.iter().enumerate() {
-                    cards.push(self.render_fleet_job(
+                    band.push(self.render_fleet_job(
                         ix,
                         job,
                         &all_jobs,
@@ -1398,8 +1464,9 @@ impl Workspace {
                         cx,
                     ));
                 }
+                let mut rest: Vec<AnyElement> = Vec::new();
                 for (n, tile) in tiles.iter().enumerate().skip(waiting) {
-                    cards.push(self.render_fleet_tile(
+                    rest.push(self.render_fleet_tile(
                         n,
                         tile,
                         n == focus,
@@ -1407,17 +1474,68 @@ impl Workspace {
                         cx,
                     ));
                 }
-                // R7.6: each card is as tall as its content; a row without
-                // a decision does not stretch to match one with it.
-                system::tile_rows(cols, cards, &p)
+                let (band_count, rest_count) = (band.len(), rest.len());
+                let section = |selector: &'static str| {
+                    div()
+                        .debug_selector(move || selector.into())
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .gap(px(t.space.md))
+                };
+                div()
                     .debug_selector(|| "fleet-grid".into())
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(t.space.xxl))
+                    .when(band_count > 0, |d| {
+                        d.child(
+                            section("fleet-band")
+                                // r8-attention (R8.1): the band says the
+                                // one Needs-you number, the sidebar's and
+                                // the summary's, never a tally of cards.
+                                .child(primitives::section_header(
+                                    "Needs you",
+                                    Some(primitives::count_text(needs).into()),
+                                    &p,
+                                ))
+                                .child(system::tile_columns(cols, band, &p)),
+                        )
+                    })
+                    .when(rest_count > 0, |d| {
+                        d.child(
+                            section("fleet-rest")
+                                .when(band_count > 0, |d| {
+                                    d.child(primitives::section_header(
+                                        "Everything else",
+                                        Some(rest_count.to_string().into()),
+                                        &p,
+                                    ))
+                                })
+                                .child(system::tile_columns(cols, rest, &p)),
+                        )
+                    })
                     .into_any_element()
             };
             div()
                 .flex()
                 .flex_col()
                 .gap(px(t.space.lg))
-                .when(needs == 0, |d| {
+                // r8-decisions (R8.5): the counts once, in the lexicon (the
+                // header carries the page's subtitle).
+                // r8-attention (R8.1): All clear only when neither want-you
+                // state has a member.
+                .when(needs + to_review > 0, |d| {
+                    d.child(
+                        div()
+                            .debug_selector(|| "fleet-summary".into())
+                            .text_size(px(t.text.body))
+                            .text_color(rgb(p.roles.text_secondary))
+                            .child(summary(counts)),
+                    )
+                })
+                .when(needs + to_review == 0, |d| {
                     d.child(
                         div()
                             .debug_selector(|| "fleet-all-clear".into())
@@ -1437,12 +1555,6 @@ impl Workspace {
                 .child(content)
                 .into_any_element()
         };
-        // R7.1: the hint lists exactly the keys the focused card shows.
-        let caps = match self.fleet_cursor(&tiles, &jobs) {
-            Cursor::Tile(at) => focused_caps(&tiles, at),
-            Cursor::Job(_) => vec!["1".to_owned(), "2".to_owned()],
-            Cursor::None => Vec::new(),
-        };
         // r5-shell (R5.4): the shared PageShell, at the grid's width.
         let content = system::page_shell(
             header,
@@ -1452,20 +1564,23 @@ impl Workspace {
                 .flex_col()
                 .gap(px(t.space.xxl))
                 .child(body)
-                .child(self.fleet_hints(&caps, table)),
+                .child(self.fleet_hints(table)),
             system::PageWidth::Grid,
             &p,
         )
         .debug_selector(|| "fleet-page".into());
+        // R8.5: Details open in a side sheet over the page, so the grid
+        // does not reflow.
+        let sheet = self.render_fleet_sheet(&tiles, cx);
         self.page_view("fleet-scroll", f.grid_max, false, content)
+            .children(sheet)
     }
 
-    /// The keys, once, under the grid: faint keycaps and plain words. The
-    /// answer keys are exactly the focused card's (R7.1), and show only
-    /// while it asks.
-    fn fleet_hints(&self, caps: &[String], table: bool) -> Div {
+    /// The keys, once, under the grid: faint keycaps and plain words.
+    /// r8-decisions (R8.2): a decision's own keys show on the focused card
+    /// only, never repeated here.
+    fn fleet_hints(&self, table: bool) -> Div {
         let p = self.palette();
-        let t = p.tokens;
         let hint = |keys: &[&'static str], label: &'static str| system::key_hint(keys, label, &p);
         system::key_hints([], &p)
             .debug_selector(|| "fleet-hints".into())
@@ -1475,20 +1590,6 @@ impl Workspace {
                 hint(&["←", "↑", "↓", "→"], "Move")
             })
             .child(hint(&["↵"], "Open"))
-            .when(!caps.is_empty(), |d| {
-                d.child(
-                    div()
-                        .debug_selector(|| "fleet-hint-answer".into())
-                        .flex()
-                        .items_center()
-                        .gap(px(t.space.xs))
-                        .children(
-                            caps.iter()
-                                .map(|k| primitives::keycap_hint(k.clone(), false, &p)),
-                        )
-                        .child(div().pl(px(t.space.xxs)).child("Answer the focused ask")),
-                )
-            })
             .child(hint(&["Esc"], "Back"))
     }
 
@@ -1634,44 +1735,52 @@ impl Workspace {
                 })
                 .collect()
         };
+        let mut lines = lines;
         let ask = tile
             .ask
             .as_ref()
             .map(|ask| self.render_fleet_ask(n, tile, ask, focused, batch, cx));
         // R6.2: a stalled subagent behind another ask still offers its
         // Nudge / Stop / View output (unkeyed: the keys answer the ask).
-        let stall = tile
+        // r8-decisions (R8.5): on the subagent's own line, each naming
+        // it ("Stop Trace session"), so no action row floats without an
+        // owner.
+        if let Some(stall) = tile
             .stall
             .as_ref()
             .filter(|_| !matches!(tile.ask, Some(Ask::Stalled(_)) | None))
-            .map(|stall| {
-                let mut decision = self.stall_decision(
-                    stall,
-                    &format!("fleet-stall-{n}"),
-                    super::decision::Frame::Row,
-                    self.fleet_stall_key(stall.clone()),
-                    cx,
-                );
-                decision.keys = false;
-                // One Primary per card: the ask above owns it.
-                decision.allow_primary = false;
-                // r7-int: a tight tile says "Nudge" (its tooltip says the
-                // rest), so the row never runs out of the tile.
-                if self.fleet_tight() {
-                    decision.allow.label = "Nudge".into();
-                }
-                // Its line above says what stalled; this row acts on it.
-                div()
-                    .debug_selector(move || format!("fleet-stall-row-{n}"))
-                    .w_full()
-                    .min_w_0()
-                    .flex()
-                    .child(decision.render(&p))
-            });
+        {
+            let mut decision = self.stall_decision(
+                stall,
+                &format!("fleet-stall-{n}"),
+                super::decision::Frame::Row,
+                self.fleet_stall_key(stall.clone()),
+                cx,
+            );
+            decision.keys = false;
+            // One Primary per card: the ask above owns it.
+            decision.allow_primary = false;
+            name_stall_actions(&mut decision, stall);
+            let row = div()
+                .debug_selector(move || format!("fleet-stall-row-{n}"))
+                .w_full()
+                .min_w_0()
+                .flex()
+                .pl(px(t.space.xl))
+                .child(decision.render(&p))
+                .into_any_element();
+            let own = |l: &Line| l.fault == Some(StatusKind::NotResponding);
+            let at = tile
+                .lines
+                .iter()
+                .position(|l| own(l) && l.verb == stall.name)
+                .or_else(|| tile.lines.iter().position(own))
+                .map_or(lines.len(), |ix| (ix + 1).min(lines.len()));
+            lines.insert(at, row);
+        }
         // R5.4: the ask sits near the top, under the title and status; the
-        // event lines (a working tile's live tail) follow. R6.3: one accent
-        // per card: focused, the focus ring carries it and the attention
-        // bar steps aside.
+        // event lines (a working tile's live tail) follow. R8.4: focus adds
+        // its ring and changes nothing else (the attention bar stays).
         let surface = match (waiting, focused) {
             (true, false) => system::waiting_tile(&p),
             (true, true) => system::waiting_tile_focused(&p),
@@ -1697,8 +1806,7 @@ impl Workspace {
                         .flex_col()
                         .children(lines),
                 )
-            })
-            .children(stall);
+            });
         system::tile_frame(
             SharedString::from(format!("fleet-tile-{}", tile.id)),
             focused,
@@ -1778,7 +1886,7 @@ impl Workspace {
             cx,
         );
         // R7.1/R7.2: keys and the Filled Allow only on the focused card.
-        decision.keys = focused;
+        decision.keys = self.keycaps(focused);
         decision.filled = focused;
         decision.tight = self.fleet_tight();
         let focus = format!("{JOB_FOCUS}{}", job.id);
@@ -1894,22 +2002,11 @@ impl Workspace {
                     choice(format!("fleet-deny-{n}"), key, "Deny".into())
                         .tooltip("Deny this request")
                 });
-                let open = self.fleet.details.as_deref() == Some(tile.id.as_str());
-                let id = tile.id.clone();
+                // R8.5: Details open in the page's side sheet, never in
+                // place (the grid does not reflow).
                 decision.details = Some(Details::facts(
-                    Choice::new(format!("fleet-details-{n}"), "Details").on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.fleet.focus = Some(id.clone());
-                            this.fleet.details = if this.fleet.details.as_ref() == Some(&id) {
-                                None
-                            } else {
-                                Some(id.clone())
-                            };
-                            cx.notify();
-                        },
-                    )),
-                    open,
+                    self.fleet_details_toggle(format!("fleet-details-{n}"), &tile.id, cx),
+                    false,
                     "fleet-details",
                     "fleet-fact",
                     facts.clone(),
@@ -1984,20 +2081,24 @@ impl Workspace {
                 decision.headline_selector = Some(format!("fleet-headline-{n}").into());
                 decision
             }
-            Ask::Stalled(stall) => self.stall_decision(
-                stall,
-                &format!("fleet-stall-{n}"),
-                Frame::Inline,
-                self.fleet_stall_key(stall.clone()),
-                cx,
-            ),
+            Ask::Stalled(stall) => {
+                let mut decision = self.stall_decision(
+                    stall,
+                    &format!("fleet-stall-{n}"),
+                    Frame::Inline,
+                    self.fleet_stall_key(stall.clone()),
+                    cx,
+                );
+                name_stall_actions(&mut decision, stall);
+                decision
+            }
         };
         // R7.1: keycaps only on the focused tile (where the number keys
-        // go); unfocused tiles show none. R7.2: only the focused tile's
-        // positive answer is Filled; the rest are Bordered.
+        // go), and R8.2 only after keyboard use. R7.2: only the focused
+        // tile's positive answer is Filled; the rest are Bordered.
         let mut decision = decision;
         decision.tight = self.fleet_tight();
-        decision.keys = focused;
+        decision.keys = self.keycaps(focused);
         decision.filled = focused;
         div()
             .debug_selector(move || format!("fleet-ask-{n}"))
@@ -2006,6 +2107,129 @@ impl Workspace {
             .pt(px(t.space.xs))
             .child(decision.render(&p))
             .into_any_element()
+    }
+
+    /// r8-decisions (R8.5): the Details toggle of session `id`'s approval
+    /// (a tile or a table row): it opens (or closes) the side sheet.
+    fn fleet_details_toggle(
+        &self,
+        selector: String,
+        id: &str,
+        cx: &mut Context<Self>,
+    ) -> super::decision::Choice {
+        let id = id.to_owned();
+        super::decision::Choice::new(selector, "Details").on_click(cx.listener(
+            move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.fleet.focus = Some(id.clone());
+                this.fleet.details = if this.fleet.details.as_ref() == Some(&id) {
+                    None
+                } else {
+                    Some(id.clone())
+                };
+                cx.notify();
+            },
+        ))
+    }
+
+    /// r8-decisions (R8.5): the open Details as a side sheet on the page's
+    /// right edge: the request's headline, then what the card does not
+    /// already say (R7.7: the whole command, why, the access mode, what
+    /// each Always allow lets through). The grid under it stays put.
+    fn render_fleet_sheet(&self, tiles: &[Tile], cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        use super::decision::{Choice, Decision, Frame, Grant};
+        let id = self.fleet.details.as_deref()?;
+        let tile = tiles.iter().find(|t| t.id == id)?;
+        let Some(Ask::Approval {
+            headline,
+            context,
+            folder,
+            host,
+            always,
+            facts,
+            command,
+            access,
+            ..
+        }) = &tile.ask
+        else {
+            return None;
+        };
+        let p = self.palette();
+        let t = p.tokens;
+        // The rows a card's Details would show, filtered the same way.
+        let mut d = Decision::new("fleet-sheet-decision", Choice::new("-", "-"), Frame::Inline);
+        d.reason = context.clone();
+        d.command = Some(command.clone());
+        d.access = Some(access.clone());
+        d.folder = Some(folder.clone());
+        d.host = Some(host.clone());
+        d.grants = always
+            .iter()
+            .map(|(_, words, _, tip)| {
+                Grant::new(Choice::new("-", "-").tooltip(tip.clone()), words, command)
+            })
+            .collect();
+        let rows = d.detail_rows(facts.clone());
+        let place = super::decision::where_line(Some(folder), Some(host));
+        Some(
+            system::side_sheet(&p)
+                .debug_selector(|| "fleet-sheet".into())
+                .id("fleet-sheet")
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap(px(t.space.md))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap(px(t.space.xxs))
+                                .child(
+                                    div()
+                                        .text_size(px(t.text.meta))
+                                        .text_color(rgb(p.roles.text_tertiary))
+                                        .child(format!("Details · {}", tile.title)),
+                                )
+                                .child(super::decision::headline(headline, &p)),
+                        )
+                        .child(
+                            primitives::icon_button(
+                                "fleet-sheet-close",
+                                IconName::Close,
+                                "Close (Esc)",
+                                ButtonVariant::Tertiary,
+                                true,
+                                &p,
+                            )
+                            .debug_selector(|| "fleet-sheet-close".into())
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.fleet.details = None;
+                                    window.focus(&this.focus);
+                                    cx.notify();
+                                },
+                            )),
+                        ),
+                )
+                .when(!place.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_tertiary))
+                            .child(place),
+                    )
+                })
+                .child(super::decision::facts(
+                    "fleet-details",
+                    "fleet-fact",
+                    rows,
+                    &p,
+                )),
+        )
     }
 
     /// A question tile's answer field: Enter sends, Esc gives the keys back
@@ -2116,17 +2340,20 @@ impl Workspace {
         let slots = primitives::action_slots_width(4, &p);
         let cols = [
             ("Status", Col::Keep(pg.status)),
-            ("Session", Col::Flex),
+            // r8-decisions (R8.5): the Session at a fixed measure and what a
+            // row is doing folded into the one flexible column, so Needs
+            // (what you are asked, else what it is doing) is the widest.
+            ("Session", Col::Fixed(pg.when)),
             ("Project", Col::Fixed(pg.machine)),
             ("Waiting", Col::Fixed(pg.age)),
-            ("Doing", Col::Flex),
-            ("Needs", Col::Flex),
+            ("Needs · doing", Col::Flex),
             ("", Col::Keep(slots)),
         ];
         let enabled = self.view.connected && !self.view.busy;
         let text = |s: String, tone: u32| div().min_w_0().truncate().text_color(rgb(tone)).child(s);
-        // r7-int: the focused row says what it would run whole, wrapped,
-        // not cut with the rest in a tooltip.
+        // r7-int: a row says what it would run whole, wrapped, not cut with
+        // the rest in a tooltip. R8.4: every row, focused or not (focus
+        // changes only weight).
         let whole = |s: String, tone: u32| {
             div()
                 .min_w_0()
@@ -2146,7 +2373,7 @@ impl Workspace {
             // the focused row only.
             let mut decision =
                 self.job_proposal_decision(ix, job, all_jobs, "fleet-job-row", Frame::Row, cx);
-            decision.keys = focused;
+            decision.keys = self.keycaps(focused);
             decision.filled = focused;
             // R7.1: the Needs cell says what it would run, and its risk
             // ("Deletes branches"), never a bare "Approve this job?".
@@ -2175,35 +2402,38 @@ impl Workspace {
                 )
                 .child(primitives::page_cell(cols[3].1))
                 .child(
-                    // R7.1: what it would run, whole in the tooltip.
+                    // Its risk ("Deletes branches") and the ask, then (R7.1)
+                    // what it would run, whole, on every row (R8.4).
+                    // r7-qa: who proposed it is in the tooltip.
                     primitives::page_cell(cols[4].1)
-                        .id(SharedString::from(format!("fleet-job-doing-{ix}")))
-                        .debug_selector(move || format!("fleet-job-doing-{ix}"))
-                        .map(|d| {
-                            if focused {
-                                d.child(whole(need, p.roles.text_secondary))
-                            } else {
-                                d.child(text(need.clone(), p.roles.text_secondary))
-                                    .tooltip(primitives::tooltip_view(need, None, &p))
-                            }
-                        }),
-                )
-                .child(
-                    // Its risk ("Deletes branches") and the ask.
-                    // r7-qa: the ask stays whole beside the chip ("Allow…"
-                    // read as nothing); who proposed it is in the tooltip.
-                    primitives::page_cell(cols[5].1)
                         .id(SharedString::from(format!("fleet-job-need-{ix}")))
                         .debug_selector(move || format!("fleet-job-need-{ix}"))
-                        .flex()
-                        .items_center()
-                        .gap(px(t.space.sm))
-                        .children(risk.map(|r| super::decision::risk_chip(r, &p)))
                         .child(
                             div()
-                                .flex_shrink_0()
-                                .text_color(rgb(p.text))
-                                .child("Allow this job?"),
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(t.space.sm))
+                                        .pt(px(t.space.xs))
+                                        .children(risk.map(|r| super::decision::risk_chip(r, &p)))
+                                        .child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .text_color(rgb(p.text))
+                                                .child("Allow this job?"),
+                                        ),
+                                )
+                                .child(
+                                    whole(need, p.roles.text_secondary)
+                                        .debug_selector(move || format!("fleet-job-doing-{ix}"))
+                                        .font_family(super::mono_font())
+                                        .text_size(px(t.text.mono)),
+                                ),
                         )
                         .when_some(
                             Some(job.proposed_by.trim().to_owned()).filter(|b| !b.is_empty()),
@@ -2216,7 +2446,7 @@ impl Workspace {
                             },
                         ),
                 )
-                .child(primitives::page_cell(cols[6].1).child(decision.render(&p)))
+                .child(primitives::page_cell(cols[5].1).child(decision.render(&p)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.fleet.focus = Some(focus.clone());
                     cx.notify();
@@ -2248,6 +2478,7 @@ impl Workspace {
                     risk,
                     command,
                     folder,
+                    facts,
                     ..
                 }) => {
                     let key = |k: StripKey| keys.contains(&k).then(|| k.number()).flatten();
@@ -2288,14 +2519,24 @@ impl Workspace {
                                 )),
                         );
                     }
-                    // R7.1: Deny with note on the focused row (it opens
-                    // the session with the note).
-                    decision.deny_note = key(StripKey::DenyWithNote).filter(|_| focused).map(|k| {
+                    // R7.1: Deny with note (it opens the session with the
+                    // note). R8.4: on every row, focused or not; the row
+                    // says "Note" (its tooltip the rest).
+                    decision.deny_note = key(StripKey::DenyWithNote).map(|k| {
                         choice(format!("fleet-row-note-{n}"), k, "Deny with note".into()).tooltip(
                             "Deny, and tell the agent what to do instead (opens the session)",
                         )
                     });
-                    decision.keys = focused;
+                    decision.tight = true;
+                    // R8.4/R8.5: Details at the right, into the side sheet.
+                    decision.details = Some(super::decision::Details::facts(
+                        self.fleet_details_toggle(format!("fleet-row-details-{n}"), &tile.id, cx),
+                        false,
+                        "fleet-details",
+                        "fleet-fact",
+                        facts.clone(),
+                    ));
+                    decision.keys = self.keycaps(focused);
                     decision.filled = focused;
                     decision.render(&p).into_any_element()
                 }
@@ -2307,7 +2548,33 @@ impl Workspace {
                         self.fleet_stall_key(stall.clone()),
                         cx,
                     );
-                    decision.keys = focused;
+                    name_stall_actions(&mut decision, stall);
+                    decision.keys = self.keycaps(focused);
+                    decision.filled = focused;
+                    decision.render(&p).into_any_element()
+                }
+                // R8.5: a text question is answered in its row: the field
+                // sits in Needs, Send answer here.
+                Some(Ask::Question { options, .. }) if options.is_empty() => {
+                    let id = tile.id.clone();
+                    let can_send =
+                        enabled
+                            && self.fleet.answers.get(&tile.id).is_some_and(|(input, _)| {
+                                !input.read(cx).value().trim().is_empty()
+                            });
+                    let send = Choice::new(
+                        format!("fleet-row-answer-send-{n}"),
+                        super::decision::SUBMIT_ANSWER,
+                    )
+                    .enabled(can_send)
+                    .tooltip("Send the answer to the agent")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.submit_fleet_answer(&id, window, cx);
+                    }));
+                    let mut decision =
+                        Decision::new(format!("fleet-row-question-{n}"), send, Frame::Row);
+                    decision.keys = false;
                     decision.filled = focused;
                     decision.render(&p).into_any_element()
                 }
@@ -2323,7 +2590,14 @@ impl Workspace {
                                     sel.clone(),
                                     "Open",
                                     None,
-                                    ButtonVariant::Tertiary,
+                                    // R8.1/R8.5: a want-you row's one verb
+                                    // (Review rows) is Bordered; elsewhere
+                                    // the row itself opens, Open is quiet.
+                                    if tile.bucket.wants_you() {
+                                        ButtonVariant::Secondary
+                                    } else {
+                                        ButtonVariant::Tertiary
+                                    },
                                     ButtonSize::Small,
                                     enabled,
                                     &p,
@@ -2364,10 +2638,10 @@ impl Workspace {
                 Some(Ask::Approval { risk, .. }) => *risk,
                 _ => None,
             };
-            // r7-int: the focused row's whole command, under the ask, when
-            // the ask does not already say all of it.
+            // r7-int: the row's whole command, under the ask, when the ask
+            // does not already say all of it (R8.4: on every row).
             let full_command = match &tile.ask {
-                Some(Ask::Approval { command, .. }) if focused => Some(command.trim())
+                Some(Ask::Approval { command, .. }) => Some(command.trim())
                     .filter(|c| !c.is_empty() && !need.contains(*c))
                     .map(str::to_owned),
                 _ => None,
@@ -2379,6 +2653,24 @@ impl Workspace {
             let behind = match (&tile.ask, &tile.stall) {
                 (Some(Ask::Stalled(_)) | None, _) | (_, None) => None,
                 (Some(_), Some(stall)) => Some(stall.reason(now)),
+            };
+            // R8.5: a Review row's words and its newest test result.
+            let review = (tile.bucket == Bucket::Review).then(|| {
+                let session = &self.view.sessions[index];
+                (
+                    session.uncommitted.map_or_else(
+                        || "Changes to review".to_owned(),
+                        super::shell::review_reason,
+                    ),
+                    self.session_verification(session),
+                )
+            });
+            let quiet_row = need.is_empty() && review.is_none() && !doing.is_empty();
+            let answer_field = match &tile.ask {
+                Some(Ask::Question { options, .. }) if options.is_empty() => {
+                    self.fleet_answer_field(n, &tile.id, cx)
+                }
+                _ => None,
             };
             let wait = (tile.bucket == Bucket::NeedsYou)
                 .then_some(tile.since)
@@ -2415,24 +2707,43 @@ impl Workspace {
                         .debug_selector(move || format!("fleet-row-waiting-{n}"))
                         .child(text(wait, p.roles.text_secondary)),
                 ))
-                .child(primitives::page_cell(cols[4].1).child(text(doing, p.roles.text_secondary)))
                 .child(
-                    primitives::page_cell(cols[5].1)
+                    primitives::page_cell(cols[4].1)
                         .flex()
                         .items_center()
                         .gap(px(t.space.xs))
                         .children(need_risk.map(|r| super::decision::risk_chip(r, &p)))
                         .map(|d| {
-                            if !focused {
-                                return d.child(text(need, p.text));
-                            }
                             d.child(
                                 div()
                                     .flex_1()
                                     .min_w_0()
                                     .flex()
                                     .flex_col()
-                                    .child(whole(need, p.text))
+                                    // Nothing asked: what it is doing, quiet.
+                                    .when(quiet_row, |d| {
+                                        d.child(
+                                            text(doing, p.roles.text_secondary)
+                                                .debug_selector(move || {
+                                                    format!("fleet-row-doing-{n}")
+                                                }),
+                                        )
+                                    })
+                                    .when(!need.is_empty(), |d| d.child(whole(need, p.text)))
+                                    // R8.5: a Review row says what waits and
+                                    // its newest test result.
+                                    .when_some(review, |d, (words, check)| {
+                                        d.child(whole(words, p.text))
+                                            .children(check.map(|v| {
+                                                system::verification_line(&v, now, &p)
+                                                    .debug_selector(move || {
+                                                        format!("fleet-row-verification-{n}")
+                                                    })
+                                                    .pb(px(t.space.xs))
+                                            }))
+                                    })
+                                    // R8.5: a text question's answer field.
+                                    .children(answer_field)
                                     .when_some(full_command, |d, command| {
                                         d.child(
                                             whole(command, p.roles.text_secondary)
@@ -2454,7 +2765,9 @@ impl Workspace {
                                     .flex_shrink_0()
                                     .text_size(px(t.text.meta))
                                     .font_weight(FontWeight(t.weight.medium))
-                                    .text_color(rgb(p.roles.status.attention))
+                                    // R8.1: amber is Needs you's alone; a
+                                    // link like this takes the warning hue.
+                                    .text_color(rgb(p.roles.caution))
                                     .tooltip(primitives::tooltip_view(
                                         format!("Also needs you: {behind}. Open the session to Nudge or Stop it."),
                                         None,
@@ -2464,7 +2777,7 @@ impl Workspace {
                             )
                         }),
                 )
-                .child(primitives::page_cell(cols[6].1).child(actions))
+                .child(primitives::page_cell(cols[5].1).child(actions))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let tiles = this.fleet_tiles(cx);
                     if let Some(tile) = tiles.iter().find(|t| t.index == index) {
@@ -2497,37 +2810,22 @@ const TIGHT_TILE: f32 = 420.;
 /// its session id).
 const JOB_FOCUS: &str = "job:";
 
+/// r8-decisions (R8.5): a subagent's actions name it ("Nudge Trace
+/// session", "Stop Trace session").
+fn name_stall_actions(decision: &mut super::decision::Decision, stall: &super::children::Stall) {
+    let target = stall.target();
+    decision.allow.label = format!("Nudge {target}").into();
+    if let Some(stop) = decision.deny.as_mut() {
+        stop.label = format!("Stop {target}").into();
+    }
+}
+
 /// The card that has the Fleet's focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Cursor {
     Tile(usize),
     Job(usize),
     None,
-}
-
-/// R7.1: the keycaps the focused tile `at` shows, in the order of the
-/// one key map (a batch's Shift+1 last).
-fn focused_caps(tiles: &[Tile], at: usize) -> Vec<String> {
-    let Some(tile) = tiles.get(at) else {
-        return Vec::new();
-    };
-    let mut caps: Vec<String> = match &tile.ask {
-        Some(Ask::Approval { keys, .. }) => keys
-            .iter()
-            .filter_map(StripKey::number)
-            .map(|n| n.to_string())
-            .collect(),
-        Some(Ask::Question { options, .. }) if !options.is_empty() => {
-            (1..=options.len().min(5)).map(|n| n.to_string()).collect()
-        }
-        Some(Ask::Question { .. } | Ask::Open { .. }) => vec!["1".to_owned()],
-        Some(Ask::Stalled(_)) => vec!["1".to_owned(), "2".to_owned()],
-        None => Vec::new(),
-    };
-    if batch_of(tiles, at).len() > 1 {
-        caps.push(super::decision::VARIANT_KEY.to_owned());
-    }
-    caps
 }
 
 /// R7.1: what a job proposal would run, for the table's Needs cell ("Run
@@ -2537,6 +2835,16 @@ fn job_need(job: &wks_native::jobs::Job) -> String {
         (_, Some(command)) => format!("Run {}", command.trim()),
         (sentence, None) => sentence,
     }
+}
+
+/// r8-decisions (R8.5): how many cards the Needs-you band holds: the tiles
+/// that wait on you, then the job proposals.
+fn fleet_band(tiles: &[Tile], jobs: &[wks_native::jobs::Job]) -> usize {
+    tiles
+        .iter()
+        .take_while(|t| t.bucket == Bucket::NeedsYou)
+        .count()
+        + jobs.len()
 }
 
 /// Every focusable Fleet card's focus id in on-screen order: the tiles
@@ -2582,6 +2890,26 @@ mod tests {
         assert_eq!(step(4, 5, 3, Move::Up), 1);
         assert_eq!(step(1, 5, 3, Move::Up), 1);
         assert_eq!(step(0, 0, 3, Move::Down), 0);
+    }
+
+    #[test]
+    fn focus_crosses_between_the_band_and_the_rest_by_column() {
+        // Band: 0 1 2 / 3; rest: 4 5 6 / 7 (3 columns, flowing).
+        assert_eq!(step_band(1, 4, 8, 3, Move::Down), 5, "down its own column");
+        assert_eq!(step_band(3, 4, 8, 3, Move::Down), 4);
+        assert_eq!(step_band(2, 4, 8, 3, Move::Down), 6);
+        assert_eq!(step_band(4, 4, 8, 3, Move::Down), 7);
+        assert_eq!(
+            step_band(5, 4, 8, 3, Move::Up),
+            1,
+            "same column in the band"
+        );
+        assert_eq!(step_band(4, 4, 8, 3, Move::Up), 3);
+        assert_eq!(step_band(7, 4, 8, 3, Move::Up), 4);
+        assert_eq!(step_band(3, 4, 8, 3, Move::Right), 4);
+        assert_eq!(step_band(0, 0, 3, 3, Move::Down), 0);
+        assert_eq!(step_band(1, 2, 4, 3, Move::Down), 3, "rest column 1");
+        assert_eq!(step_band(3, 2, 4, 3, Move::Up), 1);
     }
 
     #[test]

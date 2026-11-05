@@ -186,14 +186,16 @@ Each entry gives:
 | `Primary` | Filled `primary`, `on_primary` label | One per surface: the forward action |
 | `Secondary` | `border_strong` hairline, no fill | Peers |
 | `Tertiary` | Text only | Rows, toolbars, back links |
-| `Destructive` | Secondary shape, `error` label | Stop, Deny, Discard, End, Remove. Never brand blue |
+| `Destructive` | Secondary shape, `error` label | Stop, Discard, End, Remove. Never brand blue |
+| `Danger` | Filled `error`, the theme ink that reads best on it (`danger_label`) | R8.2: **only** the armed second step of a destructive confirm ("Press again to delete", "Remove job and history") |
 
-R7.2: these four variants draw three tiers: Filled (`Primary`), Bordered (`Secondary`, or `Destructive` with its red label) and Text (`Tertiary`). Each verb's tier is fixed in [the tier table](#button-tiers-r72) (`system::actions::Verb`).
+R7.2/R8.2: these variants draw three tiers plus Danger: Filled (`Primary`), Bordered (`Secondary`, or `Destructive` with its red label), Text (`Tertiary`), and Danger (`Danger`, `actions::armed_variant()`). Each verb's tier is fixed in [the tier table](#button-tiers-r72-r82) (`system::actions::Verb`). Deny is a **neutral** Bordered (`Secondary`): the red label is kept for what removes something, and the only red fill is an armed confirm.
 
 - **States:** Rest, Hover, Pressed, Disabled, Focus.
   - Primary moves away from its label on hover and press.
   - Destructive hover and press take the neutral wash, and the label lifts `danger_lift` toward `text`.
-  - Disabled Primary is a `selected` fill with a tertiary label.
+  - Disabled Primary (and Danger) is a `selected` fill with a tertiary label.
+  - Danger leans its fill toward its label on hover (`wash.hover`) and press (`wash.pressed`). A keycap on it takes the label colour (`keycap_in`).
   - Focus is the 2px `focus` ring.
 - **Tokens:** `layout.control_height_sm` 28 (`Small`) or `control_height` 36 (`Large`), `radius.control`, `text.body` or `subheading` / `weight.medium`, `wash.*`.
 - **API** (`primitives.rs`):
@@ -206,13 +208,15 @@ R7.2: these four variants draw three tiers: Filled (`Primary`), Bordered (`Secon
 - **State rules** (`system::actions`):
   - `send_state(can_send) -> (ButtonVariant::Primary, can_send)`
   - `stop_variant() -> ButtonVariant::Destructive`
+  - `armed_variant() -> ButtonVariant::Danger` (R8.3)
 - **Do:**
-  - Use one Primary per surface.
+  - Use one Primary per surface. R8.2: every container's one forward action (Send, Commit, Ask agent to fix, Start, Allow; `Verb::Forward` for those that are not an answer) is Filled when it is enabled. The one exception: while a decision is pending, the decision holds the single Filled button.
   - Make Send and Queue Primary when they can send, and the *disabled* Primary when they cannot.
   - Use the same tier and slot for every page header's main action (the right end of `page_header`).
 - **Don't:**
   - Outline an active Send.
-  - Fill Stop or Deny blue.
+  - Fill Stop or Deny blue, or give Deny a red label.
+  - Fill anything red except an armed confirm.
   - Infer a variant from an id.
   - Use a second filled button beside a Primary.
 
@@ -376,10 +380,12 @@ The table itself, its seven glyphs and the words, are in [Status and vocabulary 
   - `primitives::card(&p)`, `CardHead::new(title).icon(..).avatar(..).status(..).meta(..).action(..).render(&p)`.
   - `system::tile(&p)` (a card at natural height) inside `system::tile_grid(columns, &p)` (top-aligned, never stretched).
   - `system::waiting_tile(&p)`: a tile that waits on the user (the `border_strong` edge and the attention bar).
-  - `system::waiting_tile_focused(&p)` (r6): the same tile while it has the keyboard focus. **One accent per card:** the focus ring carries it, so the attention bar steps aside (the inset stays, nothing moves).
+  - `system::waiting_tile_focused(&p)` (r6): the same tile while it has the keyboard focus. R8.4: focus changes only weight, so the attention bar **stays**; the focus ring is added around the tile (`tile_frame`) and nothing moves.
+  - `system::tile_columns(columns, cards, &p)` (R8.5): masonry. Card `i` goes to column `i % columns` and each column stacks its cards at their own height, so reading order is still row by row and a tall card leaves no hole beside it. The Fleet uses it for its band and for the rest.
+  - `system::side_sheet(&p)` (R8.5): a panel on the right edge of a `.relative()` page frame, full height, `system().overlay_width` wide, on the Overlay elevation, over the page (which does not reflow). Give it a header with a close button; Esc closes it. The Fleet's Details open in one.
   - `system::tile_frame(id, focused, &p)`: the frame a tile sits in, carrying the 2px focus ring outside the tile.
   - `primitives::inset(&p)` for the one recessed well inside a card.
-- **Do:** use `tile_grid` for every grid of cards, Fleet included (R7.6: a card is as tall as its content; a row without a decision does not stretch to match one with it). `even_tile_grid` is gone.
+- **Do:** use `tile_grid` (or, where cards differ a lot in height, `tile_columns`) for every grid of cards (R7.6: a card is as tall as its content; a row without a decision does not stretch to match one with it). `even_tile_grid` is gone.
 - **Don't:**
   - Nest cards.
   - Stretch a short card to its row (that is `page_grid`; use it only for equal content).
@@ -408,16 +414,16 @@ The table itself, its seven glyphs and the words, are in [Status and vocabulary 
   - Where it applies (folder · host, tertiary).
   - The risk chip, when one is plain from the request: "Deletes files", "Deletes branches", "Writes outside the project", "Uses the network" (r6: a visible chip, its glyph and words on a quiet wash; the deleting ones in the neutral-strong `caution`, the others secondary; never amber or red). `decision::risk(approval, cwd)` derives it. A job proposal's command is read the same way (`jobs::job_risk`), so a scheduled `git branch -d` carries its chip in Jobs, on its Fleet tile and in the table.
   - The body, when there is one: a plan, a question's option list or its answer field.
-  - The answer row: **Allow (Filled) and Deny (Bordered, red label) side by side on one line, never wrapped apart**, then any variant of the positive answer ("Approve · run with Codex", "Allow all 3 · cargo test"), Bordered, on Shift+1.
-  - The quiet row: each **"Always allow"** as a short Tertiary button with the rule and scope it saves beside it ("Saves `cargo test *` · this session"; the full explanation in its tooltip), then **Details** (Tertiary). Details expands **below** its toggle and shows only what the card does not already say (the tool, other arguments, the exact provider rule).
+  - The answer row: **Allow (Filled) and Deny (a neutral Bordered, R8.2) side by side on one line, never wrapped apart**, then any variant of the positive answer ("Approve · run with Codex", "Allow all 3 · cargo test"), Bordered, on Shift+1. R8.3: when the agent's limit is hit (`runnable_first`), the variant that can run now leads and is the Filled one; the positive answer, which would only wait, is Bordered.
+  - The quiet row: each **"Always allow"** as a short Tertiary button with the rule and scope it saves beside it ("Saves `cargo test *` · this session"; the full explanation in its tooltip), Deny with note, then **Details** (Tertiary), always **at the right end** (R8.4). With no grant and no Deny with note, Details ends the answer row instead of standing alone on a line. In the conversation and Jobs, Details expands **below** its toggle; on the Fleet it opens the side sheet. It shows only what the card does not already say (the tool, other arguments, the exact provider rule).
 - **States:**
-  - **Keys** (R7.1): the one key map, [below](#decisions-one-key-map-and-three-tiers). Keycaps show only on the focused decision (`keys`: the dock's top decision, the focused Fleet card or table row, Jobs' first proposal, a stalled subagent's view); unfocused tiles show none. While the focused decision's digits type into the composer (`keys_live` off) its keycaps dim (`wash.yielded`), so nothing moves.
-  - **Destructive** (r6): a request whose risk deletes files or branches (`Risk::confirms`), approval or job proposal, is allowed on the **second** press, by click or key. The first arms it (`Workspace::confirm_allow`, keyed by `decision::confirm_key(session, card)`); Allow then reads "Press again to delete", in red (`armed`, R7.2). Deny never asks twice. A batch never holds one.
+  - **Keys** (R7.1): the one key map, [below](#decisions-one-key-map-and-three-tiers). R8.2: keycaps show only after keyboard use (`Workspace::keycaps(focused)`: the last input was a key; a pointer click, on release, puts them away) and only on the focused decision (`keys`: the dock's top decision, the focused Fleet card or table row, Jobs' first proposal, a stalled subagent's view); unfocused tiles show none. While the focused decision's digits type into the composer (`keys_live` off) its keycaps dim (`wash.yielded`), so nothing moves.
+  - **Destructive** (r6): a request whose risk deletes files or branches (`Risk::confirms`), approval or job proposal, is allowed on the **second** press, by click or key. The first arms it (`Workspace::confirm_allow`, keyed by `decision::confirm_key(session, card)`); Allow then reads "Press again to delete" as the filled red **Danger** (`armed`, R8.2), whatever the region's focus. **Esc cancels** (`Workspace::escape_decision`). Deny never asks twice. A batch never holds one. The same on every surface (R8.3): the dock, Jobs, a Fleet tile, a Fleet table row, a proposal on the Fleet and in its table.
   - Details open.
   - **Note open** (r6): the note **replaces** the answer row, the grants and Details: the note field, Cancel and its send ("Deny and tell it", Destructive) are the only controls; never a second Allow / Deny under it.
 - **Frames:** `Card { compact }` (the dock, Jobs), `Inline` (a Fleet tile), `Row` (r6: a table row's actions alone, right-aligned, same tiers and keys: the Fleet table's Allow is the filled Primary, as everywhere).
 - **One component** (r6): every approve / deny is a `Decision`: the dock, Jobs proposals, Fleet tiles, the Fleet table, a stalled subagent (tile, row and its own view: `Workspace::stall_decision`). A Fleet card with a stall behind another ask shows the stall's row without keys and without a Primary (the ask owns both).
-- **Tiers:** Allow is Primary unless a note owns it. Deny and Reject are Destructive. A "no" that removes nothing (Keep planning) sets `deny_variant = Secondary`.
+- **Tiers:** Allow is Primary unless a note owns it. Deny is a neutral Bordered (`actions::tier(Verb::Deny)`, the default `deny_variant`); Stop keeps the red label (`Destructive`). Armed, Allow is Danger.
 - **Submit label:** every question card submits with `decision::SUBMIT_ANSWER` ("Send answer"; "Send answers" for a set). "Next" only steps a multi-question set.
 - **Scope:** the hub offers session-scoped grants only, so the scope reads "this session". Project scope needs a hub option.
 - **API** (`decision.rs`):
@@ -425,10 +431,11 @@ The table itself, its seven glyphs and the words, are in [Status and vocabulary 
   - `Choice::new(id, label).key(..).tooltip(..).enabled(..).on_click(..)`.
   - `Grant::new(choice, provider_words, command)`: the rule as read, the exact rule and the scope (`grant_rule`).
   - `Details::facts(toggle, open, selector, prefix, rows)` (rows are filtered against the card) or `Details::element(toggle, open, content)`.
+- **Fixed slots (R8.4):** the same parts on every surface, Jobs included: the amber rail when it needs you, the R7.1 slots, Details at the right. Focus changes only weight (the Filled tier, the keycaps, the focus ring), never which parts are shown: a Fleet row shows Deny with note ("Note") and Details whether focused or not, and its whole command on every row.
 - **Don't:**
   - Stack Allow and Deny, or let a long "Always allow" button outweigh Deny.
-  - Make Deny blue.
-  - Hide the keycaps of a keyed decision; dim them where the keys do not go. Keycaps keep their hairline box, also on a Primary fill, so they never read as counts.
+  - Make Deny blue or red.
+  - Hide the keycaps of the focused decision while the keyboard is in use; dim them where the keys do not go. Keycaps keep their hairline box, also on a Primary fill, so they never read as counts.
   - Repeat the card in Details.
   - Draw an approve / deny pair outside `Decision`.
   - Number anything outside the key map, or move a key to fill a gap.
@@ -487,7 +494,8 @@ The table itself, its seven glyphs and the words, are in [Status and vocabulary 
 
 - **Purpose:** a key in a tooltip, a sheet or a hint.
 - **Anatomy:** a 12 mono label in a hairline box (`kbd`). A **hint** (`keycap_hint`) trails a control: tertiary with a faint edge, or the label colour with no box on a Primary fill.
-- **API:** `primitives::kbd(label, &p)`, `keycap_hint(key, on_fill, &p)`. In tooltips, spaces in the shortcut separate the keycaps (`tooltip_view(label, Some("g n"), &p)`; `tooltip_view_keys` takes an owned shortcut).
+- **When (R8.2):** a decision's keycaps show only on the focused decision and only after keyboard use (`Workspace::keycaps`). The card is the only place they appear: there is no keycap row in the composer or the Fleet footer.
+- **API:** `primitives::kbd(label, &p)`, `keycap_hint(key, on_fill, &p)`, `keycap_in(key, label_colour, &p)` (on any fill: the Primary's, the armed Danger's). In tooltips, spaces in the shortcut separate the keycaps (`tooltip_view(label, Some("g n"), &p)`; `tooltip_view_keys` takes an owned shortcut).
 - **Don't:** tint a keycap, or join keycaps without gaps.
 
 ## One page, one table, one composer (R7.6)
@@ -634,8 +642,8 @@ One word per concept, everywhere:
 | Context in the composer | "Context 42% used" (`format::context_label`) | "Context 42% full", "ctx" |
 | A usage meter | "Codex · 93% of 5h limit used", then the meter and "resets in 2h" (`format::usage_words`, `format::resets_in`) | "Claude · 5h limit 42%", "Claude 42%" |
 
-- **Fleet counts:** the subtitle says what the page is for, then the summary ("Every live session at once · 2 need you · 1 to review · 3 working · 5 idle · 20 ended", `fleet::FLEET_DESCRIPTION`, `fleet::summary`). It counts top-level sessions per group, job proposals in Needs you. Filters: Needs you, To review, Active, All. Each filter's count is one of those numbers or a sum of them, and its tooltip says which (`fleet::filter_tip`).
-- **Page subtitles and nav tooltips say the same thing (R8.6):** Fleet `fleet::FLEET_DESCRIPTION`, Machines `hosts::HOSTS_DESCRIPTION`, Scratch `scratch::SCRATCH_DESCRIPTION_V2`; the nav item's tooltip is "Fleet · " plus the subtitle.
+- **Fleet counts:** the summary line ("2 need you · 1 to review · 3 working · 5 idle · 20 ended", `fleet::summary`) counts top-level sessions per group, job proposals in Needs you. The Needs-you band's header shows the same Needs-you number (never a tally of its cards), and "All clear" shows only when both want-you numbers are 0. Filters: Needs you, To review, Active, All. Each filter's count is one of those numbers or a sum of them, and its tooltip says which (`fleet::filter_tip`).
+- **Page subtitles and nav tooltips say the same thing (R8.6):** Fleet `fleet::FLEET_SUBTITLE`, Machines `hosts::HOSTS_DESCRIPTION`, Scratch `scratch::SCRATCH_DESCRIPTION_V2`; the nav item's tooltip is "Fleet · " plus the subtitle.
 - **Welcome (R8.6):** three starter tasks (`states::STARTERS`) under the composer; the placeholder (`states::PROMPT_PLACEHOLDER_V2`, "Describe a task, or leave this empty to start a blank session") says what the box takes and never repeats the hero's question. Usage is hidden until a session exists.
 
 ### Meta text (R7.8)
@@ -736,17 +744,28 @@ Prose is above activity, and activity is above meta.
 - The composer stays a visible bordered field, even while a decision is pending (one line until it has focus).
 - **Change counts (R6.6):** the turn's line says "This turn"; Changes and the header say "Branch". The two scopes may differ (earlier turns are on the branch); the fixture keeps every file the turn touched on the branch with the same counts.
 
+### Fleet layout (R8.5)
+
+- **Header:** the title, a one-line subtitle (`fleet::FLEET_SUBTITLE`: "Every active session on one screen. Answer requests without opening each one."), and a slim toolbar: Grid / Table, the filter (each with its count), and an overflow menu (`fleet-more`) that holds the sort ("Sort by status", "Sort by waiting longest").
+- **Counts:** one quiet line above the cards (`fleet-summary`, `fleet::summary`), or "All clear" when nothing needs you.
+- **The Needs-you band** (`fleet-band`): a full-width section at the top ("Needs you N") holding every tile that waits on you, then the job proposals.
+- **Everything else** (`fleet-rest`): compact tiles below the band.
+- Both flow in columns (`system::tile_columns`, masonry): no holes. The arrows walk them by column (`fleet::step_band`): Down from the band's last card in a column lands in the same column of the rest; Left and Right follow the reading order.
+- **Details** open in a side sheet (`fleet-sheet`, `system::side_sheet`) over the page's right edge, not in place, so the grid does not reflow. The tile's or row's Details toggles it; its close button and Esc close it.
+- **Subagent actions** sit on the subagent's own line in the tile and name it: "Nudge Trace session", "Stop Trace session", View output (`Stall::target`).
+- **The table:** Session at a fixed measure and what a row is doing folded into one flexible **Needs · doing** column (the ask when there is one, else what it is doing, quiet), so the ask has the widest room. An approval row shows its risk chip, the ask and the whole command on every row, and its answer row (`Frame::Row`): Allow, Deny, Note, Details. A **Review** row shows its review words and its newest test result (`fleet-row-verification-{n}`) with a Bordered **Open**. A **text question** is answered in its row: the field in Needs, Send answer in the actions. "+1 more" (a second ask behind the first) takes the warning hue, never amber.
+
 ### Fleet card anatomy
 
-- A `tile` in a `tile_grid` (R7.6: each card is as tall as its content, top-aligned; the decision first).
+- A `tile` in `tile_columns` (R7.6: each card is as tall as its content, top-aligned; the decision first).
 - Title (14/600), then elapsed time.
 - StatusCell, then project, model and context.
 - The ask, near the top, as an inline `Decision` (`Frame::Inline`): Allow and Deny side by side; a question answered on the card (an option list whose keys send, or a field where Enter sends); a job proposal is a card of its own (Allow, Deny).
 - Up to three `EventRow`s: a working session's last tools, live. A named fault (a subagent not responding, a failed command) draws its status glyph **in the icon's place** (`EventRow::lead_status`), beside the words it qualifies, never at the tile's far edge.
 
-Every keyed card shows its keycaps; the focused one at full strength, with the focus ring (`tile_frame`) in place of its attention bar (`waiting_tile_focused`: one accent per card). Waiting tiles use `waiting_tile`. Every filter count is the number of cards it shows, job proposals included. The dense view is a Table: one row per session (StatusCell, title, project, waiting, doing, needs, the decision's `Frame::Row`), toggled with Grid/Table and remembered per device (`Settings::fleet_table`).
+The focused card shows its keycaps (after keyboard use, R8.2), with the focus ring (`tile_frame`) around it; its attention bar stays (R8.4). Waiting tiles use `waiting_tile`. Every filter count is the number of cards it shows, job proposals included. The dense view is a Table: one row per session (StatusCell, title, project, waiting, doing, needs, the decision's `Frame::Row`), toggled with Grid/Table and remembered per device (`Settings::fleet_table`).
 
-r6 (R6.7) at scale: the sidebar is its rail while the Fleet is on screen (`track_fleet_rail`; restored on the way out). The header holds three SegmentedControls: Grid / Table, By status / Waiting longest (what waits on you first, longest wait first, then the rest by how long each has been quiet; `fleet::sort_tiles`), and the filter. A tile waiting on you says "Waiting 3m". Identical requests (the same command in the same folder, none that deletes files: `fleet::batch_of`) offer "Allow all 3 · cargo test" on Shift+1 (R7.1: never a number), which allows each on its own card. A request or job that deletes is never in a batch. A session whose subagent stopped answering is Needs you (`status.rs`: `child_stalled`), its reason naming the child ("Trace session… not responding · 7m"), its ask Nudge / Stop / View output.
+r6 (R6.7) at scale: the sidebar is its rail while the Fleet is on screen (`track_fleet_rail`; restored on the way out). The header holds two SegmentedControls, Grid / Table and the filter, and (R8.5) an overflow menu with the sort: by status, or waiting longest (what waits on you first, longest wait first, then the rest by how long each has been quiet; `fleet::sort_tiles`). A tile waiting on you says "Waiting 3m". Identical requests (the same command in the same folder, none that deletes files: `fleet::batch_of`) offer "Allow all 3 · cargo test" on Shift+1 (R7.1: never a number), which allows each on its own card. A request or job that deletes is never in a batch. A session whose subagent stopped answering is Needs you (`status.rs`: `child_stalled`), its reason naming the child ("Trace session… not responding · 7m"), its ask Nudge / Stop / View output.
 
 ### Empty, loading and error states
 
@@ -801,21 +820,22 @@ The rules:
 - **Variants never take a number.** A variant of the positive answer goes on Shift+1 (`Choice::variant_key()`, keycap `⇧1`, `decision::is_variant_key`; the Fleet binds `shift-1` to `FleetVariant`). Any other extra takes no key.
 - **One verb pair.** Every approval says "Allow / Deny", job proposals included.
 - **Deny with note is a visible Text button** on slot 4 (`Decision::deny_note`), never a menu item. On a Fleet tile or row it opens the session with the note field ready.
-- **Keycaps show only on the focused decision.** Unfocused tiles and rows show none.
-- **The hint lists exactly the keys on the card.** The Fleet footer (`fleet-hint-answer`) lists them (R8.2: the composer has no keycap row; the card is the only place keycaps appear), for example "1 2 4 answer the request".
+- **Keycaps show only on the focused decision, and only after keyboard use** (R8.2). Unfocused tiles and rows show none.
+- **The card is the only place keycaps appear** (R8.2). The composer's keycap row and the Fleet footer's answer keys are gone.
 - **Question cards are the one exception.** An option list is the answer itself, so its options are numbered as listed.
 - **Enforcement.** `Decision::key_map()` reports every key a decision draws and what it answers. `decision::audit` records every decision drawn in a test. The test `every_decision_keeps_the_one_key_map` (`tests/fleet.rs`) walks the focus over every Fleet card in Grid and Table, then the dock's approval and plan, then Jobs, and holds each one to `slot_map_problems`.
 
-### Button tiers (R7.2)
+### Button tiers (R7.2, R8.2)
 
-There are three tiers: Filled, Bordered and Text. Each verb has exactly one tier, given by `system::actions::Verb::tier()`. A surface takes its variant from `actions::tier(verb)`, or from `actions::region_variant(verb, focused)` where a region can lose focus. It never picks a tier by hand.
+There are three tiers, Filled, Bordered and Text, plus Danger. Each verb has exactly one tier, given by `system::actions::Verb::tier()`. A surface takes its variant from `actions::tier(verb)`, or from `actions::region_variant(verb, focused)` where a region can lose focus. It never picks a tier by hand.
 
 | Verb | Tier | `ButtonVariant` |
 |---|---|---|
 | Send, Queue | Filled | `Primary` |
 | Allow, Approve plan, Nudge (a stall's answer), Send answer | Filled | `Primary` |
-| Allow all, Approve · run with Codex | Bordered | `Secondary` |
-| Deny | Bordered | `Destructive` (red label) |
+| Commit, Ask agent to fix, Start (`Verb::Forward`) | Filled | `Primary` |
+| Allow all, Approve · run with Codex | Bordered | `Secondary` (Filled when the limit is hit, R8.3) |
+| Deny | Bordered | `Secondary` (neutral, R8.2) |
 | Keep planning | Bordered | `Secondary` |
 | Stop | Bordered | `Destructive` |
 | Discard, Remove, End | Bordered | `Destructive` |
@@ -824,11 +844,14 @@ There are three tiers: Filled, Bordered and Text. Each verb has exactly one tier
 | Deny with note | Text | `Tertiary` |
 | Details, View output, Open, Cancel | Text | `Tertiary` |
 | Nudge in a toolbar (not a decision's answer) | Text | `Tertiary` |
+| An armed destructive confirm (`Verb::ConfirmDelete`) | Danger | `Danger` |
 
 The rules:
 
 - **One Filled per focused region.** On the Fleet, only the focused card's or row's positive answer is Filled (`Decision::filled`); the rest are Bordered. In Jobs, the first proposal's Allow is Filled. While a decision waits on the selected session, the docked side panel's main action (Commit, Ask agent to fix) is Bordered (`Workspace::side_panel_variant`). The test `one_filled_button_per_focused_region` counts the Filled buttons with `decision::audit`.
-- **Destructive, once armed.** A request or job that deletes (`Risk::confirms`) arms on the first press. Allow then turns red (`Destructive`) and reads "Press again to delete". Destructive requests are left out of Allow all (`fleet::batch_of`).
+- **Risk is the same everywhere (R8.3).** A request or job that deletes (`Risk::confirms`) arms on the first press, on every surface: the dock, Jobs, a Fleet tile, a Fleet table row, a proposal's card and row. Allow then becomes the filled red Danger and reads "Press again to delete"; Esc cancels. Destructive requests are never in Allow all (`fleet::batch_of`). The test `every_destructive_decision_needs_two_presses_on_every_surface` presses each one.
+- **Limits (R8.3).** When the agent's limit is hit, the action that can run now ("Approve · run with Codex") is the Filled one and leads (`Decision::runnable_first`); the one that would only wait is Bordered.
+- **Tests.** `one_filled_button_per_focused_region` also holds Deny to a neutral tier and Danger to armed decisions; `every_decision_keeps_the_one_key_map` also holds each decision's parts fixed while the focus moves (R8.4); `keycaps_show_only_after_keyboard_use` (R8.2).
 
 ### Decision card content (R7.7)
 
@@ -844,7 +867,7 @@ The rules:
 
 - **Text tiers, prose and links** on chat, surface, base, raised, selected and hover: 4.5.
 - **Status words:** 4.5. **Status glyphs:** 3.
-- **Every Button tier** at Rest, Hover and Pressed, on every surface, with washes composited: 4.5.
+- **Every Button tier** at Rest, Hover and Pressed, on every surface, with washes composited: 4.5. Danger included (its label on its red fill), and the Danger fill vs every surface: 3.
 - **Primary fill:** 3. A **light** Primary fill (one with a dark label) needs 4.5, so it never reads as disabled. Nord's old frost Allow was 3.7.
 - **Focus ring:** 3.
 - **Count badges:** 4.5.

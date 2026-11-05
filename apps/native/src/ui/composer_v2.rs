@@ -1776,7 +1776,9 @@ impl Workspace {
             .filter(|c| !c.is_empty());
         decision.access = session.map(super::decision::access_line);
         decision.verification = self.decision_verification(session);
-        decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval));
+        // r8-decisions (R8.2): keycaps only after keyboard use.
+        decision.keys = self
+            .keycaps(session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval)));
         // R6.3: the keycaps stay (no layout shift) but dim while the digits
         // type into the composer instead of answering.
         decision.keys_live = self.composer_ui.digits_to_card;
@@ -2083,6 +2085,9 @@ impl Workspace {
         decision.pager = position_label(&decisions, Decision::Plan);
         // A feedback note being written owns the primary.
         decision.allow_primary = !deny_open;
+        // r8-decisions (R8.3): at the limit, the hand-off runs now, so it
+        // is the primary; Approve plan only waits.
+        decision.runnable_first = limited && can_hand_off;
         decision.alternates = handoff_to
             .map(|other| {
                 approve(
@@ -2132,7 +2137,9 @@ impl Workspace {
         });
         decision.access = session.map(super::decision::access_line);
         decision.verification = self.decision_verification(session);
-        decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan));
+        // r8-decisions (R8.2): keycaps only after keyboard use.
+        decision.keys =
+            self.keycaps(session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan)));
         decision.keys_live = self.composer_ui.digits_to_card;
         // R8.4: the card and the reply are one component.
         decision.reply = self.reply_instead(enabled, cx);

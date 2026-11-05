@@ -1113,7 +1113,7 @@ impl Workspace {
                 NavItem::new(id("nav-fleet", "fleet-rail"), primitives::Concept::Fleet, "Fleet")
                     // r8-attention (R8.6): the tooltip says what the
                     // page's subtitle says.
-                    .hint(format!("Fleet · {}", super::fleet::FLEET_DESCRIPTION))
+                    .hint(format!("Fleet · {}", super::fleet::FLEET_SUBTITLE))
                     .shortcut(key("⌘ Shift F", "Ctrl Shift F"))
                     .selected(open(Screen::Fleet)),
                 Some(Screen::Fleet),

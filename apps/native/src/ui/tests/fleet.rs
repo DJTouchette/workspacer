@@ -2,6 +2,7 @@
 //! first; arrows move the focus across the grid; the focused tile's number
 //! keys and buttons answer its own ask; v1 never opens it.
 use super::*;
+use crate::ui::primitives::ButtonVariant;
 use serde_json::json;
 use wks_native::appearance::Design;
 
@@ -114,16 +115,25 @@ fn tiles_render_with_their_statuses_most_urgent_first(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("fleet-answer-send-1").is_some());
     assert!(visual.debug_bounds("fleet-line-2-0").is_some());
     assert!(visual.debug_bounds("fleet-ask-2").is_none());
-    // Three tiles in one row of the 3-column grid, the first focused.
-    let (a, c) = (
+    // R8.5: what needs you is the band at the top (the approval and the
+    // question side by side); the working tile sits below it, in the
+    // first column of the rest.
+    let (a, b, c) = (
         visual.debug_bounds("fleet-tile-0").unwrap(),
+        visual.debug_bounds("fleet-tile-1").unwrap(),
         visual.debug_bounds("fleet-tile-2").unwrap(),
     );
-    assert_eq!(a.top(), c.top());
-    assert!(c.left() > a.right());
-    // R7.6: each card is as tall as its content; the working tile does not
+    assert_eq!(a.top(), b.top());
+    assert!(b.left() > a.right());
+    let band = visual.debug_bounds("fleet-band").unwrap();
+    let rest = visual.debug_bounds("fleet-rest").unwrap();
+    assert!(band.contains(&a.center()) && band.contains(&b.center()));
+    assert!(rest.contains(&c.center()));
+    assert!(c.top() > a.bottom().max(b.bottom()));
+    assert_eq!(c.left(), a.left());
+    // R7.6: each card is as tall as its content; the question does not
     // stretch to the approval beside it.
-    assert!(c.size.height < a.size.height);
+    assert!(b.size.height < a.size.height);
     // Allow and Deny side by side, on one line.
     let (allow, deny) = (
         visual.debug_bounds("fleet-allow-0").unwrap(),
@@ -204,7 +214,8 @@ fn keyboard_focus_moves_between_tiles(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands) = open_fleet(cx);
     click(&mut visual, "fleet-filter-all");
     refresh(&mut visual);
-    // ask question busy / idle
+    // R8.5: the band (ask question), then the rest (busy idle), each
+    // flowing in three columns.
     assert_eq!(focused(&workspace, &visual), None);
     visual.simulate_keystrokes("right");
     assert_eq!(focused(&workspace, &visual).as_deref(), Some("q"));
@@ -213,6 +224,8 @@ fn keyboard_focus_moves_between_tiles(cx: &mut TestAppContext) {
     visual.simulate_keystrokes("down");
     assert_eq!(focused(&workspace, &visual).as_deref(), Some("idle"));
     visual.simulate_keystrokes("up");
+    assert_eq!(focused(&workspace, &visual).as_deref(), Some("q"));
+    visual.simulate_keystrokes("left");
     assert_eq!(focused(&workspace, &visual).as_deref(), Some("ask"));
     visual.simulate_keystrokes("l l l");
     assert_eq!(focused(&workspace, &visual).as_deref(), Some("idle"));
@@ -626,6 +639,9 @@ fn the_table_answers_through_the_decision_card(cx: &mut TestAppContext) {
         workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
     });
     refresh(&mut visual);
+    // R8.5: the sort is in the header's overflow menu.
+    click(&mut visual, "fleet-more");
+    refresh(&mut visual);
     click(&mut visual, "fleet-sort-waiting");
     workspace.read_with(&visual, |this, cx| {
         assert_eq!(this.fleet.sort, crate::ui::fleet::Sort::Waiting);
@@ -641,14 +657,14 @@ fn the_table_answers_through_the_decision_card(cx: &mut TestAppContext) {
 fn the_fleet_takes_the_room_and_cards_keep_their_height(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands) = open_fleet(cx);
     workspace.read_with(&visual, |this, _| assert!(this.sidebar_collapsed));
-    let (a, c) = (
+    let (a, b) = (
         visual.debug_bounds("fleet-tile-0").unwrap(),
-        visual.debug_bounds("fleet-tile-2").unwrap(),
+        visual.debug_bounds("fleet-tile-1").unwrap(),
     );
-    assert_eq!(a.top(), c.top());
+    assert_eq!(a.top(), b.top());
     assert!(
-        c.size.height < a.size.height,
-        "the working tile {c:?} keeps its own height beside the approval {a:?}"
+        b.size.height < a.size.height,
+        "the question {b:?} keeps its own height beside the approval {a:?}"
     );
     visual.simulate_keystrokes("escape");
     refresh(&mut visual);
@@ -748,6 +764,9 @@ fn every_decision_keeps_the_one_key_map(cx: &mut TestAppContext) {
     effects(&mut commands);
     audit::clear();
     let mut frames = Vec::new();
+    // R8.4: a decision's parts (Deny with note, Details) are fixed, whatever
+    // its focus: each selector keeps the parts it first drew.
+    let mut parts: std::collections::HashMap<String, (bool, bool)> = Default::default();
     // Grid, every card focused in turn, then the table the same way.
     for table in [false, true] {
         if table {
@@ -759,6 +778,8 @@ fn every_decision_keeps_the_one_key_map(cx: &mut TestAppContext) {
                 let problems = slot_map_problems(&d.keys);
                 assert!(problems.is_empty(), "{}: {problems:?}", d.selector);
                 frames.push(d.frame);
+                let first = *parts.entry(d.selector.clone()).or_insert(d.parts);
+                assert_eq!(first, d.parts, "{}: focus changed its parts", d.selector);
             }
             audit::clear();
             visual.simulate_keystrokes(if table { "down" } else { "right" });
@@ -848,9 +869,165 @@ fn one_filled_button_per_focused_region(cx: &mut TestAppContext) {
                 keyed <= 1,
                 "keycaps only on the focused decision: {drawn:?}"
             );
+            // R8.2: Deny is a neutral Bordered, and nothing is filled red
+            // until a destructive confirm is armed.
+            for d in &drawn {
+                if let Some(deny) = d.deny {
+                    assert_ne!(deny, ButtonVariant::Destructive, "{}", d.selector);
+                }
+                assert!(
+                    d.armed || d.allow != Some(ButtonVariant::Danger),
+                    "{}",
+                    d.selector
+                );
+            }
             visual.simulate_keystrokes(if table { "down" } else { "right" });
         }
     }
+}
+
+/// R8.2 Quiet by default: keycaps appear only on the focused decision, and
+/// only after keyboard use. A pointer click hides them; the next key
+/// brings them back.
+#[gpui::test]
+fn keycaps_show_only_after_keyboard_use(cx: &mut TestAppContext) {
+    use crate::ui::decision::audit;
+    let keyed = |visual: &mut VisualTestContext| {
+        audit::clear();
+        refresh(visual);
+        audit::drawn().iter().filter(|d| !d.keys.is_empty()).count()
+    };
+    // Opened with Ctrl+Shift+F: the keyboard is in use.
+    let (_workspace, mut visual, _commands) = open_fleet(cx);
+    assert_eq!(keyed(&mut visual), 1, "the focused tile shows its keys");
+    // A click (on a filter) puts them away, on every card.
+    click(&mut visual, "fleet-filter-active");
+    assert_eq!(keyed(&mut visual), 0, "no keycaps after a click");
+    assert!(visual.debug_bounds("fleet-hint-answer").is_none());
+    // (Left stays on the approval, the first tile.)
+    visual.simulate_keystrokes("left");
+    assert_eq!(keyed(&mut visual), 1, "a key brings them back");
+}
+
+/// R8.3: nothing that deletes is ever part of "Allow all", even when
+/// several sessions ask for the same destructive command.
+#[gpui::test]
+fn destructive_requests_never_join_allow_all(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands) = open_fleet(cx);
+    with_sessions(
+        &workspace,
+        &mut visual,
+        vec![
+            approval("rm1", "One", "rm -rf target"),
+            approval("rm2", "Two", "rm -rf target"),
+        ],
+    );
+    workspace.read_with(&visual, |this, cx| {
+        let tiles = this.fleet_tiles(cx);
+        for id in ["rm1", "rm2"] {
+            let at = tiles.iter().position(|t| t.id == id).unwrap();
+            assert!(crate::ui::fleet::batch_of(&tiles, at).is_empty(), "{id}");
+        }
+    });
+}
+
+/// R8.3 Risk is the same everywhere: every destructive decision on every
+/// surface (a Fleet tile, a Fleet table row, a job proposal on the Fleet's
+/// band and in its table, the Jobs page and the conversation's dock) takes
+/// two presses. The first arms it: its Allow becomes the filled red
+/// Danger, "Press again to delete". Esc cancels; the second press runs it.
+#[gpui::test]
+fn every_destructive_decision_needs_two_presses_on_every_surface(cx: &mut TestAppContext) {
+    use crate::ui::decision::audit;
+    use wks_native::features::{JobAction, Request};
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    let mut view = fleet_view();
+    let mut sessions = (*view.sessions).clone();
+    sessions[1] = approval("ask", "Restore sessions", "rm -rf target");
+    view.sessions = Arc::new(sessions);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+    });
+    with_jobs(&workspace, &mut visual);
+    effects(&mut commands);
+    let ran = |commands: &mut tokio::sync::mpsc::Receiver<Command>| {
+        effects(commands).iter().any(|c| {
+            matches!(
+                c,
+                Command::Act {
+                    action: Action::Approve(true, _),
+                    ..
+                } | Command::Request(Request::JobAction(JobAction::Save(_)))
+            )
+        })
+    };
+    let armed = |visual: &mut VisualTestContext| {
+        workspace.read_with(visual, |this, _| this.arming.armed.is_some())
+    };
+    let mut surfaces = 0;
+    let mut check = |visual: &mut VisualTestContext, selector: &'static str| {
+        click(visual, selector);
+        assert!(
+            !ran(&mut commands),
+            "{selector}: the first press only arms it"
+        );
+        assert!(armed(visual), "{selector}: armed");
+        audit::clear();
+        refresh(visual);
+        let drawn = audit::drawn();
+        assert!(
+            drawn
+                .iter()
+                .any(|d| d.armed && d.allow == Some(ButtonVariant::Danger)),
+            "{selector}: the armed Allow is the filled red Danger: {drawn:?}"
+        );
+        assert!(
+            drawn
+                .iter()
+                .filter(|d| d.confirms)
+                .all(|d| d.allow != Some(ButtonVariant::Primary) || !d.armed),
+            "{selector}"
+        );
+        visual.simulate_keystrokes("escape");
+        assert!(!armed(visual), "{selector}: Esc cancels");
+        assert!(!ran(&mut commands), "{selector}: Esc runs nothing");
+        refresh(visual);
+        click(visual, selector);
+        refresh(visual);
+        click(visual, selector);
+        assert!(ran(&mut commands), "{selector}: the second press runs it");
+        surfaces += 1;
+    };
+    // The Fleet's band: the approval tile and the job proposal's card.
+    check(&mut visual, "fleet-allow-0");
+    check(&mut visual, "fleet-job-approve-0");
+    // The Fleet table: the approval's row and the proposal's.
+    click(&mut visual, "fleet-view-table");
+    refresh(&mut visual);
+    check(&mut visual, "fleet-row-allow-0");
+    check(&mut visual, "fleet-job-row-approve-0");
+    // The Jobs page.
+    visual.update(|_, cx| {
+        workspace.update(cx, |this, cx| {
+            this.screen = Screen::Jobs;
+            cx.notify()
+        })
+    });
+    refresh(&mut visual);
+    check(&mut visual, "job-approve-0");
+    // The conversation's dock.
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.screen = Screen::Conversation;
+            let mut view = (*this.view).clone();
+            view.selected = Some("ask".into());
+            this.update_view(Arc::new(view), window, cx);
+            this.focus.focus(window);
+        })
+    });
+    refresh(&mut visual);
+    check(&mut visual, "approve");
+    assert_eq!(surfaces, 6);
 }
 
 /// R7.1: a scheduled `git branch -d` reads as one everywhere: the table's
