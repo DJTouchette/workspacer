@@ -1226,6 +1226,27 @@ impl Workspace {
                             .map(|name| format!("{name} (this machine)"))
                     })
             })
+            // r4-integration: before the Machines snapshot loads, the hub has
+            // often named itself already: a live `host.resources` sample or
+            // the New-session `queue.targets` read.
+            .or_else(|| {
+                self.view
+                    .hosts_live
+                    .resources
+                    .get(wks_native::hosts::LOCAL)
+                    .map(|r| r.host.clone())
+                    .or_else(|| {
+                        self.launch_targets().and_then(|t| {
+                            t.targets
+                                .into_iter()
+                                .find(|t| t.local)
+                                .and_then(|t| t.resources)
+                                .map(|r| r.host)
+                        })
+                    })
+                    .filter(|name| !name.trim().is_empty())
+                    .map(|name| format!("{} (this machine)", name.trim()))
+            })
             .unwrap_or_else(|| "this machine".to_owned())
     }
 

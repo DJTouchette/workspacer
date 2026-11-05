@@ -222,6 +222,32 @@ impl Workspace {
             .when(!empty, |d| {
                 d.child(transcript).child(self.wheel_smoother(cx))
             })
+            // r4-integration (R4.4): while reading history the transcript's
+            // viewport ends above the dock and the pill; a short fade there
+            // (a line and a half tall) dissolves a half-cut line instead of slicing
+            // it at a hard edge.
+            .when(
+                !empty && !self.follow && selected.is_some() && self.design().is_v2(),
+                |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .w_full()
+                            .bottom(self.transcript_inset_v2(compact))
+                            .h(px(self.tokens().layout.fade * 1.5))
+                            .debug_selector(|| "transcript-fade".into())
+                            .child(
+                                super::primitives::fade_mask(
+                                    super::primitives::FadeEdge::Bottom,
+                                    p.chat,
+                                    &p,
+                                )
+                                .h_full(),
+                            ),
+                    )
+                },
+            )
             .child(header)
             .when(
                 self.tools_float(narrow) && selected.is_some() && self.viewed_child().is_none(),

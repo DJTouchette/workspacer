@@ -1089,8 +1089,8 @@ impl Workspace {
                 this.review.v2.header_menu = !this.review.v2.header_menu;
                 cx.notify();
             }));
-        let item = |id: &'static str, label: &'static str, icon: IconName, enabled: bool| {
-            primitives::menu_item(id, label, Some(icon), false, enabled, &p)
+        let item = |id: &'static str, label: &'static str, icon: Icon, enabled: bool| {
+            primitives::menu_item_icon(id, label, Some(icon), false, enabled, &p)
                 .debug_selector(move || id.into())
         };
         let menu = primitives::menu(&p)
@@ -1103,7 +1103,7 @@ impl Workspace {
                 item(
                     "review-prev-hunk",
                     "Previous change  [ c",
-                    IconName::ChevronUp,
+                    Icon::new(IconName::ChevronUp),
                     true,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1115,7 +1115,7 @@ impl Workspace {
                 item(
                     "review-next-hunk",
                     "Next change  ] c",
-                    IconName::ChevronDown,
+                    Icon::new(IconName::ChevronDown),
                     true,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1128,7 +1128,7 @@ impl Workspace {
                 item(
                     "review-dock-refresh",
                     "Refresh",
-                    IconName::Redo,
+                    Icon::new(primitives::Concept::Refresh),
                     self.view.connected,
                 )
                 .when(self.view.connected, |d| {
@@ -1145,7 +1145,7 @@ impl Workspace {
                 item(
                     "review-dock-expand",
                     "Open full page (files, tree, commits)",
-                    IconName::Maximize,
+                    Icon::new(IconName::Maximize),
                     true,
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
