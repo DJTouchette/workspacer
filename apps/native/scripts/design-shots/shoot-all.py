@@ -50,7 +50,7 @@ SETTINGS_SECTIONS = ["Appearance", "Typography", "Workspace", "Remote",
 # area-pages: controls design v2 moved (used when --setting design_v2=true).
 LANDMARKS_V2 = {
     "END_SESSION": lambda shot: (1024, 637),        # r3-integration: the form column's "End session..."
-    "NEW_TASK_FIELD": lambda shot: (900, 200),      # r2-pages: v2's task box leads the form
+    "NEW_TASK_FIELD": lambda shot: (600, 270),      # r4-pages: the task box on the page template
     "HOSTS_DETAILS": lambda shot: (1520, 207),      # r3-pages: Machines' first "Details" (table row)
     "JOB_OVERFLOW": lambda shot: (1549, 447),       # r3-pages: Jobs table, first scheduled job's "..."
     "REVIEW_DOCK_MORE": lambda shot: (1535, 30),    # r3-pages: Changes dock header "..."

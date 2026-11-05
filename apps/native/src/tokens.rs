@@ -898,6 +898,18 @@ pub struct PageTokens {
     pub machine: f32,
     /// A row's actions column (Pause · Run now · ⋯), right-aligned.
     pub actions: f32,
+    // r4-pages (R4.5)
+    /// One action slot in a table row: every button in an actions column
+    /// is at least this wide, so labels that swap (Pause / Resume) and
+    /// rows that lack an action keep the others in place.
+    pub action_slot: f32,
+    /// The same in a side panel's rows (Tasks: Stop, or the row's chevron).
+    pub action_slot_compact: f32,
+    /// A short form page (New session, Agent setup) drops its whole column
+    /// by a share of the window's spare height, at most this much, so it
+    /// is not pinned to the top over an empty field. Content-independent:
+    /// opening a picker never moves the header.
+    pub short_top: f32,
 }
 
 impl Tokens {
@@ -913,6 +925,9 @@ impl Tokens {
             runs: 176.,
             machine: 160.,
             actions: 232.,
+            action_slot: 88.,
+            action_slot_compact: 56.,
+            short_top: 160.,
         }
     }
 }

@@ -369,7 +369,9 @@ fn first_run_shows_the_welcome_and_starters_fill_the_task(cx: &mut TestAppContex
         "welcome-composer",
         "welcome-start",
         "welcome-starters",
-        "welcome-projects",
+        // r4-pages (R4.5): New session's own task box and chips.
+        "launch-chip-project",
+        "launch-chip-agent",
         "welcome-setup-checklist",
         "welcome-agent-status-claude",
         "welcome-agent-status-codex",
@@ -387,6 +389,29 @@ fn first_run_shows_the_welcome_and_starters_fill_the_task(cx: &mut TestAppContex
             this.prompt.read(cx).value().as_ref(),
             "Find a failing test and fix it"
         )
+    });
+    // r4-pages (R4.5): one New-session flow. A welcome chip is a shortcut
+    // into New session, opened at that choice, the task kept.
+    visual.update(|_, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            cx.notify();
+        })
+    });
+    visual.run_until_parked();
+    tap(&mut visual, "launch-chip-agent");
+    workspace.read_with(&visual, |this, cx| {
+        assert!(this.new_session, "the chip opens New session");
+        assert!(this.extras.launch_panel.is_some(), "at the agent's choices");
+        assert_eq!(
+            this.prompt.read(cx).value().as_ref(),
+            "Find a failing test and fix it"
+        );
+    });
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.show_screen(Screen::Conversation, window, cx)
+        })
     });
     // v1 keeps its own empty state.
     visual.update(|_, cx| workspace.update(cx, |this, _| this.force_design(Some(Design::V1))));

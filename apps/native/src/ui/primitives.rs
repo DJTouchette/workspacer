@@ -1395,12 +1395,17 @@ pub(crate) fn status(kind: StatusKind, p: &Palette) -> Div {
     StatusBadge::new(kind).render(p)
 }
 
-/// A page's header: an optional back link, the title (22/600), a one-line
-/// description and right-aligned actions. The back row's height is kept
-/// even without a back link, so every page title lands at the same y; put
-/// it in [`page_column`] for the shared top offset and max width.
+/// A page's header (R4.5, the one page template): the back link, the title
+/// (22/600), a one-line intro and the right-aligned actions in one slot.
+///
+/// Every page has the back link. Pages replace the conversation in the main
+/// area, and the sidebar that would otherwise lead back can be collapsed to
+/// the rail or hidden by a narrow window, so one visible way back (the
+/// clickable twin of Esc) is the only rule that holds on every page. The
+/// link's ghost padding hangs outside the column, so the back label, title
+/// and intro share the page's left edge.
 pub(crate) fn page_header(
-    back: Option<AnyElement>,
+    back: AnyElement,
     title: impl Into<SharedString>,
     description: Option<SharedString>,
     actions: Vec<AnyElement>,
@@ -1420,7 +1425,7 @@ pub(crate) fn page_header(
                 // Ghost padding hangs outside the column so the back label
                 // lines up with the title.
                 .ml(px(-(t.space.md + t.space.xxs)))
-                .children(back),
+                .child(back),
         )
         .child(
             div()
@@ -1468,15 +1473,33 @@ pub(crate) fn back_link(
     label: impl Into<SharedString>,
     p: &Palette,
 ) -> Stateful<Div> {
+    back_link_enabled(id, label, true, p)
+}
+
+/// [`back_link`] that can be disabled (New session while it starts).
+pub(crate) fn back_link_enabled(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    enabled: bool,
+    p: &Palette,
+) -> Stateful<Div> {
     button(
         id,
         label,
         Some(IconName::ArrowLeft),
         ButtonVariant::Tertiary,
         ButtonSize::Small,
-        true,
+        enabled,
         p,
     )
+}
+
+/// R4.5: how far a short form page's column drops below the shared page
+/// top in a window `viewport_h` tall: a quarter of the height beyond 600,
+/// capped at `pages().short_top`. It reads the window, never the content,
+/// so a picker opening inside the form does not move the header.
+pub(crate) fn short_page_top(viewport_h: f32, p: &Palette) -> f32 {
+    ((viewport_h - 600.) * 0.25).clamp(0., p.tokens.pages().short_top)
 }
 
 /// The shared full-page content column: `layout.page_width` wide at most,
@@ -1758,7 +1781,7 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
         .bg(rgb(p.chat))
         .child(
             page_header(
-                Some(back_link("primitive-back", "Back to chat", p).into_any_element()),
+                back_link("primitive-back", "Back to chat", p).into_any_element(),
                 "Page title",
                 Some("One line that says what this page is for.".into()),
                 vec![
@@ -2416,6 +2439,49 @@ pub(crate) fn page_table_row(p: &Palette) -> Div {
         .border_color(rgb(s.divider))
         .text_size(px(t.text.body))
         .text_color(rgb(p.text))
+}
+
+// r4-pages (R4.5)
+/// One fixed action slot in a table or list row, `width` wide at least,
+/// its control right-aligned. An empty slot (`None`) keeps its room, so the
+/// other slots of the row sit where they sit on every other row.
+pub(crate) fn action_slot(width: f32, control: Option<AnyElement>) -> Div {
+    div()
+        .flex_shrink_0()
+        .min_w(px(width))
+        .flex()
+        .items_center()
+        .justify_end()
+        .children(control)
+}
+
+/// A row's actions: [`action_slot`]s in a fixed order (primary, secondary,
+/// overflow), right-aligned. Build every row of a table from the same
+/// slots and its actions form columns.
+pub(crate) fn action_slots(slots: Vec<Div>, p: &Palette) -> Div {
+    div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap(px(p.tokens.space.xs))
+        .children(slots)
+}
+
+/// The width `n` table slots and their gaps take: an actions column built
+/// from [`action_slots`] is this wide (plus any overflow trigger).
+pub(crate) fn action_slots_width(n: usize, p: &Palette) -> f32 {
+    let t = p.tokens;
+    let n = n as f32;
+    n * t.pages().action_slot + (n - 1.).max(0.) * t.space.xs
+}
+
+/// A button that fills one table action slot, label centred: labels that
+/// swap (Pause / Resume) keep one width, so nothing beside them moves.
+pub(crate) fn slot_button(button: Stateful<Div>, p: &Palette) -> Stateful<Div> {
+    button
+        .min_w(px(p.tokens.pages().action_slot))
+        .justify_center()
 }
 
 /// One agent or tool event as a single row: icon, verb, primary argument,

@@ -129,7 +129,7 @@ impl Workspace {
                         ("Machine", Col::Fixed(pg.machine)),
                         ("Folder there", Col::Flex),
                         ("How", Col::Fixed(pg.runs)),
-                        ("", Col::Keep(pg.actions)),
+                        ("", Col::Keep(link_actions_width(&p))),
                     ],
                     &p,
                 ));
@@ -606,9 +606,12 @@ impl Workspace {
         };
         let folder = ui::page_cell(Col::Flex);
         let how = ui::page_cell(Col::Fixed(pg.runs));
-        let mut actions = ui::page_cell(Col::Keep(pg.actions))
-            .justify_end()
-            .gap(px(t.space.xs));
+        // r4-pages (R4.5): three fixed slots, Accept · Choose… · Unlink,
+        // each kept when empty, so every row's actions form columns.
+        let slot = |b: Option<gpui::AnyElement>| ui::action_slot(pg.action_slot, b);
+        let mut accept_slot = None;
+        let mut choose_slot = None;
+        let mut unlink_slot = None;
         let mut suggestions = Vec::new();
         let (folder, how) = match &view.state {
             CellState::Linked(path) => (
@@ -652,35 +655,40 @@ impl Workspace {
         // The first suggestion is the row's own; more follow as rows of
         // their own, each with its Accept.
         if let Some(first) = suggestions.first() {
-            actions = actions.child(
+            accept_slot = Some(
                 div()
                     .debug_selector(move || format!("link-suggestion-{row}-{col}-0"))
-                    .child(accept(0, first.path.clone())),
+                    .child(ui::slot_button(accept(0, first.path.clone()), &p))
+                    .into_any_element(),
             );
         }
         let open =
             self.extras.link_choose.as_ref() == Some(&(project.path.clone(), cell.peer.clone()));
         if !cell.choices.is_empty() {
             let key = (project.path.clone(), cell.peer.clone());
-            actions = actions.child(
-                button(
-                    format!("link-choose-{row}-{col}"),
-                    "Choose…",
-                    ButtonVariant::Tertiary,
-                    enabled,
+            choose_slot = Some(
+                ui::slot_button(
+                    button(
+                        format!("link-choose-{row}-{col}"),
+                        "Choose…",
+                        ButtonVariant::Tertiary,
+                        enabled,
+                    )
+                    .debug_selector(move || format!("link-choose-{row}-{col}"))
+                    .when(enabled, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.extras.link_choose =
+                                if this.extras.link_choose.as_ref() == Some(&key) {
+                                    None
+                                } else {
+                                    Some(key.clone())
+                                };
+                            cx.notify();
+                        }))
+                    }),
+                    &p,
                 )
-                .debug_selector(move || format!("link-choose-{row}-{col}"))
-                .when(enabled, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        this.extras.link_choose = if this.extras.link_choose.as_ref() == Some(&key)
-                        {
-                            None
-                        } else {
-                            Some(key.clone())
-                        };
-                        cx.notify();
-                    }))
-                }),
+                .into_any_element(),
             );
         }
         if view.saved.is_some() {
@@ -688,23 +696,33 @@ impl Workspace {
                 local_path: project.path.clone(),
                 peer: cell.peer.clone(),
             });
-            actions = actions.child(
-                button(
-                    format!("link-unlink-{row}-{col}"),
-                    "Unlink",
-                    ButtonVariant::Tertiary,
-                    enabled,
+            unlink_slot = Some(
+                ui::slot_button(
+                    button(
+                        format!("link-unlink-{row}-{col}"),
+                        "Unlink",
+                        ButtonVariant::Tertiary,
+                        enabled,
+                    )
+                    .debug_selector(move || format!("link-unlink-{row}-{col}"))
+                    .when(enabled, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.extras.link_choose = None;
+                            this.command(Command::Request(request.clone()), cx);
+                            cx.notify();
+                        }))
+                    }),
+                    &p,
                 )
-                .debug_selector(move || format!("link-unlink-{row}-{col}"))
-                .when(enabled, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        this.extras.link_choose = None;
-                        this.command(Command::Request(request.clone()), cx);
-                        cx.notify();
-                    }))
-                }),
+                .into_any_element(),
             );
         }
+        let actions = ui::page_cell(Col::Keep(link_actions_width(&p)))
+            .justify_end()
+            .child(ui::action_slots(
+                vec![slot(accept_slot), slot(choose_slot), slot(unlink_slot)],
+                &p,
+            ));
         let project_cell = ui::page_cell(Col::Fixed(pg.when)).when(col == 0, |d| {
             d.flex_col()
                 .items_start()
@@ -767,9 +785,19 @@ impl Workspace {
                             .child(quiet(format!("Suggested · {}", suggestion.label()))),
                     )
                     .child(
-                        ui::page_cell(Col::Keep(pg.actions))
+                        ui::page_cell(Col::Keep(link_actions_width(&p)))
                             .justify_end()
-                            .child(accept(ix, suggestion.path.clone())),
+                            .child(ui::action_slots(
+                                vec![
+                                    slot(Some(
+                                        ui::slot_button(accept(ix, suggestion.path.clone()), &p)
+                                            .into_any_element(),
+                                    )),
+                                    slot(None),
+                                    slot(None),
+                                ],
+                                &p,
+                            )),
                     ),
             );
         }
@@ -884,4 +912,10 @@ impl Workspace {
             )
         })
     }
+}
+
+/// r4-pages (R4.5): the links table's actions column, three fixed slots
+/// (Accept · Choose… · Unlink).
+fn link_actions_width(p: &Palette) -> f32 {
+    super::primitives::action_slots_width(3, p)
 }

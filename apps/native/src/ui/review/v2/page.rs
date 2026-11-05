@@ -10,9 +10,7 @@ impl Workspace {
     ) -> Stateful<Div> {
         let p = self.palette();
         let t = p.tokens;
-        let back = primitives::back_link("feature-back", "Back to chat", &p)
-            .debug_selector(|| "feature-back".into())
-            .on_click(cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)));
+        let back = self.page_back_v2(cx);
         let paths = self.review_paths();
         let branch = self
             .review_status()
@@ -93,14 +91,8 @@ impl Workspace {
         let description = paths
             .as_ref()
             .map(|(_, root)| SharedString::from(format!("{root} · {branch}")));
-        let header = primitives::page_header(
-            Some(back.into_any_element()),
-            "Changes",
-            description,
-            actions,
-            &p,
-        )
-        .debug_selector(|| "page-header".into());
+        let header = primitives::page_header(back, "Changes", description, actions, &p)
+            .debug_selector(|| "page-header".into());
         let notice = (!self.extras.notice.is_empty()).then(|| {
             let tone = chrome::notice_tone(&self.extras.notice);
             chrome::notice_line(self.extras.notice.clone(), tone, p)
@@ -145,20 +137,33 @@ impl Workspace {
             .bg(rgb(p.chat))
             .flex()
             .flex_col()
-            .px(px(t.layout.page_gutter))
+            // r4-pages (R4.5): every page's frame (`page_view`): its gutter,
+            // top and centred `pages().wide` column, so the header shares
+            // the other pages' left edge at any window width.
+            .px(px(chrome::PAGE_GUTTER))
             .pt(px(if caption {
                 chrome::PAGE_CAPTION_INSET
             } else {
-                t.space.xxl
+                chrome::PAGE_TOP
             }))
             .pb(px(t.space.xl))
-            .gap(px(t.space.lg))
             .children(chrome::page_drag_strip())
-            .child(header)
-            .children(notice)
-            .child(self.feature_message("changes"))
-            .child(self.feature_message("git-action"))
-            .child(body)
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(t.pages().wide))
+                    .mx_auto()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(t.space.lg))
+                    .child(header)
+                    .children(notice)
+                    .child(self.feature_message("changes"))
+                    .child(self.feature_message("git-action"))
+                    .child(body),
+            )
             .children(self.review_overlays(window, cx))
     }
 

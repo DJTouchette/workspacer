@@ -289,22 +289,8 @@ impl Workspace {
                 }))
             });
         let header = if let Some(p) = v2 {
-            let close = primitives::icon_button_with_shortcut(
-                "cancel-create",
-                IconName::Close,
-                "Back to the conversation",
-                Some("Esc"),
-                ButtonVariant::Tertiary,
-                !busy,
-                &p,
-            )
-            .when(!busy, |d| {
-                d.on_click(cx.listener(|this, _, window, cx| {
-                    this.show_screen(Screen::Conversation, window, cx)
-                }))
-            });
             primitives::page_header(
-                None,
+                self.page_back_v2_enabled(!busy, cx),
                 if resume {
                     "Continue a session"
                 } else {
@@ -316,7 +302,7 @@ impl Workspace {
                     "Choose where it runs, the project and the agent, then describe the task."
                         .into()
                 }),
-                vec![close.into_any_element()],
+                Vec::new(),
                 &p,
             )
             .debug_selector(|| "launch-title".into())
@@ -2111,23 +2097,10 @@ impl Workspace {
         let t = p.tokens;
         let short = window.viewport_size().height < px(620.);
         let resume = self.extras.resume.is_some();
-        let close =
-            primitives::icon_button_with_shortcut(
-                "cancel-create",
-                IconName::Close,
-                "Back to the conversation",
-                Some("Esc"),
-                ButtonVariant::Tertiary,
-                !busy,
-                &p,
-            )
-            .when(!busy, |d| {
-                d.on_click(cx.listener(|this, _, window, cx| {
-                    this.show_screen(Screen::Conversation, window, cx)
-                }))
-            });
+        // r4-pages (R4.5): the one page template, back link included, on
+        // the shared page column and left edge.
         let header = primitives::page_header(
-            None,
+            self.page_back_v2_enabled(!busy, cx),
             if resume {
                 "Continue a session"
             } else {
@@ -2139,7 +2112,7 @@ impl Workspace {
                 "Say what you want done. Where it runs and which agent works on it are below the task."
                     .into()
             }),
-            vec![close.into_any_element()],
+            Vec::new(),
             &p,
         )
         .debug_selector(|| "launch-title".into());
@@ -2149,7 +2122,116 @@ impl Workspace {
         } else {
             self.extras.launch_panel
         };
-        let task = div()
+        let hint = div()
+            .px(px(t.space.sm))
+            .text_size(px(t.text.meta))
+            .text_color(rgb(p.roles.text_tertiary))
+            .child(if resume {
+                "Optional · sent after it resumes"
+            } else {
+                "Optional · you can start empty"
+            })
+            .into_any_element();
+        let task = self.launch_task_box_v2(panel, busy, false, hint, &p, cx);
+        let panel_card = panel.and_then(|panel| {
+            let body = match panel {
+                LaunchPanel::Machine => self.render_host_picker_v2(busy, cx)?,
+                LaunchPanel::Project => match self.launch_peer() {
+                    Some(peer) => self.render_peer_folders(&peer, busy, cx),
+                    None => self.render_project_section(busy, cx),
+                },
+                LaunchPanel::Agent => div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(t.space.lg))
+                    .child(card_title("Agent", &p))
+                    .child(self.render_provider_choice(busy, cx))
+                    .child(self.render_model_select(busy, true, cx)),
+            };
+            Some(
+                primitives::card(&p)
+                    .debug_selector(|| "launch-panel".into())
+                    .gap(px(t.space.lg))
+                    .child(body),
+            )
+        });
+        let form = div()
+            .w_full()
+            .max_w(px(t.pages().form))
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xl))
+            .child(task)
+            .children(panel_card)
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(t.space.lg))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(self.render_launch_disclosure(busy, cx)),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .max_w(px(t.pages().form / 2.))
+                            .child(self.render_launch_footer(busy, can_create, wide, short, cx)),
+                    ),
+            )
+            .when(resume, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.sm))
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary))
+                        .child(Icon::new(IconName::Info).size(px(t.icon.sm)))
+                        .child(
+                            "Your previous conversation will be resumed with the choices above.",
+                        ),
+                )
+            });
+        // A short form: the column drops by a share of the window's spare
+        // height (never the content's, so a chip's panel never moves it).
+        let top = primitives::short_page_top(f32::from(window.viewport_size().height), &p);
+        let content = div()
+            .debug_selector(|| "launch-content".into())
+            .w_full()
+            .pt(px(top))
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xxl))
+            .child(header)
+            .child(form);
+        div()
+            .id("new-session-form")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .child(self.page_view("launch-scroll", t.pages().wide, false, content))
+    }
+
+    /// The task box: the task, then the chips that say where, in which
+    /// project and with which agent it runs, and `trailing` on the chip
+    /// row (a hint on New session, Start on the welcome). The welcome draws
+    /// this same box (R4.5, one New-session flow); there a chip is a
+    /// shortcut that opens New session at that choice.
+    pub(super) fn launch_task_box_v2(
+        &self,
+        panel: Option<LaunchPanel>,
+        busy: bool,
+        welcome: bool,
+        trailing: gpui::AnyElement,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = p.tokens;
+        div()
             .debug_selector(|| "launch-task".into())
             .w_full()
             .flex()
@@ -2158,7 +2240,7 @@ impl Workspace {
             .bg(rgb(p.surface))
             .border(px(t.stroke.hairline))
             .border_color(rgb(p.roles.border_strong))
-            .shadow(primitives::elevation(&p, t.elevation.raised))
+            .shadow(primitives::elevation(p, t.elevation.raised))
             .child(
                 div()
                     .debug_selector(|| "launch-prompt".into())
@@ -2185,113 +2267,32 @@ impl Workspace {
                     .flex_wrap()
                     .items_center()
                     .gap(px(t.space.xs))
-                    .children(self.launch_chips_v2(panel, busy, &p, cx))
+                    .children(self.launch_chips_v2(panel, busy, welcome, p, cx))
                     .child(div().flex_1())
-                    .child(
-                        div()
-                            .px(px(t.space.sm))
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_tertiary))
-                            .child(if resume {
-                                "Optional · sent after it resumes"
-                            } else {
-                                "Optional · you can start empty"
-                            }),
-                    ),
-            );
-        let panel_card = panel.and_then(|panel| {
-            let body = match panel {
-                LaunchPanel::Machine => self.render_host_picker_v2(busy, cx)?,
-                LaunchPanel::Project => match self.launch_peer() {
-                    Some(peer) => self.render_peer_folders(&peer, busy, cx),
-                    None => self.render_project_section(busy, cx),
-                },
-                LaunchPanel::Agent => div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.lg))
-                    .child(card_title("Agent", &p))
-                    .child(self.render_provider_choice(busy, cx))
-                    .child(self.render_model_select(busy, true, cx)),
-            };
-            Some(
-                primitives::card(&p)
-                    .debug_selector(|| "launch-panel".into())
-                    .gap(px(t.space.lg))
-                    .child(body),
+                    .child(trailing),
             )
-        });
-        let gutter = if short {
-            t.space.lg
-        } else {
-            t.layout.page_gutter
-        };
-        let content = div()
-            .debug_selector(|| "launch-content".into())
-            .w_full()
-            .max_w(px(self.launch_width(wide)))
-            .mx_auto()
-            .pt(px(if short { 0. } else { t.layout.page_top }))
-            .flex()
-            .flex_col()
-            .gap(px(t.space.xl))
-            .child(header)
-            .child(task)
-            .children(panel_card)
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(t.space.lg))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.render_launch_disclosure(busy, cx)),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .max_w(px(t.layout.page_width / 2.))
-                            .child(self.render_launch_footer(busy, can_create, wide, short, cx)),
-                    ),
-            )
-            .when(resume, |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(t.space.sm))
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_secondary))
-                        .child(Icon::new(IconName::Info).size(px(t.icon.sm)))
-                        .child(
-                            "Your previous conversation will be resumed with the choices above.",
-                        ),
-                )
-            });
-        div()
-            .id("new-session-form")
-            .relative()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .id("launch-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .px(px(gutter))
-                    .pb(px(gutter))
-                    .when(chrome::custom_caption(), |d| {
-                        d.pt(px(chrome::PAGE_CAPTION_INSET))
-                    })
-                    .child(content),
-            )
-            .children(chrome::page_drag_strip())
+    }
+
+    /// The welcome's shortcut into New session: the task typed there and
+    /// the project it showed come along, and `panel`'s choices are open.
+    pub(super) fn open_launch_at(
+        &mut self,
+        panel: LaunchPanel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let provider = self.provider;
+        let cwd = self.welcome_project().unwrap_or_default();
+        self.show_new_session(window, cx);
+        if !self.new_session {
+            return;
+        }
+        self.choose_provider(provider, window, cx);
+        if !cwd.is_empty() {
+            self.seed_project(&cwd, cx);
+        }
+        self.extras.launch_panel = Some(panel);
+        cx.notify();
     }
 
     /// The chips inside the task box: machine (when the hub has a queue),
@@ -2301,22 +2302,30 @@ impl Workspace {
         &self,
         open: Option<LaunchPanel>,
         busy: bool,
+        welcome: bool,
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
         let t = p.tokens;
+        let enabled = !busy && !(welcome && self.demo);
         let chip = |id: &'static str,
                     panel: LaunchPanel,
                     leading: Option<gpui::AnyElement>,
                     label: String,
                     tooltip: &'static str| {
             let selected = open == Some(panel);
-            primitives::toolbar_chip(id, leading, label, true, !busy, p)
+            primitives::toolbar_chip(id, leading, label, true, enabled, p)
                 .debug_selector(move || id.into())
                 .when(selected, |d| d.bg(rgb(p.selected)).text_color(rgb(p.text)))
                 .tooltip(primitives::tooltip_view(tooltip, None, p))
-                .when(!busy, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
+                .when(enabled, |d| {
+                    d.on_click(cx.listener(move |this, _, window, cx| {
+                        if welcome {
+                            // The welcome's chips are shortcuts into New
+                            // session, opened at that choice.
+                            this.open_launch_at(panel, window, cx);
+                            return;
+                        }
                         this.extras.launch_panel =
                             (this.extras.launch_panel != Some(panel)).then_some(panel);
                         cx.notify();
@@ -2349,6 +2358,8 @@ impl Workspace {
         }
         let cwd = match self.launch_peer() {
             Some(_) => self.extras.launch_host_cwd.clone(),
+            // The welcome starts in the folder it would launch in.
+            None if welcome => self.welcome_project().unwrap_or_default(),
             None => self.projects.cwd.clone(),
         };
         let project = if cwd.is_empty() {

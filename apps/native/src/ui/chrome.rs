@@ -1406,13 +1406,13 @@ impl Workspace {
             .id(id)
             .size_full()
             .overflow_y_scroll()
-            .px(px(if short { 16. } else { 24. }))
+            .px(px(if short { 16. } else { PAGE_GUTTER }))
             .pt(px(if custom_caption() {
                 PAGE_CAPTION_INSET
             } else if short {
                 12.
             } else {
-                24.
+                PAGE_TOP
             }))
             .pb(px(if short { 16. } else { 32. }))
     }
@@ -1493,6 +1493,11 @@ impl Workspace {
             )
     }
 }
+
+/// A page's side padding and its top below the window edge (no custom
+/// caption): every page frame's, so their left edges agree (r4-pages).
+pub(super) const PAGE_GUTTER: f32 = 24.;
+pub(super) const PAGE_TOP: f32 = 24.;
 
 /// The window-chrome strip across the top of a page, when the app draws its
 /// own caption: drags the window, stops short of the caption buttons.

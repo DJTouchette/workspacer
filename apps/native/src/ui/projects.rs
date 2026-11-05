@@ -1979,7 +1979,7 @@ impl Workspace {
             cx,
         );
         let header = primitives::page_header(
-            None,
+            self.page_back_v2(cx),
             "Projects",
             Some(
                 "A project groups the folders that belong together, like an app's api and web. Every folder you pinned or ran a session in is listed here."
