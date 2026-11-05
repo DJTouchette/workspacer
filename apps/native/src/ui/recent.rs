@@ -15,7 +15,7 @@ use wks_native::projects;
 
 const CLEARED_TOOLTIP: &str =
     "Cleared from the sidebar on this device · show it under its parent again";
-const RECENT_FOOTER: &str = "History keeps every session. Hide takes a session off every sidebar on this hub, web included, and keeps it here; it never stops an agent. Delete removes a stopped session from history for good. Names are saved on this device.";
+const RECENT_FOOTER: &str = "History keeps every session. Hide takes a session off every sidebar on this hub, web included, and keeps it here; a running agent is ended first, so resuming starts it fresh. Delete removes a stopped session from history for good. Names are saved on this device.";
 /// How long typing pauses before the hub is asked to search too.
 const SEARCH_DEBOUNCE_MS: u64 = 300;
 const SEARCH_PLACEHOLDER: &str = "Search by name, project, folder, provider or model";

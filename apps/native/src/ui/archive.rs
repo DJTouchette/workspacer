@@ -1,5 +1,5 @@
-//! Archiving: a visibility change only, shared through the hub's archive
-//! where it has one and kept on this device where it does not.
+//! Archiving: hides a session (shared through the hub's archive where it has
+//! one, kept on this device where it does not) and ends its live agent.
 use super::*;
 use wks_native::features::Request;
 
@@ -137,10 +137,12 @@ impl Workspace {
         }
     }
 
-    /// Archive or restore. Only ever a visibility change: no stop, signal,
-    /// selection change or forget is sent, and a running session keeps
-    /// running. Shared through the hub when it supports it; otherwise kept on
-    /// this device for this connection, as before.
+    /// Archive or restore. Archiving a live session also ends its agent
+    /// process (as "End session" does), so an archived session holds no
+    /// running agent and resuming it starts a fresh one. Restoring never
+    /// starts anything. Neither changes the selection or forgets the session.
+    /// Shared through the hub when it supports it; otherwise kept on this
+    /// device for this connection, as before.
     pub(super) fn toggle_archive(&mut self, id: &str, cx: &mut Context<Self>) {
         if !self.view.connected && self.view.session_archive.is_some() {
             self.extras.notice = "Reconnect to archive or restore this session.".into();
@@ -148,6 +150,9 @@ impl Workspace {
             return;
         }
         let archive = !self.archived(id);
+        if archive {
+            self.end_for_archive(id);
+        }
         if !archive && self.locally_archived(id) {
             if let Some(ids) = self.settings.archived.get_mut(&self.project_scope) {
                 ids.retain(|s| s != id);
@@ -174,5 +179,24 @@ impl Workspace {
             self.save_settings(cx);
         }
         cx.notify();
+    }
+
+    /// Archiving ends a live session's agent first. A stopped session, or one
+    /// this connection cannot signal, is only hidden.
+    fn end_for_archive(&mut self, id: &str) {
+        let live = self
+            .view
+            .sessions
+            .iter()
+            .any(|s| s.id == id && !s.stopped());
+        if !live || !self.view.connected {
+            return;
+        }
+        if let Err(error) = self
+            .controller
+            .command(Command::Request(Request::EndSession { session: id.into() }))
+        {
+            self.extras.notice = format!("Could not end the session's agent: {error}");
+        }
     }
 }

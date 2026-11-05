@@ -413,12 +413,20 @@ pub enum Request {
     UndoCleanup {
         sessions: Vec<String>,
     },
-    /// Archive or restore one session on the hub. View state only: it never
-    /// stops, signals or forgets the session. Its own key, and never
-    /// superseded, so archiving two sessions quickly keeps both.
+    /// Archive or restore one session on the hub. View state only: the stop
+    /// that archiving a live session also needs is [`Request::EndSession`].
+    /// Its own key, and never superseded, so archiving two sessions quickly
+    /// keeps both.
     SetArchive {
         session: String,
         archived: bool,
+    },
+    /// End a live session's agent process (`claude.signal` SIGTERM), as
+    /// "End session" does. Archiving sends it first, so an archived session
+    /// holds no running agent and resuming it starts a fresh one. Never
+    /// superseded: ending two sessions quickly ends both.
+    EndSession {
+        session: String,
     },
     /// Claude stream: restore files to how they were at a user message
     /// (`claude.rewindFiles`). `preview` is the dry run that says what would
@@ -665,6 +673,7 @@ impl Request {
             Self::SnoozeCleanup => "session-snooze",
             Self::UndoCleanup { .. } => "session-undo",
             Self::SetArchive { .. } => "archive-set",
+            Self::EndSession { .. } => "session-end",
             Self::RewindFiles { .. } => "rewind-files",
             Self::Fork { .. } => "fork",
             Self::PrThreads { .. } => "pr-threads",
@@ -695,6 +704,7 @@ impl Request {
             Self::PrProviders => Some("pr.providers"),
             Self::HistoryPage { .. } => Some("sessions.history"),
             Self::ForgetSession { .. } => Some("sessions.forget"),
+            Self::EndSession { .. } => Some("claude.signal"),
             Self::ScratchList { .. } => Some("scratch.list"),
             Self::ScratchRead { .. } => Some("scratch.read"),
             Self::ScratchMark { .. } => Some("scratch.mark"),
@@ -1066,6 +1076,14 @@ impl Request {
                     )
                     .await?,
             ),
+            Self::EndSession { session } => {
+                backend
+                    .call(
+                        "claude.signal",
+                        json!({"sessionId":session,"signal":"SIGTERM"}),
+                    )
+                    .await
+            }
             Self::SetArchive { session, archived } => {
                 let document = archive_document(
                     backend
@@ -1781,6 +1799,23 @@ pub fn installed_version() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ending_a_session_is_the_hubs_signal_and_never_superseded_by_another() {
+        let end = Request::EndSession {
+            session: "s1".into(),
+        };
+        assert_eq!(end.key(), "session-end");
+        // Gated on the same bus method as "End session".
+        assert_eq!(end.method(), Some("claude.signal"));
+        assert_eq!(
+            crate::controller::Action::Terminate.wire("s1"),
+            (
+                "claude.signal",
+                json!({"sessionId":"s1","signal":"SIGTERM"})
+            )
+        );
+    }
 
     #[test]
     fn title_settings_apply_shared_defaults_and_resolve_the_effective_model() {

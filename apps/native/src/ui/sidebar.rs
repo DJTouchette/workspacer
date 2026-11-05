@@ -1433,7 +1433,7 @@ impl Workspace {
                                                 } else {
                                                     this.icon_button(
                                                         SharedString::from(format!("archive-sidebar-{}", session.id)),
-                                                        "Archive · hides it in every client, keeps it running · restore from Session history → Archived",
+                                                        "Archive · ends its agent and hides it in every client · restore from Session history → Archived",
                                                         IconName::Inbox,
                                                         true,
                                                     )

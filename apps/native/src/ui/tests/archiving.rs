@@ -1,8 +1,8 @@
-//! Archiving: shared through the hub, never a stop.
+//! Archiving: shared through the hub; archiving a live session ends its agent.
 use super::*;
 
 #[gpui::test]
-fn sidebar_archive_hides_session_without_selecting_or_stopping_it(cx: &mut TestAppContext) {
+fn sidebar_archive_hides_session_and_ends_its_agent_without_selecting_it(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     let path = std::env::temp_dir().join(format!("native-archive-{}.json", std::process::id()));
     visual.update(|window, cx| {
@@ -21,7 +21,14 @@ fn sidebar_archive_hides_session_without_selecting_or_stopping_it(cx: &mut TestA
         assert_eq!(this.view.selected.as_deref(), Some("a"));
         assert_eq!(this.composer.read(cx).value().as_ref(), "keep draft");
     });
-    assert!(commands.try_recv().is_err());
+    // The live agent is ended (the hub's `claude.signal`), nothing else:
+    // no select, no act on the selected session.
+    let sent = archive_effects(&mut commands);
+    assert!(
+        matches!(&sent[..], [Command::Request(wks_native::features::Request::EndSession { session })] if session == "b"),
+        "unexpected effects: {}",
+        sent.len()
+    );
     assert_eq!(Settings::load(&path).unwrap().archived["test"], vec!["b"]);
     visual.update(|_, cx| {
         workspace.update(cx, |this, cx| {
@@ -45,7 +52,7 @@ fn archive_doc(version: i64, ids: &[&str]) -> Option<Arc<serde_json::Value>> {
 }
 
 #[gpui::test]
-fn sidebar_archive_is_shared_through_the_hub_and_never_stops(cx: &mut TestAppContext) {
+fn sidebar_archive_is_shared_through_the_hub_and_ends_the_agent(cx: &mut TestAppContext) {
     use wks_native::{controller::ArchiveReceipt, features::Request};
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     let path =
@@ -69,8 +76,8 @@ fn sidebar_archive_is_shared_through_the_hub_and_never_stops(cx: &mut TestAppCon
     let _ = archive_effects(&mut commands);
     let archive = visual.debug_bounds("sidebar-archive-1").unwrap();
     visual.simulate_click(archive.center(), gpui::Modifiers::default());
-    // Hidden at once, selection and draft untouched, and the only effect
-    // is the hub archive request: no stop, select, or local-only copy.
+    // Hidden at once, selection and draft untouched. The effects are the
+    // agent's end, then the hub archive request: no select or local copy.
     workspace.read_with(&visual, |this, cx| {
         assert_eq!(this.visible_sessions(cx), vec![0]);
         assert_eq!(this.view.selected.as_deref(), Some("a"));
@@ -79,7 +86,10 @@ fn sidebar_archive_is_shared_through_the_hub_and_never_stops(cx: &mut TestAppCon
     });
     let sent = archive_effects(&mut commands);
     assert!(
-        matches!(&sent[..], [Command::Request(Request::SetArchive { session, archived: true })] if session == "b"),
+        matches!(&sent[..], [
+            Command::Request(Request::EndSession { session: ended }),
+            Command::Request(Request::SetArchive { session, archived: true }),
+        ] if ended == "b" && session == "b"),
         "unexpected effects: {}",
         sent.len()
     );
@@ -107,11 +117,11 @@ fn sidebar_archive_is_shared_through_the_hub_and_never_stops(cx: &mut TestAppCon
             assert!(this.extras.notice.contains("denied"));
         })
     });
-    assert!(
-        archive_effects(&mut commands)
-            .iter()
-            .all(|c| matches!(c, Command::Request(Request::SetArchive { .. })))
-    );
+    // Restoring never starts or stops anything; re-archiving ends it again.
+    assert!(archive_effects(&mut commands).iter().all(|c| matches!(
+        c,
+        Command::Request(Request::SetArchive { .. } | Request::EndSession { .. })
+    )));
     // Later saves (teardown included) would write it back.
     visual.update(|_, cx| workspace.update(cx, |this, _| this.settings_path = None));
     let _ = std::fs::remove_file(path);
@@ -205,9 +215,17 @@ fn archive_restore_during_migration_serializes_writes_and_preserves_the_latest_c
             assert!(!this.archived("a"));
         })
     });
+    // The archive click ended the live agent (a restore never revives it);
+    // the hub sees only the latest choice.
     let second = archive_effects(&mut commands);
+    let (ends, writes): (Vec<_>, Vec<_>) = second
+        .iter()
+        .partition(|c| matches!(c, Command::Request(Request::EndSession { .. })));
     assert!(
-        matches!(&second[..], [Command::Request(Request::SetArchive { session, archived: false })] if session == "a")
+        matches!(&ends[..], [Command::Request(Request::EndSession { session })] if session == "a")
+    );
+    assert!(
+        matches!(&writes[..], [Command::Request(Request::SetArchive { session, archived: false })] if session == "a")
     );
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
@@ -241,7 +259,10 @@ fn archive_restore_during_migration_serializes_writes_and_preserves_the_latest_c
     let sent = archive_effects(&mut commands);
     assert!(matches!(
         &sent[..],
-        [Command::Request(Request::SetArchive { archived: true, .. })]
+        [
+            Command::Request(Request::EndSession { .. }),
+            Command::Request(Request::SetArchive { archived: true, .. })
+        ]
     ));
     visual.update(|_, cx| {
         workspace.update(cx, |this, cx| {
@@ -293,4 +314,50 @@ fn archived_sessions_are_filtered_per_connection(cx: &mut TestAppContext) {
             assert_eq!(this.visible_sessions(cx), vec![0, 1]);
         })
     });
+}
+
+#[gpui::test]
+fn archiving_a_stopped_session_or_restoring_one_never_signals(cx: &mut TestAppContext) {
+    use wks_native::features::Request;
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            let mut view = state("a");
+            Arc::make_mut(&mut view.sessions)[1].state = "stopped".into();
+            view.session_archive = archive_doc(1, &[]);
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    let _ = archive_effects(&mut commands);
+    visual.update(|_, cx| workspace.update(cx, |this, cx| this.toggle_archive("b", cx)));
+    let sent = archive_effects(&mut commands);
+    assert!(
+        matches!(&sent[..], [Command::Request(Request::SetArchive { session, archived: true })] if session == "b"),
+        "a stopped session is only hidden: {}",
+        sent.len()
+    );
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = state("a");
+            view.session_archive = archive_doc(2, &["b"]);
+            Arc::make_mut(&mut view.sessions)[1].state = "stopped".into();
+            view.archive_receipts = vec![wks_native::controller::ArchiveReceipt {
+                number: 1,
+                session: "b".into(),
+                archived: true,
+                error: None,
+            }]
+            .into();
+            this.update_view(Arc::new(view), window, cx);
+            this.toggle_archive("b", cx);
+        })
+    });
+    assert!(
+        archive_effects(&mut commands)
+            .iter()
+            .all(|c| !matches!(c, Command::Request(Request::EndSession { .. }))),
+        "restoring never signals"
+    );
 }

@@ -1174,7 +1174,7 @@ impl Worker {
         // Each accepted touch keeps its own job. Jobs queue on the shared
         // per-hub FIFO transaction lock; never cancel an acknowledged launch's
         // recency update merely because another launch used the same slot.
-        let queued = matches!(key, "project-touch" | "archive-set");
+        let queued = matches!(key, "project-touch" | "archive-set" | "session-end");
         if !queued && let Some(abort) = self.request_aborts.remove(key) {
             abort.abort();
         }

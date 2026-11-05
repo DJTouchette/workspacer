@@ -1419,14 +1419,14 @@ impl Workspace {
                             "Hides it from the sidebar everywhere you use Workspacer."
                         }
                         (false, false, true) => {
-                            "Hides it from the sidebar everywhere you use Workspacer. It keeps running."
+                            "Ends its agent and hides it from the sidebar everywhere you use Workspacer."
                         }
                         (true, _, false) => "Hidden from the list in every client of this hub.",
                         (false, true, false) => {
                             "Hides it from the list in every client of this hub."
                         }
                         (false, false, false) => {
-                            "Hides it from the list in every client of this hub. It keeps running."
+                            "Ends its agent and hides it from the list in every client of this hub."
                         }
                     },
                     self.pbutton(

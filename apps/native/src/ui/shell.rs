@@ -2067,7 +2067,7 @@ impl Workspace {
             row_action(
                 format!("archive-sidebar-{}", session.id).into(),
                 IconName::Inbox,
-                "Archive · hides it in every client, keeps it running · restore from Session history → Archived",
+                "Archive · ends its agent and hides it in every client · restore from Session history → Archived",
                 &p,
             )
             .debug_selector(move || format!("sidebar-archive-{ix}"))
