@@ -49,7 +49,7 @@ SETTINGS_SECTIONS = ["Appearance", "Typography", "Workspace", "Remote",
                      "Agents", "Chat", "Keyboard", "About"]
 # area-pages: controls design v2 moved (used when --setting design_v2=true).
 LANDMARKS_V2 = {
-    "END_SESSION": lambda shot: (1324, 634),        # Session details "End session..."
+    "END_SESSION": lambda shot: (1024, 637),        # r3-integration: the form column's "End session..."
     "NEW_TASK_FIELD": lambda shot: (900, 200),      # r2-pages: v2's task box leads the form
     "HOSTS_DETAILS": lambda shot: (1520, 207),      # r3-pages: Machines' first "Details" (table row)
     "JOB_OVERFLOW": lambda shot: (1549, 447),       # r3-pages: Jobs table, first scheduled job's "..."
@@ -110,7 +110,9 @@ def shots():
     # r3-composer: v2's Deny with note lives in Deny's split menu.
     add("deny-with-note", "Approval dock: Deny with note",
         [("design", [("click", "APPROVAL_DENY_NOTE")],
-          [("click", "APPROVAL_DENY_MENU"), ("sleep", 0.5), ("click", "APPROVAL_DENY_NOTE")]),
+          [("click", "APPROVAL_DENY_MENU"), ("sleep", 0.5), ("click", "APPROVAL_DENY_NOTE"),
+           # r3-integration: focus the note field before typing.
+           ("sleep", 0.5), ("click", 851, 877)]),
          ("sleep", 0.5), ("type", "Run only the session tests, not the whole suite.")])
     add("file-viewer", "File viewer with README.md open from a transcript link",
         [("click", "README_LINK"), ("sleep", 2)])
@@ -447,35 +449,38 @@ class Rig:
 # Kept in one place so a redesign that moves a control only edits here.
 LANDMARKS = {
     "RAIL_TOGGLE": lambda shot: (286, 35),          # sidebar header, rightmost icon
-    "SIDEBAR_SEARCH": lambda shot: (140, 85),       # r2-shell: v2 sidebar search field
+    "SIDEBAR_SEARCH": lambda shot: (140, 68),       # r2-shell: v2 sidebar search field (r3-integration: re-measured)
     # Design v2 groups the list (Needs you, then Idle): Bus fan-out sits higher.
     # (r2: Idle rows are single-line 30px; re-measured after integration.)
     # (r3-shell: one two-line row template in every group; re-measured.)
-    "SIDEBAR_ROW_BUS": lambda shot: (110, 562 if shot.get("v2") else 468),
+    # (r3-integration: re-measured after the header strip.)
+    "SIDEBAR_ROW_BUS": lambda shot: (110, 588 if shot.get("v2") else 468),
     # The fixture's question (Release checklist for 0.9): v2 groups it under
     # Needs you; v1 lists it after Bus fan-out.
-    "SIDEBAR_ROW_QUESTION": lambda shot: (110, 352 if shot.get("v2") else 532),
+    "SIDEBAR_ROW_QUESTION": lambda shot: (110, 378 if shot.get("v2") else 532),
     # v1 "Inspect transcript parsing"; v2 the child nested under Needs you.
-    "SIDEBAR_ROW_CHILD": lambda shot: (110, 283 if shot.get("v2") else 212),
+    "SIDEBAR_ROW_CHILD": lambda shot: (110, 313 if shot.get("v2") else 212),
     # The title pill grows when hovered (context meter appears), so hover it
     # first; these two are the chips' positions once it has grown.
     "TITLE_PILL": lambda shot: (900, 30),
     # "Sonnet" chip: v1 in the hovered title pill, v2 on the composer (r2).
-    "TITLE_MODEL": lambda shot: (562, 961) if shot.get("v2") else (1005, 30),
+    # (r3-integration: the reading column is centred; the chip once the composer is open.)
+    "TITLE_MODEL": lambda shot: (705, 960) if shot.get("v2") else (1005, 30),
     # Background work: v1 the hovered pill's badge; v2 (r3-shell) the
     # header toolbar's "Tasks 3".
     "TITLE_TASKS_BADGE": lambda shot: (1304, 20) if shot.get("v2") else (1078, 30),
     # v1: the approval card above the composer; v2: the strip on the composer.
     "APPROVAL_DETAILS": lambda shot: (1289, 805) if shot["v2"] else (1361, 749),  # r2-systems: the approval is a card above the composer
     # r3-composer: v2's Deny with note is the first item of Deny's menu.
-    "APPROVAL_DENY_NOTE": lambda shot: (860, 960) if shot["v2"] else (910, 795),
-    "APPROVAL_DENY_MENU": lambda shot: (948, 920),   # r3-composer: Deny's chevron (v2)
-    "COMPOSER_REPLY": lambda shot: (466, 970),       # r3-composer: "Reply instead…" under the card (v2)
+    # (r3-integration: v1's moved right when the fixture's grant label grew.)
+    "APPROVAL_DENY_NOTE": lambda shot: (960, 952) if shot["v2"] else (1030, 797),
+    "APPROVAL_DENY_MENU": lambda shot: (1098, 921),  # r3-composer: Deny's chevron (v2; r3-integration re-measured)
+    "COMPOSER_REPLY": lambda shot: (615, 970),       # r3-composer: "Reply instead…" under the card (v2)
     "QUESTION_ANSWER": lambda shot: (900, 884),      # r3-composer: the release question's answer field (v2)
-    "COMPOSER_SEND_MENU": lambda shot: (1482, 960),  # r3-composer: Queue's chevron while working (v2)
+    "COMPOSER_SEND_MENU": lambda shot: (1333, 960),  # r3-composer: Queue's chevron while working (v2; r3-integration re-measured)
     "RAIL_FIRST_MARK": lambda shot: (35, 205 if shot.get("v2") else 219),  # first session in the rail
-    "README_LINK": lambda shot: (651, 629) if shot["v2"] else (591, 497),  # README.md link, last assistant message
-    "TALL_README_LINK": lambda shot: (228, 1229) if shot["v2"] else (169, 1097),  # same link, 1000x1600 tall layout
+    "README_LINK": lambda shot: (630, 684) if shot["v2"] else (591, 497),  # README.md link, last assistant message
+    "TALL_README_LINK": lambda shot: (207, 1284) if shot["v2"] else (169, 1097),  # same link, 1000x1600 tall layout
     "TASK_ROW_DEV": lambda shot: (1200, 85),        # the fixture hub task in the tasks panel
     # The failed cargo test task: v2 its "Open log" button, v1 its row.
     "TASK_ROW_FAILED": lambda shot: (1043, 345) if shot["v2"] else (1200, 270),
@@ -491,7 +496,8 @@ LANDMARKS = {
     # Settings category rail; rows are ~37.7 px apart starting at Appearance.
     "settings_section": lambda shot, index: (570, 114 + round(index * 37.7)),
     # area-pages: the design v2 rail (Chat folds into Appearance).
-    "settings_section_v2": lambda shot, index: (570, 158 + round(index * 34.4)),  # r2-pages: shared page grid
+    # (r3-integration: the rail sits left of the wide page column.)
+    "settings_section_v2": lambda shot, index: (420, 162 + index * 34),
 }
 
 
