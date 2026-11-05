@@ -1122,7 +1122,7 @@ impl Workspace {
 /// r6-decisions (R6.2): a subagent that stopped answering, as a Needs-you
 /// item: what it is, how long it has been silent, and where its three
 /// actions go. Nudge, Stop and View output read the same (and take the
-/// same keys, 1 2 3) on its Fleet tile, its Fleet table row and its own
+/// same keys, 1 2) on its Fleet tile, its Fleet table row and its own
 /// view.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Stall {
@@ -1138,7 +1138,8 @@ pub(super) struct Stall {
     pub session: Option<String>,
 }
 
-/// A stalled subagent's actions, in key order.
+/// A stalled subagent's actions. R7.1: Nudge is the positive answer (1),
+/// Stop the "no" (2); View output is an extra and takes no number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StallKey {
     Nudge,
@@ -1149,14 +1150,19 @@ pub(super) enum StallKey {
 impl StallKey {
     pub(super) const ALL: [StallKey; 3] = [Self::Nudge, Self::Stop, Self::ViewOutput];
 
-    /// Key `n` (1-based).
+    /// Key `n` (1-based), from the one key map.
     pub(super) fn nth(n: usize) -> Option<Self> {
-        n.checked_sub(1).and_then(|ix| Self::ALL.get(ix).copied())
+        Self::ALL.into_iter().find(|k| k.number() == Some(n))
     }
 
-    /// Its number key.
-    pub(super) fn number(self) -> usize {
-        Self::ALL.iter().position(|k| *k == self).unwrap_or(0) + 1
+    /// Its number key, if it has one.
+    pub(super) fn number(self) -> Option<usize> {
+        use super::decision::Slot;
+        match self {
+            Self::Nudge => Some(Slot::Positive.key()),
+            Self::Stop => Some(Slot::Deny.key()),
+            Self::ViewOutput => None,
+        }
     }
 }
 
@@ -1306,8 +1312,8 @@ impl Workspace {
     }
 
     /// `stall` as the one decision component: Nudge (Primary) and Stop
-    /// (Destructive) side by side, View output (Secondary) after them, keys
-    /// 1 2 3. `on_key` runs a key (a Fleet tile focuses itself first; the
+    /// (Destructive) side by side, View output (Text) in the quiet row,
+    /// keys 1 2 (R7.1). `on_key` runs a key (a Fleet tile focuses itself first; the
     /// subagent view acts in place).
     pub(super) fn stall_decision(
         &self,
@@ -1328,7 +1334,7 @@ impl Workspace {
             };
             let on_key = on_key.clone();
             Choice::new(id, label)
-                .key(Some(key.number()))
+                .key(key.number())
                 .tooltip(tip)
                 .enabled(enabled)
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1355,18 +1361,20 @@ impl Workspace {
         decision.headline_selector = Some(format!("{prefix}-headline").into());
         decision.reason = Some(wks_native::format::not_responding(stall.since, now));
         decision.deny = Some(choice(StallKey::Stop, "Stop", stop_tip));
-        decision.alternates = vec![choice(
+        // R7.1: View output is no variant of Nudge; it rides where Deny
+        // with note would (a Text button), with no key.
+        decision.deny_note = Some(choice(
             StallKey::ViewOutput,
             "View output",
             "Open what it has done so far",
-        )];
+        ));
         decision.keys = true;
         decision
     }
 
     /// r6-decisions (R6.2): under the subagent view's header, while the
     /// subagent shown has stopped answering: Nudge, Stop and View output
-    /// with their keys (1 2 3 while nothing else is focused). Design v2.
+    /// with their keys (1 2 while nothing else is focused). Design v2.
     pub(super) fn render_stall_bar(&self, cx: &mut Context<Self>) -> Option<Div> {
         if !self.design().is_v2() {
             return None;
@@ -1395,7 +1403,7 @@ impl Workspace {
     }
 
     /// Number keys on the subagent view while its subagent is stalled:
-    /// 1 Nudge, 2 Stop, 3 View output. Whether the key was taken.
+    /// 1 Nudge, 2 Stop (View output has no key). Whether the key was taken.
     pub(super) fn stall_key(&mut self, n: usize, cx: &mut Context<Self>) -> bool {
         let Some(key) = StallKey::nth(n) else {
             return false;

@@ -41,7 +41,9 @@ actions!(
         FleetKey2,
         FleetKey3,
         FleetKey4,
-        FleetKey5
+        FleetKey5,
+        /// R7.1: Shift+1, the positive answer's variant (Allow all).
+        FleetVariant
     ]
 );
 
@@ -118,26 +120,11 @@ pub(super) fn batch_of(tiles: &[Tile], n: usize) -> Vec<usize> {
     if same.len() > 1 { same } else { Vec::new() }
 }
 
-/// R6.7: the batch's number key: right after Allow and Deny, on the
-/// answer row it sits on (reading order); the grants below move up one.
-pub(super) const BATCH_KEY: usize = 3;
-
-/// Key `key`'s number on an approval tile whose keys are `keys`, with a
-/// batch (`batch`) taking [`BATCH_KEY`].
-pub(super) fn key_number(keys: &[StripKey], key: &StripKey, batch: bool) -> Option<usize> {
-    let at = keys.iter().position(|k| k == key)? + 1;
-    Some(if batch && at >= BATCH_KEY { at + 1 } else { at })
-}
-
-/// What number key `n` does on such a tile: `None` the batch.
-pub(super) fn key_at(keys: &[StripKey], n: usize, batch: bool) -> Option<Option<StripKey>> {
-    if batch && n == BATCH_KEY {
-        return Some(None);
-    }
-    let n = if batch && n > BATCH_KEY { n - 1 } else { n };
-    n.checked_sub(1)
-        .and_then(|ix| keys.get(ix))
-        .map(|k| Some(k.clone()))
+/// R7.1: what number key `n` does on an approval tile whose keyed actions
+/// are `keys`: the one key map, never shifted by a batch (the batch is
+/// Shift+1, [`super::decision::VARIANT_KEY`]).
+pub(super) fn key_at(keys: &[StripKey], n: usize) -> Option<StripKey> {
+    keys.iter().find(|k| k.number() == Some(n)).cloned()
 }
 
 /// The tiles in `sort` order (stable: ties keep the sidebar's order).
@@ -317,6 +304,8 @@ pub(super) enum Ask {
         facts: Vec<(String, String, bool)>,
         command: String,
         risk: Option<super::decision::Risk>,
+        /// R7.7: the session's access mode in words, for Details.
+        access: String,
     },
     /// r5-fleet (R5.4): one question, answered on the tile: its options
     /// (label, description) as a list (keys 1…n send one), or with none an
@@ -334,7 +323,7 @@ pub(super) enum Ask {
         verb: &'static str,
     },
     /// r6-decisions (R6.2): a subagent that stopped answering: 1 Nudge,
-    /// 2 Stop, 3 View output.
+    /// 2 Stop, and View output (no key, R7.1).
     Stalled(super::children::Stall),
 }
 
@@ -521,11 +510,17 @@ impl Workspace {
                     request: approval_request(approval),
                     folder: session.cwd.clone(),
                     host: host.clone(),
-                    keys: strip_keys(always.len(), false),
+                    // R7.1: Deny with note (4) wherever the provider
+                    // reads a note; it opens the note in the session.
+                    keys: strip_keys(
+                        always.len(),
+                        matches!(session.provider_id(), "claude" | "codex"),
+                    ),
                     always,
                     facts: approval_facts(approval, &session.cwd, &host),
                     command: super::composer_v2::approval_summary(approval).1,
                     risk: super::decision::risk(approval, &session.cwd),
+                    access: super::decision::access_line(session),
                 }
             })
             .or_else(|| {
@@ -879,25 +874,25 @@ impl Workspace {
         window.focus(&self.focus);
         let ready = self.view.connected && !self.view.busy;
         match &tile.ask {
-            Some(Ask::Approval {
-                keys, always, risk, ..
-            }) => {
-                // R6.7: the batch's key (3, beside Allow and Deny).
-                let batch = batch_of(&tiles, position);
-                let Some(key) = key_at(keys, n, !batch.is_empty()) else {
-                    return;
-                };
-                let Some(key) = key.as_ref() else {
-                    if ready {
-                        self.fleet_batch(&tiles, &batch, cx);
-                    }
+            Some(Ask::Approval { keys, risk, .. }) => {
+                // R7.1: the one key map (1 Allow, 2 Deny, 3 Always allow,
+                // 4 Deny with note); the batch is Shift+1.
+                let Some(key) = key_at(keys, n) else {
                     return;
                 };
                 if !ready {
                     return;
                 }
+                if key == StripKey::DenyWithNote {
+                    self.fleet_deny_with_note(tile.index, window, cx);
+                    return;
+                }
+                if let StripKey::Always(ix) = key {
+                    self.fleet_grant(position, ix, cx);
+                    return;
+                }
                 let card = self.view.sessions[tile.index].card();
-                if *key == StripKey::Allow
+                if key == StripKey::Allow
                     && !self.confirm_allow(
                         &super::decision::confirm_key(&tile.id, card.as_deref()),
                         *risk,
@@ -910,15 +905,7 @@ impl Workspace {
                 let action = match key {
                     StripKey::Allow => Action::Approve(true, card),
                     StripKey::Deny => Action::Approve(false, card),
-                    StripKey::Always(ix) => match (always.get(*ix), card) {
-                        (Some((option, label, _, _)), Some(card)) => Action::AlwaysAllow {
-                            option: option.clone(),
-                            label: label.clone(),
-                            card,
-                        },
-                        _ => return,
-                    },
-                    StripKey::DenyWithNote => return,
+                    StripKey::Always(_) | StripKey::DenyWithNote => return,
                 };
                 self.fleet_act(tile.index, action, cx);
                 // Decided: the focus moves on to the next tile that asks
@@ -967,6 +954,57 @@ impl Workspace {
             this.fleet.focus = Some(stall.parent.clone());
             this.stall_act(&stall, key, cx);
         })
+    }
+
+    /// Grant `ix` ("Always allow") of tile `position`'s approval; the focus
+    /// moves on to the next ask.
+    fn fleet_grant(&mut self, position: usize, ix: usize, cx: &mut Context<Self>) {
+        let tiles = self.fleet_tiles(cx);
+        let Some(tile) = tiles.get(position) else {
+            return;
+        };
+        let Some(Ask::Approval { always, .. }) = &tile.ask else {
+            return;
+        };
+        if !self.view.connected || self.view.busy {
+            return;
+        }
+        let card = self.view.sessions[tile.index].card();
+        if let (Some((option, label, _, _)), Some(card)) = (always.get(ix), card) {
+            let action = Action::AlwaysAllow {
+                option: option.clone(),
+                label: label.clone(),
+                card,
+            };
+            self.fleet.focus = Some(tile.id.clone());
+            self.fleet_act(tile.index, action, cx);
+            if let Some(next) = next_asking(&tiles, position) {
+                self.fleet.focus = Some(next);
+            }
+            cx.notify();
+        }
+    }
+
+    /// R7.1: Deny with note from the Fleet: the session opens with its
+    /// note field ready (the note needs room the tile does not have).
+    fn fleet_deny_with_note(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let card = self.view.sessions[index].card();
+        self.open_listed_session(index, cx);
+        self.open_deny_note(card, window, cx);
+    }
+
+    /// R7.1: Shift+1 on the focused tile: the positive answer's variant,
+    /// "Allow all" for a batch of identical requests.
+    fn fleet_variant(&mut self, cx: &mut Context<Self>) {
+        let tiles = self.fleet_tiles(cx);
+        let jobs = self.fleet_jobs();
+        let Cursor::Tile(position) = self.fleet_cursor(&tiles, &jobs) else {
+            return;
+        };
+        let batch = batch_of(&tiles, position);
+        if !batch.is_empty() && self.view.connected && !self.view.busy {
+            self.fleet_batch(&tiles, &batch, cx);
+        }
     }
 
     /// R6.7: allow every approval in `batch` (positions among `tiles`, the
@@ -1087,6 +1125,7 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &FleetKey3, window, cx| this.fleet_key(3, window, cx)))
             .on_action(cx.listener(|this, _: &FleetKey4, window, cx| this.fleet_key(4, window, cx)))
             .on_action(cx.listener(|this, _: &FleetKey5, window, cx| this.fleet_key(5, window, cx)))
+            .on_action(cx.listener(|this, _: &FleetVariant, _, cx| this.fleet_variant(cx)))
     }
 
     fn fleet_key(&mut self, n: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -1231,7 +1270,8 @@ impl Workspace {
                     .into_any_element(),
             ],
             &p,
-        );
+        )
+        .w_auto();
         let body: AnyElement = if tiles.is_empty() && jobs.is_empty() {
             let (title, body) = if groups.is_empty() && all_count == 0 {
                 (
@@ -1324,10 +1364,10 @@ impl Workspace {
                         cx,
                     ));
                 }
-                // R6.7: the cards of a row share its height.
-                system::even_tile_grid(cols as u16, &p)
+                // R7.6: each card is as tall as its content; a row without
+                // a decision does not stretch to match one with it.
+                system::tile_rows(cols, cards, &p)
                     .debug_selector(|| "fleet-grid".into())
-                    .children(cards)
                     .into_any_element()
             };
             div()
@@ -1354,7 +1394,12 @@ impl Workspace {
                 .child(content)
                 .into_any_element()
         };
-        let asks = tiles.iter().any(|t| t.ask.is_some());
+        // R7.1: the hint lists exactly the keys the focused card shows.
+        let caps = match self.fleet_cursor(&tiles, &jobs) {
+            Cursor::Tile(at) => focused_caps(&tiles, at),
+            Cursor::Job(_) => vec!["1".to_owned(), "2".to_owned()],
+            Cursor::None => Vec::new(),
+        };
         // r5-shell (R5.4): the shared PageShell, at the grid's width.
         let content = system::page_shell(
             header,
@@ -1364,7 +1409,7 @@ impl Workspace {
                 .flex_col()
                 .gap(px(t.space.xxl))
                 .child(body)
-                .child(self.fleet_hints(asks, table)),
+                .child(self.fleet_hints(&caps, table)),
             system::PageWidth::Grid,
             &p,
         )
@@ -1373,8 +1418,9 @@ impl Workspace {
     }
 
     /// The keys, once, under the grid: faint keycaps and plain words. The
-    /// number keys show only while something asks.
-    fn fleet_hints(&self, asks: bool, table: bool) -> Div {
+    /// answer keys are exactly the focused card's (R7.1), and show only
+    /// while it asks.
+    fn fleet_hints(&self, caps: &[String], table: bool) -> Div {
         let p = self.palette();
         let t = p.tokens;
         let hint = |keys: &[&'static str], label: &'static str| {
@@ -1399,8 +1445,19 @@ impl Workspace {
                 hint(&["←", "↑", "↓", "→"], "Move")
             })
             .child(hint(&["↵"], "Open"))
-            .when(asks, |d| {
-                d.child(hint(&["1", "2", "3"], "Answer the focused ask"))
+            .when(!caps.is_empty(), |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "fleet-hint-answer".into())
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.xs))
+                        .children(
+                            caps.iter()
+                                .map(|k| primitives::keycap_hint(k.clone(), false, &p)),
+                        )
+                        .child(div().pl(px(t.space.xxs)).child("Answer the focused ask")),
+                )
             })
             .child(hint(&["Esc"], "Back"))
     }
@@ -1588,6 +1645,14 @@ impl Workspace {
         let card = surface
             .flex_1()
             .child(self.fleet_tile_head(n, tile))
+            // R7.3: the session's latest test result, under its status.
+            .children(
+                self.session_verification(&self.view.sessions[index])
+                    .map(|v| {
+                        system::verification_line(&v, timing::now_ms(), &p)
+                            .debug_selector(move || format!("fleet-verification-{n}"))
+                    }),
+            )
             .children(ask)
             .when(!lines.is_empty(), |d| {
                 d.child(
@@ -1677,10 +1742,9 @@ impl Workspace {
             super::decision::Frame::Inline,
             cx,
         );
-        // R6.3: keys show on every keyed decision, at full strength where
-        // they go (the focused card).
-        decision.keys = true;
-        decision.keys_live = focused;
+        // R7.1/R7.2: keys and the Filled Allow only on the focused card.
+        decision.keys = focused;
+        decision.filled = focused;
         let focus = format!("{JOB_FOCUS}{}", job.id);
         let surface = if focused {
             system::waiting_tile_focused(&p)
@@ -1742,11 +1806,14 @@ impl Workspace {
                 facts,
                 command,
                 risk,
+                access,
             } => {
-                let number = |key: &StripKey| key_number(keys, key, batch > 1);
+                // R7.1: the one key map; a key the card does not offer
+                // stays empty.
+                let number = |key: &StripKey| keys.contains(key).then(|| key.number()).flatten();
                 let allow = choice(
                     format!("fleet-allow-{n}"),
-                    number(&StripKey::Allow).unwrap_or(1),
+                    StripKey::Allow.number().unwrap_or(1),
                     "Allow".into(),
                 )
                 .tooltip("Allow this once");
@@ -1760,21 +1827,33 @@ impl Workspace {
                 decision.folder = Some(folder.clone());
                 decision.host = Some(host.clone());
                 decision.risk = *risk;
+                decision.access = Some(access.clone());
                 decision.grants = always
                     .iter()
                     .enumerate()
-                    .filter_map(|(ix, (_, words, _, tip))| {
-                        let key = number(&StripKey::Always(ix))?;
-                        // The first grant keeps its selector.
+                    .map(|(ix, (_, words, _, tip))| {
+                        // The first grant keeps its selector (and slot 3);
+                        // a second has no key.
                         let id = if ix == 0 {
                             format!("fleet-always-{n}")
                         } else {
                             format!("fleet-always-{n}-{ix}")
                         };
-                        let choice = choice(id, key, "Always allow".into()).tooltip(tip.clone());
-                        Some(Grant::new(choice, words, command))
+                        let choice = Choice::new(id, "Always allow")
+                            .key(number(&StripKey::Always(ix)))
+                            .enabled(enabled)
+                            .tooltip(tip.clone())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.fleet_grant(n, ix, cx);
+                            }));
+                        Grant::new(choice, words, command)
                     })
                     .collect();
+                decision.deny_note = number(&StripKey::DenyWithNote).map(|key| {
+                    choice(format!("fleet-note-{n}"), key, "Deny with note".into())
+                        .tooltip("Deny, and tell the agent what to do instead (opens the session)")
+                });
                 decision.deny = number(&StripKey::Deny).map(|key| {
                     choice(format!("fleet-deny-{n}"), key, "Deny".into())
                         .tooltip("Deny this request")
@@ -1804,17 +1883,25 @@ impl Workspace {
                 decision.armed =
                     self.armed(&super::decision::confirm_key(&tile.id, card.as_deref()));
                 // R6.7: the same command in the same folder elsewhere: one
-                // press allows them all (the key after the card's own).
+                // press allows them all. R7.1: on Shift+1, never a number;
+                // nothing that deletes is ever in a batch (`batch_of`).
                 if batch > 1 {
+                    let id: SharedString = format!("fleet-batch-{n}").into();
                     decision.alternates.push(
-                        choice(
-                            format!("fleet-batch-{n}"),
-                            BATCH_KEY,
-                            batch_label(batch, command).into(),
-                        )
-                        .tooltip(format!(
-                            "Allow this command in {folder} for all {batch} sessions that ask for it"
-                        )),
+                        Choice::new(id, batch_label(batch, command))
+                            .variant_key()
+                            .enabled(enabled)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                let tiles = this.fleet_tiles(cx);
+                                if let Some(tile) = tiles.get(n) {
+                                    this.fleet.focus = Some(tile.id.clone());
+                                }
+                                this.fleet_variant(cx);
+                            }))
+                            .tooltip(format!(
+                                "Allow this command in {folder} for all {batch} sessions that ask for it"
+                            )),
                     );
                 }
                 decision
@@ -1869,11 +1956,12 @@ impl Workspace {
                 cx,
             ),
         };
-        // R6.3: keys show on every keyed decision, at full strength on the
-        // focused tile (where the number keys go), dimmed on the others.
+        // R7.1: keycaps only on the focused tile (where the number keys
+        // go); unfocused tiles show none. R7.2: only the focused tile's
+        // positive answer is Filled; the rest are Bordered.
         let mut decision = decision;
-        decision.keys = true;
-        decision.keys_live = focused;
+        decision.keys = focused;
+        decision.filled = focused;
         div()
             .debug_selector(move || format!("fleet-ask-{n}"))
             .w_full()
@@ -1952,13 +2040,9 @@ impl Workspace {
                                             .child(d)
                                     })),
                             )
-                            .when(key <= 5, |d| {
-                                let cap = primitives::keycap_hint(key.to_string(), false, &p);
-                                d.child(if focused {
-                                    cap
-                                } else {
-                                    cap.opacity(t.wash.yielded)
-                                })
+                            // R7.1: keycaps only on the focused tile.
+                            .when(key <= 5 && focused, |d| {
+                                d.child(primitives::keycap_hint(key.to_string(), false, &p))
                             })
                             .when(enabled, |d| {
                                 d.on_click(cx.listener(move |this, _, window, cx| {
@@ -2011,12 +2095,16 @@ impl Workspace {
         let job_row = |ix: usize, job: &wks_native::jobs::Job, cx: &mut Context<Self>| {
             let focused = focused_job == Some(ix);
             let focus = format!("{JOB_FOCUS}{}", job.id);
-            // R6.3: the proposal's own decision, as its answer row: Approve
-            // the filled Primary, Reject Destructive, 1 and 2.
+            // R6.3: the proposal's own decision, as its answer row: Allow
+            // and Deny on 1 and 2. R7.1/R7.2: keys and the Filled Allow on
+            // the focused row only.
             let mut decision =
                 self.job_proposal_decision(ix, job, all_jobs, "fleet-job-row", Frame::Row, cx);
-            decision.keys = true;
-            decision.keys_live = focused;
+            decision.keys = focused;
+            decision.filled = focused;
+            // R7.1: the Needs cell says what it would run, and its risk
+            // ("Deletes branches"), never a bare "Approve this job?".
+            let (need, risk) = (job_need(job), decision.risk);
             primitives::page_table_row(&p)
                 .id(SharedString::from(format!("fleet-job-row-{}", job.id)))
                 .debug_selector(move || format!("fleet-job-row-{ix}"))
@@ -2041,17 +2129,28 @@ impl Workspace {
                 )
                 .child(primitives::page_cell(cols[3].1))
                 .child(
-                    primitives::page_cell(cols[4].1).child(text(
-                        Some(job.proposed_by.trim())
-                            .filter(|b| !b.is_empty())
-                            .map(|b| format!("Proposed by {b}"))
-                            .unwrap_or_else(|| "Proposed".into()),
-                        p.roles.text_secondary,
-                    )),
+                    // R7.1: what it would run, whole in the tooltip.
+                    primitives::page_cell(cols[4].1)
+                        .id(SharedString::from(format!("fleet-job-doing-{ix}")))
+                        .debug_selector(move || format!("fleet-job-doing-{ix}"))
+                        .child(text(need.clone(), p.roles.text_secondary))
+                        .tooltip(primitives::tooltip_view(need, None, &p)),
                 )
                 .child(
+                    // Its risk ("Deletes branches") and the ask.
                     primitives::page_cell(cols[5].1)
-                        .child(text("Approve this job?".into(), p.text)),
+                        .debug_selector(move || format!("fleet-job-need-{ix}"))
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.sm))
+                        .children(risk.map(|r| super::decision::risk_chip(r, &p)))
+                        .child(text(
+                            Some(job.proposed_by.trim())
+                                .filter(|b| !b.is_empty())
+                                .map(|b| format!("Allow this job? {b} proposed it"))
+                                .unwrap_or_else(|| "Allow this job?".into()),
+                            p.text,
+                        )),
                 )
                 .child(primitives::page_cell(cols[6].1).child(decision.render(&p)))
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -2087,10 +2186,10 @@ impl Workspace {
                     folder,
                     ..
                 }) => {
-                    let key = |k: StripKey| keys.iter().position(|x| *x == k).map(|ix| ix + 1);
+                    let key = |k: StripKey| keys.contains(&k).then(|| k.number()).flatten();
                     let allow = choice(
                         format!("fleet-row-allow-{n}"),
-                        key(StripKey::Allow).unwrap_or(1),
+                        StripKey::Allow.number().unwrap_or(1),
                         "Allow".into(),
                     )
                     .tooltip("Allow this once");
@@ -2106,20 +2205,34 @@ impl Workspace {
                         self.armed(&super::decision::confirm_key(&tile.id, card.as_deref()));
                     let batch = batch_of(tiles, n).len();
                     if batch > 1 {
+                        let id: SharedString = format!("fleet-row-batch-{n}").into();
                         decision.alternates.push(
-                            choice(
-                                format!("fleet-row-batch-{n}"),
-                                BATCH_KEY,
-                                format!("Allow all {batch}").into(),
-                            )
-                            .tooltip(format!(
-                                "Allow {} in {folder} for all {batch} sessions that ask for it",
-                                command.trim()
-                            )),
+                            Choice::new(id, format!("Allow all {batch}"))
+                                .variant_key()
+                                .enabled(enabled)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    let tiles = this.fleet_tiles(cx);
+                                    if let Some(tile) = tiles.get(n) {
+                                        this.fleet.focus = Some(tile.id.clone());
+                                    }
+                                    this.fleet_variant(cx);
+                                }))
+                                .tooltip(format!(
+                                    "Allow {} in {folder} for all {batch} sessions that ask for it",
+                                    command.trim()
+                                )),
                         );
                     }
-                    decision.keys = true;
-                    decision.keys_live = focused;
+                    // R7.1: Deny with note on the focused row (it opens
+                    // the session with the note).
+                    decision.deny_note = key(StripKey::DenyWithNote).filter(|_| focused).map(|k| {
+                        choice(format!("fleet-row-note-{n}"), k, "Deny with note".into()).tooltip(
+                            "Deny, and tell the agent what to do instead (opens the session)",
+                        )
+                    });
+                    decision.keys = focused;
+                    decision.filled = focused;
                     decision.render(&p).into_any_element()
                 }
                 Some(Ask::Stalled(stall)) => {
@@ -2130,7 +2243,8 @@ impl Workspace {
                         self.fleet_stall_key(stall.clone()),
                         cx,
                     );
-                    decision.keys_live = focused;
+                    decision.keys = focused;
+                    decision.filled = focused;
                     decision.render(&p).into_any_element()
                 }
                 _ => {
@@ -2181,6 +2295,11 @@ impl Workspace {
                 (None, Some(stall)) => stall.reason(now),
                 _ => String::new(),
             };
+            // R7.1: a request's risk shows in the table too.
+            let need_risk = match &tile.ask {
+                Some(Ask::Approval { risk, .. }) => *risk,
+                _ => None,
+            };
             // r6-integration (R6.2/R6.3): a row answers one ask. When a
             // stalled subagent waits behind the approval, the Needs cell
             // says "+1 more" and names it, so the second ask is not lost;
@@ -2230,6 +2349,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(px(t.space.xs))
+                        .children(need_risk.map(|r| super::decision::risk_chip(r, &p)))
                         .child(text(need, p.text))
                         .when_some(behind, |d, behind| {
                             d.child(
@@ -2284,6 +2404,40 @@ enum Cursor {
     Tile(usize),
     Job(usize),
     None,
+}
+
+/// R7.1: the keycaps the focused tile `at` shows, in the order of the
+/// one key map (a batch's Shift+1 last).
+fn focused_caps(tiles: &[Tile], at: usize) -> Vec<String> {
+    let Some(tile) = tiles.get(at) else {
+        return Vec::new();
+    };
+    let mut caps: Vec<String> = match &tile.ask {
+        Some(Ask::Approval { keys, .. }) => keys
+            .iter()
+            .filter_map(StripKey::number)
+            .map(|n| n.to_string())
+            .collect(),
+        Some(Ask::Question { options, .. }) if !options.is_empty() => {
+            (1..=options.len().min(5)).map(|n| n.to_string()).collect()
+        }
+        Some(Ask::Question { .. } | Ask::Open { .. }) => vec!["1".to_owned()],
+        Some(Ask::Stalled(_)) => vec!["1".to_owned(), "2".to_owned()],
+        None => Vec::new(),
+    };
+    if batch_of(tiles, at).len() > 1 {
+        caps.push(super::decision::VARIANT_KEY.to_owned());
+    }
+    caps
+}
+
+/// R7.1: what a job proposal would run, for the table's Needs cell ("Run
+/// git branch --merged … | xargs git branch -d"), or its sentence.
+fn job_need(job: &wks_native::jobs::Job) -> String {
+    match job.describe() {
+        (_, Some(command)) => format!("Run {}", command.trim()),
+        (sentence, None) => sentence,
+    }
 }
 
 /// Every focusable Fleet card's focus id in on-screen order: the tiles

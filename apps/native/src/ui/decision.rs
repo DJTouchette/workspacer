@@ -19,6 +19,7 @@
 //! Callers describe the decision and hand in click handlers; this module
 //! owns the layout, the button tiers and the keycaps. Design v2 only.
 use super::primitives::{self, ButtonSize, ButtonVariant};
+use super::system::actions;
 use super::*;
 use gpui::{AnyElement, ClickEvent, relative};
 use std::rc::Rc;
@@ -29,9 +30,6 @@ pub(crate) const SUBMIT_ANSWER: &str = "Send answer";
 
 /// A click handler, as `cx.listener(…)` builds one.
 pub(crate) type OnClick = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
-
-/// A menu-dismiss handler (a click outside it).
-pub(crate) type OnDismiss = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// A request value shows in full under the headline (rather than as a code
 /// span in it) once it is longer than this or has several lines.
@@ -44,9 +42,50 @@ pub(crate) fn needs_request_line(value: &str) -> bool {
     value.contains('\n') || value.chars().count() > HEADLINE_FITS
 }
 
-/// The "Reply instead…" line's tooltip (R4.6): replying does not answer.
+/// The folded composer's tooltip (R4.6, R7.7): replying does not answer.
 pub(crate) const REPLY_KEEPS_PENDING: &str =
-    "Write to the agent instead. The request stays pending until you choose above.";
+    "Write to the agent instead. The request stays open until you answer it above.";
+
+/// R7.1 The one key map. Every decision surface (the conversation's dock,
+/// the sidebar, a Fleet tile, a Fleet table row, Jobs, a plan card, a
+/// stalled subagent) numbers its answers the same way, whatever else the
+/// card offers: 1 the positive answer (Allow, Approve, Nudge), 2 the "no"
+/// (Deny, Keep planning, Stop), 3 Always allow (absent when not offered,
+/// and then never reused), 4 Deny with note. Nothing else takes a number:
+/// a variant of the positive answer (Allow all, Approve · run with Codex)
+/// goes behind Shift+1 ([`VARIANT_KEY`]); other extras (View output) take
+/// no key. A question's option list is the one exception: its options are
+/// the answers, numbered as listed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Slot {
+    Positive,
+    Deny,
+    Always,
+    DenyNote,
+}
+
+impl Slot {
+    /// The slot's number key.
+    pub(crate) fn key(self) -> usize {
+        match self {
+            Self::Positive => 1,
+            Self::Deny => 2,
+            Self::Always => 3,
+            Self::DenyNote => 4,
+        }
+    }
+}
+
+/// R7.1: the keycap of the positive answer's variant (Allow all, Approve ·
+/// run with Codex): Shift+1, never a number of its own.
+pub(crate) const VARIANT_KEY: &str = "⇧1";
+
+/// R7.1: whether a keystroke is the variant key (Shift+1; some layouts
+/// report it as "!").
+pub(crate) fn is_variant_key(k: &gpui::Keystroke) -> bool {
+    let m = &k.modifiers;
+    !(m.control || m.alt || m.platform || m.function) && ((m.shift && k.key == "1") || k.key == "!")
+}
 
 /// One action of a decision.
 #[derive(Clone)]
@@ -56,6 +95,8 @@ pub(crate) struct Choice {
     pub label: SharedString,
     /// Its number key (1-based), drawn only while the decision takes keys.
     pub key: Option<usize>,
+    /// R7.1: a non-number key (Shift+1 for a variant), drawn the same way.
+    pub shortcut: Option<SharedString>,
     pub tooltip: Option<SharedString>,
     pub enabled: bool,
     pub on_click: Option<OnClick>,
@@ -67,6 +108,7 @@ impl Choice {
             id: id.into(),
             label: label.into(),
             key: None,
+            shortcut: None,
             tooltip: None,
             enabled: true,
             on_click: None,
@@ -76,6 +118,25 @@ impl Choice {
     pub(crate) fn key(mut self, key: Option<usize>) -> Self {
         self.key = key;
         self
+    }
+
+    /// R7.1: the choice's fixed slot (and so its number key).
+    pub(crate) fn slot(self, slot: Slot) -> Self {
+        self.key(Some(slot.key()))
+    }
+
+    /// R7.1: the positive answer's variant: Shift+1, no number.
+    pub(crate) fn variant_key(mut self) -> Self {
+        self.key = None;
+        self.shortcut = Some(VARIANT_KEY.into());
+        self
+    }
+
+    /// The keycap it shows while its decision takes keys.
+    fn cap(&self) -> Option<SharedString> {
+        self.key
+            .map(|k| SharedString::from(k.to_string()))
+            .or_else(|| self.shortcut.clone())
     }
 
     pub(crate) fn tooltip(mut self, tip: impl Into<SharedString>) -> Self {
@@ -103,10 +164,10 @@ impl Choice {
     fn render(&self, variant: ButtonVariant, keys: bool, live: bool, p: &Palette) -> Stateful<Div> {
         let t = p.tokens;
         let size = ButtonSize::Small;
-        let el = match self.key.filter(|_| keys) {
+        let el = match self.cap().filter(|_| keys) {
             Some(key) if live => primitives::keyed_button(
                 self.id.clone(),
-                key.to_string(),
+                key,
                 self.label.clone(),
                 variant,
                 size,
@@ -156,14 +217,6 @@ impl Choice {
                 d.on_click(move |e, w, cx| f(e, w, cx))
             })
     }
-}
-
-/// Deny's "Deny with note…" menu, hung from a chevron on Deny.
-pub(crate) struct NoteMenu {
-    pub chevron: Choice,
-    pub open: bool,
-    pub item: Choice,
-    pub on_dismiss: Option<OnDismiss>,
 }
 
 /// An "Always allow" grant (R5.4): a short Tertiary "Always allow" whose
@@ -278,10 +331,10 @@ impl Risk {
 }
 
 /// Allow's label once a destructive request has been pressed once.
-pub(crate) const PRESS_AGAIN: &str = "Press again to allow";
+pub(crate) const PRESS_AGAIN: &str = "Press again to delete";
 
 /// Allow's tooltip on a request that needs the second press.
-pub(crate) const CONFIRM_TIP: &str = "Deletes files: press Allow (or its key) twice to allow it";
+pub(crate) const CONFIRM_TIP: &str = "It deletes something: press Allow (or 1) twice to allow it";
 
 /// R6.3: the destructive request armed by a first Allow, by its key
 /// ([`confirm_key`]). One at a time: arming another disarms it.
@@ -317,6 +370,16 @@ impl Workspace {
         false
     }
 
+    /// R7.2: the tier of a side panel's main action (Commit, Ask agent to
+    /// fix). While a decision waits on the selected session, the decision
+    /// owns the one Filled button, so the panel's is Bordered.
+    pub(crate) fn side_panel_variant(&self) -> ButtonVariant {
+        let deciding = self
+            .selected_session()
+            .is_some_and(|s| self.decision_takes_composer(s));
+        actions::region_variant(actions::Verb::Allow, !deciding)
+    }
+
     /// Whether the request `key` waits for its second press.
     pub(crate) fn armed(&self, key: &str) -> bool {
         self.arming.armed.as_deref() == Some(key)
@@ -324,7 +387,7 @@ impl Workspace {
 
     /// R6.3: number keys on the keyed decisions outside the conversation's
     /// dock and the Fleet: Jobs' first proposal (1 Approve, 2 Reject) and
-    /// a stalled subagent's view (1 Nudge, 2 Stop, 3 View output). Only
+    /// a stalled subagent's view (1 Nudge, 2 Stop). Only
     /// while nothing else is focused, so a digit never leaves a text field.
     pub(crate) fn page_decision_keys(
         &mut self,
@@ -544,10 +607,18 @@ pub(crate) struct Decision {
     /// The full request, wrapped in mono, when the headline cannot show it.
     pub request: Option<String>,
     pub request_selector: SharedString,
+    /// R7.7: the whole command, for Details (the card may show it cut, or
+    /// as a code span in the headline).
+    pub command: Option<String>,
+    /// R7.7: the session's access mode in words, for Details.
+    pub access: Option<String>,
     pub folder: Option<String>,
     pub host: Option<String>,
     /// What the request would do that is hard to take back.
     pub risk: Option<Risk>,
+    /// R7.3: the session's latest test result
+    /// (`system::verification_line`), under the meta line.
+    pub verification: Option<AnyElement>,
     /// "2/3" while more than one waits.
     pub pager: Option<String>,
     /// A body between the head and the actions (a plan, a question's
@@ -559,26 +630,34 @@ pub(crate) struct Decision {
     pub allow: Choice,
     /// Allow is the Primary unless a note being written owns it.
     pub allow_primary: bool,
+    /// R7.2: whether this decision owns its region's one Filled button
+    /// (the focused Fleet card or row, the dock's decision). Off, its
+    /// positive answer is Bordered.
+    pub filled: bool,
     /// Whether Allow shows at all: off when the body answers (a
     /// question's options send on a click).
     pub show_allow: bool,
-    /// Secondary alternatives to Allow ("Approve · run with Codex").
+    /// Variants of the positive answer ("Approve · run with Codex", "Allow
+    /// all 3"): Bordered, on Shift+1 (R7.1), never a number.
     pub alternates: Vec<Choice>,
-    /// "Always allow" grants, each with its exact rule and scope.
+    /// "Always allow" grants, each with its exact rule and scope. Only the
+    /// first takes slot 3.
     pub grants: Vec<Grant>,
     pub deny: Option<Choice>,
-    /// Deny's tier: Destructive (Deny, Reject), or Secondary for a "no"
+    /// Deny's tier: Destructive (Deny, Stop), or Secondary for a "no"
     /// that removes nothing (Keep planning).
     pub deny_variant: ButtonVariant,
-    pub deny_note: Option<NoteMenu>,
-    /// Whether this decision shows its number keys.
+    /// R7.1: "Deny with note", a visible Text button on slot 4.
+    pub deny_note: Option<Choice>,
+    /// Whether this decision shows its keycaps: only the focused decision
+    /// (R7.1: unfocused tiles show none).
     pub keys: bool,
     /// Whether the number keys go to it now (R6.3): its keycaps at full
-    /// strength. Off, they show dimmed: keyed, but the keys go elsewhere
-    /// (another focused card, text in the composer).
+    /// strength. Off, they show dimmed: it is the focused decision, but the
+    /// keys type into the composer for now.
     pub keys_live: bool,
     /// R6.3: a destructive request ([`Risk::confirms`]) pressed once:
-    /// Allow reads "Press again to allow".
+    /// Allow reads "Press again to delete", in red (R7.2).
     pub armed: bool,
     pub frame: Frame,
 }
@@ -592,15 +671,19 @@ impl Decision {
             reason: None,
             request: None,
             request_selector: "decision-request".into(),
+            command: None,
+            access: None,
             folder: None,
             host: None,
             risk: None,
+            verification: None,
             pager: None,
             body: None,
             details: None,
             note: None,
             allow,
             allow_primary: true,
+            filled: true,
             show_allow: true,
             alternates: Vec::new(),
             grants: Vec::new(),
@@ -614,50 +697,134 @@ impl Decision {
         }
     }
 
-    /// `rows` less what the card already says (the reason, the request,
-    /// the folder, the host, a code span of the headline), plus each
-    /// grant's exact rule: Details adds, it never repeats.
+    /// R7.7: what Details shows: the whole command, the agent's stated
+    /// reason, the access mode, and in words what each Always allow would
+    /// let through (with the provider's exact rule), then whatever else
+    /// the request carries that the card does not say (the tool, other
+    /// arguments). The folder and host are on the card and stay out.
     pub(crate) fn detail_rows(
         &self,
         rows: Vec<(String, String, bool)>,
     ) -> Vec<(String, String, bool)> {
-        let shown: Vec<&str> = [
-            self.reason.as_deref(),
-            self.request.as_deref(),
-            self.folder.as_deref(),
-            self.host.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .chain(
-            self.headline
-                .iter()
-                .filter(|(_, code)| *code)
-                .map(|(t, _)| t.as_str()),
-        )
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect();
-        let mut rows: Vec<_> = rows
-            .into_iter()
-            .filter(|(_, value, _)| !shown.contains(&value.trim()))
-            .collect();
+        let mut out: Vec<(String, String, bool)> = Vec::new();
+        let command = self
+            .command
+            .clone()
+            .or_else(|| self.request.clone())
+            .or_else(|| {
+                rows.iter()
+                    .find(|(label, _, _)| label == "Command")
+                    .map(|(_, v, _)| v.clone())
+            })
+            .filter(|c| !c.trim().is_empty());
+        if let Some(command) = &command {
+            out.push(("Command".into(), command.trim_end().to_owned(), true));
+        }
+        let reason = self
+            .reason
+            .clone()
+            .or_else(|| {
+                rows.iter()
+                    .find(|(label, _, _)| label == "Reason")
+                    .map(|(_, v, _)| v.clone())
+            })
+            .filter(|r| !r.trim().is_empty());
+        if let Some(reason) = &reason {
+            out.push(("Reason".into(), reason.trim().to_owned(), false));
+        }
+        if let Some(access) = self.access.clone().filter(|a| !a.trim().is_empty()) {
+            out.push(("Access".into(), access, false));
+        }
         for grant in &self.grants {
+            let words = grant
+                .choice
+                .tooltip
+                .as_ref()
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| format!("{} runs without asking · {}", grant.rule, grant.scope));
+            out.push(("Always".into(), words, false));
             if !grant.exact.is_empty() && grant.exact != grant.rule {
-                rows.push((
+                out.push((
                     "Rule".to_owned(),
                     format!("{} · {}", grant.exact, grant.scope),
                     true,
                 ));
             }
         }
-        rows
+        let shown: Vec<&str> = [self.folder.as_deref(), self.host.as_deref()]
+            .into_iter()
+            .flatten()
+            .chain(command.as_deref())
+            .chain(reason.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        out.extend(rows.into_iter().filter(|(label, value, _)| {
+            !matches!(label.as_str(), "Command" | "Reason" | "Folder" | "Host")
+                && !shown.contains(&value.trim())
+        }));
+        out
+    }
+
+    /// R7.1: the keys this decision draws (while `keys`), each with what it
+    /// answers: the slot map a test holds every decision to.
+    #[cfg(test)]
+    pub(crate) fn key_map(&self) -> Vec<(String, Answer)> {
+        if !self.keys {
+            return Vec::new();
+        }
+        let noting = self.note.is_some();
+        let mut out = Vec::new();
+        let mut push = |choice: &Choice, answer: Answer| {
+            if let Some(cap) = choice.cap() {
+                out.push((cap.to_string(), answer));
+            }
+        };
+        if self.show_allow && !noting {
+            push(&self.allow, Answer::Positive);
+        }
+        if !noting {
+            if let Some(deny) = &self.deny {
+                push(deny, Answer::Deny);
+            }
+            for alternate in &self.alternates {
+                push(alternate, Answer::Variant);
+            }
+            for (ix, grant) in self.grants.iter().enumerate() {
+                push(
+                    &grant.choice,
+                    if ix == 0 {
+                        Answer::Always
+                    } else {
+                        Answer::OtherGrant
+                    },
+                );
+            }
+            if let Some(note) = &self.deny_note {
+                push(note, Answer::DenyNote);
+            }
+        }
+        out
+    }
+
+    /// The tier of the positive answer as drawn (R7.2).
+    fn allow_variant(&self) -> ButtonVariant {
+        if self.armed && self.risk.is_some_and(Risk::confirms) {
+            // Armed: red, "Press again to delete".
+            ButtonVariant::Destructive
+        } else if self.allow_primary && self.filled {
+            ButtonVariant::Primary
+        } else {
+            ButtonVariant::Secondary
+        }
     }
 
     pub(crate) fn render(mut self, p: &Palette) -> Div {
         let t = p.tokens;
         let keys = self.keys;
         let selector = self.selector.clone();
+        #[cfg(test)]
+        audit::record(&self);
         let headline = {
             let el = headline(&self.headline, p);
             match self.headline_selector.clone() {
@@ -686,20 +853,31 @@ impl Decision {
                 .text_color(rgb(p.text))
                 .child(request.trim_end().to_owned())
         });
+        // R7.7: three lines of metadata at most: the headline, the reason,
+        // then one line with the risk chip and where it runs.
         let place = where_line(self.folder.as_deref(), self.host.as_deref());
         let place = (!place.is_empty()).then(|| {
             div()
                 .debug_selector(|| "decision-where".into())
+                .flex_1()
                 .min_w_0()
+                .truncate()
                 .text_size(px(t.text.meta))
-                .line_height(relative(t.text.line_height))
                 .text_color(rgb(p.roles.text_tertiary))
                 .child(place)
         });
-        // R6.3: the risk is a visible chip, a fact about the request and
-        // not a status: never amber or red. One that deletes files reads
-        // neutral-strong (`caution`) and asks for a second press.
-        let risk = self.risk.map(|risk| div().flex().child(risk_chip(risk, p)));
+        let risk = self.risk.map(|risk| risk_chip(risk, p));
+        let meta = (place.is_some() || risk.is_some()).then(|| {
+            div()
+                .debug_selector(|| "decision-meta".into())
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(px(t.space.sm))
+                .children(risk)
+                .children(place)
+        });
         let live = self.keys_live;
         let confirms = self.risk.is_some_and(Risk::confirms);
         if confirms {
@@ -708,8 +886,8 @@ impl Decision {
             }
             self.allow.tooltip = Some(CONFIRM_TIP.into());
         }
-        // Details: only what the card does not already say. Nothing left
-        // to add, no toggle.
+        // Details: the full request in words (R7.7). Nothing to add, no
+        // toggle.
         let details = self.details.take().and_then(|d| {
             let Details {
                 toggle,
@@ -737,7 +915,7 @@ impl Decision {
             let tip = if *open {
                 "Hide the details"
             } else {
-                "Show what the card leaves out: the tool, every argument, the exact rule"
+                "The whole command, why it asks, the access mode, and what Always allow would let through"
             };
             let id = toggle.id.clone();
             let control = primitives::button(
@@ -748,7 +926,7 @@ impl Decision {
                 } else {
                     IconName::ChevronRight
                 }),
-                ButtonVariant::Tertiary,
+                actions::tier(actions::Verb::Details),
                 ButtonSize::Small,
                 toggle.enabled,
                 p,
@@ -778,38 +956,30 @@ impl Decision {
         // *replaces* the answer: its own send and Cancel are the only
         // buttons, never a second Allow / Deny row under it.
         let noting = self.note.is_some();
-        // The answer: Allow (Primary) and Deny (Destructive) side by side,
-        // never stacked; any Secondary alternative after them.
-        let allow = (self.show_allow && !noting).then(|| {
-            self.allow.render(
-                if self.allow_primary {
-                    ButtonVariant::Primary
-                } else {
-                    ButtonVariant::Secondary
-                },
-                keys,
-                live,
-                p,
-            )
-        });
+        // The answer: Allow and Deny side by side, never stacked; any
+        // variant after them.
+        let allow_variant = self.allow_variant();
+        let allow =
+            (self.show_allow && !noting).then(|| self.allow.render(allow_variant, keys, live, p));
         let deny = self.deny.as_ref().filter(|_| !noting).map(|deny| {
-            deny_control(
-                deny,
-                self.deny_variant,
-                self.deny_note.take(),
-                keys,
-                live,
-                p,
-            )
+            div()
+                .flex_shrink_0()
+                .child(deny.render(self.deny_variant, keys, live, p))
         });
         let alternates: Vec<Stateful<Div>> = if noting {
             Vec::new()
         } else {
             self.alternates
                 .iter()
-                .map(|c| c.render(ButtonVariant::Secondary, keys, live, p))
+                .map(|c| c.render(actions::tier(actions::Verb::AllowVariant), keys, live, p))
                 .collect()
         };
+        // R7.1: Deny with note, a visible Text button (slot 4).
+        let deny_note = self
+            .deny_note
+            .as_ref()
+            .filter(|_| !noting)
+            .map(|c| c.render(actions::tier(actions::Verb::DenyWithNote), keys, live, p));
         let pair = (allow.is_some() || deny.is_some()).then(|| {
             div()
                 .debug_selector(|| "decision-answer".into())
@@ -832,7 +1002,8 @@ impl Decision {
                 .justify_end()
                 .gap(px(t.space.sm))
                 .children(pair)
-                .children(alternates);
+                .children(alternates)
+                .children(deny_note);
         }
         let answer = (pair.is_some() || !alternates.is_empty()).then(|| {
             primitives::waiting_actions(p)
@@ -840,7 +1011,7 @@ impl Decision {
                 .children(alternates)
         });
         // Then the quiet row: each grant with its exact rule and scope,
-        // and Details (it decides nothing) at the end.
+        // Deny with note, and Details (it decides nothing) at the end.
         let grants: Vec<Div> = if noting {
             Vec::new()
         } else {
@@ -850,34 +1021,36 @@ impl Decision {
                 .collect()
         };
         let details_toggle = details_toggle.filter(|_| !noting);
-        let quiet = (!grants.is_empty() || details_toggle.is_some()).then(|| {
-            div()
-                .w_full()
-                .min_w_0()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(t.space.sm))
-                .when(!grants.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .flex_1()
-                            // Narrower than this, Details wraps below.
-                            .min_w(px(t.system().tile_min * 0.75))
-                            .flex()
-                            .flex_col()
-                            .gap(px(t.space.xxs))
-                            .children(grants),
-                    )
-                })
-                .children(details_toggle.map(|d| div().flex_shrink_0().child(d)))
-        });
+        let quiet =
+            (!grants.is_empty() || details_toggle.is_some() || deny_note.is_some()).then(|| {
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(t.space.sm))
+                    .when(!grants.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .flex_1()
+                                // Narrower than this, Details wraps below.
+                                .min_w(px(t.system().tile_min * 0.75))
+                                .flex()
+                                .flex_col()
+                                .gap(px(t.space.xxs))
+                                .children(grants),
+                        )
+                    })
+                    .children(deny_note.map(|d| div().flex_shrink_0().child(d)))
+                    .children(details_toggle.map(|d| div().flex_shrink_0().child(d)))
+            });
 
         let content = |d: Div| {
             d.child(head)
                 .children(request)
-                .children(place)
-                .children(risk)
+                .children(meta)
+                .children(self.verification)
                 .children(self.body)
                 .children(self.note)
                 .children(answer)
@@ -901,25 +1074,103 @@ impl Decision {
     }
 }
 
-/// A keycap at the strength of keys that go elsewhere just now (R6.3).
-fn dim_keycap(key: usize, on_fill: bool, p: &Palette) -> Div {
-    primitives::keycap_hint(key.to_string(), on_fill, p).opacity(p.tokens.wash.yielded)
+/// What a drawn key answers (R7.1's slot map, as [`Decision::key_map`]
+/// reports it).
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Answer {
+    Positive,
+    Deny,
+    Always,
+    /// A second or later "Always allow" (no key of its own).
+    OtherGrant,
+    DenyNote,
+    /// A variant of the positive answer (Shift+1).
+    Variant,
 }
 
-/// The keycap after a split's label or a menu item: full strength while
-/// the keys go here, dimmed otherwise.
-fn keycap(key: usize, live: bool, p: &Palette) -> Div {
-    if live {
-        primitives::keycap_hint(key.to_string(), false, p)
-    } else {
-        dim_keycap(key, false, p)
+/// R7.1: whether a decision's drawn keys follow the one key map. The
+/// problems, empty when it does.
+#[cfg(test)]
+pub(crate) fn slot_map_problems(map: &[(String, Answer)]) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (cap, answer) in map {
+        let want = match answer {
+            Answer::Positive => Some(Slot::Positive.key().to_string()),
+            Answer::Deny => Some(Slot::Deny.key().to_string()),
+            Answer::Always => Some(Slot::Always.key().to_string()),
+            Answer::DenyNote => Some(Slot::DenyNote.key().to_string()),
+            Answer::Variant => Some(VARIANT_KEY.to_owned()),
+            Answer::OtherGrant => None,
+        };
+        match want {
+            Some(want) if *cap != want => {
+                problems.push(format!("{answer:?} shows {cap}, the map says {want}"))
+            }
+            None => problems.push(format!("{answer:?} shows {cap}, it takes no key")),
+            _ => {}
+        }
     }
+    problems
+}
+
+/// Tests: every decision drawn on this thread, so a test can hold all of
+/// them to the key map and the one-Filled rule (R7.1, R7.2).
+#[cfg(test)]
+pub(crate) mod audit {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[derive(Clone, Debug)]
+    pub(crate) struct Drawn {
+        pub selector: String,
+        pub frame: Frame,
+        pub keys: Vec<(String, Answer)>,
+        /// Filled (Primary) buttons it drew.
+        pub filled: usize,
+    }
+
+    thread_local! {
+        static DRAWN: RefCell<Vec<Drawn>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn record(d: &Decision) {
+        let noting = d.note.is_some();
+        let filled =
+            usize::from(d.show_allow && !noting && d.allow_variant() == ButtonVariant::Primary)
+                + usize::from(
+                    !noting && d.deny.is_some() && d.deny_variant == ButtonVariant::Primary,
+                );
+        DRAWN.with(|v| {
+            v.borrow_mut().push(Drawn {
+                selector: d.selector.to_string(),
+                frame: d.frame,
+                keys: d.key_map(),
+                filled,
+            })
+        });
+    }
+
+    /// Forget what was drawn so far.
+    pub(crate) fn clear() {
+        DRAWN.with(|v| v.borrow_mut().clear());
+    }
+
+    /// Everything drawn since the last [`clear`].
+    pub(crate) fn drawn() -> Vec<Drawn> {
+        DRAWN.with(|v| v.borrow().clone())
+    }
+}
+
+/// A keycap at the strength of keys that go elsewhere just now (R6.3).
+fn dim_keycap(key: SharedString, on_fill: bool, p: &Palette) -> Div {
+    primitives::keycap_hint(key, on_fill, p).opacity(p.tokens.wash.yielded)
 }
 
 /// R6.3: the risk cue as a chip: its glyph and words on a quiet wash.
 /// "Deletes files" (the one that asks for a second press) in the
 /// neutral-strong `caution`; the others in secondary text.
-fn risk_chip(risk: Risk, p: &Palette) -> Div {
+pub(crate) fn risk_chip(risk: Risk, p: &Palette) -> Div {
     let t = p.tokens;
     let tone = if risk.confirms() {
         p.roles.caution
@@ -966,7 +1217,7 @@ fn grant_row(grant: &Grant, keys: bool, live: bool, p: &Palette) -> Div {
         .items_center()
         .gap(px(t.space.xs))
         .child(div().flex_shrink_0().child(grant.choice.render(
-            ButtonVariant::Tertiary,
+            actions::tier(actions::Verb::AlwaysAllow),
             keys,
             live,
             p,
@@ -983,76 +1234,22 @@ fn grant_row(grant: &Grant, keys: bool, live: bool, p: &Palette) -> Div {
         )
 }
 
-/// Deny in its tier, or a split whose menu holds "Deny with note…".
-fn deny_control(
-    deny: &Choice,
-    variant: ButtonVariant,
-    note: Option<NoteMenu>,
-    keys: bool,
-    live: bool,
-    p: &Palette,
-) -> Div {
-    let Some(note) = note else {
-        return div()
-            .flex_shrink_0()
-            .child(deny.render(variant, keys, live, p));
-    };
-    let (main, chevron) = primitives::split_button_parts(
-        "deny",
-        deny.label.clone(),
-        None,
-        variant,
-        ButtonSize::Small,
-        deny.enabled,
-        p,
-    );
-    let main = {
-        let id = deny.id.clone();
-        main.debug_selector(move || id.to_string())
-            .when_some(deny.key.filter(|_| keys), |d, key| {
-                d.child(keycap(key, live, p))
-            })
-            .when_some(deny.tooltip.clone(), |d, tip| {
-                d.tooltip(primitives::tooltip_view(tip, None, p))
-            })
-            .when_some(deny.on_click.clone().filter(|_| deny.enabled), |d, f| {
-                d.on_click(move |e, w, cx| f(e, w, cx))
-            })
-    };
-    let chevron = {
-        let id = note.chevron.id.clone();
-        chevron.debug_selector(move || id.to_string()).when_some(
-            note.chevron
-                .on_click
-                .clone()
-                .filter(|_| note.chevron.enabled),
-            |d, f| d.on_click(move |e, w, cx| f(e, w, cx)),
-        )
-    };
-    let menu = (note.open && note.chevron.enabled).then(|| {
-        let item = &note.item;
-        let id = item.id.clone();
-        primitives::menu(p)
-            .debug_selector(|| "deny-menu-list".into())
-            .occlude()
-            .when_some(note.on_dismiss.clone(), |d, f| {
-                d.on_mouse_down_out(move |_, w, cx| f(w, cx))
-            })
-            .child(
-                primitives::menu_item(item.id.clone(), item.label.clone(), None, false, true, p)
-                    .debug_selector(move || id.to_string())
-                    .when_some(item.key.filter(|_| keys), |d, key| {
-                        d.child(keycap(key, live, p))
-                    })
-                    .when_some(item.tooltip.clone(), |d, tip| {
-                        d.tooltip(primitives::tooltip_view(tip, None, p))
-                    })
-                    .when_some(item.on_click.clone(), |d, f| {
-                        d.on_click(move |e, w, cx| f(e, w, cx))
-                    }),
-            )
-    });
-    primitives::split_button_with_menu(main, chevron, menu, p)
+/// R7.7: the session's access mode for Details, in words: "Ask first ·
+/// Asks before it runs a command or edits a file."
+pub(crate) fn access_line(session: &Session) -> String {
+    // The mode the composer's access chip shows (a provider that has not
+    // reported one runs at its default, Ask first, where it offers it).
+    let provider = session.provider_id();
+    let current = wks_native::launch::Permission::from_wire(provider, session.access_mode());
+    let choices = wks_native::launch::Permission::choices(provider);
+    match super::model_popover::effective_access(current, choices) {
+        Some(mode) => format!(
+            "{} · {}",
+            mode.word(),
+            super::model_popover::access_consequence(mode)
+        ),
+        None => super::capsule::access_word(session).0.to_owned(),
+    }
 }
 
 /// "Folder /home/dev/src/app · on studio" (either part may be missing).
@@ -1202,8 +1399,44 @@ mod tests {
     }
 
     #[test]
+    fn details_say_the_command_reason_access_and_what_always_lets_through() {
+        let mut d = Decision::new("d", Choice::new("a", "Allow"), Frame::Inline);
+        d.reason = Some("Run the tests".into());
+        d.command = Some("cargo test --locked".into());
+        d.access = Some("Ask first · Asks before it runs a command".into());
+        d.folder = Some("/home/dev/app".into());
+        d.grants = vec![Grant::new(
+            Choice::new("g", "Always allow").tooltip(
+                "Until this session ends, any command starting with “cargo test” runs without asking",
+            ),
+            "Always allow Bash(cargo test:*) this session",
+            "",
+        )];
+        let rows = d.detail_rows(vec![
+            ("Tool".into(), "Bash".into(), false),
+            ("Command".into(), "cargo test --locked".into(), true),
+            ("Folder".into(), "/home/dev/app".into(), true),
+        ]);
+        let labels: Vec<&str> = rows.iter().map(|(l, _, _)| l.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["Command", "Reason", "Access", "Always", "Rule", "Tool"]
+        );
+        assert!(rows[3].1.contains("any command starting with"));
+    }
+
+    #[test]
+    fn the_slots_are_fixed() {
+        assert_eq!(
+            [Slot::Positive, Slot::Deny, Slot::Always, Slot::DenyNote].map(Slot::key),
+            [1, 2, 3, 4]
+        );
+        assert_eq!(Choice::new("x", "Allow all").variant_key().key, None);
+    }
+
+    #[test]
     fn replying_says_the_request_stays_pending() {
-        assert!(REPLY_KEEPS_PENDING.contains("stays pending"));
+        assert!(REPLY_KEEPS_PENDING.contains("stays open"));
     }
 
     #[test]

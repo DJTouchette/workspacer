@@ -56,8 +56,8 @@ impl Workspace {
     }
 
     /// r5-integration: a proposal's number keys where it takes them (the
-    /// focused Fleet card), in reading order: 1 Approve, 2 Reject. Its
-    /// Approve and Reject go through the same checks as their buttons.
+    /// focused Fleet card, Jobs' first proposal): R7.1's 1 Allow, 2 Deny.
+    /// They go through the same checks as their buttons.
     pub(super) fn job_proposal_key(
         &mut self,
         job: &Job,
@@ -1592,6 +1592,8 @@ impl Workspace {
         // 2 Reject: `page_decision_keys`) and shows them; the others wait
         // their turn below it.
         decision.keys = ix == 0;
+        // R7.2: one Filled per region: the first proposal's Allow.
+        decision.filled = ix == 0;
         decision.render(&p)
     }
 
@@ -1650,9 +1652,11 @@ impl Workspace {
         let armed = self.armed(&confirm);
         // Keycaps show only where the keys go (`decision.keys`: the focused
         // Fleet card); the numbers are `job_proposal_key`'s.
-        let allow = Choice::new(format!("{prefix}-approve-{ix}"), "Approve")
-            .key(Some(1))
-            .tooltip("Approve: it runs on its schedule from now on")
+        // R7.1: one verb pair for every approval, jobs included: Allow /
+        // Deny, on slots 1 and 2.
+        let allow = Choice::new(format!("{prefix}-approve-{ix}"), "Allow")
+            .slot(super::decision::Slot::Positive)
+            .tooltip("Allow: it runs on its schedule from now on")
             .enabled(can_approve)
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
@@ -1661,9 +1665,9 @@ impl Workspace {
                 }
             }));
         let remove_id = job.id.clone();
-        let reject = Choice::new(format!("{prefix}-remove-{ix}"), "Reject")
-            .key(Some(2))
-            .tooltip("Reject the proposal; nothing runs")
+        let reject = Choice::new(format!("{prefix}-remove-{ix}"), "Deny")
+            .slot(super::decision::Slot::Deny)
+            .tooltip("Deny the proposal; nothing runs")
             .enabled(enabled)
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
@@ -1675,6 +1679,7 @@ impl Workspace {
         decision.headline = vec![(headline, false)];
         decision.headline_selector = Some(format!("{prefix}-headline-{ix}").into());
         decision.reason = Some(reason);
+        decision.command = command.clone();
         decision.request = command.map(|c| format!("$ {c}"));
         decision.request_selector = format!("{prefix}-action-{ix}").into();
         decision.folder = folder;
@@ -1969,10 +1974,11 @@ impl Workspace {
             .gap(px(t.space.xs));
         if proposal {
             let remove_id = id.clone();
+            // R7.1/R7.2: Allow / Deny, in their tiers.
             let reject = button(
                 job_control("remove", ix),
-                "Reject",
-                ButtonVariant::Tertiary,
+                "Deny",
+                super::system::actions::tier(super::system::actions::Verb::Deny),
                 enabled,
             )
             .debug_selector(move || format!("job-remove-{ix}"))
@@ -1984,21 +1990,23 @@ impl Workspace {
             });
             let can_approve = enabled && (!job.change() || target.is_some());
             let approval = job.approval();
+            let (risk, confirm) = (job_risk(job), job_confirm_key(job));
             let approve = button(
                 job_control("approve", ix),
-                "Approve",
-                if ix == 0 {
-                    ButtonVariant::Primary
-                } else {
-                    ButtonVariant::Secondary
-                },
+                "Allow",
+                super::system::actions::region_variant(
+                    super::system::actions::Verb::Allow,
+                    ix == 0,
+                ),
                 can_approve,
             )
             .debug_selector(move || format!("job-approve-{ix}"))
             .when(can_approve, |d| {
                 d.on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.job_action(JobAction::Save(approval.clone()), cx);
+                    if this.confirm_allow(&confirm, risk, cx) {
+                        this.job_action(JobAction::Save(approval.clone()), cx);
+                    }
                 }))
             });
             // r4-pages (R4.5): fixed slots, so every row's actions align.

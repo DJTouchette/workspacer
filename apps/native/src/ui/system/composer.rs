@@ -201,10 +201,10 @@ pub(crate) fn composer_reply_link(
         .children(hint)
 }
 
-/// R6.3: where the digit keys go. "1–3 answer the request" while the
-/// focused decision takes them; nothing while the composer has focus
-/// (digits type there).
-pub(crate) fn decision_keys_hint(count: usize, p: &Palette) -> Div {
+/// R6.3: where the digit keys go. R7.1: the hint lists exactly the keys
+/// the card shows ("1 2 4 answer the request"), each as a keycap; nothing
+/// while the composer has focus (digits type there).
+pub(crate) fn decision_keys_hint(caps: &[String], p: &Palette) -> Div {
     let t = p.tokens;
     div()
         .flex_shrink_0()
@@ -213,12 +213,8 @@ pub(crate) fn decision_keys_hint(count: usize, p: &Palette) -> Div {
         .gap(px(t.space.xxs))
         .text_size(px(t.text.meta))
         .text_color(rgb(p.roles.text_tertiary))
-        .child(prim::keycap_hint("1", false, p))
-        .when(count > 1, |d| {
-            d.child("–")
-                .child(prim::keycap_hint(count.min(9).to_string(), false, p))
-        })
-        .child(div().ml(px(t.space.xs)).child(if count > 1 {
+        .children(caps.iter().map(|k| prim::keycap_hint(k.clone(), false, p)))
+        .child(div().ml(px(t.space.xs)).child(if caps.len() > 1 {
             "answer the request"
         } else {
             "answers the request"

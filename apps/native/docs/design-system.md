@@ -185,6 +185,8 @@ Each entry gives:
 | `Tertiary` | Text only | Rows, toolbars, back links |
 | `Destructive` | Secondary shape, `error` label | Stop, Deny, Discard, End, Remove. Never brand blue |
 
+R7.2: these four variants draw three tiers: Filled (`Primary`), Bordered (`Secondary`, or `Destructive` with its red label) and Text (`Tertiary`). Each verb's tier is fixed in [the tier table](#button-tiers-r72) (`system::actions::Verb`).
+
 - **States:** Rest, Hover, Pressed, Disabled, Focus.
   - Primary moves away from its label on hover and press.
   - Destructive hover and press take the neutral wash, and the label lifts `danger_lift` toward `text`.
@@ -373,9 +375,8 @@ The table itself, its seven glyphs and the words, are in [Status and vocabulary 
   - `system::waiting_tile(&p)`: a tile that waits on the user (the `border_strong` edge and the attention bar).
   - `system::waiting_tile_focused(&p)` (r6): the same tile while it has the keyboard focus. **One accent per card:** the focus ring carries it, so the attention bar steps aside (the inset stays, nothing moves).
   - `system::tile_frame(id, focused, &p)`: the frame a tile sits in, carrying the 2px focus ring outside the tile.
-  - `system::even_tile_grid(columns, &p)` (r6, R6.7): a grid whose tiles in one row share its height; give the frame `.flex().flex_col()` and the tile `.flex_1()`. Content stays at the top (the decision first); the room left falls below it.
   - `primitives::inset(&p)` for the one recessed well inside a card.
-- **Do:** use `tile_grid` for cards of different lengths that do not sit side by side as peers; `even_tile_grid` for a supervising grid (Fleet), where a row reads as one band.
+- **Do:** use `tile_grid` for every grid of cards, Fleet included (R7.6: a card is as tall as its content; a row without a decision does not stretch to match one with it). `even_tile_grid` is gone.
 - **Don't:**
   - Nest cards.
   - Stretch a short card to its row (that is `page_grid`; use it only for equal content).
@@ -404,10 +405,10 @@ The table itself, its seven glyphs and the words, are in [Status and vocabulary 
   - Where it applies (folder · host, tertiary).
   - The risk chip, when one is plain from the request: "Deletes files", "Deletes branches", "Writes outside the project", "Uses the network" (r6: a visible chip, its glyph and words on a quiet wash; the deleting ones in the neutral-strong `caution`, the others secondary; never amber or red). `decision::risk(approval, cwd)` derives it. A job proposal's command is read the same way (`jobs::job_risk`), so a scheduled `git branch -d` carries its chip in Jobs, on its Fleet tile and in the table.
   - The body, when there is one: a plan, a question's option list or its answer field.
-  - The answer row: **Allow (Primary) and Deny (Destructive) side by side on one line, never wrapped apart**, then any Secondary alternative ("Approve · run with Codex"). Deny may be a split with "Deny with note…".
+  - The answer row: **Allow (Filled) and Deny (Bordered, red label) side by side on one line, never wrapped apart**, then any variant of the positive answer ("Approve · run with Codex", "Allow all 3 · cargo test"), Bordered, on Shift+1.
   - The quiet row: each **"Always allow"** as a short Tertiary button with the rule and scope it saves beside it ("Saves `cargo test *` · this session"; the full explanation in its tooltip), then **Details** (Tertiary). Details expands **below** its toggle and shows only what the card does not already say (the tool, other arguments, the exact provider rule).
 - **States:**
-  - **Keys** (r6, R6.3): every keyed decision shows its keycaps (`keys`). Where the number keys go now (`keys_live`: the dock's top decision, the focused Fleet card or table row, Jobs' first proposal, a stalled subagent's view) they are full strength; elsewhere dimmed (`wash.yielded`), never hidden. The numbers follow reading order: 1 Allow and 2 Deny side by side, then a Fleet batch (3) beside them, then each Always allow on the row below, then Deny with note from Deny's menu; a plan is 1 Approve, 2 Keep planning, then the hand-off alternate; a stalled subagent is 1 Nudge, 2 Stop, 3 View output.
+  - **Keys** (R7.1): the one key map, [below](#decisions-one-key-map-and-three-tiers). Keycaps show only on the focused decision (`keys`: the dock's top decision, the focused Fleet card or table row, Jobs' first proposal, a stalled subagent's view); unfocused tiles show none. While the focused decision's digits type into the composer (`keys_live` off) its keycaps dim (`wash.yielded`), so nothing moves.
   - **Destructive** (r6): a request whose risk deletes files or branches (`Risk::confirms`), approval or job proposal, is allowed on the **second** press, by click or key. The first arms it (`Workspace::confirm_allow`, keyed by `decision::confirm_key(session, card)`); Allow then reads "Press again to allow" (`armed`). Deny never asks twice. A batch never holds one.
   - Details open.
   - **Note open** (r6): the note **replaces** the answer row, the grants and Details: the note field, Cancel and its send ("Deny and tell it", Destructive) are the only controls; never a second Allow / Deny under it.
@@ -427,6 +428,7 @@ The table itself, its seven glyphs and the words, are in [Status and vocabulary 
   - Hide the keycaps of a keyed decision; dim them where the keys do not go. Keycaps keep their hairline box, also on a Primary fill, so they never read as counts.
   - Repeat the card in Details.
   - Draw an approve / deny pair outside `Decision`.
+  - Number anything outside the key map, or move a key to fill a gap.
 
 ### SegmentedControl
 
@@ -665,21 +667,81 @@ Prose is above activity, and activity is above meta.
 
 ### Fleet card anatomy
 
-- A `tile` in an `even_tile_grid` (r6: a row's cards share its height; the decision first).
+- A `tile` in a `tile_grid` (R7.6: each card is as tall as its content, top-aligned; the decision first).
 - Title (14/600), then elapsed time.
 - StatusCell, then project, model and context.
-- The ask, near the top, as an inline `Decision` (`Frame::Inline`): Allow and Deny side by side; a question answered on the card (an option list whose keys send, or a field where Enter sends); a job proposal is a card of its own (Approve, Reject).
+- The ask, near the top, as an inline `Decision` (`Frame::Inline`): Allow and Deny side by side; a question answered on the card (an option list whose keys send, or a field where Enter sends); a job proposal is a card of its own (Allow, Deny).
 - Up to three `EventRow`s: a working session's last tools, live. A named fault (a subagent not responding, a failed command) draws its status glyph **in the icon's place** (`EventRow::lead_status`), beside the words it qualifies, never at the tile's far edge.
 
 Every keyed card shows its keycaps; the focused one at full strength, with the focus ring (`tile_frame`) in place of its attention bar (`waiting_tile_focused`: one accent per card). Waiting tiles use `waiting_tile`. Every filter count is the number of cards it shows, job proposals included. The dense view is a Table: one row per session (StatusCell, title, project, waiting, doing, needs, the decision's `Frame::Row`), toggled with Grid/Table and remembered per device (`Settings::fleet_table`).
 
-r6 (R6.7) at scale: the sidebar is its rail while the Fleet is on screen (`track_fleet_rail`; restored on the way out). The header holds three SegmentedControls: Grid / Table, By status / Waiting longest (what waits on you first, longest wait first, then the rest by how long each has been quiet; `fleet::sort_tiles`), and the filter. A tile waiting on you says "Waiting 3m". Identical requests (the same command in the same folder, none that deletes files: `fleet::batch_of`) offer "Allow all 3 · cargo test" on key 3, which allows each on its own card. A session whose subagent stopped answering is Needs you (`status.rs`: `child_stalled`), its reason naming the child ("Trace session… not responding · 7m"), its ask Nudge / Stop / View output.
+r6 (R6.7) at scale: the sidebar is its rail while the Fleet is on screen (`track_fleet_rail`; restored on the way out). The header holds three SegmentedControls: Grid / Table, By status / Waiting longest (what waits on you first, longest wait first, then the rest by how long each has been quiet; `fleet::sort_tiles`), and the filter. A tile waiting on you says "Waiting 3m". Identical requests (the same command in the same folder, none that deletes files: `fleet::batch_of`) offer "Allow all 3 · cargo test" on Shift+1 (R7.1: never a number), which allows each on its own card. A request or job that deletes is never in a batch. A session whose subagent stopped answering is Needs you (`status.rs`: `child_stalled`), its reason naming the child ("Trace session… not responding · 7m"), its ask Nudge / Stop / View output.
 
 ### Empty, loading and error states
 
 See Page anatomy. The same rules apply inside cards and panels: one line, tertiary, and one way out.
 
 ---
+
+## Decisions: one key map and three tiers
+
+R7.1 and R7.2. One rule each, enforced in code and by tests.
+
+### The key map (R7.1)
+
+Every decision surface uses the same slots: the conversation's dock, the sidebar, a Fleet tile, a Fleet table row, Jobs, a plan card and a stalled subagent. `decision::Slot` holds the map, and `Choice::slot(Slot)` puts a choice on its slot.
+
+| Key | Slot | Approval | Plan | Job proposal | Stalled subagent |
+|---|---|---|---|---|---|
+| 1 | `Positive` | Allow | Approve plan | Allow | Nudge |
+| 2 | `Deny` | Deny | Keep planning | Deny | Stop |
+| 3 | `Always` | Always allow (the first grant) | — | — | — |
+| 4 | `DenyNote` | Deny with note | — | — | — |
+| ⇧1 | variant | Allow all N (Fleet batch) | Approve · run with Codex | — | — |
+| no key | | a second Always allow | | | View output |
+
+The rules:
+
+- **A slot that is not offered stays empty.** Its key does nothing, and no other action moves up to take its number.
+- **Variants never take a number.** A variant of the positive answer goes on Shift+1 (`Choice::variant_key()`, keycap `⇧1`, `decision::is_variant_key`; the Fleet binds `shift-1` to `FleetVariant`). Any other extra takes no key.
+- **One verb pair.** Every approval says "Allow / Deny", job proposals included.
+- **Deny with note is a visible Text button** on slot 4 (`Decision::deny_note`), never a menu item. On a Fleet tile or row it opens the session with the note field ready.
+- **Keycaps show only on the focused decision.** Unfocused tiles and rows show none.
+- **The hint lists exactly the keys on the card.** Both the composer's hint (`system::decision_keys_hint(&caps)`) and the Fleet footer (`fleet-hint-answer`) list them, for example "1 2 4 answer the request".
+- **Question cards are the one exception.** An option list is the answer itself, so its options are numbered as listed.
+- **Enforcement.** `Decision::key_map()` reports every key a decision draws and what it answers. `decision::audit` records every decision drawn in a test. The test `every_decision_keeps_the_one_key_map` (`tests/fleet.rs`) walks the focus over every Fleet card in Grid and Table, then the dock's approval and plan, then Jobs, and holds each one to `slot_map_problems`.
+
+### Button tiers (R7.2)
+
+There are three tiers: Filled, Bordered and Text. Each verb has exactly one tier, given by `system::actions::Verb::tier()`. A surface takes its variant from `actions::tier(verb)`, or from `actions::region_variant(verb, focused)` where a region can lose focus. It never picks a tier by hand.
+
+| Verb | Tier | `ButtonVariant` |
+|---|---|---|
+| Send, Queue | Filled | `Primary` |
+| Allow, Approve plan, Nudge (a stall's answer), Send answer | Filled | `Primary` |
+| Allow all, Approve · run with Codex | Bordered | `Secondary` |
+| Deny | Bordered | `Destructive` (red label) |
+| Keep planning | Bordered | `Secondary` |
+| Stop | Bordered | `Destructive` |
+| Discard, Remove, End | Bordered | `Destructive` |
+| A page header's main action (New job, Add…) | Bordered | `Secondary` |
+| Always allow | Text | `Tertiary` |
+| Deny with note | Text | `Tertiary` |
+| Details, View output, Open, Cancel | Text | `Tertiary` |
+| Nudge in a toolbar (not a decision's answer) | Text | `Tertiary` |
+
+The rules:
+
+- **One Filled per focused region.** On the Fleet, only the focused card's or row's positive answer is Filled (`Decision::filled`); the rest are Bordered. In Jobs, the first proposal's Allow is Filled. While a decision waits on the selected session, the docked side panel's main action (Commit, Ask agent to fix) is Bordered (`Workspace::side_panel_variant`). The test `one_filled_button_per_focused_region` counts the Filled buttons with `decision::audit`.
+- **Destructive, once armed.** A request or job that deletes (`Risk::confirms`) arms on the first press. Allow then turns red (`Destructive`) and reads "Press again to delete". Destructive requests are left out of Allow all (`fleet::batch_of`).
+
+### Decision card content (R7.7)
+
+- **Three lines of metadata.** The headline, the reason, then one line with the risk chip and where it runs (`decision-meta`). A long command shows whole in its mono block, which is the request itself and not metadata.
+- **Details** (`Decision::detail_rows`) shows the whole command, the agent's stated reason, the access mode (`decision::access_line`: "Ask first · Asks before it runs a command or edits a file.") and, in words, what each Always allow would let through, with the provider's exact rule. After those come the rest of the request (the tool and other arguments). The folder and host are already on the card, so Details leaves them out.
+- **Verification (R7.3).** Under the meta line, the session's latest test result (`Decision::verification`, `system::verification_line`). A Fleet tile carries the same line under its status (`fleet-verification-{n}`), with or without an ask.
+- **Composer.** While a decision waits, the composer's folded line and placeholder read "Reply — the request stays open".
+- **Fleet table.** A job proposal's Needs cell names the command it would run ("Run git branch --merged … | xargs git branch -d") with its risk chip. An approval row carries its chip in the same cell.
 
 ## Contrast
 

@@ -942,6 +942,8 @@ fn decision(p: &Palette) -> Div {
         "git push origin main",
     )];
     tool.deny = Some(Choice::new("gallery-deny", "Deny").key(Some(2)));
+    // R7.1: Deny with note, a visible Text button on 4.
+    tool.deny_note = Some(Choice::new("gallery-deny-note", "Deny with note").key(Some(4)));
     tool.details = Some(Details::facts(
         Choice::new("gallery-details", "Details"),
         false,
@@ -1016,14 +1018,14 @@ fn decision(p: &Palette) -> Div {
     // A job proposal, as a Fleet card shows it.
     let mut job = Decision::new(
         "gallery-job",
-        Choice::new("gallery-job-approve", "Approve"),
+        Choice::new("gallery-job-approve", "Allow"),
         Frame::Inline,
     );
     job.headline = vec![("Schedule the job “Nightly tests”?".into(), false)];
     job.reason = Some("Runs the workspace tests · every day at 02:00".into());
     job.request = Some("$ cargo test --workspace".into());
     job.host = Some("studio (this machine)".into());
-    job.deny = Some(Choice::new("gallery-job-reject", "Reject"));
+    job.deny = Some(Choice::new("gallery-job-reject", "Deny"));
     job.details = Some(Details::element(
         Choice::new("gallery-job-details", "Details"),
         false,
@@ -1048,8 +1050,8 @@ fn decision(p: &Palette) -> Div {
     destructive.deny = Some(Choice::new("gallery-destructive-deny", "Deny").key(Some(2)));
     destructive.keys = true;
 
-    // A keyed decision whose keys go elsewhere (an unfocused Fleet card):
-    // its keycaps dimmed, never hidden.
+    // R7.1: the focused decision while its keys type into the composer:
+    // keycaps dimmed. The batch is the positive answer's variant, Shift+1.
     let mut elsewhere = Decision::new(
         "gallery-keys-elsewhere",
         Choice::new("gallery-elsewhere-allow", "Allow").key(Some(1)),
@@ -1058,7 +1060,7 @@ fn decision(p: &Palette) -> Div {
     elsewhere.headline = vec![("Run".into(), false), ("cargo test".into(), true)];
     elsewhere.deny = Some(Choice::new("gallery-elsewhere-deny", "Deny").key(Some(2)));
     elsewhere.alternates =
-        vec![Choice::new("gallery-batch", "Allow all 3 · cargo test").key(Some(3))];
+        vec![Choice::new("gallery-batch", "Allow all 3 · cargo test").variant_key()];
     elsewhere.keys = true;
     elsewhere.keys_live = false;
 
@@ -1130,7 +1132,7 @@ fn decision(p: &Palette) -> Div {
                     super::waiting_tile(p).child(destructive.render(p)),
                 ))
                 .child(specimen(
-                    "Keys go elsewhere · dimmed; a batch",
+                    "Keys type elsewhere · dimmed; batch on ⇧1",
                     super::waiting_tile(p).child(elsewhere.render(p)),
                 ))
                 .child(specimen(
@@ -1229,7 +1231,7 @@ fn composers(p: &Palette) -> Div {
                 .gap(px(t.space.xs))
                 .child(super::composer_reply_line(
                     "Reply — the request stays open",
-                    Some(super::decision_keys_hint(3, p).into_any_element()),
+                    Some(super::decision_keys_hint(&["1".into(), "2".into(), "3".into(), "4".into()], p).into_any_element()),
                     p,
                 ))
                 .child(caption(
@@ -1244,7 +1246,7 @@ fn composers(p: &Palette) -> Div {
                 .gap(px(t.space.xs))
                 .child(super::composer_reply_link(
                     "Reply — the request stays open",
-                    Some(super::decision_keys_hint(3, p).into_any_element()),
+                    Some(super::decision_keys_hint(&["1".into(), "2".into()], p).into_any_element()),
                     p,
                 ))
                 .child(caption(

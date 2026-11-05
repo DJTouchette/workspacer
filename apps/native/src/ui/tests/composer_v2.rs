@@ -113,18 +113,18 @@ fn the_approval_waits_above_the_composer_and_takes_number_keys(cx: &mut TestAppC
             Some(super::super::composer_v2::REPLY_INSTEAD)
         )
     });
-    // Always allow says its scope (this session); Deny's menu holds the note.
+    // Always allow says its scope (this session); R7.1: Deny with note is
+    // a visible button (slot 4), never in a menu.
     // R6.3: the keycaps follow where the digits go; settle the focus (and
     // so the buttons' widths) before clicking by position.
     focus_root(&workspace, &mut visual);
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
-    tap(&mut visual, "deny-menu");
+    assert!(visual.debug_bounds("deny-menu").is_none());
     assert!(visual.debug_bounds("deny-with-note").is_some());
     tap(&mut visual, "deny-with-note");
     workspace.read_with(&visual, |this, _| {
         assert!(this.extras.deny_open);
-        assert!(!this.composer_ui.deny_menu);
     });
     visual.update(|_, cx| {
         workspace.update(cx, |this, cx| {
@@ -267,13 +267,22 @@ fn approval_details_read_as_facts(cx: &mut TestAppContext) {
     assert!(inside(&mut visual, "approval-request", "approval-card"));
     tap(&mut visual, "approval-toggle");
     assert!(inside(&mut visual, "approval-details", "approval-card"));
-    // r5-fleet (R5.4): only what the card does not already say: Tool and
-    // Timeout (the command, folder and host are on the card).
-    for fact in ["approval-fact-0", "approval-fact-1"] {
+    // R7.7: Details says the whole command, the access mode, and the rest
+    // of the request (Tool, Timeout); the folder and host stay on the card.
+    for fact in [
+        "approval-fact-0",
+        "approval-fact-1",
+        "approval-fact-2",
+        "approval-fact-3",
+    ] {
         assert!(visual.debug_bounds(fact).is_some(), "{fact}");
     }
-    assert!(visual.debug_bounds("approval-fact-2").is_none());
-    workspace.read_with(&visual, |this, _| assert!(this.extras.approval_details));
+    assert!(visual.debug_bounds("approval-fact-4").is_none());
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.extras.approval_details);
+        let s = this.selected_session().unwrap();
+        assert!(!crate::ui::decision::access_line(s).is_empty());
+    });
 }
 
 /// R4.3: number keys show as keycaps only on the decision they answer.

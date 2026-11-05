@@ -31,8 +31,6 @@ pub(super) struct ComposerUi {
     pub send_menu: bool,
     /// R6.4: the access chip's menu is open.
     pub access_menu: bool,
-    /// The approval's Deny split menu (Deny with note…) is open.
-    pub deny_menu: bool,
     /// The question a multi-question set's stepper shows (0-based).
     pub question_step: usize,
     /// The placeholder last given to the composer, when v2 changed it.
@@ -436,10 +434,9 @@ pub(super) fn position_label(decisions: &[Decision], decision: Decision) -> Opti
     pager(ix, cards.len())
 }
 
-/// Number keys on the approval strip, in reading order (r5-integration):
-/// Allow and Deny side by side on the first line, then each "Always allow"
-/// grant on the quiet row below, then Deny with note (a menu item, off the
-/// surface) where it is offered.
+/// The keys of a tool approval (R7.1, the one key map): 1 Allow, 2 Deny,
+/// 3 the first "Always allow" (a second grant has no key), 4 Deny with
+/// note. A key never moves to fill a gap.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum StripKey {
     Allow,
@@ -448,24 +445,60 @@ pub(super) enum StripKey {
     DenyWithNote,
 }
 
+impl StripKey {
+    /// Its number key, from the slot map.
+    pub(super) fn number(&self) -> Option<usize> {
+        use super::decision::Slot;
+        match self {
+            Self::Allow => Some(Slot::Positive.key()),
+            Self::Deny => Some(Slot::Deny.key()),
+            Self::Always(0) => Some(Slot::Always.key()),
+            Self::Always(_) => None,
+            Self::DenyWithNote => Some(Slot::DenyNote.key()),
+        }
+    }
+}
+
+/// The keyed actions of an approval with `always` grants and, when `note`,
+/// Deny with note, in key order.
 pub(super) fn strip_keys(always: usize, note: bool) -> Vec<StripKey> {
     let mut keys = vec![StripKey::Allow, StripKey::Deny];
-    keys.extend((0..always).map(StripKey::Always));
+    if always > 0 {
+        keys.push(StripKey::Always(0));
+    }
     if note {
         keys.push(StripKey::DenyWithNote);
     }
     keys
 }
 
-/// Number keys on a plan review, in reading order (R4.3: numbered like an
-/// approval): Approve plan, Keep planning beside it (not while its note is
-/// open), then "Approve · run with Codex" after the pair while a limit
-/// applies.
+/// What number key `n` does on such an approval.
+pub(super) fn strip_key_at(n: usize, always: usize, note: bool) -> Option<StripKey> {
+    strip_keys(always, note)
+        .into_iter()
+        .find(|k| k.number() == Some(n))
+}
+
+/// The keys of a plan review (R7.1): 1 Approve plan, 2 Keep planning (the
+/// plan's "no", with its note), Shift+1 "Approve · run with Codex" while
+/// a limit applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PlanKey {
     Approve,
     Handoff,
     KeepPlanning,
+}
+
+impl PlanKey {
+    /// Its number key; the hand-off is Shift+1 and has none.
+    pub(super) fn number(self) -> Option<usize> {
+        use super::decision::Slot;
+        match self {
+            Self::Approve => Some(Slot::Positive.key()),
+            Self::KeepPlanning => Some(Slot::Deny.key()),
+            Self::Handoff => None,
+        }
+    }
 }
 
 pub(super) fn plan_keys(handoff: bool, keep_planning: bool) -> Vec<PlanKey> {
@@ -504,20 +537,31 @@ impl Workspace {
         out
     }
 
-    /// R6.3: how many digit keys answer the keyed decision (1 Allow, 2
-    /// Deny, then each Always allow and Deny with note; a plan's choices; a
-    /// question's options), for "1–3 answer the request".
-    pub(super) fn decision_key_count(&self, session: &Session) -> Option<usize> {
-        let n = match self.keyed_decision(session)? {
+    /// R7.1: the keys the keyed decision shows, exactly (1 2 3 4 of an
+    /// approval, less what it does not offer; a plan's 1 2 and ⇧1; a
+    /// question's options), for the hint under the card.
+    pub(super) fn decision_key_caps(&self, session: &Session) -> Option<Vec<String>> {
+        let caps: Vec<String> = match self.keyed_decision(session)? {
             Decision::Approval => {
                 let approval = session.approval.as_ref()?;
                 let always = wks_native::session_controls::always_options(approval);
                 let note = self.deny_note_offered() && !self.extras.deny_open;
-                strip_keys(always.len(), note).len()
+                strip_keys(always.len(), note)
+                    .iter()
+                    .filter_map(StripKey::number)
+                    .map(|n| n.to_string())
+                    .collect()
             }
             Decision::Plan => {
                 let (handoff, _) = self.plan_handoff(Some(session));
-                plan_keys(handoff.is_some(), true).len()
+                plan_keys(handoff.is_some(), !self.extras.deny_open)
+                    .into_iter()
+                    .map(|k| {
+                        k.number()
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| super::decision::VARIANT_KEY.to_owned())
+                    })
+                    .collect()
             }
             Decision::Questions => {
                 let list = session
@@ -529,11 +573,12 @@ impl Workspace {
                     return None;
                 }
                 let step = self.question_step(list.len());
-                list[step]["options"].as_array().map_or(0, Vec::len).min(9)
+                let n = list[step]["options"].as_array().map_or(0, Vec::len).min(9);
+                (1..=n).map(|n| n.to_string()).collect()
             }
-            Decision::Limit => 0,
+            Decision::Limit => Vec::new(),
         };
-        (n > 0).then_some(n)
+        (!caps.is_empty()).then_some(caps)
     }
 
     /// R6.3: whether the digit keys answer the keyed decision now: no text
@@ -677,9 +722,9 @@ impl Workspace {
             let hint = selected
                 .as_ref()
                 .filter(|_| self.composer_ui.digits_to_card)
-                .and_then(|s| self.decision_key_count(s))
-                .map(|n| {
-                    system::decision_keys_hint(n, &p)
+                .and_then(|s| self.decision_key_caps(s))
+                .map(|caps| {
+                    system::decision_keys_hint(&caps, &p)
                         .debug_selector(|| "decision-keys-hint".into())
                         .into_any_element()
                 });
@@ -1416,7 +1461,7 @@ impl Workspace {
         decisions: &[Decision],
         cx: &mut Context<Self>,
     ) -> Div {
-        use super::decision::{Choice, Details, Frame, NoteMenu};
+        use super::decision::{Choice, Details, Frame};
         let p = self.palette();
         let (compact, enabled) = (layout.compact, layout.enabled);
         let session = self.selected_session();
@@ -1425,8 +1470,7 @@ impl Workspace {
         let card = session.and_then(Session::card);
         let always = wks_native::session_controls::always_options(approval);
         let note = self.deny_note_offered() && !self.extras.deny_open;
-        let keys = strip_keys(always.len(), note);
-        let number = |key: &StripKey| keys.iter().position(|k| k == key).map(|ix| ix + 1);
+        let number = |key: &StripKey| key.number();
         // r6-decisions (R6.3): a request that deletes files takes a
         // second press.
         let risk = super::decision::risk(approval, &cwd);
@@ -1487,31 +1531,16 @@ impl Workspace {
                     this.act(Action::Approve(false, card.clone()), cx)
                 }))
         };
+        // R7.1: Deny with note is a visible Text button on slot 4.
         let deny_note = note.then(|| {
             let card = card.clone();
-            let entity = cx.entity().downgrade();
-            NoteMenu {
-                chevron: Choice::new("deny-menu", "")
-                    .enabled(enabled)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.composer_ui.deny_menu = !this.composer_ui.deny_menu;
-                        cx.notify();
-                    })),
-                open: self.composer_ui.deny_menu,
-                item: Choice::new("deny-with-note", "Deny with note…")
-                    .key(number(&StripKey::DenyWithNote))
-                    .tooltip("Deny, and tell the agent what to do instead")
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.composer_ui.deny_menu = false;
-                        this.open_deny_note(card.clone(), window, cx)
-                    })),
-                on_dismiss: Some(std::rc::Rc::new(move |_: &mut Window, cx: &mut App| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.composer_ui.deny_menu = false;
-                        cx.notify();
-                    });
-                })),
-            }
+            Choice::new("deny-with-note", "Deny with note")
+                .key(number(&StripKey::DenyWithNote))
+                .tooltip("Deny, and tell the agent what to do instead")
+                .enabled(enabled)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_deny_note(card.clone(), window, cx)
+                }))
         });
         let details_open = self.extras.approval_details;
         let details = Details::facts(
@@ -1546,11 +1575,25 @@ impl Workspace {
         decision.armed = self.armed(&confirm);
         decision.deny = Some(deny);
         decision.deny_note = deny_note;
+        decision.command = approval
+            .pointer("/toolInput/command")
+            .and_then(Value::as_str)
+            .map(|c| c.trim().to_owned())
+            .filter(|c| !c.is_empty());
+        decision.access = session.map(super::decision::access_line);
+        decision.verification = self.decision_verification(session);
         decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Approval));
         // R6.3: the keycaps stay (no layout shift) but dim while the digits
         // type into the composer instead of answering.
         decision.keys_live = self.composer_ui.digits_to_card;
         decision.render(&p)
+    }
+
+    /// R7.3: the session's latest test result, for its decision card.
+    fn decision_verification(&self, session: Option<&Session>) -> Option<AnyElement> {
+        let v = self.session_verification(session?)?;
+        let p = self.palette();
+        Some(system::verification_line(&v, timing::now_ms(), &p).into_any_element())
     }
 
     /// The decision the number keys answer (R4.3: their keycaps show only
@@ -1665,11 +1708,19 @@ impl Workspace {
             return;
         }
         let k = &event.keystroke;
-        if k.modifiers.modified() {
+        // R7.1: Shift+1 is the positive answer's variant (a plan's
+        // "Approve · run with Codex"); other modified keys are not ours.
+        let variant = super::decision::is_variant_key(k);
+        if k.modifiers.modified() && !variant {
             return;
         }
-        let Ok(n) = k.key.parse::<usize>() else {
-            return;
+        let n = if variant {
+            0
+        } else {
+            let Ok(n) = k.key.parse::<usize>() else {
+                return;
+            };
+            n
         };
         // R6.3: digits answer only while no text field has focus; in the
         // composer they type (the hint and keycaps say which).
@@ -1686,7 +1737,14 @@ impl Workspace {
         {
             let (handoff, can_hand_off) = self.plan_handoff(Some(&session));
             let keys = plan_keys(handoff.is_some(), true);
-            let Some(key) = n.checked_sub(1).and_then(|ix| keys.get(ix)) else {
+            let wanted = |k: &&PlanKey| {
+                if variant {
+                    **k == PlanKey::Handoff
+                } else {
+                    k.number() == Some(n)
+                }
+            };
+            let Some(key) = keys.iter().find(wanted) else {
                 return;
             };
             cx.stop_propagation();
@@ -1711,12 +1769,10 @@ impl Workspace {
             return;
         };
         let always = wks_native::session_controls::always_options(approval);
-        let keys = strip_keys(always.len(), self.deny_note_offered());
-        let Some(key) = n.checked_sub(1).and_then(|ix| keys.get(ix)) else {
+        let Some(key) = strip_key_at(n, always.len(), self.deny_note_offered()) else {
             return;
         };
         cx.stop_propagation();
-        self.composer_ui.deny_menu = false;
         let card = session.card();
         match key {
             StripKey::Allow => {
@@ -1729,7 +1785,7 @@ impl Workspace {
             StripKey::Deny => self.act(Action::Approve(false, card), cx),
             StripKey::DenyWithNote => self.open_deny_note(card, window, cx),
             StripKey::Always(ix) => {
-                if let (Some(option), Some(card)) = (always.get(*ix), card) {
+                if let (Some(option), Some(card)) = (always.get(ix), card) {
                     self.act(
                         Action::AlwaysAllow {
                             option: option.id.clone(),
@@ -1792,8 +1848,7 @@ impl Workspace {
         let limited = decisions.contains(&Decision::Limit);
         let (handoff_to, can_hand_off) = self.plan_handoff(session);
         let deny_open = self.extras.deny_open;
-        let keys = plan_keys(handoff_to.is_some(), !deny_open);
-        let number = |key: PlanKey| keys.iter().position(|k| *k == key).map(|ix| ix + 1);
+        let number = |key: PlanKey| key.number();
         let agent = session
             .map(|s| match s.provider_id() {
                 "codex" => "Codex",
@@ -1837,7 +1892,7 @@ impl Workspace {
                     card.clone(),
                     true,
                 )
-                .key(number(PlanKey::Handoff))
+                .variant_key()
                 .tooltip(format!(
                     "Approve, then hand this session to {other} instead of waiting"
                 ))
@@ -1876,6 +1931,8 @@ impl Workspace {
             self.render_deny_note_v2(enabled, "Keep planning", ButtonVariant::Primary, cx)
                 .into_any_element()
         });
+        decision.access = session.map(super::decision::access_line);
+        decision.verification = self.decision_verification(session);
         decision.keys = session.is_some_and(|s| self.keyed_decision(s) == Some(Decision::Plan));
         decision.keys_live = self.composer_ui.digits_to_card;
         decision.render(&p)
@@ -2076,6 +2133,10 @@ mod tests {
         );
         assert_eq!(plan_keys(true, false), [PlanKey::Approve, PlanKey::Handoff]);
         assert_eq!(plan_keys(false, false), [PlanKey::Approve]);
+        // R7.1: the plan's slots are the approval's; the hand-off is Shift+1.
+        assert_eq!(PlanKey::Approve.number(), Some(1));
+        assert_eq!(PlanKey::KeepPlanning.number(), Some(2));
+        assert_eq!(PlanKey::Handoff.number(), None);
     }
 
     #[test]
@@ -2129,29 +2190,31 @@ mod tests {
     }
 
     #[test]
-    fn strip_numbers_follow_the_buttons() {
+    fn strip_keys_keep_their_slots() {
+        // R7.1: a missing Always allow leaves 3 empty; Deny with note is
+        // still 4.
         assert_eq!(
             strip_keys(0, true),
             [StripKey::Allow, StripKey::Deny, StripKey::DenyWithNote]
         );
+        assert_eq!(strip_key_at(3, 0, true), None);
+        assert_eq!(strip_key_at(4, 0, true), Some(StripKey::DenyWithNote));
+        // Only the first grant takes 3; a second has no key.
         assert_eq!(
             strip_keys(2, false),
-            [
-                StripKey::Allow,
-                StripKey::Deny,
-                StripKey::Always(0),
-                StripKey::Always(1)
-            ]
+            [StripKey::Allow, StripKey::Deny, StripKey::Always(0)]
         );
-        assert_eq!(
-            strip_keys(1, true),
-            [
-                StripKey::Allow,
-                StripKey::Deny,
-                StripKey::Always(0),
-                StripKey::DenyWithNote
-            ]
-        );
+        assert_eq!(StripKey::Always(1).number(), None);
+        assert_eq!(strip_key_at(4, 2, false), None);
+        for (n, key) in [
+            (1, StripKey::Allow),
+            (2, StripKey::Deny),
+            (3, StripKey::Always(0)),
+            (4, StripKey::DenyWithNote),
+        ] {
+            assert_eq!(key.number(), Some(n));
+            assert_eq!(strip_key_at(n, 1, true), Some(key));
+        }
     }
 
     #[test]

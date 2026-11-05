@@ -633,7 +633,9 @@ impl Workspace {
                             "task-log-fix",
                             "Ask agent to fix",
                             None,
-                            ButtonVariant::Primary,
+                            // R7.2: Bordered while a decision owns the
+                            // Filled button.
+                            self.side_panel_variant(),
                             ButtonSize::Small,
                             true,
                             &p,

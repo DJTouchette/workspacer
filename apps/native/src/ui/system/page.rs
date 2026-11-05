@@ -71,14 +71,20 @@ pub(crate) fn page_shell(
     p: &Palette,
 ) -> Div {
     let t = p.tokens;
+    // The column has a definite width (the frame), capped by its parent
+    // when the parent's is definite: inside a column sized by its content
+    // a bare `w_full` would collapse, and with it the header's own
+    // `w_full` (title left, actions right). Every page gets this, not
+    // only the ones that patch it at the call site.
     let column = div()
         .debug_selector(|| "page-shell".into())
-        .w_full()
-        .max_w(px(width.frame(p)))
+        .w(px(width.frame(p)))
+        .max_w_full()
+        .min_w_0()
         .flex()
         .flex_col()
         .gap(px(t.space.xxl))
-        .child(header)
+        .child(div().w_full().flex().flex_col().child(header))
         .children(notice)
         .child(
             div()

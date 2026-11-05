@@ -1520,7 +1520,8 @@ impl Workspace {
                 "Commit".to_owned()
             },
             Some(IconName::Check),
-            ButtonVariant::Primary,
+            // R7.2: Bordered while a decision owns the Filled button.
+            self.side_panel_variant(),
             ButtonSize::Small,
             can_commit,
             &p,
