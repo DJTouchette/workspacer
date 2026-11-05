@@ -175,13 +175,13 @@ def shots():
     # area-transcript: the transcript itself, further back and at each reading width.
     add("transcript-earlier", "Transcript further back: tool rows, work cards, user turns",
         # r2-transcript: v2's denser rows need fewer notches; v1 keeps its own.
-        # (r4-integration: v2 needs 16 notches to leave the last turn.)
-        [("design", [("wheel", 16, 1000, 400)], [("wheel", 3, 1000, 400)])])
+        # (r4-integration: v2's smoothed wheel lands unpredictably; Ctrl+U is exact.)
+        [("design", [("wheel", 10, 1000, 400)], [("key", "Escape"), ("keys", *(["ctrl+u"] * 4))])])
     add("transcript-start", "Transcript start: the first turns",
         [("key", "Escape"), ("keys", *(["ctrl+u"] * 12))])
     add("transcript-fleet", "Transcript: supervisor and fleet wakes, subagents",
-        # (r4-integration: v2 needs 24 notches to reach the delegation.)
-        [("design", [("wheel", 24, 1000, 400)], [("wheel", 2, 1000, 400)])])
+        # (r4-integration: Ctrl+U, as above; three reach the delegation and subagents.)
+        [("design", [("wheel", 7, 1000, 400)], [("key", "Escape"), ("keys", *(["ctrl+u"] * 3))])])
     add("transcript-wide", "Rich conversation at the wide reading width",
         settings={"reading_width": "wide"})
     add("transcript-full", "Earlier transcript at the full reading width",
@@ -402,8 +402,14 @@ class Rig:
             settings.update(args.settings)  # command-line --setting wins
             # r2-shell: design v2 starts with modal keys off; shots that drive
             # them (`g p`, Ctrl+U) turn them on for that run.
+            # (r4-integration: also inside a step's v2 branch.)
+            def v2_steps(steps):
+                for step in steps:
+                    yield step
+                    if step[0] == "design":
+                        yield from v2_steps(step[2])
             if settings.get("design_v2") and any(
-                    step[0] in ("keys", "design_keys") for step in shot["steps"]):
+                    step[0] in ("keys", "design_keys") for step in v2_steps(shot["steps"])):
                 settings.setdefault("vim_navigation_v2", True)
             if settings:
                 (config / "native-settings.json").write_text(json.dumps(settings))
