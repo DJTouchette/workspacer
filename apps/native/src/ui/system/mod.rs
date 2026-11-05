@@ -19,7 +19,7 @@
 use super::*;
 use gpui::AnyElement;
 
-mod actions;
+pub(crate) mod actions;
 mod card;
 mod composer;
 mod edge;
@@ -41,7 +41,7 @@ mod lint;
 
 pub(crate) use actions::{composer_send_state, send_state, stop_variant};
 pub(crate) use card::{
-    even_tile_grid, tile, tile_frame, tile_grid, waiting_tile, waiting_tile_focused,
+    tile, tile_frame, tile_grid, tile_rows, waiting_tile, waiting_tile_focused,
 };
 pub(crate) use composer::{
     ComposerState, access_chip, access_option, access_tone, composer_body, composer_field,

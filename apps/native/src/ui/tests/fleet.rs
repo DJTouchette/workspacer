@@ -121,9 +121,9 @@ fn tiles_render_with_their_statuses_most_urgent_first(cx: &mut TestAppContext) {
     );
     assert_eq!(a.top(), c.top());
     assert!(c.left() > a.right());
-    // R6.7: the cards of a row share its height (the decision first in
-    // each; the room left falls below it).
-    assert_eq!(c.size.height, a.size.height);
+    // R7.6: each card is as tall as its content; the working tile does not
+    // stretch to the approval beside it.
+    assert!(c.size.height < a.size.height);
     // Allow and Deny side by side, on one line.
     let (allow, deny) = (
         visual.debug_bounds("fleet-allow-0").unwrap(),
@@ -589,8 +589,8 @@ fn identical_requests_are_allowed_in_one_batch(cx: &mut TestAppContext) {
         crate::ui::fleet::batch_label(2, "cargo test"),
         "Allow all 2 · cargo test"
     );
-    // Allow 1 and Deny 2, then the batch beside them: 3 (Always allow is 4).
-    visual.simulate_keystrokes("3");
+    // R7.1: the batch is Shift+1, never a number: 3 stays Always allow.
+    visual.simulate_keystrokes("shift-1");
     let approved: Vec<String> = effects(&mut commands)
         .into_iter()
         .filter_map(|c| match c {
@@ -635,19 +635,21 @@ fn the_table_answers_through_the_decision_card(cx: &mut TestAppContext) {
 }
 
 /// r6-decisions (R6.7): the sidebar is its rail while the Fleet is on
-/// screen, and comes back on the way out. Cards in a row share its height.
+/// screen, and comes back on the way out. R7.6: a card is as tall as its
+/// content; a working tile does not stretch to its row's decision.
 #[gpui::test]
-fn the_fleet_takes_the_room_and_rows_share_a_height(cx: &mut TestAppContext) {
+fn the_fleet_takes_the_room_and_cards_keep_their_height(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands) = open_fleet(cx);
     workspace.read_with(&visual, |this, _| assert!(this.sidebar_collapsed));
-    let (a, b, c) = (
+    let (a, c) = (
         visual.debug_bounds("fleet-tile-0").unwrap(),
-        visual.debug_bounds("fleet-tile-1").unwrap(),
         visual.debug_bounds("fleet-tile-2").unwrap(),
     );
     assert_eq!(a.top(), c.top());
-    assert_eq!(a.size.height, b.size.height);
-    assert_eq!(a.size.height, c.size.height);
+    assert!(
+        c.size.height < a.size.height,
+        "the working tile {c:?} keeps its own height beside the approval {a:?}"
+    );
     visual.simulate_keystrokes("escape");
     refresh(&mut visual);
     workspace.read_with(&visual, |this, _| {
@@ -657,7 +659,8 @@ fn the_fleet_takes_the_room_and_rows_share_a_height(cx: &mut TestAppContext) {
 }
 
 /// r6-decisions (R6.2): a session whose subagent stopped answering needs
-/// you: its tile asks with Nudge / Stop / View output on 1 2 3.
+/// you: its tile asks with Nudge / Stop on 1 2 (R7.1: View output has no
+/// number).
 #[gpui::test]
 fn a_stalled_subagent_asks_on_its_tile(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands) = open_fleet(cx);
@@ -701,6 +704,198 @@ fn a_stalled_subagent_asks_on_its_tile(cx: &mut TestAppContext) {
     visual.simulate_keystrokes("2");
     assert!(effects(&mut commands).iter().any(|c| matches!(c,
         Command::Act { session, action: Action::Stop } if session == "stuck")));
+    workspace.update(&mut visual, |this, _| {
+        this.fleet.focus = Some("stuck".into())
+    });
+    visual.simulate_keystrokes("3");
+    assert!(effects(&mut commands).is_empty(), "3 is never View output");
+}
+
+/// R7.1 The one key map. Every decision drawn on every surface (the
+/// conversation's dock, a Fleet tile, a Fleet table row, a job proposal on
+/// the Fleet and in Jobs, a plan, a stalled subagent, a batch) numbers its
+/// answers the same way: 1 positive, 2 deny, 3 Always allow, 4 Deny with
+/// note, variants on Shift+1, nothing else numbered. Keycaps show only on
+/// the focused decision.
+#[gpui::test]
+fn every_decision_keeps_the_one_key_map(cx: &mut TestAppContext) {
+    use crate::ui::decision::{Answer, Frame, audit, slot_map_problems};
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    let now = timing::now_ms();
+    let mut stuck = row(
+        "stuck",
+        "Bus fan-out",
+        "responding",
+        json!({"lastToolName":"Read","lastToolSummary":"src/bus.rs"}),
+    );
+    stuck.telemetry.last_activity_ms = Some(now - 1_000);
+    stuck.subagents = Arc::new(json!([{"id":"s1","type":"Explore",
+        "description":"Trace session restore paths","status":"running",
+        "startedAt": now - 20 * 60_000, "lastActivity": now - 7 * 60_000 - 5_000}]));
+    let plan = row(
+        "plan",
+        "Plan it",
+        "input",
+        json!({"pendingRequestId":"req-p","pendingApproval":{"toolName":"ExitPlanMode",
+            "toolInput":{"plan":"1. Do it"},"requestId":"req-p"}}),
+    );
+    with_sessions(
+        &workspace,
+        &mut visual,
+        vec![approval("twin", "Twin", "cargo test"), stuck, plan],
+    );
+    with_jobs(&workspace, &mut visual);
+    effects(&mut commands);
+    audit::clear();
+    let mut frames = Vec::new();
+    // Grid, every card focused in turn, then the table the same way.
+    for table in [false, true] {
+        if table {
+            click(&mut visual, "fleet-view-table");
+        }
+        for _ in 0..6 {
+            refresh(&mut visual);
+            for d in audit::drawn() {
+                let problems = slot_map_problems(&d.keys);
+                assert!(problems.is_empty(), "{}: {problems:?}", d.selector);
+                frames.push(d.frame);
+            }
+            audit::clear();
+            visual.simulate_keystrokes(if table { "down" } else { "right" });
+        }
+    }
+    // The conversation's dock (approval, then plan), and Jobs.
+    for id in ["ask", "plan"] {
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.screen = Screen::Conversation;
+                let mut view = (*this.view).clone();
+                view.selected = Some(id.into());
+                this.update_view(Arc::new(view), window, cx);
+                this.focus.focus(window);
+            })
+        });
+        refresh(&mut visual);
+        let drawn = audit::drawn();
+        assert!(!drawn.is_empty(), "{id} draws its card");
+        for d in drawn {
+            assert!(slot_map_problems(&d.keys).is_empty(), "{}: {:?}", d.selector, d.keys);
+            frames.push(d.frame);
+        }
+        audit::clear();
+    }
+    visual.update(|_, cx| {
+        workspace.update(cx, |this, cx| {
+            this.screen = Screen::Jobs;
+            cx.notify()
+        })
+    });
+    refresh(&mut visual);
+    for d in audit::drawn() {
+        assert!(slot_map_problems(&d.keys).is_empty(), "{}", d.selector);
+        frames.push(d.frame);
+    }
+    assert!(frames.contains(&Frame::Inline), "a Fleet tile");
+    assert!(frames.contains(&Frame::Row), "a Fleet table row");
+    assert!(
+        frames.iter().any(|f| matches!(f, Frame::Card { .. })),
+        "the dock and Jobs"
+    );
+    // The map's own rule, on what a decision may report.
+    assert!(slot_map_problems(&[("3".into(), Answer::Variant)]).len() == 1);
+    assert!(slot_map_problems(&[("4".into(), Answer::DenyNote)]).is_empty());
+    assert!(slot_map_problems(&[("3".into(), Answer::OtherGrant)]).len() == 1);
+}
+
+/// R7.2 One Filled per focused region: on the Fleet (grid and table) only
+/// the focused card's positive answer is Filled; the others are Bordered
+/// and show no keycaps.
+#[gpui::test]
+fn one_filled_button_per_focused_region(cx: &mut TestAppContext) {
+    use crate::ui::decision::audit;
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    with_sessions(
+        &workspace,
+        &mut visual,
+        vec![approval("twin", "Twin", "cargo test"), approval("other", "Other", "cargo build")],
+    );
+    with_jobs(&workspace, &mut visual);
+    effects(&mut commands);
+    for table in [false, true] {
+        if table {
+            click(&mut visual, "fleet-view-table");
+        }
+        for _ in 0..4 {
+            audit::clear();
+            refresh(&mut visual);
+            let drawn = audit::drawn();
+            assert!(drawn.len() > 2, "several decisions on screen");
+            let filled: usize = drawn.iter().map(|d| d.filled).sum();
+            assert!(filled <= 1, "table {table}: {filled} Filled in {drawn:?}");
+            let keyed = drawn.iter().filter(|d| !d.keys.is_empty()).count();
+            assert!(keyed <= 1, "keycaps only on the focused decision: {drawn:?}");
+            visual.simulate_keystrokes(if table { "down" } else { "right" });
+        }
+    }
+}
+
+/// R7.1: a scheduled `git branch -d` reads as one everywhere: the table's
+/// Needs cell names the command with its "Deletes branches" chip, and the
+/// job is never part of "Allow all".
+#[gpui::test]
+fn a_destructive_job_shows_its_command_and_risk_in_the_table(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands) = open_fleet(cx);
+    with_jobs(&workspace, &mut visual);
+    click(&mut visual, "fleet-view-table");
+    refresh(&mut visual);
+    effects(&mut commands);
+    assert!(
+        visual.debug_bounds("fleet-job-doing-0").is_some(),
+        "the command it would run"
+    );
+    let need = visual
+        .debug_bounds("fleet-job-need-0")
+        .expect("the job's Needs cell");
+    let chip = visual.debug_bounds("decision-risk").expect("its risk chip");
+    assert!(need.contains(&chip.center()), "the chip sits in Needs");
+    workspace.read_with(&visual, |this, cx| {
+        let tiles = this.fleet_tiles(cx);
+        for at in 0..tiles.len() {
+            assert!(
+                crate::ui::fleet::batch_of(&tiles, at).is_empty(),
+                "no batch here, and never the job"
+            );
+        }
+    });
+}
+
+/// A destructive job proposal (`git branch -d`) in the hub's job list.
+fn with_jobs(workspace: &Entity<Workspace>, visual: &mut VisualTestContext) {
+    use wks_native::features::{Request, RequestState};
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = (*this.view).clone();
+            view.requests.insert(
+                "jobs",
+                RequestState {
+                    request: Request::Jobs,
+                    number: 1,
+                    loading: false,
+                    error: None,
+                    value: Arc::new(json!({"jobs":[
+                        {"id":"prune","name":"Prune merged branches","enabled":false,
+                         "proposedBy":"helper","trigger":{"kind":"daily","at":"18:00"},
+                         "action":{"kind":"shell","shell":{"command":
+                            "git branch --merged main | grep -v main | xargs -r git branch -d",
+                            "cwd":"/home/dev/workspacer"}}}
+                    ]})),
+                },
+            );
+            this.update_view(Arc::new(view), window, cx);
+            this.focus.focus(window);
+        })
+    });
+    refresh(visual);
 }
 
 /// r6-integration: a table row answers one ask. When a stalled subagent

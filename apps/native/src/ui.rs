@@ -842,6 +842,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("3", fleet::FleetKey3, Some(fleet::KEY_CONTEXT)),
         KeyBinding::new("4", fleet::FleetKey4, Some(fleet::KEY_CONTEXT)),
         KeyBinding::new("5", fleet::FleetKey5, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("shift-1", fleet::FleetVariant, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("shift-!", fleet::FleetVariant, Some(fleet::KEY_CONTEXT)),
+        KeyBinding::new("!", fleet::FleetVariant, Some(fleet::KEY_CONTEXT)),
     ]);
 }
 

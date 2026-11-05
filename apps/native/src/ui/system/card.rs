@@ -69,14 +69,30 @@ pub(crate) fn tile_grid(columns: u16, p: &Palette) -> Div {
         .items_start()
 }
 
-/// r6-decisions (R6.7): a grid whose tiles in one row share its height
-/// (the tallest tile's), so a row reads as one band and never leaves a hole
-/// under a short tile. Each tile keeps its content at the top (the decision
-/// first); the extra room falls below it. Give the tiles `.h_full()`.
-pub(crate) fn even_tile_grid(columns: u16, p: &Palette) -> Div {
-    div()
-        .w_full()
-        .grid()
-        .grid_cols(columns.max(1))
-        .gap(px(p.tokens.space.lg))
+/// R7.6: `cards` in rows of `columns` equal columns, `space.lg` apart, each
+/// card at its own height (top-aligned): a row without a decision does
+/// not stretch to match one with it. Rows of flex cells rather than a CSS
+/// grid, so wrapped text in a tall card lays out in place.
+pub(crate) fn tile_rows(columns: usize, cards: Vec<gpui::AnyElement>, p: &Palette) -> Div {
+    let columns = columns.max(1);
+    let gap = px(p.tokens.space.lg);
+    let mut rows = Vec::new();
+    let mut cards = cards.into_iter().peekable();
+    while cards.peek().is_some() {
+        let row: Vec<gpui::AnyElement> = cards.by_ref().take(columns).collect();
+        let empty = columns - row.len();
+        rows.push(
+            div()
+                .w_full()
+                .flex()
+                .items_start()
+                .gap(gap)
+                .children(
+                    row.into_iter()
+                        .map(|card| div().flex_1().min_w_0().child(card)),
+                )
+                .children((0..empty).map(|_| div().flex_1().min_w_0())),
+        );
+    }
+    div().w_full().flex().flex_col().gap(gap).children(rows)
 }
