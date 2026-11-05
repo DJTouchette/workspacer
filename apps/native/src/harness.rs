@@ -188,6 +188,8 @@ impl Fixture {
                 let catalog = catalog::Catalog::new(now);
                 if options.sessions == 0 {
                     catalog.first_run()
+                } else if options.all_clear {
+                    catalog.all_clear(now)
                 } else {
                     catalog
                 }
@@ -306,8 +308,15 @@ impl Fixture {
         self.remaining -= 1;
         if self.remaining == 0 {
             self.streaming = false;
-            let done = json!({"sessionId": self.active_id, "mode": "input"});
+            let done = json!({"sessionId": self.active_id, "mode": "input",
+                "lastActivity": chrono::Utc::now().timestamp_millis()});
             let _ = socket.send(event("agent.snapshot", done)).await;
+        } else if self.remaining % 10 == 0 {
+            // r4-truth: a session streaming a reply is heard from; its row's
+            // activity moves on as the hub's would.
+            let beat = json!({"sessionId": self.active_id, "mode": "responding",
+                "lastActivity": chrono::Utc::now().timestamp_millis()});
+            let _ = socket.send(event("agent.snapshot", beat)).await;
         }
         Ok(())
     }
@@ -792,7 +801,9 @@ impl Fixture {
                 "provider": provider,
                 "model": model,
                 "transport": "stream",
-                "lastActivity": if state == Some(catalog::Live::Working) {
+                "lastActivity": if state == Some(catalog::Live::Working)
+                    || (self.streaming && self.active_id == id)
+                {
                     now
                 } else if catalog {
                     catalog::live_activity(i, self.epoch)
@@ -922,6 +933,10 @@ impl Fixture {
         self.streaming = true;
         self.remaining = 30;
         self.restart_stream = true;
+        // r4-truth: the reply starts now; so does the session's activity.
+        let started = json!({"sessionId": self.active_id, "mode": "responding",
+            "lastActivity": chrono::Utc::now().timestamp_millis()});
+        let _ = socket.send(event("agent.snapshot", started)).await;
         let topic = format!("agent.conversation.{}", self.active_id);
         if self.topics.contains(&topic) {
             let delta = json!({"seq": self.seq, "items": &self.items[self.items.len() - 2..]});
@@ -1445,6 +1460,9 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
                 {"id":"bdeploy04","taskType":"local_bash","status":"running","description":"cargo build --release --bin wks-native > build.log 2>&1; echo rc=$?","startedAt":now - 212_000,"hasOutput":true,"redirectFile":"build.log","toolUseId":"fixture-bg-deploy"},
                 {"id":"fixture-native-audit","taskType":"local_agent","status":"running","description":"Check focus after restore","startedAt":now - 59_000,"subagentId":"fixture-native-audit","usage":{"totalTokens":9100,"toolUses":3,"durationMs":59000},"lastToolName":"Grep","summary":"Searching focus_session"},
                 {"id":"btestwch2","taskType":"local_bash","status":"failed","description":"cargo test --locked -- --test-threads=1","startedAt":now - 1_900_000,"endedAt":now - 1_640_000,"hasOutput":true,"summary":"Background command \"cargo test --locked -- --test-threads=1\" failed with exit code 101"},
+                // r4-truth: the same run again after the fix, passing, so
+                // the failure above is history and no chip stays red.
+                {"id":"btestwch3","taskType":"local_bash","status":"completed","description":"cargo test --locked -- --test-threads=1","startedAt":now - 1_200_000,"endedAt":now - 950_000,"hasOutput":true,"summary":"Background command \"cargo test --locked -- --test-threads=1\" completed"},
                 {"id":"wfrelease3","taskType":"local_workflow","status":"completed","description":"Pre-commit checks","workflowName":"pre-commit","startedAt":now - 3_600_000,"endedAt":now - 3_420_000,"hasOutput":true}
             ]);
         }
@@ -1527,6 +1545,7 @@ fn rich_task_output(session: &str, params: &Value) -> Value {
             lines.join("\n") + "\n"
         }
         "btestwch2" => "running 214 tests\ntest ui::tests::title::chip ... ok\ntest model::merge ... FAILED\n\nfailures:\n    model::merge\n\ntest result: FAILED. 213 passed; 1 failed\n\n[exited with code 101]\n".to_owned(),
+        "btestwch3" => "running 214 tests\ntest ui::tests::title::chip ... ok\ntest model::merge ... ok\n\ntest result: ok. 214 passed; 0 failed\n".to_owned(),
         "wfrelease3" => "step 1/3 cargo fmt --check ... done\nstep 2/3 clippy ... done\nstep 3/3 unit tests ... done\n".to_owned(),
         _ => return json!({"ok": false, "error": "background task not found for that session"}),
         },

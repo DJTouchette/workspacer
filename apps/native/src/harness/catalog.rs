@@ -1031,6 +1031,24 @@ impl Catalog {
         catalog
     }
 
+    // r4-truth (R4.2)
+    /// All clear: nothing waits on the user, so the agent-proposed job has
+    /// been approved (it is listed, scheduled and enabled like the rest).
+    pub fn all_clear(mut self, now: i64) -> Self {
+        for job in self.jobs.iter_mut() {
+            if !text(job, "proposedBy").is_empty()
+                && let Some(map) = job.as_object_mut()
+            {
+                map.remove("proposedBy");
+                map.insert("enabled".into(), Value::Bool(true));
+            }
+        }
+        for job in self.jobs.clone() {
+            self.schedule(&job, now);
+        }
+        self
+    }
+
     /// A first run: the projects are known, but nothing has happened yet:
     /// no scratch waiting for review, no jobs or runs, no history, nothing
     /// queued (so no badge or count reads as pending work).

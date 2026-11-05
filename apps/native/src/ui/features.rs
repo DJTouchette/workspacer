@@ -2752,44 +2752,6 @@ impl SetupState {
     }
 }
 
-/// A session's status word (`Workspace::status_of`) in the shared v2
-/// vocabulary: Needs you · Working · Idle · Done · Failed (and Paused).
-pub(super) fn session_badge_v2(word: &str) -> StatusBadge {
-    let kind = session_kind_v2(word);
-    match kind {
-        // r3-pages: "Ready" is the lexicon's Idle; "Ended" (and other
-        // specific facts) keep their word.
-        StatusKind::Idle if word.eq_ignore_ascii_case("ready") => StatusBadge::new(kind),
-        StatusKind::Idle => StatusBadge::new(kind).label(word.to_owned()),
-        // r3-foundation: everything else speaks the one lexicon ("Running",
-        // "Thinking" → Working; "Needs approval" → Needs you).
-        _ => StatusBadge::new(kind),
-    }
-}
-
-/// The [`StatusKind`] of a session status word.
-pub(super) fn session_kind_v2(word: &str) -> StatusKind {
-    let lower = word.to_ascii_lowercase();
-    if lower.starts_with("needs") || lower.contains("waiting") {
-        StatusKind::NeedsYou
-    } else if lower.contains("lost") || lower.contains("stall") || lower.contains("not respond") {
-        StatusKind::NotResponding
-    } else if lower.contains("fail") || lower.contains("error") {
-        StatusKind::Failed
-    } else if lower == "paused" {
-        StatusKind::Paused
-    } else if ["work", "run", "think", "start", "respond"]
-        .iter()
-        .any(|w| lower.contains(w))
-    {
-        StatusKind::Working
-    } else if lower.contains("complet") || lower == "done" {
-        StatusKind::Done
-    } else {
-        StatusKind::Idle
-    }
-}
-
 /// Design v2 page state (area-pages).
 #[derive(Default)]
 pub(super) struct PagesUi {
@@ -3021,12 +2983,16 @@ impl Workspace {
             .child(s.display_model())
     }
 
-    /// A session's status as the shared v2 badge (Offline while
-    /// disconnected).
+    /// A session's status as the shared v2 badge: the one derivation
+    /// (r4-truth), read from the live session when the fleet still holds
+    /// it (a History row is the hub's stored copy).
     pub(super) fn session_status_v2(&self, s: &Session) -> StatusBadge {
-        if !self.view.connected {
-            return StatusBadge::new(StatusKind::Idle).label("Offline");
-        }
-        session_badge_v2(self.status_of(s, self.palette()).0)
+        let live = self
+            .view
+            .sessions
+            .iter()
+            .find(|l| l.id == s.id)
+            .unwrap_or(s);
+        self.session_status(live, timing::now_ms()).badge()
     }
 }

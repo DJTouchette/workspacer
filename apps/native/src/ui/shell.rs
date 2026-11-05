@@ -43,6 +43,11 @@ pub(super) struct ShellUi {
     /// Failed background tasks the user acknowledged in the title's red
     /// chip, by task id: their chip is gone for this run (memory only).
     pub(super) acknowledged_failures: BTreeSet<String>,
+    // r4-truth
+    /// The session whose conversation last received output here, and when
+    /// (epoch ms): a reply streaming in is activity, whatever the session
+    /// row last reported.
+    pub(super) output_at: Option<(String, i64)>,
     // r3-shell
     /// The model popover was opened from the header (toolbar or access
     /// chip), so it hangs from the strip rather than the composer's chip.
@@ -66,6 +71,7 @@ impl Default for ShellUi {
             scroll: gpui::ScrollHandle::new(),
             palette: Default::default(),
             acknowledged_failures: BTreeSet::new(),
+            output_at: None,
             model_from_header: false,
             model_cursor: 0,
             model_focus: None,
@@ -98,6 +104,13 @@ pub(super) enum ShellRow {
     },
     /// Needs you is empty.
     AllClear,
+    // r4-truth (R4.2)
+    /// A job an agent proposed, waiting for the user's approval in Jobs.
+    Proposal {
+        id: String,
+        name: String,
+        by: String,
+    },
     /// Idle's older sessions, folded.
     ShowMore { hidden: usize },
 }
@@ -249,6 +262,17 @@ struct Descendant {
     active: bool,
 }
 
+/// `(total, not responding, failed, working)` among a tree's descendants.
+fn descendant_counts(found: &[Descendant]) -> (usize, usize, usize, usize) {
+    let count = |kind: StatusKind| found.iter().filter(|d| d.kind == kind).count();
+    (
+        found.len(),
+        count(StatusKind::NotResponding),
+        count(StatusKind::Failed),
+        count(StatusKind::Working),
+    )
+}
+
 impl Workspace {
     // r2-shell
     /// Modal (vim) keys for the design on screen: v2 starts with them off.
@@ -261,15 +285,37 @@ impl Workspace {
         self.search.read(cx).value().trim().to_owned()
     }
 
+    /// r4-truth: when `session` was last heard from: its reported activity,
+    /// or output arriving in this window (a streaming reply is never
+    /// silent), whichever is later.
+    pub(super) fn last_heard(&self, session: &Session) -> Option<i64> {
+        let output = self
+            .shell
+            .output_at
+            .as_ref()
+            .filter(|(id, _)| *id == session.id)
+            .map(|(_, at)| *at);
+        session.telemetry.last_activity_ms.max(output)
+    }
+
+    /// r4-truth: output reached this window within the heartbeat threshold.
+    fn streaming(&self, session: &Session, now: i64) -> bool {
+        self.shell.output_at.as_ref().is_some_and(|(id, at)| {
+            *id == session.id && !wks_native::format::is_stale(Some(*at), now)
+        })
+    }
+
     /// How long `session` (or its quietest running subagent) has been
     /// silent, when that is past the heartbeat threshold.
     pub(super) fn stalled_for(&self, session: &Session, now: i64) -> Option<i64> {
         if !self.view.connected || session.stopped() {
             return None;
         }
-        let own = attention::session_stalled(session, now)
-            .then(|| session.telemetry.last_activity_ms.map(|at| now - at))
-            .flatten();
+        let heard = self.last_heard(session);
+        let own = (session.working()
+            && heard.is_some_and(|at| wks_native::format::is_stale(Some(at), now)))
+        .then(|| heard.map(|at| now - at))
+        .flatten();
         let children = self
             .native_children(session)
             .iter()
@@ -284,61 +330,61 @@ impl Workspace {
         own.max(children)
     }
 
-    /// Failed background work of a live session (a failure to look at).
-    fn failed_tasks(&self, session: &Session) -> usize {
+    /// r4-truth: the failures a live session still owes the user (failed,
+    /// not dismissed, not since passed), newest first.
+    pub(super) fn open_failures<'a>(
+        &self,
+        session: &'a Session,
+    ) -> Vec<&'a wks_native::background_tasks::Task> {
         if session.stopped() {
-            return 0;
+            return Vec::new();
         }
-        session.tasks.iter().filter(|t| t.failed()).count()
+        super::status::open_failures(&session.tasks, &self.shell.acknowledged_failures)
     }
 
     /// Why a session sits in Needs you, and its inline action.
     pub(super) fn inbox_reason(&self, session: &Session, now: i64) -> Option<Reason> {
-        attention::reason(
-            session,
-            self.stalled_for(session, now),
-            self.failed_tasks(session),
-        )
+        let failure = self
+            .open_failures(session)
+            .first()
+            .map(|task| wks_native::format::failed_label(&task.title(), 32));
+        attention::reason(session, self.stalled_for(session, now), failure)
     }
 
-    /// The group one session belongs to on its own: stalls and failures
-    /// need you; a subagent at work keeps an idle parent among the working.
+    /// r4-truth: what [`super::status::derive`] reads for `session`.
+    pub(super) fn session_facts(&self, session: &Session, now: i64) -> super::status::Facts {
+        let stopped = session.stopped();
+        let streaming = !stopped && self.streaming(session, now);
+        super::status::Facts {
+            connected: self.view.connected,
+            stopped,
+            paused: self.paused(session),
+            needs_you: !stopped && attention::needs_you(session),
+            failed: !self.open_failures(session).is_empty(),
+            stalled: !streaming && self.stalled_for(session, now).is_some(),
+            streaming,
+            working: !stopped && (session.working() || session.starting()),
+            children_working: !stopped
+                && self
+                    .native_children(session)
+                    .iter()
+                    .any(|c| c.running() && !attention::child_stalled(c, now)),
+        }
+    }
+
+    /// r4-truth (R4.1): the one status of a session, for every surface.
+    pub(super) fn session_status(&self, session: &Session, now: i64) -> super::status::Status {
+        super::status::derive(self.session_facts(session, now))
+    }
+
+    /// The group one session belongs to on its own ([`Self::session_status`]).
     pub(super) fn session_bucket(&self, session: &Session, now: i64) -> Bucket {
-        let own = attention::bucket(session, self.paused(session));
-        if own == Bucket::NeedsYou {
-            return own;
-        }
-        if self.view.connected
-            && !session.stopped()
-            && (self.stalled_for(session, now).is_some() || self.failed_tasks(session) > 0)
-        {
-            return Bucket::NeedsYou;
-        }
-        if own > Bucket::Working && self.native_children(session).iter().any(|c| c.running()) {
-            Bucket::Working
-        } else {
-            own
-        }
+        self.session_status(session, now).bucket
     }
 
-    /// What a session row shows as its status (stalled is a fault).
+    /// What a session shows as its status ([`Self::session_status`]).
     pub(super) fn session_kind(&self, session: &Session, now: i64) -> StatusKind {
-        if !self.view.connected {
-            return StatusKind::Idle;
-        }
-        if self.paused(session) {
-            return StatusKind::Paused;
-        }
-        if attention::needs_you(session) {
-            return StatusKind::NeedsYou;
-        }
-        if self.stalled_for(session, now).is_some() {
-            return StatusKind::NotResponding;
-        }
-        match attention::bucket(session, false) {
-            Bucket::Working => StatusKind::Working,
-            _ => StatusKind::Idle,
-        }
+        self.session_status(session, now).kind
     }
 
     fn is_active(&self, id: &str) -> bool {
@@ -355,28 +401,39 @@ impl Workspace {
     pub(super) fn shell_rows(&self, cx: &App) -> Vec<ShellRow> {
         let visible = self.visible_sessions(cx);
         let sessions = &self.view.sessions;
-        let tree = wks_native::navigation::session_tree(sessions, &visible);
         let query = self.query(cx);
         let searching = !query.is_empty();
         let lower = query.to_lowercase();
         let now = timing::now_ms();
-        let buckets: BTreeMap<usize, Bucket> = tree
-            .iter()
-            .map(|&(ix, _)| (ix, self.session_bucket(&sessions[ix], now)))
-            .collect();
-        let bucket_of = |ix: usize| buckets.get(&ix).copied().unwrap_or(Bucket::Idle);
-        let groups = attention::group(&tree, bucket_of, |ix| {
-            sessions[ix].telemetry.last_activity_ms
-        });
+        let groups = self.attention_groups(&visible, now);
+        // r4-truth (R4.2): job proposals wait on the user too; they count
+        // in Needs you, and only nothing at all waiting is All clear.
+        let proposals: Vec<ShellRow> = if searching {
+            Vec::new()
+        } else {
+            self.job_proposals()
+                .into_iter()
+                .map(|job| ShellRow::Proposal {
+                    id: job.id,
+                    name: job.name,
+                    by: job.proposed_by,
+                })
+                .collect()
+        };
         let mut rows = Vec::new();
         let needs_empty = !groups.iter().any(|(b, _)| *b == Bucket::NeedsYou);
-        if needs_empty && !searching && !visible.is_empty() {
+        if needs_empty && !searching && (!visible.is_empty() || !proposals.is_empty()) {
+            let folded = self.shell.folded[Bucket::NeedsYou.index()] && !proposals.is_empty();
             rows.push(ShellRow::Group {
                 bucket: Bucket::NeedsYou,
-                count: 0,
-                folded: false,
+                count: proposals.len(),
+                folded,
             });
-            rows.push(ShellRow::AllClear);
+            if proposals.is_empty() {
+                rows.push(ShellRow::AllClear);
+            } else if !folded {
+                rows.extend(proposals.iter().cloned());
+            }
         }
         for (bucket, members) in groups {
             // Back into trees: a root and the members nested under it.
@@ -388,9 +445,14 @@ impl Workspace {
                 }
             }
             let folded = self.shell.folded[bucket.index()] && !searching;
+            let waiting = if bucket == Bucket::NeedsYou {
+                proposals.len()
+            } else {
+                0
+            };
             rows.push(ShellRow::Group {
                 bucket,
-                count: trees.len(),
+                count: trees.len() + waiting,
                 folded,
             });
             if folded {
@@ -441,11 +503,62 @@ impl Workspace {
                 }
             }
             rows.extend(items);
+            if bucket == Bucket::NeedsYou {
+                rows.extend(proposals.iter().cloned());
+            }
             if hidden > 0 {
                 rows.push(ShellRow::ShowMore { hidden });
             }
         }
         rows
+    }
+
+    // r4-truth (R4.1)
+    /// The listed sessions as one tree cut into groups (each top-level tree
+    /// in its most urgent member's group, by [`Self::session_status`]): the
+    /// sidebar's groups and the Fleet's order and counts both read this.
+    pub(super) fn attention_groups(
+        &self,
+        visible: &[usize],
+        now: i64,
+    ) -> Vec<(Bucket, Vec<(usize, usize)>)> {
+        let sessions = &self.view.sessions;
+        let tree = wks_native::navigation::session_tree(sessions, visible);
+        let buckets: BTreeMap<usize, Bucket> = tree
+            .iter()
+            .map(|&(ix, _)| (ix, self.session_bucket(&sessions[ix], now)))
+            .collect();
+        let bucket_of = |ix: usize| buckets.get(&ix).copied().unwrap_or(Bucket::Idle);
+        attention::group(&tree, bucket_of, |ix| {
+            sessions[ix].telemetry.last_activity_ms
+        })
+    }
+
+    /// Top-level trees in each group, `Bucket::index` order, with job
+    /// proposals counted in Needs you: the one set of counts the sidebar's
+    /// headers and the Fleet show.
+    pub(super) fn attention_counts(&self, cx: &App) -> [usize; 4] {
+        let visible = self.visible_sessions(cx);
+        let mut counts = [0usize; 4];
+        for (bucket, members) in self.attention_groups(&visible, timing::now_ms()) {
+            counts[bucket.index()] += members.iter().filter(|(_, depth)| *depth == 0).count();
+        }
+        counts[Bucket::NeedsYou.index()] += self.job_proposals().len();
+        counts
+    }
+
+    // r4-truth (R4.2)
+    /// Jobs an agent proposed that wait for the user's approval, from the
+    /// newest list the hub returned (read at every connection under v2).
+    pub(super) fn job_proposals(&self) -> Vec<wks_native::jobs::Job> {
+        if !self.design().is_v2() {
+            return Vec::new();
+        }
+        self.job_rows()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|job| job.proposal())
+            .collect()
     }
 
     /// A tree's members after its root, and every member's subagents: the
@@ -459,9 +572,44 @@ impl Workspace {
         now: i64,
         out: &mut Vec<ShellRow>,
     ) {
+        let root = &self.view.sessions[members[0].0];
+        let found = self.descendants(members, query, now);
+        if found.is_empty() {
+            return;
+        }
+        let open = self.shell.open_children.contains(&root.id);
+        let mut listed = 0;
+        for d in &found {
+            let own_row = open || d.active || d.matches || (d.loud && bucket == Bucket::NeedsYou);
+            if own_row {
+                listed += 1;
+                out.push(ShellRow::Item {
+                    row: d.row.clone(),
+                    bucket,
+                    tag: None,
+                });
+            }
+        }
+        if listed == found.len() && !open {
+            return;
+        }
+        let (total, stalled, failed, working) = descendant_counts(&found);
+        if let Some(summary) = attention::children_summary(total, stalled, failed, working) {
+            out.push(ShellRow::Children {
+                parent: root.id.clone(),
+                depth: members[0].1 + 1,
+                summary,
+                fault: stalled + failed > 0,
+                open,
+            });
+        }
+    }
+
+    /// A tree's members after its root and every member's subagents, each
+    /// with its status ([`Self::session_kind`], the child's own).
+    fn descendants(&self, members: &[(usize, usize)], query: &str, now: i64) -> Vec<Descendant> {
         let sessions = &self.view.sessions;
         let connected = self.view.connected;
-        let root = &sessions[members[0].0];
         let mut found: Vec<Descendant> = Vec::new();
         for (n, &(ix, depth)) in members.iter().enumerate() {
             let s = &sessions[ix];
@@ -510,41 +658,22 @@ impl Workspace {
                 });
             }
         }
-        if found.is_empty() {
-            return;
-        }
-        let open = self.shell.open_children.contains(&root.id);
-        let (mut total, mut stalled, mut failed, mut working, mut listed) = (0, 0, 0, 0, 0);
-        for d in &found {
-            let own_row = open || d.active || d.matches || (d.loud && bucket == Bucket::NeedsYou);
-            if own_row {
-                listed += 1;
-                out.push(ShellRow::Item {
-                    row: d.row.clone(),
-                    bucket,
-                    tag: None,
-                });
-            }
-            total += 1;
-            match (&d.row, d.kind) {
-                (_, StatusKind::NotResponding) => stalled += 1,
-                (_, StatusKind::Failed) => failed += 1,
-                (_, StatusKind::Working) => working += 1,
-                _ => {}
-            }
-        }
-        if listed == found.len() && !open {
-            return;
-        }
-        if let Some(summary) = attention::children_summary(total, stalled, failed, working) {
-            out.push(ShellRow::Children {
-                parent: root.id.clone(),
-                depth: members[0].1 + 1,
-                summary,
-                fault: stalled + failed > 0,
-                open,
-            });
-        }
+        found
+    }
+
+    // r4-truth
+    /// The collapsed line for a tree's subagents ("4 subagents · 3 working"),
+    /// and whether it names a fault: the sidebar's summary row and the
+    /// Fleet tile say the same.
+    pub(super) fn subagents_line(
+        &self,
+        members: &[(usize, usize)],
+        now: i64,
+    ) -> Option<(String, bool)> {
+        let found = self.descendants(members, "", now);
+        let (total, stalled, failed, working) = descendant_counts(&found);
+        attention::children_summary(total, stalled, failed, working)
+            .map(|line| (line, stalled + failed > 0))
     }
 
     /// Sessions in the order the list shows them (what j/k, Enter in the
@@ -622,6 +751,11 @@ impl Workspace {
             .or(self.view.selected.as_ref())
             .and_then(|id| self.view.sessions.iter().position(|s| &s.id == id));
         let Some(next) = attention::next_needing(&order, &needing, current) else {
+            // r4-truth (R4.2): a job proposal is the one thing waiting.
+            if !self.job_proposals().is_empty() {
+                self.open_feature(Screen::Jobs, window, cx);
+                return;
+            }
             self.extras.notice = "Nothing needs you right now.".into();
             cx.notify();
             return;
@@ -840,6 +974,7 @@ impl Workspace {
         let t = p.tokens;
         let vim = self.vim();
         let pending = self.pending_total();
+        let proposals = self.job_proposals().len();
         let new_session = !self.demo;
         div()
             .debug_selector(|| "sidebar-destinations".into())
@@ -900,7 +1035,18 @@ impl Workspace {
                 "Jobs",
                 vim.then_some("g j"),
                 Screen::Jobs,
-                None,
+                // r4-truth (R4.2): proposals waiting for approval, counted as
+                // Needs you counts them.
+                (proposals > 0).then(|| {
+                    div()
+                        .debug_selector(|| "jobs-needs-you-badge".into())
+                        .child(primitives::count_badge(
+                            primitives::count_text(proposals),
+                            primitives::CountTone::NeedsYou,
+                            &p,
+                        ))
+                        .into_any_element()
+                }),
                 cx,
             ))
             .child(self.destination_to(
@@ -1002,6 +1148,8 @@ impl Workspace {
             .tooltip(tooltip_view(
                 if id == "nav-scratch" && self.pending_total() > 0 {
                     "Scratch files · some are waiting for you to run them"
+                } else if id == "nav-jobs" && !self.job_proposals().is_empty() {
+                    "Jobs · an agent's proposal is waiting for your approval"
                 } else {
                     label
                 },
@@ -1286,6 +1434,7 @@ impl Workspace {
                 open,
             } => self.render_children_line(parent, *depth, summary, *fault, *open, ix, cx),
             ShellRow::AllClear => self.render_all_clear(),
+            ShellRow::Proposal { id, name, by } => self.render_proposal(id, name, by, ix, cx),
             ShellRow::ShowMore { hidden } => self.render_show_more(*hidden, cx),
         }
     }
@@ -1414,6 +1563,115 @@ impl Workspace {
                     .child(Icon::new(IconName::Check).size(px(t.icon.xs))),
             )
             .child("All clear · nothing is waiting on you")
+            .into_any_element()
+    }
+
+    // r4-truth (R4.2)
+    /// A job proposal in Needs you: one attention row, "Job proposal · Prune
+    /// merged worktrees", who proposed it, and Review (it opens Jobs, where
+    /// the proposal is approved or rejected).
+    fn render_proposal(
+        &self,
+        id: &str,
+        name: &str,
+        by: &str,
+        ix: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette();
+        let t = p.tokens;
+        let two_lines = !self.settings.sidebar_compact;
+        let group: SharedString = format!("sidebar-row-{ix}").into();
+        let title = if name.is_empty() {
+            "Job proposal".to_owned()
+        } else {
+            format!("Job proposal · {name}")
+        };
+        let from = if by.is_empty() {
+            "Proposed by an agent".to_owned()
+        } else {
+            format!("Proposed by {by}")
+        };
+        let open = |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            this.open_feature(Screen::Jobs, window, cx)
+        };
+        let verb = primitives::button(
+            SharedString::from(format!("sidebar-proposal-review-{id}")),
+            "Review",
+            None,
+            ButtonVariant::Secondary,
+            ButtonSize::Small,
+            true,
+            &p,
+        )
+        .debug_selector(move || format!("sidebar-inbox-action-{ix}"))
+        .h(px(t.icon.lg + t.space.xxs))
+        .px(px(t.space.md))
+        .text_size(px(t.text.meta))
+        .flex_shrink_0()
+        .tooltip(tooltip_view("Open Jobs to approve or reject it", None, &p))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            open(this, window, cx)
+        }))
+        .into_any_element();
+        let first = div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(px(t.space.sm))
+            .child(status_indicator(StatusKind::NeedsYou, &p))
+            .child(self.row_title(title.clone(), None, false, ""))
+            .child(self.row_trailing_verb(group.clone(), None, verb, false));
+        let second = two_lines.then(|| {
+            div()
+                .debug_selector(move || format!("sidebar-reason-{ix}"))
+                .w_full()
+                .min_w_0()
+                .pl(px(t.layout.status_box + t.space.sm))
+                .truncate()
+                .text_size(px(t.text.meta))
+                .text_color(rgb(p.roles.text_secondary))
+                .child(from.clone())
+        });
+        let height = if two_lines {
+            t.shell().row_double
+        } else {
+            self.single_height()
+        };
+        let bar = t.signals().attention_bar;
+        let control = chrome::interactive_control(
+            div().id(SharedString::from(format!("proposal-{id}"))),
+            p,
+            true,
+        )
+        .debug_selector(move || format!("sidebar-proposal-{ix}"))
+        .group(group)
+        .relative()
+        .size_full()
+        .pl(px(t.space.md + bar))
+        .pr(px(t.space.md))
+        .rounded(px(t.radius.control))
+        .flex()
+        .flex_col()
+        .justify_center()
+        .gap(px(t.space.xxs))
+        .hover(move |s| s.bg(rgb(p.roles.hover)))
+        .tooltip(tooltip_view(
+            format!("{title}\n{from}\nWaiting for your approval in Jobs"),
+            None,
+            &p,
+        ))
+        .child(first)
+        .children(second)
+        .on_click(cx.listener(move |this, _, window, cx| open(this, window, cx)));
+        self.row_frame(0, height)
+            .child(
+                primitives::attention_frame(t.radius.control, &p)
+                    .size_full()
+                    .child(control),
+            )
             .into_any_element()
     }
 
@@ -1641,7 +1899,8 @@ impl Workspace {
         let id = session.id.clone();
         let active = self.is_active(&id);
         let title = self.session_title(session);
-        let kind = self.session_kind(session, now);
+        let status = self.session_status(session, now);
+        let kind = status.kind;
         let project = self.project_name(&session.cwd);
         let reason = (bucket == Bucket::NeedsYou)
             .then(|| self.inbox_reason(session, now))
@@ -1659,11 +1918,6 @@ impl Workspace {
                 .last_activity_ms
                 .map(|at| wks_native::format::age(at, now))
         };
-        let (status_label, _) = if self.view.connected {
-            self.status_of(session, p)
-        } else {
-            ("Offline", p.muted)
-        };
         let details = {
             let mut lines = vec![title.clone(), session.cwd.clone()];
             if let Some(reason) = &reason {
@@ -1678,12 +1932,7 @@ impl Workspace {
             lines.push(format!(
                 "{provider} · {} · {}",
                 wks_native::format::model_name(&session.display_model()),
-                match kind {
-                    StatusKind::NotResponding | StatusKind::NeedsYou | StatusKind::Working => {
-                        kind.label()
-                    }
-                    _ => status_label,
-                }
+                status.label()
             ));
             if job {
                 lines.push("Started by a job · its runs are under Jobs → Runs".into());
@@ -2573,11 +2822,6 @@ impl Workspace {
         let active = self.is_active(&s.id);
         let title = self.session_title(s);
         let kind = self.session_kind(s, now);
-        let kind = if kind == StatusKind::Idle && self.session_bucket(s, now) == Bucket::NeedsYou {
-            StatusKind::Failed
-        } else {
-            kind
-        };
         let reason = self.inbox_reason(s, now);
         let age = s
             .telemetry

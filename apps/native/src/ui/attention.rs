@@ -53,21 +53,6 @@ pub(crate) fn needs_you(session: &Session) -> bool {
         )
 }
 
-/// One session's own group. `paused` is a stopped session the hub keeps
-/// open (resumable from its composer): idle, not ended.
-pub(crate) fn bucket(session: &Session, paused: bool) -> Bucket {
-    if session.stopped() {
-        return if paused { Bucket::Idle } else { Bucket::Ended };
-    }
-    if needs_you(session) {
-        Bucket::NeedsYou
-    } else if session.working() || session.starting() {
-        Bucket::Working
-    } else {
-        Bucket::Idle
-    }
-}
-
 /// A session tree in display order (`(index, depth)`, roots at depth 0) cut
 /// into groups. Each top-level tree goes where its most urgent member
 /// belongs, so children stay under their parent; `Needs you` puts the
@@ -166,16 +151,6 @@ pub(crate) fn child_stalled(child: &wks_native::child_agents::ChildAgent, now: i
         )
 }
 
-/// A working session whose last reported activity is past the heartbeat
-/// threshold. Unknown activity is not evidence of a stall.
-pub(crate) fn session_stalled(session: &Session, now: i64) -> bool {
-    session.working()
-        && session
-            .telemetry
-            .last_activity_ms
-            .is_some_and(|at| wks_native::format::is_stale(Some(at), now))
-}
-
 /// What a waiting row offers inline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InboxAction {
@@ -208,14 +183,22 @@ pub(crate) struct Reason {
     pub fault: bool,
 }
 
-/// The reason a waiting session gives. `stalled_for` is how long its
-/// quietest stalled subagent (or itself) has been silent, in ms;
-/// `failed_tasks` counts failed background work.
+/// The reason a waiting session gives, in the status order (R4.1): a
+/// failure first, then a decision, then a stall. `stalled_for` is how long
+/// its quietest stalled subagent (or itself) has been silent, in ms;
+/// `failure` names its newest open failure ("cargo test failed").
 pub(crate) fn reason(
     session: &Session,
     stalled_for: Option<i64>,
-    failed_tasks: usize,
+    failure: Option<String>,
 ) -> Option<Reason> {
+    if let Some(failure) = failure {
+        return Some(Reason {
+            text: failure,
+            action: InboxAction::Open,
+            fault: true,
+        });
+    }
     if let Some(approval) = session.approval.as_ref() {
         let tool = approval
             .get("toolName")
@@ -281,17 +264,6 @@ pub(crate) fn reason(
     if let Some(quiet) = stalled_for {
         return Some(Reason {
             text: format!("Not responding · {}", quiet_for(quiet)),
-            action: InboxAction::Open,
-            fault: true,
-        });
-    }
-    if failed_tasks > 0 {
-        return Some(Reason {
-            text: if failed_tasks == 1 {
-                "A background task failed".into()
-            } else {
-                format!("{failed_tasks} background tasks failed")
-            },
             action: InboxAction::Open,
             fault: true,
         });
@@ -394,30 +366,27 @@ mod tests {
             })),
             ..Default::default()
         };
-        let r = reason(&s, None, 0).unwrap();
+        let r = reason(&s, None, None).unwrap();
         assert_eq!(r.text, "Run cargo test?");
         assert_eq!(r.action, InboxAction::Allow);
         s.approval = Some(serde_json::json!({"toolName": "ExitPlanMode"}));
-        assert_eq!(reason(&s, None, 0).unwrap().action, InboxAction::Open);
+        assert_eq!(reason(&s, None, None).unwrap().action, InboxAction::Open);
         s.approval = None;
         s.questions = Some(serde_json::json!([{"question": "Which theme?"}]));
-        let r = reason(&s, None, 0).unwrap();
+        let r = reason(&s, None, None).unwrap();
         assert_eq!(
             (r.text.as_str(), r.action),
             ("Which theme?", InboxAction::Answer)
         );
         s.questions = None;
         s.state = "working".into();
-        let r = reason(&s, Some(7 * 60_000), 0).unwrap();
+        let r = reason(&s, Some(7 * 60_000), None).unwrap();
         assert_eq!(r.text, "Not responding · 7m");
         assert!(r.fault);
-        assert!(
-            reason(&s, None, 2)
-                .unwrap()
-                .text
-                .contains("2 background tasks")
-        );
-        assert_eq!(reason(&s, None, 0), None);
+        // R4.1: a failure leads, named.
+        let r = reason(&s, Some(7 * 60_000), Some("cargo test failed".into())).unwrap();
+        assert_eq!((r.text.as_str(), r.fault), ("cargo test failed", true));
+        assert_eq!(reason(&s, None, None), None);
     }
 
     #[test]
@@ -512,22 +481,5 @@ mod tests {
         assert_eq!(next_needing(&order, &[3], Some(3)), Some(3));
         // A current session the list no longer shows starts from the top.
         assert_eq!(next_needing(&order, &[1], Some(42)), Some(1));
-    }
-
-    #[test]
-    fn sessions_land_in_the_vocabulary_groups() {
-        let mut s = Session {
-            state: "idle".into(),
-            ..Default::default()
-        };
-        assert_eq!(bucket(&s, false), Bucket::Idle);
-        s.approval = Some(serde_json::json!({}));
-        assert_eq!(bucket(&s, false), Bucket::NeedsYou);
-        s.approval = None;
-        s.state = "working".into();
-        assert_eq!(bucket(&s, false), Bucket::Working);
-        s.state = "ended".into();
-        assert_eq!(bucket(&s, false), Bucket::Ended);
-        assert_eq!(bucket(&s, true), Bucket::Idle);
     }
 }

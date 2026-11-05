@@ -30,20 +30,6 @@ pub(super) fn running_words(tasks: &[bg::Task], fallback: u32) -> Option<String>
     Some(format!("{n} {}", if n == 1 { one } else { many }))
 }
 
-/// The failed tasks the title's red chip still names: not acknowledged,
-/// newest first (by end, then start).
-pub(super) fn unacknowledged_failures<'a>(
-    tasks: &'a [bg::Task],
-    acknowledged: &std::collections::BTreeSet<String>,
-) -> Vec<&'a bg::Task> {
-    let mut failed: Vec<&bg::Task> = tasks
-        .iter()
-        .filter(|t| t.failed() && !acknowledged.contains(&t.id))
-        .collect();
-    failed.sort_by_key(|t| std::cmp::Reverse((t.ended_at, t.started_at)));
-    failed
-}
-
 /// The session's access mode in a word or two; "Unknown" when the provider
 /// has not reported one this app offers.
 pub(super) fn access_word(session: &Session) -> (&'static str, Option<Permission>) {
@@ -66,23 +52,10 @@ impl Workspace {
         1.
     }
 
-    /// The selected session's state in the R3.1 lexicon, for the header.
-    fn title_kind(&self, session: &Session) -> StatusKind {
-        let now = timing::now_ms();
-        if !self.view.connected {
-            StatusKind::Offline
-        } else if self.paused(session) {
-            StatusKind::Paused
-        } else if super::attention::needs_you(session) {
-            StatusKind::NeedsYou
-        } else if self.stalled_for(session, now).is_some() {
-            StatusKind::NotResponding
-        } else {
-            match super::attention::bucket(session, false) {
-                super::attention::Bucket::Working => StatusKind::Working,
-                _ => StatusKind::Idle,
-            }
-        }
+    /// The selected session's state for the header: the one derivation
+    /// (r4-truth), Offline while the hub is away.
+    pub(super) fn title_kind(&self, session: &Session) -> StatusKind {
+        self.session_kind(session, timing::now_ms())
     }
 
     // r3-shell
@@ -389,11 +362,13 @@ impl Workspace {
                     .unwrap_or_default(),
             )
             .children(session.and_then(|s| {
-                let failed = unacknowledged_failures(&s.tasks, &self.shell.acknowledged_failures);
+                // r4-truth: only a failure still open (not since passed).
+                let failed = self.open_failures(s);
                 failed
                     .first()
-                    .map(|task| self.render_failed_chip(task, failed.len(), cx))
+                    .map(|task| self.render_failed_chip(task, failed.len(), s, cx))
             }))
+            .children(session.and_then(|s| self.render_stall_recovery(s, narrow, cx)))
     }
 
     /// The red chip naming the newest unacknowledged failed task: the name
@@ -402,20 +377,23 @@ impl Workspace {
         &self,
         task: &bg::Task,
         count: usize,
+        session: &Session,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = self.palette();
         let t = p.tokens;
         let name = task.title();
-        let mut label = wks_native::format::failed_label(&name, 28);
+        // r4-truth: it names its task ("cargo test failed · Restore sessions").
+        let owner = self.session_title(session);
+        let mut label = super::status::failure_label(task, &owner, 28);
         if count > 1 {
             label.push_str(&format!(" · +{}", count - 1));
         }
         let error = task.error.trim();
         let tip = if error.is_empty() {
-            format!("{name} failed · open to see why")
+            format!("Background task “{name}” in {owner} failed · open to see why")
         } else {
-            format!("{name} failed · {error}")
+            format!("Background task “{name}” in {owner} failed · {error}")
         };
         let open_id = task.id.clone();
         let ack_id = task.id.clone();
@@ -460,25 +438,109 @@ impl Workspace {
             .into_any_element()
     }
 
+    // r4-truth (R4.7)
+    /// A session that stopped answering offers its way out right in the
+    /// header: Nudge (the subagent rows' machinery: a line it reads at once)
+    /// and Stop. Shown only while the one status reads Not responding.
+    fn render_stall_recovery(
+        &self,
+        session: &Session,
+        narrow: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.title_kind(session) != StatusKind::NotResponding {
+            return None;
+        }
+        let p = self.palette();
+        let t = p.tokens;
+        let enabled = self.view.connected && !self.view.busy;
+        let nudge_id = session.id.clone();
+        let stop_id = session.id.clone();
+        Some(
+            div()
+                .debug_selector(|| "title-stall-recovery".into())
+                .occlude()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(px(t.space.xs))
+                .child(
+                    primitives::with_tooltip(
+                        primitives::button(
+                            "title-nudge",
+                            "Nudge",
+                            None,
+                            primitives::ButtonVariant::Secondary,
+                            primitives::ButtonSize::Small,
+                            enabled,
+                            &p,
+                        ),
+                        "Send it “Still there? Reply with where you are.” now",
+                        None,
+                        &p,
+                    )
+                    .debug_selector(|| "title-nudge".into())
+                    .when(enabled, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.command(
+                                Command::Act {
+                                    session: nudge_id.clone(),
+                                    action: Action::SendNow(
+                                        super::transcript_v2::NUDGE_TEXT.into(),
+                                    ),
+                                },
+                                cx,
+                            )
+                        }))
+                    }),
+                )
+                .when(!narrow, |d| {
+                    d.child(
+                        primitives::with_tooltip(
+                            primitives::button(
+                                "title-stop",
+                                "Stop",
+                                None,
+                                primitives::ButtonVariant::Tertiary,
+                                primitives::ButtonSize::Small,
+                                enabled,
+                                &p,
+                            ),
+                            "Stop this turn",
+                            None,
+                            &p,
+                        )
+                        .debug_selector(|| "title-stop".into())
+                        .when(enabled, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                this.command(
+                                    Command::Act {
+                                        session: stop_id.clone(),
+                                        action: Action::Stop,
+                                    },
+                                    cx,
+                                )
+                            }))
+                        }),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
     /// Whether the toolbar has room for its labels.
     pub(super) fn toolbar_labels(&self) -> bool {
         f32::from(self.chat_width) >= self.tokens().shell().toolbar_labels_at
     }
 
-    /// "+5 −2": what the agent's edits in the loaded conversation add and
-    /// remove (counts only). `None` before any edit.
-    fn session_line_changes(&self) -> Option<(usize, usize, usize)> {
-        let files = wks_native::transcript::turn_changes(
-            self.view.transcript.rows.iter().map(AsRef::as_ref),
-        );
-        if files.is_empty() {
-            return None;
-        }
-        Some((
-            files.len(),
-            files.iter().map(|f| f.added).sum(),
-            files.iter().map(|f| f.removed).sum(),
-        ))
+    // r4-truth (R4.1)
+    /// The selected session's changes in the Changes panel's own scope and
+    /// words: every uncommitted change on its branch, `(files, added,
+    /// removed)`, once the panel has read them for this folder. The header
+    /// shows exactly this, labelled "Branch", never a count of its own.
+    pub(super) fn branch_line_changes(&self) -> Option<(usize, usize, usize)> {
+        let cwd = &self.selected_session()?.cwd;
+        self.review_stack_summary(cwd)
     }
 
     /// One toolbar tool: a 16px icon and its label (icons only when the
@@ -559,11 +621,11 @@ impl Workspace {
                 this.open_feature(screen, window, cx)
             })
         };
-        // Changes: what the agent's edits add and remove.
-        let lines = self.session_line_changes();
+        // r4-truth: the Changes panel's scope and label, "Branch +17 −3".
+        let lines = self.branch_line_changes();
         let changes_tip: SharedString = match lines {
             Some((files, added, removed)) => format!(
-                "Changes · this session's edits: {files} {}, +{added} −{removed}",
+                "Changes · Branch: every uncommitted change, {files} {}, +{added} −{removed}",
                 if files == 1 { "file" } else { "files" }
             )
             .into(),
@@ -579,14 +641,8 @@ impl Workspace {
                 selected,
                 self.review_dock_showing(),
                 lines
-                    .map(|(_, added, removed)| format!("+{added} −{removed}"))
-                    .or_else(|| {
-                        // Before any edit here, the folder's own changed files.
-                        session
-                            .and_then(|s| self.changes_count(&s.cwd))
-                            .filter(|n| *n > 0)
-                            .map(primitives::count_text)
-                    })
+                    .filter(|(_, added, removed)| added + removed > 0)
+                    .map(|(_, added, removed)| format!("Branch +{added} −{removed}"))
                     .map(quiet),
             )
             .when(selected, |d| d.on_click(page(Screen::Changes)));
@@ -807,7 +863,7 @@ mod tests {
         ];
         let mut acked = std::collections::BTreeSet::new();
         let ids = |acked: &std::collections::BTreeSet<String>| {
-            unacknowledged_failures(&tasks, acked)
+            super::super::status::open_failures(&tasks, acked)
                 .iter()
                 .map(|t| t.id.clone())
                 .collect::<Vec<_>>()

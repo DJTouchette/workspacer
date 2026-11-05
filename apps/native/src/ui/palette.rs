@@ -238,6 +238,16 @@ impl Workspace {
             .unwrap_or_default()
     }
 
+    // r4-truth
+    /// The status the palette's entry for session `index` shows.
+    #[cfg(test)]
+    pub(super) fn palette_session_status(&self, index: usize, cx: &App) -> Option<StatusKind> {
+        self.palette_entries(cx)
+            .into_iter()
+            .find(|e| matches!(e.target, Target::Session(ix) if ix == index))
+            .and_then(|e| e.status)
+    }
+
     /// Everything the palette can reach, before matching.
     fn palette_entries(&self, cx: &App) -> Vec<Entry> {
         let mac = cfg!(target_os = "macos");
@@ -257,9 +267,11 @@ impl Workspace {
         for (n, ix) in sessions.into_iter().enumerate() {
             let s = &self.view.sessions[ix];
             let recent = recents.iter().position(|r| *r == s.id);
+            // r4-truth: the one status; its reason only when it asks for you.
+            let status = self.session_status(s, now);
             let reason = self
                 .inbox_reason(s, now)
-                .filter(|_| attention::needs_you(s) || self.stalled_for(s, now).is_some());
+                .filter(|_| status.bucket == attention::Bucket::NeedsYou);
             let age = s
                 .telemetry
                 .last_activity_ms
@@ -270,17 +282,7 @@ impl Workspace {
                 .filter(|m| !m.is_empty())
                 .collect::<Vec<_>>()
                 .join(" · ");
-            let status = if attention::needs_you(s) {
-                StatusKind::NeedsYou
-            } else if self.stalled_for(s, now).is_some() {
-                StatusKind::NotResponding
-            } else if s.working() {
-                StatusKind::Working
-            } else if self.paused(s) {
-                StatusKind::Paused
-            } else {
-                StatusKind::Idle
-            };
+            let status = status.kind;
             out.push(Entry {
                 scope: Scope::Sessions,
                 title: self.session_title(s),

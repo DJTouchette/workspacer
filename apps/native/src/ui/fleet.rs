@@ -5,8 +5,9 @@
 //! actions. Arrows (or h j k l) move the focus between tiles, Enter opens
 //! the focused session, 1 / 2 / 3 answer its ask and Esc goes back.
 //!
-//! Data: the same session list, groups and reasons the sidebar and palette
-//! read (`Workspace::session_bucket`, `session_kind`, `inbox_reason`). The
+//! Data: the same session list, groups, counts and reasons the sidebar and
+//! palette read (r4-truth: `Workspace::attention_groups`,
+//! `attention_counts`, `session_status`, `inbox_reason`). The
 //! hub sends no per-session transcript for sessions that are not open, so
 //! a tile's event lines are what the session row itself reports: its last
 //! tool, plan step, subagents and background work. Design v2 only.
@@ -223,42 +224,51 @@ pub(super) struct Tile {
 }
 
 impl Workspace {
-    /// Every session the fleet knows (the sidebar's visible set), most
-    /// urgent first: Needs you oldest wait first, Working in the hub's
-    /// order, then Idle and Ended most recent first.
-    pub(super) fn fleet_sessions(&self, cx: &App) -> Vec<(usize, Bucket)> {
-        let now = timing::now_ms();
-        let sessions = &self.view.sessions;
-        let mut all: Vec<(usize, Bucket)> = self
-            .visible_sessions(cx)
+    /// Every session the fleet knows (the sidebar's visible set) in the
+    /// sidebar's own order and groups (r4-truth): each tree where its most
+    /// urgent member puts it, Needs you oldest wait first, Working in the
+    /// hub's order, then Idle and Ended most recent first. `(index, depth,
+    /// the tree's group)`.
+    pub(super) fn fleet_sessions(&self, cx: &App) -> Vec<(usize, usize, Bucket)> {
+        let visible = self.visible_sessions(cx);
+        self.attention_groups(&visible, timing::now_ms())
             .into_iter()
-            .map(|ix| (ix, self.session_bucket(&sessions[ix], now)))
-            .collect();
-        let activity = |ix: usize| sessions[ix].telemetry.last_activity_ms;
-        all.sort_by_key(|&(ix, bucket)| {
-            let order = match bucket {
-                Bucket::NeedsYou => activity(ix).unwrap_or(i64::MAX),
-                Bucket::Working => 0,
-                Bucket::Idle | Bucket::Ended => -activity(ix).unwrap_or(i64::MIN / 2),
-            };
-            (bucket, order)
-        });
-        all
+            .flat_map(|(bucket, members)| {
+                members
+                    .into_iter()
+                    .map(move |(ix, depth)| (ix, depth, bucket))
+            })
+            .collect()
     }
 
     /// The tiles on screen, in grid order.
     pub(super) fn fleet_tiles(&self, cx: &App) -> Vec<Tile> {
         let now = timing::now_ms();
-        self.fleet_sessions(cx)
-            .into_iter()
-            .filter(|&(_, bucket)| shown(bucket, self.fleet.filter))
-            .map(|(ix, bucket)| self.fleet_tile(ix, bucket, now))
+        let all = self.fleet_sessions(cx);
+        all.iter()
+            .enumerate()
+            .filter(|(_, (_, _, bucket))| shown(*bucket, self.fleet.filter))
+            .map(|(at, &(ix, depth, _))| {
+                // The session and the sessions nested under it.
+                let subtree: Vec<(usize, usize)> = std::iter::once((ix, depth))
+                    .chain(
+                        all[at + 1..]
+                            .iter()
+                            .take_while(|(_, d, _)| *d > depth)
+                            .map(|&(ix, d, _)| (ix, d)),
+                    )
+                    .collect();
+                self.fleet_tile(&subtree, now)
+            })
             .collect()
     }
 
-    fn fleet_tile(&self, index: usize, bucket: Bucket, now: i64) -> Tile {
+    fn fleet_tile(&self, subtree: &[(usize, usize)], now: i64) -> Tile {
+        let index = subtree[0].0;
         let session = &self.view.sessions[index];
-        let kind = self.session_kind(session, now);
+        // r4-truth: the one status, and the group it counts in on its own.
+        let status = self.session_status(session, now);
+        let (kind, bucket) = (status.kind, status.bucket);
         let time = if kind == StatusKind::Working {
             self.working_elapsed(session, now)
         } else {
@@ -311,7 +321,7 @@ impl Workspace {
                         verb: "Answer",
                     })
             });
-        let mut lines = self.fleet_lines(session);
+        let mut lines = self.fleet_lines(session, subtree);
         // A stall or failure that put the session in Needs you, when no
         // line already names it (its own silence, say), leads.
         if let Some(reason) = reason.as_ref().filter(|r| r.fault)
@@ -363,7 +373,7 @@ impl Workspace {
     /// one named: a subagent that stopped answering or failed, a failed
     /// background command; then the last tool, the plan step in progress,
     /// the subagents at work and the background work still running.
-    fn fleet_lines(&self, session: &Session) -> Vec<Line> {
+    fn fleet_lines(&self, session: &Session, subtree: &[(usize, usize)]) -> Vec<Line> {
         let now = timing::now_ms();
         let mut faults = Vec::new();
         let mut lines = Vec::new();
@@ -447,18 +457,15 @@ impl Workspace {
                 });
             }
         }
-        let working = children
-            .iter()
-            .filter(|c| c.running() && !attention::child_stalled(c, now))
-            .count();
-        if working > 0 {
+        // r4-truth: the sidebar's own summary of this tree's subagents
+        // ("4 subagents · 3 working"), so the two never count differently.
+        if let Some((line, _)) = self
+            .subagents_line(subtree, now)
+            .filter(|(line, fault)| *fault || line.ends_with("working"))
+        {
             lines.push(Line {
                 icon: IconName::Bot,
-                verb: if working == 1 {
-                    "1 subagent working".into()
-                } else {
-                    format!("{working} subagents working")
-                },
+                verb: line,
                 argument: None,
                 summary: None,
                 fault: None,
@@ -638,13 +645,14 @@ impl Workspace {
         let room = (width - self.sidebar_footprint(width) - 2. * t.space.xxl).min(f.grid_max);
         let cols = columns(room, f.tile_min, t.space.lg, f.columns_max);
         self.fleet.columns = cols;
+        // r4-truth: the sidebar's counts (top-level trees per group, job
+        // proposals in Needs you), never a tally of its own.
         let groups = self.fleet_sessions(cx);
-        let mut counts = [0usize; 4];
-        for (_, bucket) in &groups {
-            counts[bucket.index()] += 1;
-        }
-        let active = counts[Bucket::NeedsYou.index()] + counts[Bucket::Working.index()];
-        let quiet = groups.len() - active;
+        let counts = self.attention_counts(cx);
+        let proposals = self.job_proposals().len();
+        let trees: usize = counts.iter().sum::<usize>() - proposals;
+        let active = counts[Bucket::NeedsYou.index()] + counts[Bucket::Working.index()] - proposals;
+        let quiet = trees - active;
         let tiles = self.fleet_tiles(cx);
         let focus = self.fleet_focus(&tiles);
         let current = self.fleet.filter;
@@ -683,12 +691,42 @@ impl Workspace {
                         Filter::Active,
                         active,
                     ))
-                    .child(filter("fleet-filter-all", "All", Filter::All, groups.len()))
+                    .child(filter("fleet-filter-all", "All", Filter::All, trees))
                     .into_any_element(),
             ],
             &p,
         );
-        let body: AnyElement = if tiles.is_empty() {
+        // r4-truth (R4.2): a job proposal waits on the user too; All clear
+        // only when nothing does.
+        let waiting_jobs = (proposals > 0).then(|| {
+            div()
+                .id("fleet-jobs-waiting")
+                .debug_selector(|| "fleet-jobs-waiting".into())
+                .cursor_pointer()
+                .flex()
+                .items_center()
+                .gap(px(t.space.sm))
+                .text_size(px(t.text.body))
+                .text_color(rgb(p.roles.text_secondary))
+                .child(primitives::status_indicator(StatusKind::NeedsYou, &p))
+                .child(if proposals == 1 {
+                    "1 job proposal waits for your approval".to_owned()
+                } else {
+                    format!("{proposals} job proposals wait for your approval")
+                })
+                .child(div().text_color(rgb(p.accent)).child("Review in Jobs"))
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.open_feature(Screen::Jobs, window, cx)),
+                )
+        });
+        let body: AnyElement = if tiles.is_empty() && waiting_jobs.is_some() {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.lg))
+                .children(waiting_jobs)
+                .into_any_element()
+        } else if tiles.is_empty() {
             let (title, body) = if groups.is_empty() {
                 (
                     "No sessions yet",
@@ -712,7 +750,7 @@ impl Workspace {
             let (wider, label) = if current == Filter::NeedsYou && active > 0 {
                 (Filter::Active, format!("Show active {active}"))
             } else {
-                (Filter::All, format!("Show all {}", groups.len()))
+                (Filter::All, format!("Show all {trees}"))
             };
             let offer = !all && (quiet > 0 || wider == Filter::Active);
             primitives::empty_state(IconName::CircleCheck, title, Some(body.into()), &p)
@@ -744,6 +782,7 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap(px(t.space.lg))
+                .children(waiting_jobs)
                 .when(needs == 0, |d| {
                     d.child(
                         div()

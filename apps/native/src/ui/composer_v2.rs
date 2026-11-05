@@ -882,6 +882,50 @@ impl Workspace {
             )
     }
 
+    // r4-truth (R4.1)
+    /// What the composer says from the selected session's one status, when
+    /// the turn's own clock does not: a stall (as the header says it; a
+    /// streaming reply never is one), or a turn that ended while its
+    /// subagents still work ("2 subagents working"). `live` is the turn
+    /// clock running.
+    pub(super) fn composer_state(&self, live: bool) -> Option<(StatusKind, String)> {
+        let now = timing::now_ms();
+        let session = self
+            .selected_session()
+            .filter(|_| self.view.connected && self.view.child.is_none())?;
+        match self.session_status(session, now).kind {
+            StatusKind::NotResponding => {
+                let label = self
+                    .stalled_for(session, now)
+                    .map(|ms| {
+                        format!(
+                            "{} · {}",
+                            wks_native::format::NOT_RESPONDING,
+                            super::attention::quiet_for(ms)
+                        )
+                    })
+                    .unwrap_or_else(|| wks_native::format::NOT_RESPONDING.into());
+                Some((StatusKind::NotResponding, label))
+            }
+            StatusKind::Working if !live && !session.working() && !session.starting() => {
+                let working = self
+                    .native_children(session)
+                    .iter()
+                    .filter(|c| c.running() && !super::attention::child_stalled(c, now))
+                    .count();
+                (working > 0).then(|| {
+                    let label = if working == 1 {
+                        "1 subagent working".to_owned()
+                    } else {
+                        format!("{working} subagents working")
+                    };
+                    (StatusKind::Working, label)
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// The live status in the composer's toolbar: a decision it waits on
     /// (Needs you), the agent working (with its clock), or a connection
     /// state. A settled turn's summary shows as quiet text; Ready shows
@@ -910,6 +954,9 @@ impl Workspace {
             // r2-systems: the decision card and the placeholder already say
             // what is waited on; the toolbar does not repeat it.
             return None;
+        }
+        if let Some((kind, label)) = self.composer_state(activity.live) {
+            return Some(badge(kind, label));
         }
         if activity.live {
             let kind = if !connected {

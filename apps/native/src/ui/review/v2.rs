@@ -1034,6 +1034,15 @@ impl Workspace {
     }
 
     /// "3 files · +12 −4" for the stack's toolbar.
+    // r4-truth
+    /// [`Self::stack_summary`] of every uncommitted change, when the panel
+    /// read them for `cwd`: the one count the header shows too.
+    pub(in crate::ui) fn review_stack_summary(&self, cwd: &str) -> Option<(usize, usize, usize)> {
+        self.review_paths()
+            .filter(|(c, _)| c == cwd)
+            .and_then(|_| self.stack_summary(SET))
+    }
+
     fn stack_summary(&self, slot: &'static str) -> Option<(usize, usize, usize)> {
         let cache = self.review.v2.cache.as_ref().filter(|c| c.slot == slot)?;
         Some((

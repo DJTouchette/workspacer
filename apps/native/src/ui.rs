@@ -62,6 +62,8 @@ mod attention;
 mod capsule;
 mod model_popover;
 mod shell;
+// r4-truth
+mod status;
 // r2-shell
 mod palette;
 // area-transcript
@@ -1569,6 +1571,20 @@ impl Workspace {
         // restart on reselection and reconnects, so the count and last row
         // key take part too.
         let rows_changed = rows_signature(&self.view) != rows_signature(&view);
+        // r4-truth: rows arriving in the open conversation (not its first
+        // read, a reselection or a reconnect) are the session being heard
+        // from: a streaming reply is never "Not responding".
+        if rows_changed
+            && !reconnected
+            && !self.view.loading
+            && !view.loading
+            && view.selected.is_some()
+            && view.selected == self.view.selected
+            && view.transcript.revision > self.view.transcript.revision
+            && let Some(id) = &view.selected
+        {
+            self.shell.output_at = Some((id.clone(), timing::now_ms()));
+        }
         if !view.loading && rows_changed && !self.tool_expansion.is_empty() {
             let identities = view
                 .transcript
@@ -1675,6 +1691,11 @@ impl Workspace {
         // registry is read on every (re)connection, not only on Projects.
         if reconnected {
             self.load_projects(cx);
+            // r4-truth (R4.2): job proposals count in Needs you, so v2
+            // reads the job list on every (re)connection, not only on Jobs.
+            if self.design().is_v2() && !self.demo {
+                self.request(wks_native::features::Request::Jobs, cx);
+            }
             if self.new_session {
                 self.refresh_project_inspection(cx);
             }
