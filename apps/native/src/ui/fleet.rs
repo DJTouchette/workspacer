@@ -1511,11 +1511,15 @@ impl Workspace {
                     .text_size(px(t.text.body))
                     .text_color(rgb(p.roles.text_tertiary))
                     .child(match tile.bucket {
-                        Bucket::Ended => "Ended",
-                        Bucket::Working => "Starting…",
-                        Bucket::NeedsYou => "Waiting for you",
-                        Bucket::Review => "Ready for review",
-                        Bucket::Idle => "Ready for your next message",
+                        Bucket::Ended => "Ended".to_owned(),
+                        Bucket::Working => "Starting…".to_owned(),
+                        Bucket::NeedsYou => "Waiting for you".to_owned(),
+                        // r7-status (R7.3): what waits for review.
+                        Bucket::Review => self.view.sessions[index].uncommitted.map_or_else(
+                            || "Changes to review".to_owned(),
+                            super::shell::review_reason,
+                        ),
+                        Bucket::Idle => "Ready for your next message".to_owned(),
                     })
                     .into_any_element(),
             ]
