@@ -400,3 +400,83 @@ Round 5 averaged 7.3 (7.7, 7.4, 7.4, 7.2, 7.0). The system exists, but the scree
 - Sort by "waiting longest".
 - Batch-approve identical requests.
 - The selected filter is clearly selected.
+
+# Round 7 addendum: one rule per decision, quieter everywhere
+
+Round 6 averaged 7.4. All five reviewers named the same top problems: number keys that change meaning, more than one filled primary on a surface, two states on one element, finished work that does not count as needing you, and pages and toolbars that move. Round 7 removes each variant and leaves one rule in the system that the lint or a test enforces.
+
+## R7.1 One key map, everywhere
+- **Fixed slots.** On every decision surface (chat, sidebar, Fleet grid, Fleet table, Jobs, plan and question cards), 1 = the positive answer (Allow, Approve, Run), 2 = Deny, 3 = Always allow (absent if not offered, and never reused), 4 = Deny with note.
+- **Modifier variants.** Variants such as Allow all, Run with another agent, or Skip go behind a modifier (Shift+1) or a letter. They never take a number.
+- **Keycaps.** Keycaps show only on the focused decision. Unfocused tiles show none.
+- **Hint.** The hint lists exactly the keys that are visible on the card.
+- **Deny with note** is a visible text button on every surface, not hidden in a menu.
+- **One verb pair** for all approvals, jobs included: "Allow / Deny".
+- **Enforcement.** A test iterates every DecisionCard frame and asserts the slot map.
+
+## R7.2 Button tiers
+- **Three tiers only:** Filled, Bordered, Text. Every verb gets one tier, recorded in a table in `design-system.md` and enforced by `system::actions`. Examples:
+  - Send and Allow are Filled.
+  - Stop is Bordered.
+  - Nudge is Text.
+- **One Filled per focused region.** On Fleet, only the focused card's primary action is Filled; the rest are Bordered. In split views, the side panel never has a Filled button while a decision is pending.
+- **Destructive, once armed.** The button turns red ("Press again to delete"). Destructive items are left out of Allow all.
+
+## R7.3 One status per element
+- **One status, worst child up.** Each element shows one status. The worst child state propagates to its parent, labelled with the child's name.
+- **No mixed states.** No check next to a spinner. "Delegating" becomes "Delegated" once its subagent ends.
+- **Review is a Needs-you state.** A finished turn with uncommitted changes is "Ready for review". It has its own glyph and band in the sidebar and Fleet, and "All clear" is false while one exists. Alt+N cycles through Needs-you, including Review.
+- **Six to seven glyphs.** At most 6–7 status glyphs. Idle has its glyph everywhere it is listed.
+- **Verification line.** Decision cards and Fleet tiles show the latest test result for the session ("Tests failed 4m ago · cargo test"). It is flagged when the transcript claims a pass after a recorded failure.
+- **Failures read as failures.** A failed transcript row is red.
+
+## R7.4 Words and meters
+- **One word per concept.**
+  - Session.
+  - Subagent.
+  - Background task: the toolbar label "Tasks" opens "Background tasks"; rename the label to match.
+  - Job: scheduled.
+  - Fleet.
+- **Scratch** is explained where it appears ("Scratch · sessions without a project").
+- **Project names.** One name per project everywhere.
+- **Usage meters** name their window ("Claude · 5h limit 42%"). The composer chip becomes "Context 42% used".
+- **Fleet counts** are defined in the filter tooltips and agree with the summary line.
+- **Meter colours.** Meters use exactly two token colours: neutral, and the warning hue at 80% or more. No teal.
+- **Plainer wording.** Insider terms get plain wording or a tooltip:
+  - "Nudge" becomes "Nudge (ask to continue)".
+  - "0/2 shell" and "no free agent slot" get the same treatment.
+
+## R7.5 A calm sidebar
+- **Quiet by default.** Non-urgent rows use regular weight and the secondary text colour. Only Needs-you rows are strong.
+- **Previews.** Preview text appears only under Needs-you rows.
+- **Group labels and badges.** Group labels are quieter. There is one badge style for counts, tokenised.
+- **Usage.** Usage moves to a single footer line, or a popover off one icon.
+- **Collapsed rail.** Every icon and initial has a hover label, with the project's full name.
+
+## R7.6 One page, one table, one composer
+- **One page template.** The same header (title, one-line purpose, actions at the right) and the same padding everywhere. Content width is Form 880 or full width for tables, never anything else.
+- **One table style,** shared by History, Jobs, Machines and the Fleet table.
+- **Composer width.** One width on Welcome, New session and in chat.
+- **Fleet toolbar.** One toolbar (view, sort, filter) at the right of the header, in the same place in Grid and Table.
+- **Fleet grid.** Card height follows content within a row. A row with no decisions does not stretch to match a decision row.
+- **Short conversations** anchor to the top. The subagent view has one "Back to parent" and no unlabelled icons.
+
+## R7.7 Decision card content
+- **Three lines.** Metadata is cut to three lines.
+- **Details** shows:
+  - the full command
+  - the agent's stated reason
+  - the access mode
+  - in words, what an Always-allow rule would let through
+- **Composer placeholder.** While a decision is pending, the composer placeholder says the consequence: "Reply — the request stays open".
+- **Question cards** have exactly one input. The composer stays folded.
+
+## R7.8 Polish
+- **Wake strip.** Opaque, with no content showing through.
+- **Jump-to-latest fade.** It never slices a line mid-height.
+- **Change counts.** "Changes +N −M" loads when the session is selected.
+- **Stop and Queue.** Stop stays visible while typing in a running session; Queue appears beside it.
+- **One join helper** for meta text, with no leading "·" and one dash style.
+- **Badge, meter and inline-code styles** come from tokens.
+
+Process: area agents, then integration, then a QA gate that checks every shot against R7.1–R7.8 and the round-6 reviews, then the council.
