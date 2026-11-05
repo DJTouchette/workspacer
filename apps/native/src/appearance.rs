@@ -187,15 +187,16 @@ fn toggle_edge(border_strong: u32, text: u32, on: &[u32]) -> u32 {
 pub const AVATAR_TONES: usize = 6;
 
 /// The avatar hues in OKLCH degrees, each with its share of the mode's
-/// chroma: blue, sky, teal, green, rose and a blue-grey slate. r4-calm
-/// (R4.4): the olive, sand and clay that read as mud on dark rails are
-/// gone. No purple (280–335°), which v2 retires.
+/// chroma: blue, sky, teal, green, a warm stone and a blue-grey slate.
+/// r4-calm (R4.4): the olive, sand and clay that read as mud on dark rails
+/// are gone. No purple (280–335°), which v2 retires. r6-qa: no rose
+/// either; a red-brown tile read as an error beside the fault red.
 const AVATAR_HUES: [(f32, f32); AVATAR_TONES] = [
     (258., 1.),
     (226., 1.),
     (192., 1.),
     (152., 1.),
-    (20., 1.),
+    (60., 0.3),
     (250., 0.3),
 ];
 

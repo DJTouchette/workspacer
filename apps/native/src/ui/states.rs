@@ -454,11 +454,17 @@ impl AgentSetup {
 
     /// Ready is done; the rest are neutral unless nothing can run (then the
     /// user must act: attention).
+    ///
+    /// r6-qa (R6.2): each word keeps the status table's glyph, as on
+    /// Agent setup: Ready (a target, not Done's check), Not installed
+    /// (Offline's dash), Not checked (Unknown's dots).
     pub(super) fn kind(self, nothing_ready: bool) -> primitives::StatusKind {
         match self {
-            Self::Installed => primitives::StatusKind::Done,
+            Self::Installed => primitives::StatusKind::Ready,
             Self::NeedsSignIn | Self::Missing if nothing_ready => primitives::StatusKind::NeedsYou,
-            _ => primitives::StatusKind::Idle,
+            Self::Missing => primitives::StatusKind::Offline,
+            Self::Unknown => primitives::StatusKind::Unknown,
+            Self::NeedsSignIn => primitives::StatusKind::Idle,
         }
     }
 

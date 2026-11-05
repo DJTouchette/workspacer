@@ -308,6 +308,14 @@ fn the_table_view_lists_one_row_per_session(cx: &mut TestAppContext) {
     refresh(&mut visual);
     workspace.read_with(&visual, |this, _| assert!(this.settings.fleet_table));
     assert!(visual.debug_bounds("fleet-table").is_some());
+    // r6-qa: the header's controls keep the page's right edge in the table
+    // view too (they sat by the title).
+    let table = visual.debug_bounds("fleet-table").unwrap();
+    let actions = visual.debug_bounds("page-actions").unwrap();
+    assert!(
+        (f32::from(actions.right()) - f32::from(table.right())).abs() <= 1.,
+        "actions {actions:?} table {table:?}"
+    );
     for row in ["fleet-row-0", "fleet-row-1", "fleet-row-2"] {
         assert!(visual.debug_bounds(row).is_some(), "{row}");
     }

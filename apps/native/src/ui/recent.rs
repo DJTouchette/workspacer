@@ -1271,9 +1271,9 @@ impl Workspace {
         [
             ("Session", Col::Flex),
             ("Status", Col::Fixed(pg.status)),
-            ("Agent", Col::Fixed(pg.machine)),
+            ("Model", Col::Fixed(pg.machine)),
             ("Folder", Col::Fixed(pg.when)),
-            ("Last active", Col::Fixed(pg.age)),
+            ("Last active", Col::End(pg.age)),
             ("", Col::Keep(primitives::action_slots_width(3, &p))),
         ]
     }
@@ -1471,15 +1471,13 @@ impl Workspace {
                 ),
             )
             .child(
-                primitives::page_cell(age_col.1)
-                    .justify_end()
-                    .child(tabular(
-                        div()
-                            .whitespace_nowrap()
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_secondary))
-                            .child(age),
-                    )),
+                primitives::page_cell(age_col.1).child(tabular(
+                    div()
+                        .whitespace_nowrap()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_secondary))
+                        .child(age),
+                )),
             )
             .child(
                 // Hovered (or under the cursor), the actions show in their

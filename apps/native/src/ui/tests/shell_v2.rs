@@ -282,7 +282,7 @@ fn rows_take_the_chosen_density(cx: &mut TestAppContext) {
     open_v2(&workspace, &mut visual, attention_state(), Design::V2);
     // Rows: needs-you header, e, a, working header, d, idle header, b.
     // r4-calm (R4.4), r6-surfaces (R6.5): one line by default; a second,
-    // faint line only says what the agent asks (in compact too).
+    // faint line only says what the agent asks (inline in compact).
     let height = |visual: &mut VisualTestContext, row: &'static str| {
         f32::from(visual.debug_bounds(row).unwrap().size.height) + 2. * Tokens::V2.stroke.hairline
     };
@@ -300,8 +300,12 @@ fn rows_take_the_chosen_density(cx: &mut TestAppContext) {
         })
     });
     visual.run_until_parked();
-    // Compact keeps what the agent asks; everything else is one line.
-    assert_eq!(height(&mut visual, "sidebar-session-1"), shell.row_double);
+    // r6-qa: Compact is one line throughout; what the agent asks follows
+    // the title inline.
+    assert_eq!(
+        height(&mut visual, "sidebar-session-1"),
+        Tokens::V2.layout.sidebar_row_compact
+    );
     assert!(visual.debug_bounds("sidebar-reason-1").is_some());
     assert_eq!(
         height(&mut visual, "sidebar-session-6"),

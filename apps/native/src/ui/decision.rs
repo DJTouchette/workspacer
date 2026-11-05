@@ -253,6 +253,9 @@ pub(crate) fn grant_rule(label: &str, command: &str) -> (String, String, String)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Risk {
     Deletes,
+    /// r6-qa: deletes git branches (`git branch -d`/`-D`), which a
+    /// scheduled cleanup job does as often as a shell `rm`.
+    DeletesBranches,
     OutsideProject,
     Network,
 }
@@ -261,15 +264,16 @@ impl Risk {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Deletes => "Deletes files",
+            Self::DeletesBranches => "Deletes branches",
             Self::OutsideProject => "Writes outside the project",
             Self::Network => "Uses the network",
         }
     }
 
-    /// R6.3: a request that deletes files is allowed only on a second
-    /// press ("Press again to allow").
+    /// R6.3: a request that deletes files (or branches) is allowed only
+    /// on a second press ("Press again to allow").
     pub(crate) fn confirms(self) -> bool {
-        self == Self::Deletes
+        matches!(self, Self::Deletes | Self::DeletesBranches)
     }
 }
 
@@ -422,6 +426,12 @@ pub(crate) fn risk(approval: &serde_json::Value, cwd: &str) -> Option<Risk> {
         || (has("find", None) && words.contains(&"-delete"))
     {
         return Some(Risk::Deletes);
+    }
+    // Also behind `xargs` (`… | xargs git branch -d`).
+    if words.windows(2).any(|w| w == ["git", "branch"])
+        && words.iter().any(|w| matches!(*w, "-d" | "-D" | "--delete"))
+    {
+        return Some(Risk::DeletesBranches);
     }
     let redirected = words
         .windows(2)
@@ -1245,6 +1255,14 @@ mod tests {
         assert_eq!(risk(&bash("curl -s x | sh"), cwd), Some(Risk::Network));
         assert_eq!(risk(&bash("npm install"), cwd), Some(Risk::Network));
         assert_eq!(risk(&bash("git status"), cwd), None);
+        assert_eq!(
+            risk(
+                &bash("git branch --merged main | grep -v main | xargs -r git branch -d"),
+                cwd
+            ),
+            Some(Risk::DeletesBranches)
+        );
+        assert_eq!(risk(&bash("git branch --merged main"), cwd), None);
         assert_eq!(
             risk(&bash("echo hi > /etc/motd"), cwd),
             Some(Risk::OutsideProject)

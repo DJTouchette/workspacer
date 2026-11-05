@@ -1513,8 +1513,10 @@ impl Workspace {
                     if let Some(summary) = &line.summary {
                         row = row.summary(summary.clone());
                     }
+                    // r6-qa: a fault's glyph leads, beside the words it
+                    // qualifies, not at the tile's far edge.
                     if let Some(fault) = line.fault {
-                        row = row.status(fault);
+                        row = row.lead_status(fault);
                     }
                     row.render(&p)
                         .debug_selector(move || format!("fleet-line-{n}-{ix}"))

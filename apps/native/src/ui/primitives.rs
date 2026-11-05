@@ -1784,6 +1784,10 @@ pub(crate) fn page_header(
         })
         .child(
             div()
+                // r6-qa: the row spans the column whatever the body below
+                // it does, so the actions keep the right edge (Fleet's
+                // table view left them by the title).
+                .w_full()
                 .flex()
                 .items_center()
                 .justify_between()
@@ -2716,6 +2720,9 @@ pub(crate) enum Col {
     Fixed(f32),
     /// A measure that never gives way: the actions column.
     Keep(f32),
+    /// [`Col::Fixed`], right-aligned: numbers and times, whose header
+    /// sits over its values' right edge (r6-qa).
+    End(f32),
     Flex,
     /// Whatever its content needs (the actions column), right-aligned.
     Auto,
@@ -2744,6 +2751,7 @@ pub(crate) fn page_cell(col: Col) -> Div {
     match col {
         Col::Fixed(w) => cell.w(px(w)).flex_shrink(),
         Col::Keep(w) => cell.w(px(w)).flex_shrink_0(),
+        Col::End(w) => cell.w(px(w)).flex_shrink().justify_end(),
         Col::Flex => cell.flex_1(),
         Col::Auto => cell.flex_shrink_0().justify_end(),
     }
@@ -2839,6 +2847,10 @@ pub(crate) struct EventRow {
     argument: Option<SharedString>,
     summary: Option<SharedString>,
     status: Option<StatusKind>,
+    /// r6-qa: a state drawn in the icon's place, by the words it
+    /// qualifies (a Fleet tile's "Trace session restore paths · Not
+    /// responding"), instead of at the row's far edge.
+    lead: Option<StatusKind>,
     duration: Option<SharedString>,
 }
 
@@ -2850,8 +2862,15 @@ impl EventRow {
             argument: None,
             summary: None,
             status: None,
+            lead: None,
             duration: None,
         }
+    }
+
+    /// The row's state as its leading glyph, in the icon's place.
+    pub(crate) fn lead_status(mut self, status: StatusKind) -> Self {
+        self.lead = Some(status);
+        self
     }
 
     /// The thing it acted on: a path, a command, a pattern (monospace).
@@ -2889,12 +2908,21 @@ impl EventRow {
             .items_center()
             .gap(px(t.space.md))
             .text_size(px(t.text.body))
-            .child(
-                Icon::new(self.icon)
+            .child(match self.lead {
+                Some(kind) => div()
                     .size(px(t.icon.sm))
                     .flex_shrink_0()
-                    .text_color(rgb(p.roles.text_tertiary)),
-            )
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(status_indicator(kind, p))
+                    .into_any_element(),
+                None => Icon::new(self.icon)
+                    .size(px(t.icon.sm))
+                    .flex_shrink_0()
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .into_any_element(),
+            })
             .child(
                 div()
                     .flex_shrink_0()

@@ -1450,7 +1450,7 @@ impl Workspace {
             && let Some(fleet) = wks_native::transcript::fleet(&row.text)
         {
             let key = format!("{namespace}:{}:{}", self.chat_owner(), row.key);
-            let card = self.render_fleet_card_v2(&key, fleet, row.copy_text(), window, cx);
+            let card = self.render_fleet_card_v2(&key, fleet, row.copy_text(), true, window, cx);
             return div().w_full().flex().flex_col().child(card);
         }
         let content = self.render_message_content(row, namespace, continued, window, cx);
@@ -1959,7 +1959,7 @@ impl Workspace {
         if wakes.len() == 1 {
             let (row, fleet) = wakes.into_iter().next()?;
             let key = key_of(&row);
-            let line = self.render_fleet_card_v2(&key, fleet, row.copy_text(), window, cx);
+            let line = self.render_fleet_card_v2(&key, fleet, row.copy_text(), true, window, cx);
             return Some(strip.child(line));
         }
         let glances: Vec<FleetGlance> = wakes.iter().map(|(_, f)| self.fleet_glance(f)).collect();
@@ -2038,8 +2038,16 @@ impl Workspace {
             let mut list = event_guide(&p).debug_selector(|| "wake-strip-list".into());
             for (row, fleet) in wakes {
                 let key = key_of(&row);
-                list =
-                    list.child(self.render_fleet_card_v2(&key, fleet, row.copy_text(), window, cx));
+                // The header already says "from other sessions"; each line
+                // leads with its news (r6-qa).
+                list = list.child(self.render_fleet_card_v2(
+                    &key,
+                    fleet,
+                    row.copy_text(),
+                    false,
+                    window,
+                    cx,
+                ));
             }
             strip = strip.child(list);
         }
@@ -2174,6 +2182,7 @@ impl Workspace {
         key: &str,
         fleet: Fleet,
         copy: String,
+        eyebrow_label: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -2215,12 +2224,14 @@ impl Workspace {
                 Some(kind) => glyph_box(Glyph::Status(kind), p.roles.text_tertiary, &p),
                 None => glyph_box(Glyph::Named(IconName::Inbox), p.roles.text_tertiary, &p),
             })
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .font_weight(FontWeight(t.weight.medium))
-                    .child("From other sessions"),
-            )
+            .when(eyebrow_label, |d| {
+                d.child(
+                    div()
+                        .flex_shrink_0()
+                        .font_weight(FontWeight(t.weight.medium))
+                        .child("From other sessions"),
+                )
+            })
             .child(div().min_w_0().flex_1().truncate().child(summary))
             .children((0..fleet.entries.len()).map(|index| {
                 div()

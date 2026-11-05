@@ -1530,8 +1530,8 @@ impl Workspace {
     ) -> AnyElement {
         let p = self.palette();
         let t = p.tokens;
-        // r4-calm: its ask line stays in compact too, as a session's does.
-        let two_lines = true;
+        // r6-qa: one line in compact, its ask inline, as a session's.
+        let two_lines = !self.settings.sidebar_compact;
         let group: SharedString = format!("sidebar-row-{ix}").into();
         let title = if name.is_empty() {
             "Job proposal".to_owned()
@@ -1573,7 +1573,22 @@ impl Workspace {
             .items_center()
             .gap(px(t.space.sm))
             .child(status_indicator(StatusKind::NeedsYou, &p))
-            .child(self.row_title(title.clone(), None, false, ""))
+            .child(
+                self.row_title(title.clone(), None, false, "")
+                    .when(!two_lines, |d| d.flex_initial()),
+            )
+            .when(!two_lines, |d| {
+                d.child(
+                    div()
+                        .debug_selector(move || format!("sidebar-reason-{ix}"))
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(from.clone()),
+                )
+            })
             .child(self.row_trailing_verb(group.clone(), None, verb, false));
         let second = two_lines.then(|| {
             div()
@@ -1874,7 +1889,13 @@ impl Workspace {
         // r6-surfaces (R6.5): one line (title and time); a second only for
         // a Needs-you ask. Where a working one is and what it does are in
         // the row's tooltip and the conversation's header.
-        let two_lines = depth == 0 && reason.is_some();
+        // r6-qa: Compact is one line throughout; a Needs-you ask follows
+        // the title inline, faint and truncated.
+        let compact = self.settings.sidebar_compact;
+        let two_lines = depth == 0 && reason.is_some() && !compact;
+        let inline_reason = (depth == 0 && compact)
+            .then(|| reason.as_ref().map(|r| r.text.clone()))
+            .flatten();
         let job = !session.job_id.is_empty();
         let cold =
             super::cache::cold(session, now).map(|cold| super::cache::marker_tooltip(cold, now));
@@ -2007,7 +2028,24 @@ impl Workspace {
             .items_center()
             .gap(px(t.space.sm))
             .child(status_indicator(kind, &p))
-            .child(title_el)
+            // Inline, the title keeps its words; the ask takes what is left.
+            .child(if inline_reason.is_some() {
+                title_el.flex_initial()
+            } else {
+                title_el
+            })
+            .when_some(inline_reason, |d, text| {
+                d.child(
+                    div()
+                        .debug_selector(move || format!("sidebar-reason-{ix}"))
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(text),
+                )
+            })
             .child(marks)
             .child(trailing);
         // Line two, under the title: why it waits, or where and what.

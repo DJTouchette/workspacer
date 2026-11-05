@@ -748,7 +748,7 @@ impl Workspace {
                     button(
                         format!("link-unlink-{row}-{col}"),
                         "Unlink",
-                        ButtonVariant::Tertiary,
+                        ButtonVariant::Secondary,
                         enabled,
                     )
                     .debug_selector(move || format!("link-unlink-{row}-{col}"))
@@ -766,10 +766,19 @@ impl Workspace {
         }
         let actions = ui::page_cell(Col::Keep(link_actions_width(&p)))
             .justify_end()
-            .child(ui::action_slots(
-                vec![slot(accept_slot), slot(choose_slot), slot(unlink_slot)],
-                &p,
-            ));
+            // r6-qa: a row's one decision (Accept a suggestion, or Unlink a
+            // saved link) sits in the first slot, at one weight, so the
+            // column reads as one; Unlink moves last only beside an Accept.
+            .child({
+                let (first_slot, last_slot) = match accept_slot {
+                    Some(accept) => (Some(accept), unlink_slot),
+                    None => (unlink_slot, None),
+                };
+                ui::action_slots(
+                    vec![slot(first_slot), slot(choose_slot), slot(last_slot)],
+                    &p,
+                )
+            });
         let project_cell = ui::page_cell(Col::Fixed(pg.when)).when(first, |d| {
             d.flex_col()
                 .items_start()

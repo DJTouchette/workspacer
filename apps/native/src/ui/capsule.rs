@@ -691,11 +691,19 @@ impl Workspace {
                 s.tasks.iter().filter(|t| t.running()).count()
             }
         });
+        // r6-qa: a failed task escalates to the toolbar, not only inside
+        // the open panel (its red count beside the running one).
+        let failed = session.map_or(0, |s| s.tasks.iter().filter(|t| t.failed()).count());
         let tasks_tip: SharedString = session
             .and_then(|s| running_words(&s.tasks, s.background_tasks))
             .map(|words| format!("Tasks · {words} running"))
             .unwrap_or_else(|| "Tasks · background work".into())
             .into();
+        let tasks_tip: SharedString = if failed > 0 {
+            format!("{tasks_tip} · {failed} failed").into()
+        } else {
+            tasks_tip
+        };
         let tasks = self
             .toolbar_tool(
                 "title-tasks",
@@ -704,13 +712,29 @@ impl Workspace {
                 None,
                 selected,
                 self.tasks.open,
-                (running > 0).then(|| {
-                    primitives::count_badge(
-                        primitives::count_text(running),
-                        primitives::CountTone::Neutral,
-                        &p,
-                    )
-                    .into_any_element()
+                (running > 0 || failed > 0).then(|| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(t.space.xxs))
+                        .when(running > 0, |d| {
+                            d.child(primitives::count_badge(
+                                primitives::count_text(running),
+                                primitives::CountTone::Neutral,
+                                &p,
+                            ))
+                        })
+                        .when(failed > 0, |d| {
+                            d.child(
+                                primitives::count_badge(
+                                    primitives::count_text(failed),
+                                    primitives::CountTone::Failed,
+                                    &p,
+                                )
+                                .debug_selector(|| "title-tasks-failed".into()),
+                            )
+                        })
+                        .into_any_element()
                 }),
             )
             .text(labelled.then_some("Tasks"))

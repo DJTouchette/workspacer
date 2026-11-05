@@ -67,7 +67,9 @@ impl Workspace {
     ) {
         match n {
             1 if self.job_approvable(job, all) => {
-                self.job_action(JobAction::Save(job.approval()), cx)
+                if self.confirm_allow(&job_confirm_key(job), job_risk(job), cx) {
+                    self.job_action(JobAction::Save(job.approval()), cx)
+                }
             }
             2 if self.job_decidable() => self.remove_job(&job.id, true, cx),
             _ => {}
@@ -1641,6 +1643,11 @@ impl Workspace {
             peer => peer.to_owned(),
         };
         let approval = job.approval();
+        // r6-qa (R6.3): a job that deletes files or branches carries the
+        // risk chip and approves on the second press, like any approval.
+        let risk = job_risk(job);
+        let confirm = job_confirm_key(job);
+        let armed = self.armed(&confirm);
         // Keycaps show only where the keys go (`decision.keys`: the focused
         // Fleet card); the numbers are `job_proposal_key`'s.
         let allow = Choice::new(format!("{prefix}-approve-{ix}"), "Approve")
@@ -1649,7 +1656,9 @@ impl Workspace {
             .enabled(can_approve)
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
-                this.job_action(JobAction::Save(approval.clone()), cx);
+                if this.confirm_allow(&confirm, risk, cx) {
+                    this.job_action(JobAction::Save(approval.clone()), cx);
+                }
             }));
         let remove_id = job.id.clone();
         let reject = Choice::new(format!("{prefix}-remove-{ix}"), "Reject")
@@ -1670,6 +1679,8 @@ impl Workspace {
         decision.request_selector = format!("{prefix}-action-{ix}").into();
         decision.folder = folder;
         decision.host = Some(host);
+        decision.risk = risk;
+        decision.armed = armed;
         decision.deny = Some(reject);
         decision.details = Some(Details::element(
             Choice::new(format!("{prefix}-details-{ix}"), "Details").on_click(cx.listener(
@@ -2123,4 +2134,24 @@ pub(super) fn strip_summary(runs: &[&Run]) -> String {
         n => format!("Last {n} runs"),
     };
     format!("{head}: {}", parts.join(", "))
+}
+
+/// r6-qa (R6.3): the risk a proposed job's command carries, read the way
+/// an approval's is (`decision::risk`), in the job's own folder.
+fn job_risk(job: &Job) -> Option<super::decision::Risk> {
+    let command = job.describe().1?;
+    let action = &job.spec["action"];
+    let cwd = [&action["spawn"]["cwd"], &action["shell"]["cwd"]]
+        .into_iter()
+        .find_map(serde_json::Value::as_str)
+        .unwrap_or("");
+    super::decision::risk(
+        &serde_json::json!({"toolName": "Bash", "toolInput": {"command": command}}),
+        cwd,
+    )
+}
+
+/// The arming key of a proposed job's Approve (`decision::confirm_key`).
+fn job_confirm_key(job: &Job) -> String {
+    super::decision::confirm_key(&format!("job:{}", job.id), None)
 }

@@ -583,7 +583,8 @@ impl Tokens {
             page_top: 40.,
             page_gutter: 32.,
             sidebar_row: 44.,
-            sidebar_row_compact: 28.,
+            // r6-qa: a true one-line list (24px rows, the ask inline).
+            sidebar_row_compact: 24.,
             footer_height: 44.,
             rail_width: 56.,
             rail_row: 44.,

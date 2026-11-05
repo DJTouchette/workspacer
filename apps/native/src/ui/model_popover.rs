@@ -354,11 +354,17 @@ impl Workspace {
                                     .child(
                                         div()
                                             .font_weight(FontWeight(t.weight.medium))
-                                            .text_color(rgb(if active {
-                                                p.text
-                                            } else {
-                                                p.roles.text_secondary
-                                            }))
+                                            // r6-qa (R6.4): Full access reads in
+                                            // the warning hue, as on its chip.
+                                            .text_color(rgb(
+                                                if permission == Permission::FullAccess {
+                                                    system::access_tone(true, &p)
+                                                } else if active {
+                                                    p.text
+                                                } else {
+                                                    p.roles.text_secondary
+                                                },
+                                            ))
                                             .child(label),
                                     )
                                     .child(
@@ -443,14 +449,21 @@ impl Workspace {
                     d.hover(move |s| s.bg(rgb(p.roles.hover)))
                 })
                 .when(!raw.is_empty(), |d| d.tooltip(tooltip_view(raw, None, &p)))
+                // r6-qa: one selection idiom with Access below, a leading
+                // check in its own slot.
+                .child(
+                    div()
+                        .size(px(t.icon.sm))
+                        .flex_shrink_0()
+                        .when(selected, |d| {
+                            d.child(
+                                Icon::new(IconName::Check)
+                                    .size(px(t.icon.sm))
+                                    .text_color(rgb(p.accent)),
+                            )
+                        }),
+                )
                 .child(div().flex_1().min_w_0().truncate().child(label))
-                .when(selected, |d| {
-                    d.child(
-                        Icon::new(IconName::Check)
-                            .size(px(t.icon.sm))
-                            .text_color(rgb(p.accent)),
-                    )
-                })
         };
         let mut list = div()
             .debug_selector(|| "popover-model-list".into())

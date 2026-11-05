@@ -57,7 +57,7 @@ LANDMARKS_V2 = {
     "NEW_TASK_FIELD": lambda shot: (720, 455),      # r6-conversation: the task text in the centred composer (New session is the welcome)
     "WAKE_STRIP": lambda shot: (640, 62),           # r6-conversation: the "2 updates from other sessions" strip above the transcript
     "HOSTS_DETAILS": lambda shot: (1520, 173),      # r3-pages: Machines' first "Details" (table row; r6-integration: studio, this machine)
-    "JOB_OVERFLOW": lambda shot: (1548, 518),       # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal; r6-integration re-measured)
+    "JOB_OVERFLOW": lambda shot: (1548, 549),       # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal; r6-qa: under the risk chip)
     "REVIEW_DOCK_MORE": lambda shot: (1535, 30),    # r3-pages: Changes dock header "..."
     "REVIEW_DOCK_EXPAND_ITEM": lambda shot: (1440, 166),  # r3-pages: its "Open full page" item
 }
@@ -158,7 +158,9 @@ def shots():
     add("conversation-catppuccin-latte", "Rich conversation, Catppuccin Latte", theme="catppuccin-latte")
     add("settings-tokyo-night", "Settings: Appearance, Tokyo Night", nav("s"), theme="tokyo-night")
     # Shell & navigation (design v2 surfaces; v1 shows its own equivalents).
-    add("title-hover", "Title capsule hovered: model chip, access, background work", [("move", "TITLE_PILL")])
+    add("title-hover", "Title capsule hovered: model chip, access, background work",
+        # r6-qa: v2 has no capsule; hover the labelled Changes tool for its tooltip.
+        [("design", [("move", "TITLE_PILL")], [("move", 1262, 19), ("sleep", 1.5)])])
     # r3-composer: under v2 the pending approval holds the composer's slot,
     # so "Reply instead…" opens the composer (and its model chip) first.
     add("model-popover", "Model, effort and access from the title's model chip",
@@ -405,6 +407,13 @@ class Rig:
                 self.xdo("mousemove", "--window", window, self.px(x), self.px(y))
                 self.xdo("click", "1")
                 time.sleep(1.0)
+                if self.design_v2(shot) and SETTINGS_SECTIONS[rest[0]] == "Chat":
+                    # r6-qa: Chat folded into Appearance's "Conversation"
+                    # section; scroll to it, so the shot is not Appearance's twin.
+                    self.xdo("mousemove", "--window", window, self.px(1060), self.px(600))
+                    time.sleep(0.3)
+                    self.xdo("click", "--repeat", 8, "--delay", "40", "5")
+                    time.sleep(1.0)
                 self.park(shot["width"], shot["height"])
             elif kind == "wheel":  # area-transcript: scroll the chat up by n notches
                 notches, x, y = rest

@@ -237,6 +237,29 @@ impl Workspace {
                 d.child(self.render_child_only(window, cx))
             })
             .when(!empty, |d| {
+                // r6-qa (R6.1): under the wake strip the transcript fades in
+                // (as it fades out above the dock), so a half-scrolled line
+                // never shows sliced at the strip's edge.
+                let transcript = if strip.is_some() {
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .flex_col()
+                        .child(transcript)
+                        .child(
+                            super::primitives::fade_mask(
+                                super::primitives::FadeEdge::Top,
+                                p.chat,
+                                &p,
+                            )
+                            .debug_selector(|| "wake-strip-fade".into()),
+                        )
+                        .into_any_element()
+                } else {
+                    transcript.into_any_element()
+                };
                 d.children(strip)
                     .child(transcript)
                     .child(self.wheel_smoother(cx))
