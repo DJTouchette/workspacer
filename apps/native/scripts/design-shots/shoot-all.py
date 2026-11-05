@@ -523,7 +523,7 @@ LANDMARKS = {
     "WAKE_STRIP": lambda shot: (640, 62),           # r6-conversation: v2 only (the wake strip); harmless under v1
     # "Sonnet" chip: v1 in the hovered title pill, v2 on the composer (r2).
     # (r3-integration: the reading column is centred; the chip once the composer is open.)
-    "TITLE_MODEL": lambda shot: (705, 960) if shot.get("v2") else (1005, 30),
+    "TITLE_MODEL": lambda shot: (672, 960) if shot.get("v2") else (1005, 30),  # r6-conversation: the composer's model chip in the 880 column
     # Background work: v1 the hovered pill's badge; v2 (r3-shell) the
     # header toolbar's "Tasks 3" (r4-calm: icon tools, re-measured).
     "TITLE_TASKS_BADGE": lambda shot: (1532, 20) if shot.get("v2") else (1078, 30),
@@ -534,13 +534,13 @@ LANDMARKS = {
     "APPROVAL_DENY_NOTE": lambda shot: (588, 861) if shot["v2"] else (1030, 797),  # r5-fleet re-measured
     "APPROVAL_DENY_MENU": lambda shot: (750, 822),  # r3-composer: Deny's chevron (v2; r5-fleet re-measured: Allow and Deny side by side)
     "COMPOSER_REPLY": lambda shot: (700, 964),       # r6-conversation: the one-line "Reply instead…" under the card (it expands on focus)
-    "QUESTION_ANSWER": lambda shot: (900, 813),      # r3-composer: the release question's answer field (v2; r5-integration re-measured)
-    "COMPOSER_SEND_MENU": lambda shot: (1333, 960),  # r3-composer: Queue's chevron while working (v2; r3-integration re-measured)
+    "QUESTION_ANSWER": lambda shot: (900, 874),      # r3-composer: the release question's answer field (v2; r6-conversation: above the one-line composer)
+    "COMPOSER_SEND_MENU": lambda shot: (1373, 960),  # r3-composer: Queue chevron while working (v2; r6-conversation: the 880 column)
     # (r4-integration: v2 re-measured; the first tile centres at y 179.)
     "RAIL_FIRST_MARK": lambda shot: (35, 179 if shot.get("v2") else 219),  # first session in the rail
     # (r4-integration: v2 re-measured after the decision gained its where line.)
     # (r5-integration: v2 re-measured; the decision card is shorter.)
-    "README_LINK": lambda shot: (630, 520) if shot["v2"] else (591, 497),  # README.md link, last assistant message
+    "README_LINK": lambda shot: (595, 534) if shot["v2"] else (591, 497),  # r6-conversation: the 880 column and 8/16/32 rhythm  # README.md link, last assistant message
     "TALL_README_LINK": lambda shot: (210, 1121) if shot["v2"] else (169, 1097),  # r5-integration: v2 re-measured  # same link, 1000x1600 tall layout
     "TASK_ROW_DEV": lambda shot: (1200, 85),        # the fixture hub task in the tasks panel
     # The failed cargo test task: v2 its "Open log" button, v1 its row.

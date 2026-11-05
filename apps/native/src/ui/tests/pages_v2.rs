@@ -281,7 +281,7 @@ fn every_page_shares_one_header_and_left_edge(cx: &mut TestAppContext) {
         (Screen::Setup, false),
         (Screen::Fleet, false),
         (Screen::Changes, false),
-        // R6.4: New session is the welcome's centred composer, not a page.
+        (Screen::Conversation, true),
     ] {
         visual.update(|_, cx| {
             workspace.update(cx, |this, cx| {

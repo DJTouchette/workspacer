@@ -2145,23 +2145,28 @@ impl Workspace {
                     .child(body),
             )
         });
+        // R6.4 on the r6-surfaces form template: the welcome's centred
+        // question is the page's title and the composer its body, in the one
+        // centred form column (`PageWidth::Form`), held near the window's
+        // middle like the welcome while it fits.
         let headline = div()
             .debug_selector(|| "launch-title".into())
             .w_full()
-            .text_center()
-            .pb(px(t.space.sm))
-            .text_size(px(t.text.title))
-            .font_weight(FontWeight(t.weight.semibold))
-            .text_color(rgb(p.text))
-            .child(headline);
-        let column = div()
-            .debug_selector(|| "launch-content".into())
+            .child(
+                div()
+                    .debug_selector(|| "page-title".into())
+                    .w_full()
+                    .text_center()
+                    .text_size(px(t.text.title))
+                    .font_weight(FontWeight(t.weight.semibold))
+                    .text_color(rgb(p.text))
+                    .child(headline),
+            );
+        let body = div()
             .w_full()
-            .max_w(px(t.layout.chat_width))
             .flex()
             .flex_col()
             .gap(px(t.space.lg))
-            .child(headline)
             .child(task)
             .child(self.render_launch_status_v2(busy, short))
             .children(panel_card)
@@ -2180,32 +2185,27 @@ impl Workspace {
                         ),
                 )
             });
+        let content = div()
+            .debug_selector(|| "launch-content".into())
+            .w_full()
+            .min_h(window.viewport_size().height * 0.8)
+            .flex()
+            .flex_col()
+            .justify_center()
+            .child(system::page_shell(
+                headline,
+                None,
+                body,
+                system::PageWidth::Form,
+                &p,
+            ));
         div()
             .id("new-session-form")
             .flex_1()
             .min_w_0()
             .h_full()
             .flex()
-            .child(
-                div()
-                    .id("launch-scroll")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .child(
-                        div()
-                            .w_full()
-                            // Centred in the window like the welcome while it
-                            // fits; an open card grows it and it scrolls.
-                            .min_h(window.viewport_size().height)
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .justify_center()
-                            .px(px(t.space.xxl))
-                            .py(px(t.space.huge))
-                            .child(column),
-                    ),
-            )
+            .child(self.page_view("launch-scroll", t.pages().wide, false, content))
     }
 
     /// The project New session would start in, by its name.

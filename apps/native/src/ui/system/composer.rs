@@ -199,9 +199,8 @@ pub(crate) fn access_chip(
         enabled,
         p,
     )
-    // TODO(r6-surfaces): the warning hue for capacity and Full access
-    // lands with the status table; until then Full access uses the caution
-    // role (neutral-strong), never amber or red.
+    // R6.2: Full access in the warning hue (`roles.caution`), distinct
+    // from Needs-you amber and fault red.
     .when(full, |d| d.text_color(rgb(access_tone(true, p))))
 }
 
