@@ -61,7 +61,7 @@ pub(crate) fn elevated(level: Level, p: &Palette) -> Div {
 }
 
 /// The scrim behind a centred overlay: the theme's shadow colour at
-/// `elevation.scrim_alpha`.
+/// `roles.scrim_alpha` (per theme: light themes dim less).
 pub(crate) fn scrim_color(p: &Palette) -> Hsla {
-    wash(p.shadow, p.tokens.elevation.scrim_alpha)
+    wash(p.shadow, p.roles.scrim_alpha)
 }

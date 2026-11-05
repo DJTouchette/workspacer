@@ -24,3 +24,7 @@ details), `history.svg` (conversation history), `list-checks.svg` (background
 tasks, a static mark: the spinner means running), `rotate-ccw.svg` (Retry) and
 `refresh-cw.svg` (Refresh) give each concept its own glyph under design v2
 (r4-calm, R4.6). They are written from the Lucide icon nodes of the same names.
+
+`sticky-note.svg` (Scratch: files agents wrote for you to review and run) gives
+Scratch a glyph of its own, so no two sidebar destinations share a folder
+(r5-shell, R5.4). It is written from the Lucide icon node of the same name.

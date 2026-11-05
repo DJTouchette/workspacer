@@ -1,8 +1,10 @@
 //! Design v2: model, effort and access in a popover hanging from the
 //! composer's model chip or the header's Model tool, instead of a trip to
-//! the full Model page (which stays one click away, and on `g m`). It never
-//! covers a pending decision, and Up/Down, Enter and Esc drive it.
+//! the full Model page (which stays one click away, and on `g m`). It
+//! hangs from the control that opened it (r5-shell, R5.4), and Up/Down,
+//! Enter and Esc drive it.
 use super::primitives::{self, ButtonSize, ButtonVariant, tooltip_view};
+use super::system::{self, EdgeTone, IconButton, Side};
 use super::*;
 use gpui::{AnyElement, KeyDownEvent, deferred};
 
@@ -110,6 +112,17 @@ pub(super) fn effective_access(
     choices: &[Permission],
 ) -> Option<Permission> {
     current.or(Some(Permission::Ask).filter(|ask| choices.contains(ask)))
+}
+
+/// What an access mode lets the agent do, in one plain line (r5-shell:
+/// each Access option says what it allows).
+pub(super) fn access_consequence(permission: Permission) -> &'static str {
+    match permission {
+        Permission::Ask => "Asks before it runs a command or edits a file.",
+        Permission::AcceptEdits => "Edits files without asking; asks before other tools.",
+        Permission::Plan => "Reads and plans only; changes nothing until you approve.",
+        Permission::FullAccess => "Runs commands and edits files without asking.",
+    }
 }
 
 /// The v2 word for an access mode, the same in the popover and on the
@@ -257,25 +270,29 @@ impl Workspace {
         // agent reports one, that is its default, asking first.
         let shown = effective_access(current, Permission::choices(&provider));
         let switching = self.view.busy && self.extras.access_switching;
-        let note = match (switching, current) {
-            (true, _) => "Switching…".to_owned(),
-            (false, Some(current)) => {
-                format!(
-                    "{} Changes at once; nothing restarts.",
-                    current.description()
-                )
+        // r5-shell: say what is in force, plainly.
+        let note = match (switching, current, shown) {
+            (true, _, _) => "Switching…".to_owned(),
+            (false, Some(current), _) => format!(
+                "Currently: {}. A change applies at once; nothing restarts.",
+                access_word(current)
+            ),
+            (false, None, Some(shown)) if session.permission_mode.is_empty() => {
+                format!("Currently: {} (the default).", access_word(shown))
             }
-            (false, None) if session.permission_mode.is_empty() => {
-                "Not reported yet, so it asks first, the agents' default. Choosing one sets it."
-                    .to_owned()
+            (false, None, _) if session.permission_mode.is_empty() => {
+                "Currently: the agent's default.".to_owned()
             }
-            (false, None) => format!(
-                "Running in “{}”, which this app does not offer. Choosing one sets it.",
+            (false, None, _) => format!(
+                "Currently: “{}”, which this app does not offer. Pick one to change it.",
                 session.permission_mode
             ),
         };
-        let track = primitives::segmented(&p)
+        let track = div()
             .debug_selector(|| "popover-access".into())
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xxs))
             .children(
                 Permission::choices(&provider)
                     .iter()
@@ -288,13 +305,46 @@ impl Workspace {
                         let settable = !active || current.is_none();
                         let provider = provider.clone();
                         let label = access_word(permission);
-                        primitives::segment(id.clone(), label, active, &p)
+                        primitives::list_row(id.clone(), active, !busy, &p)
                             .debug_selector(move || id.to_string())
-                            .flex_1()
-                            .tooltip(tooltip_view(permission.description(), None, &p))
-                            .when(active && permission == Permission::FullAccess, |d| {
-                                d.text_color(rgb(p.warning))
-                            })
+                            .py(px(t.space.xs))
+                            .items_start()
+                            .child(
+                                div()
+                                    .size(px(t.icon.sm))
+                                    .mt(px(t.space.xxs))
+                                    .flex_shrink_0()
+                                    .when(active, |d| {
+                                        d.child(
+                                            Icon::new(IconName::Check)
+                                                .size(px(t.icon.sm))
+                                                .text_color(rgb(p.accent)),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight(t.weight.medium))
+                                            .text_color(rgb(if active {
+                                                p.text
+                                            } else {
+                                                p.roles.text_secondary
+                                            }))
+                                            .child(label),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(t.text.meta))
+                                            .text_color(rgb(p.roles.text_tertiary))
+                                            .child(access_consequence(permission)),
+                                    ),
+                            )
                             .when(!busy && settable, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
                                     let Ok(mode) = permission.wire(&provider) else {
@@ -365,10 +415,7 @@ impl Workspace {
                 }))
                 .when(selected, |d| d.bg(rgb(p.selected)))
                 .when(keyed && !selected, |d| d.bg(rgb(p.roles.hover)))
-                .when(keyed, |d| {
-                    d.border(px(t.stroke.hairline))
-                        .border_color(rgb(p.roles.border_strong))
-                })
+                .when(keyed, |d| system::edge(d, Side::All, EdgeTone::Strong, &p))
                 .when(!selected && !busy, |d| {
                     d.hover(move |s| s.bg(rgb(p.roles.hover)))
                 })
@@ -459,15 +506,13 @@ impl Workspace {
             )
             .when(custom, |d| {
                 d.child(
-                    div()
+                    system::edge(div(), Side::All, EdgeTone::Strong, &p)
                         .debug_selector(|| "popover-model-input".into())
                         .h(px(t.layout.control_height_sm + t.space.xs))
                         .px(px(t.space.md))
                         .flex()
                         .items_center()
                         .rounded(px(t.radius.control))
-                        .border(px(t.stroke.hairline))
-                        .border_color(rgb(p.roles.border_strong))
                         .child(Input::new(&self.model).appearance(false).disabled(busy)),
                 )
             })
@@ -492,14 +537,10 @@ impl Workspace {
         let anchor = self.shell.model_anchor;
         let width = t.layout.dialog_width;
         let viewport = window.viewport_size();
-        // r3-shell: while a decision waits above the composer, the popover
-        // hangs from the header instead, and stops short of the dock, so it
-        // never covers the decision card.
-        let pending = self
-            .selected_session()
-            .is_some_and(super::attention::needs_you);
-        let from_header = self.shell.model_from_header || pending || anchor.size.width <= px(0.);
-        let dock_top = self.composer_dock_bounds.top();
+        // r5-shell (R5.4): it hangs from the control that opened it, the
+        // composer's chip or the header's "…", whether or not a decision
+        // waits (closing it shows the decision again).
+        let from_header = self.shell.model_from_header || anchor.size.width <= gpui::Pixels::ZERO;
         // Hangs from its chip: below it in the top half of the window,
         // above it (the composer's chip) in the bottom half; from the
         // header, under the strip at its right, by the Model tool.
@@ -509,8 +550,11 @@ impl Workspace {
                 .max(px(t.space.md))
                 .min(viewport.width - px(width + t.space.md));
             (left, Some(strip + px(t.space.xs)), None)
-        } else if anchor.size.width > px(0.) {
-            let left = (anchor.center().x - px(width / 2.))
+        } else if anchor.size.width > gpui::Pixels::ZERO {
+            // Left edges aligned, as an anchored menu's (`BelowStart` /
+            // `AboveStart`), kept inside the window.
+            let left = anchor
+                .left()
                 .max(px(t.space.md))
                 .min(viewport.width - px(width + t.space.md));
             if anchor.center().y > viewport.height / 2. {
@@ -530,7 +574,6 @@ impl Workspace {
             )
         };
         let room = match (top, bottom) {
-            (Some(top), _) if pending && dock_top > top => dock_top - top - px(t.space.sm),
             (Some(top), _) => viewport.height - top - px(t.space.xl),
             (_, Some(bottom)) => viewport.height - bottom - px(t.space.xl),
             _ => viewport.height,
@@ -552,28 +595,18 @@ impl Workspace {
                 div()
                     .flex()
                     .items_center()
+                    .child(div().flex_1().child(primitives::card_header(
+                        "Model and access",
+                        None,
+                        &p,
+                    )))
                     .child(
-                        div()
-                            .flex_1()
-                            .text_size(px(t.text.subheading))
-                            .font_weight(FontWeight(t.weight.semibold))
-                            .text_color(rgb(p.text))
-                            .child("Model and access"),
-                    )
-                    .child(
-                        primitives::icon_button_with_shortcut(
-                            "model-popover-close",
-                            IconName::Close,
-                            "Close",
-                            Some("Esc"),
-                            ButtonVariant::Tertiary,
-                            true,
-                            &p,
-                        )
-                        .debug_selector(|| "model-popover-close".into())
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.close_model_popover(window, cx)),
-                        ),
+                        IconButton::new("model-popover-close", IconName::Close, "Close")
+                            .shortcut("Esc")
+                            .render(&p)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_model_popover(window, cx)
+                            })),
                     ),
             )
             .child(self.render_model_list(busy, cx))
@@ -591,10 +624,8 @@ impl Workspace {
             )
             .child(self.render_access_choice(busy, cx))
             .child(
-                div()
+                system::edge(div(), Side::Top, EdgeTone::Divider, &p)
                     .pt(px(t.space.md))
-                    .border_t(px(t.stroke.hairline))
-                    .border_color(rgb(p.border))
                     .flex()
                     .items_center()
                     .gap(px(t.space.sm))

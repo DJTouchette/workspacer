@@ -95,7 +95,8 @@ pub(crate) fn gallery(p: &Palette) -> AnyElement {
                         .child(icon_buttons(p))
                         .child(navigation(p))
                         .child(statuses(p))
-                        .child(toggles(p)),
+                        .child(toggles(p))
+                        .child(meters(p)),
                 )
                 .child(
                     column()
@@ -455,6 +456,52 @@ fn icon_buttons(p: &Palette) -> Div {
                     p,
                 )),
         )
+        // r5-shell: the header strip's tools: a badge beside the icon, a
+        // corner dot (accent: something new; a status role: a running shell).
+        .child(
+            row(p)
+                .child(
+                    IconButton::new("gallery-icon-badge", prim::Concept::Tasks, "Tasks")
+                        .icon_size(p.tokens.icon.md)
+                        .badge(Some(prim::count_badge("3", CountTone::Neutral, p)))
+                        .render(p),
+                )
+                .child(
+                    IconButton::new("gallery-icon-dot", IconName::Settings, "Settings")
+                        .shortcut("Ctrl ,")
+                        .dot(Some("gallery-icon-dot-mark"))
+                        .render(p),
+                )
+                .child(
+                    IconButton::new("gallery-icon-run", IconName::SquareTerminal, "Terminal")
+                        .dot_color(Some("gallery-icon-run-mark"), p.roles.status.working)
+                        .render(p),
+                )
+                .child(caption("badge · update dot · running dot", p)),
+        )
+}
+
+/// r5-shell: a capacity meter's three tiers: neutral, neutral-strong
+/// (`caution`) from 80%, red at the limit. Never amber.
+fn meters(p: &Palette) -> Div {
+    let t = p.tokens;
+    let specimen = |share: f32, intent: prim::Intent, label: &'static str| {
+        div()
+            .w(px(t.layout.menu_width))
+            .flex()
+            .flex_col()
+            .gap(px(t.space.xs))
+            .child(caption(label, p))
+            .child(prim::meter(share, intent, p))
+    };
+    section("Meter", p)
+        .debug_selector(|| "gallery-meters".into())
+        .child(
+            row(p)
+                .child(specimen(0.42, prim::Intent::Neutral, "42% · neutral"))
+                .child(specimen(0.93, prim::Intent::Caution, "93% · caution"))
+                .child(specimen(1., prim::Intent::Danger, "100% · at the limit")),
+        )
 }
 
 fn navigation(p: &Palette) -> Div {
@@ -481,14 +528,10 @@ fn navigation(p: &Palette) -> Div {
                                 .render(p),
                         )
                         .child(
-                            NavItem::new(
-                                "gallery-nav-projects",
-                                IconName::FolderClosed,
-                                "Projects",
-                            )
-                            .shortcut("g p")
-                            .count(4, CountTone::Neutral)
-                            .render(p),
+                            NavItem::new("gallery-nav-projects", IconName::Folder, "Projects")
+                                .shortcut("g p")
+                                .count(4, CountTone::Neutral)
+                                .render(p),
                         )
                         .child(
                             NavItem::new("gallery-nav-jobs", IconName::Calendar, "Jobs")
@@ -504,6 +547,19 @@ fn navigation(p: &Palette) -> Div {
                             )
                             .shortcut("g o")
                             .render(p),
+                        )
+                        // r5-shell: Scratch's own glyph, a definition in its
+                        // tooltip, and a disabled destination.
+                        .child(
+                            NavItem::new("gallery-nav-scratch", prim::Concept::Scratch, "Scratch")
+                                .hint("Scratch · files agents wrote for you to review and run")
+                                .count(4, CountTone::Neutral)
+                                .render(p),
+                        )
+                        .child(
+                            NavItem::new("gallery-nav-new", IconName::Plus, "New session")
+                                .enabled(false)
+                                .render(p),
                         ),
                 )
                 .child(

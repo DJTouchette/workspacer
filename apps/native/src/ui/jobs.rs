@@ -1410,19 +1410,14 @@ impl Workspace {
     pub(super) fn new_job_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let p = self.palette();
         let enabled = self.view.connected && !self.demo;
-        // A proposal waiting for approval owns the page's one primary.
-        let waiting = self
-            .job_rows()
-            .is_some_and(|rows| rows.iter().any(Job::proposal));
+        // r5-shell (R5.4): every page header's main action is Secondary, in
+        // the header's right slot, whatever else is on the page (a waiting
+        // proposal's decision owns the page's one Primary).
         primitives::button(
             "jobs-new",
             "New job",
             Some(IconName::Plus),
-            if waiting {
-                ButtonVariant::Secondary
-            } else {
-                ButtonVariant::Primary
-            },
+            ButtonVariant::Secondary,
             ButtonSize::Small,
             enabled,
             &p,

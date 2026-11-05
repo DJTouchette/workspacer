@@ -13,6 +13,9 @@ pub(crate) enum PageWidth {
     /// Forms (New session, Agent setup, Session details, Model, Handoff,
     /// Pull request): `pages().form` (760), left-aligned.
     Form,
+    /// Fleet's tile grid: `fleet().grid_max` (1440), so its header sits
+    /// on the grid's edge (r5-shell).
+    Grid,
 }
 
 impl PageWidth {
@@ -20,6 +23,7 @@ impl PageWidth {
         match self {
             Self::Wide => p.tokens.pages().wide,
             Self::Form => p.tokens.pages().form,
+            Self::Grid => p.tokens.fleet().grid_max,
         }
     }
 }

@@ -1875,6 +1875,7 @@ impl Workspace {
 // "working" count sessions exactly as the sidebar groups them.
 use super::primitives::{self, ButtonSize, ButtonVariant, StatusBadge, StatusKind};
 use super::project_groups::group_filter;
+use super::system;
 use gpui::AnyElement;
 
 impl Workspace {
@@ -1959,11 +1960,12 @@ impl Workspace {
                 this.edit_group(None, window, cx)
             }))
         });
+        // r5-shell (R5.4): the header's main action, Secondary on every page.
         let add = primitives::button(
             "projects-add",
             "Add…",
             Some(IconName::Plus),
-            ButtonVariant::Primary,
+            ButtonVariant::Secondary,
             ButtonSize::Small,
             can_write || can_new_group,
             &p,
@@ -2107,27 +2109,45 @@ impl Workspace {
         } else {
             "Click a folder to see its sessions"
         };
-        let content = div()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.xxl))
-            .child(header)
-            .children(self.render_project_notices(cx))
-            .children(self.render_identity_editor(cx))
-            .when_some(self.projects.registry_error.clone(), |d, error| {
-                d.child(chrome::notice_line(
-                    registry_error_notice(&error),
-                    chrome::Tone::Warning,
-                    p,
-                ))
-            })
-            .child(body)
-            .child(
-                div()
-                    .text_size(px(t.text.meta))
-                    .text_color(rgb(p.roles.text_tertiary))
-                    .child(hint),
-            );
+        // r5-shell (R5.4): the shared PageShell.
+        let mut notices: Vec<AnyElement> = self
+            .render_project_notices(cx)
+            .into_iter()
+            .map(IntoElement::into_any_element)
+            .collect();
+        notices.extend(
+            self.render_identity_editor(cx)
+                .map(IntoElement::into_any_element),
+        );
+        notices.extend(self.projects.registry_error.clone().map(|error| {
+            chrome::notice_line(registry_error_notice(&error), chrome::Tone::Warning, p)
+                .into_any_element()
+        }));
+        let notice = (!notices.is_empty()).then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.lg))
+                .children(notices)
+                .into_any_element()
+        });
+        let content = system::page_shell(
+            header,
+            notice,
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.xxl))
+                .child(body)
+                .child(
+                    div()
+                        .text_size(px(t.text.meta))
+                        .text_color(rgb(p.roles.text_tertiary))
+                        .child(hint),
+                ),
+            system::PageWidth::Wide,
+            &p,
+        );
         self.page_view("projects-top", t.pages().wide, false, content)
     }
 
@@ -2595,7 +2615,10 @@ impl Workspace {
             .text_color(rgb(p.roles.text_secondary))
             .hover(move |s| s.underline().text_color(rgb(hover)))
             .tooltip(primitives::tooltip_view(
-                "Open the scratch files waiting for you to run them",
+                format!(
+                    "{} Click to open the ones waiting here.",
+                    super::shell::DEFINE_SCRATCH_FILE
+                ),
                 None,
                 &p,
             ))

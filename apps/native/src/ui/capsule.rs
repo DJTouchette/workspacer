@@ -3,6 +3,7 @@
 //! badged session toolbar on the right; the transcript scrolls beneath it.
 //! The shipped capsule is `chrome::render_title_bar`.
 use super::primitives::{self, StatusKind, tooltip_view};
+use super::system::{self, IconButton, MenuAnchor, anchored_menu};
 use super::*;
 use gpui::AnyElement;
 use wks_native::background_tasks::{self as bg, Kind};
@@ -106,7 +107,7 @@ impl Workspace {
                 return false;
             }
             let delta = bounds.size.height - this.header_bounds.size.height;
-            if !this.follow && delta != px(0.) {
+            if !this.follow && delta != gpui::Pixels::ZERO {
                 let mut anchor = this.scroll_anchor();
                 anchor.offset_in_item += delta;
                 this.list.scroll_to(anchor);
@@ -127,8 +128,7 @@ impl Workspace {
             .flex()
             .items_center()
             .gap(px(t.space.md))
-            .border_b(px(t.stroke.hairline))
-            .border_color(rgb(p.border))
+            .map(|d| system::edge(d, system::Side::Bottom, system::EdgeTone::Divider, &p))
             // The strip's empty room drags the window; its controls occlude.
             .when(caption, |d| {
                 d.child(
@@ -171,8 +171,14 @@ impl Workspace {
                                     .gap(px(t.space.xs))
                                     .rounded(px(t.radius.panel))
                                     .bg(rgb(p.surface))
-                                    .border(px(t.stroke.hairline))
-                                    .border_color(rgb(p.roles.card_border))
+                                    .map(|d| {
+                                        system::edge(
+                                            d,
+                                            system::Side::All,
+                                            system::EdgeTone::Card,
+                                            &p,
+                                        )
+                                    })
                                     .children(notices),
                             )
                         })
@@ -477,7 +483,7 @@ impl Workspace {
                             enabled,
                             &p,
                         ),
-                        "Nudge · ask it to report back: sends “Still there? Reply with where you are.” now",
+                        super::shell::DEFINE_NUDGE,
                         None,
                         &p,
                     )
@@ -547,10 +553,10 @@ impl Workspace {
         self.review_stack_summary(cwd)
     }
 
-    // r4-calm (R4.4)
-    /// One toolbar tool: a 16px icon (never a label: the title keeps the
-    /// room), a 28px hit area, an optional badge, and a tooltip naming it
-    /// with its shortcut.
+    // r4-calm (R4.4), r5-shell (R5.4)
+    /// One toolbar tool: an `IconButton` with a 16px icon (never a label:
+    /// the title keeps the room), an optional badge, and a tooltip naming
+    /// it with its shortcut.
     #[allow(clippy::too_many_arguments)]
     fn toolbar_tool(
         &self,
@@ -561,38 +567,14 @@ impl Workspace {
         enabled: bool,
         on: bool,
         badge: Option<AnyElement>,
-    ) -> Stateful<Div> {
-        let p = self.palette();
-        let t = p.tokens;
-        chrome::interactive_control(div().id(id), p, enabled)
-            .debug_selector(move || id.into())
-            .flex_shrink_0()
-            .h(px(t.layout.control_height_sm))
-            .min_w(px(t.layout.control_height_sm))
-            .px(px(if badge.is_some() { t.space.sm } else { 0. }))
-            .rounded(px(t.radius.control))
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(t.space.xs))
-            .text_size(px(t.text.meta))
-            .font_weight(FontWeight(t.weight.medium))
-            .map(super::shell::tabular)
-            .text_color(rgb(if !enabled {
-                p.disabled
-            } else if on {
-                p.text
-            } else {
-                p.roles.text_secondary
-            }))
-            .when(on, |d| d.bg(rgb(p.selected)))
-            .when(enabled && !on, |d| {
-                d.hover(move |s| s.bg(rgb(p.roles.hover)).text_color(rgb(p.text)))
-                    .active(move |s| s.bg(rgb(p.roles.pressed)))
-            })
-            .tooltip(tooltip_view(tip, keys, &p))
-            .child(Icon::new(icon).size(px(t.icon.md)))
-            .children(badge)
+    ) -> IconButton {
+        let t = self.tokens();
+        IconButton::new(id, icon, tip)
+            .icon_size(t.icon.md)
+            .shortcut_opt(keys)
+            .enabled(enabled)
+            .selected(on)
+            .badge(badge)
     }
 
     // r3-shell, r4-calm (R4.4)
@@ -637,6 +619,7 @@ impl Workspace {
                     .map(|(_, added, removed)| format!("Branch +{added} −{removed}"))
                     .map(quiet),
             )
+            .render(&p)
             .when(selected, |d| {
                 d.on_click(
                     cx.listener(|this, _, window, cx| {
@@ -654,6 +637,7 @@ impl Workspace {
                 false,
                 None,
             )
+            .render(&p)
             .when(selected, |d| {
                 d.on_click(cx.listener(|this, _, window, cx| this.open_selected_editor(window, cx)))
             });
@@ -676,15 +660,13 @@ impl Workspace {
                 Some(if mac { "⌘ `" } else { "Ctrl `" }),
                 selected,
                 self.terminal.open,
-                shell_running.then(|| {
-                    div()
-                        .debug_selector(|| "terminal-running-dot".into())
-                        .size(px(t.layout.status_dot))
-                        .rounded(px(t.radius.full))
-                        .bg(rgb(p.roles.status.working))
-                        .into_any_element()
-                }),
+                None,
             )
+            .dot_color(
+                shell_running.then_some("terminal-running-dot"),
+                p.roles.status.working,
+            )
+            .render(&p)
             .when(selected, |d| {
                 d.on_click(cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx)))
             });
@@ -717,6 +699,7 @@ impl Workspace {
                     .into_any_element()
                 }),
             )
+            .render(&p)
             .when(selected, |d| {
                 d.on_click(cx.listener(|this, _, window, cx| this.toggle_tasks(window, cx)))
             });
@@ -739,21 +722,18 @@ impl Workspace {
     /// shortcut, in one menu that hangs under the strip at its right.
     fn session_more_menu(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
-        let t = p.tokens;
         let selected = self.selected_session().is_some();
         let model_enabled = enabled && self.supported_session();
         let vim = self.vim();
         let open = self.shell.session_menu && selected;
-        let trigger = primitives::icon_button(
+        let trigger = IconButton::new(
             "session-more",
             IconName::Ellipsis,
             "History, details and model",
-            primitives::ButtonVariant::Tertiary,
-            selected,
-            &p,
         )
-        .debug_selector(|| "session-more".into())
-        .when(open, |d| d.bg(rgb(p.selected)).text_color(rgb(p.text)))
+        .enabled(selected)
+        .selected(open)
+        .render(&p)
         .when(selected, |d| {
             d.on_click(cx.listener(|this, _, _, cx| {
                 cx.stop_propagation();
@@ -768,15 +748,7 @@ impl Workspace {
                     enabled: bool| {
             primitives::menu_item_icon(id, label, Some(icon), false, enabled, &p)
                 .debug_selector(move || id.into())
-                .when_some(keys, |d, keys| {
-                    d.child(
-                        div()
-                            .flex_shrink_0()
-                            .text_size(px(t.text.meta))
-                            .text_color(rgb(p.roles.text_tertiary))
-                            .child(keys),
-                    )
-                })
+                .when_some(keys, |d, keys| d.child(primitives::menu_shortcut(keys, &p)))
         };
         let close = |this: &mut Self| this.shell.session_menu = false;
         let menu = primitives::menu(&p)
@@ -828,22 +800,8 @@ impl Workspace {
                     }))
                 }),
             );
-        div()
-            .relative()
-            .flex_shrink_0()
-            .child(trigger)
-            .when(open, |d| {
-                d.child(
-                    gpui::deferred(
-                        div()
-                            .absolute()
-                            .top(px(t.layout.icon_button + t.space.xs))
-                            .right_0()
-                            .child(menu),
-                    )
-                    .with_priority(1),
-                )
-            })
+        // r5-shell (R5.4): the menu hangs from its trigger.
+        anchored_menu(trigger, open.then_some(menu), MenuAnchor::BelowEnd, &p)
     }
 
     /// The session's tools in labelled groups (review · session · agent),

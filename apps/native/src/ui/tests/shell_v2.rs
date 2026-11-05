@@ -98,11 +98,12 @@ fn the_sidebar_groups_sessions_by_what_needs_you(cx: &mut TestAppContext) {
     let list = visual.debug_bounds("sidebar-destinations").unwrap();
     for item in [
         "new-session-button",
+        "nav-fleet",
         "nav-projects",
         "nav-jobs",
+        "nav-history",
         "nav-hosts",
         "nav-scratch",
-        "nav-settings",
     ] {
         let bounds = visual.debug_bounds(item).unwrap();
         assert!(
@@ -111,6 +112,9 @@ fn the_sidebar_groups_sessions_by_what_needs_you(cx: &mut TestAppContext) {
         );
         assert!(bounds.bottom() < needs.top(), "{item} above the groups");
     }
+    // r5-shell: Settings is the footer's gear.
+    let gear = visual.debug_bounds("nav-settings").unwrap();
+    assert!(footer.contains(&gear.center()), "the gear in the footer");
 }
 
 #[gpui::test]
@@ -371,11 +375,17 @@ fn the_model_chip_opens_a_popover_not_a_page(cx: &mut TestAppContext) {
             .debug_bounds("popover-access-Ask to approve")
             .is_some()
     );
-    // A decision waits (a needs you): the popover hangs from the header
-    // and stops short of the dock, so it never covers the decision card.
+    // r5-shell (R5.4): the popover hangs from the chip that opened it
+    // (above it, left edges aligned), decision or not.
     let card = visual.debug_bounds("model-popover").unwrap();
-    let dock = workspace.read_with(&visual, |this, _| this.composer_dock_bounds);
-    assert!(card.bottom() <= dock.top(), "{card:?} above {dock:?}");
+    let chip = visual.debug_bounds("composer-model").unwrap();
+    assert!(card.bottom() <= chip.top(), "{card:?} above {chip:?}");
+    assert!(
+        (f32::from(card.left()) - f32::from(chip.left())).abs() <= 2.,
+        "{card:?} aligned with {chip:?}"
+    );
+    // Each access option says what it allows.
+    assert!(visual.debug_bounds("popover-access").is_some());
     // The keys drive it: Down walks the list, Escape closes it.
     visual.simulate_keystrokes("down");
     visual.run_until_parked();
@@ -463,18 +473,22 @@ fn the_header_is_a_strip_with_icon_tools_and_one_overflow(cx: &mut TestAppContex
 }
 
 /// r3-shell: the destinations are a short block, and the footer carries no
-/// modal-key label. r4-calm: New session and one row of icon tiles.
+/// modal-key label. r5-shell (R5.4): seven labelled 32px NavItem rows in a
+/// tight list (New session, Fleet, Projects, Jobs, History, Machines,
+/// Scratch), every one with its own glyph.
 #[gpui::test]
 fn the_destinations_are_a_short_labelled_block(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     visual.simulate_resize(size(px(1200.), px(900.)));
     open_v2(&workspace, &mut visual, attention_state(), Design::V2);
     let block = visual.debug_bounds("sidebar-destinations").unwrap();
-    let rows = Tokens::V2.layout.control_height_sm * 4.;
+    let rows = Tokens::V2.system().nav_row * 7.;
     assert!(
-        f32::from(block.size.height) <= rows + 4. * Tokens::V2.space.sm,
+        f32::from(block.size.height) <= rows + Tokens::V2.space.sm,
         "{block:?}"
     );
+    let row = visual.debug_bounds("nav-history").unwrap();
+    assert_eq!(f32::from(row.size.height), Tokens::V2.system().nav_row);
     visual.update(|_, cx| {
         workspace.update(cx, |this, cx| {
             this.settings.vim_navigation_v2 = true;

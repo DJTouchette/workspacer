@@ -148,22 +148,32 @@ impl Workspace {
             }))
             .pb(px(t.space.xl))
             .children(chrome::page_drag_strip())
-            .child(
-                div()
-                    .w_full()
-                    .max_w(px(t.pages().wide))
-                    .mx_auto()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(t.space.lg))
-                    .child(header)
-                    .children(notice)
-                    .child(self.feature_message("changes"))
-                    .child(self.feature_message("git-action"))
-                    .child(body),
-            )
+            // r5-shell (R5.4): the shared PageShell (header, notices, body),
+            // stretched to the window so the diff scrolls inside it.
+            .child({
+                let messages = notice.is_some()
+                    || self.has_feature_message("changes")
+                    || self.has_feature_message("git-action");
+                super::super::system::page_shell(
+                    header,
+                    messages.then(|| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(t.space.sm))
+                            .children(notice)
+                            .child(self.feature_message("changes"))
+                            .child(self.feature_message("git-action"))
+                            .into_any_element()
+                    }),
+                    div().flex_1().min_h_0().flex().flex_col().child(body),
+                    super::super::system::PageWidth::Wide,
+                    &p,
+                )
+                .mx_auto()
+                .flex_1()
+                .min_h_0()
+            })
             .children(self.review_overlays(window, cx))
     }
 

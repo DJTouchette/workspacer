@@ -2184,26 +2184,22 @@ impl Workspace {
             "settings-view",
             t.pages().wide,
             false,
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(t.space.xxl))
-                .child(header)
-                .when(!self.settings_error.is_empty(), |d| {
-                    d.child(chrome::notice_line(
-                        self.settings_error.clone(),
-                        chrome::Tone::Error,
-                        p,
-                    ))
-                })
-                .child(
-                    div()
-                        .flex()
-                        .items_start()
-                        .gap(px(if tight { t.space.lg } else { t.space.xxl }))
-                        .child(rail)
-                        .child(content),
-                ),
+            // r5-shell (R5.4): the shared PageShell.
+            super::system::page_shell(
+                header,
+                (!self.settings_error.is_empty()).then(|| {
+                    chrome::notice_line(self.settings_error.clone(), chrome::Tone::Error, p)
+                        .into_any_element()
+                }),
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(if tight { t.space.lg } else { t.space.xxl }))
+                    .child(rail)
+                    .child(content),
+                super::system::PageWidth::Wide,
+                &p,
+            ),
         )
     }
 

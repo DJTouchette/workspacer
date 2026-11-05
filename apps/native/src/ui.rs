@@ -194,6 +194,8 @@ bundled_icons!(
     "lucide/list-checks.svg",
     "lucide/rotate-ccw.svg",
     "lucide/refresh-cw.svg",
+    // r5-shell (R5.4): Scratch's own glyph, distinct from Projects' folder.
+    "lucide/sticky-note.svg",
 );
 
 impl gpui::AssetSource for Assets {
@@ -306,7 +308,7 @@ fn configure_theme_v2(c: &mut gpui_component::ThemeColor, p: &Palette, dark: boo
     c.link_active = solid(p.primary_pressed);
     c.popover = solid(r.raised);
     c.popover_foreground = solid(p.text);
-    c.overlay = tone(p.shadow, p.tokens.elevation.scrim_alpha);
+    c.overlay = tone(p.shadow, p.roles.scrim_alpha);
     c.window_border = solid(p.border);
     c.title_bar = solid(p.base);
     c.title_bar_border = solid(p.border);

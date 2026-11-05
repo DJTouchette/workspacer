@@ -10,11 +10,22 @@ use super::primitives::{
     tooltip_view,
 };
 use super::sidebar::SidebarRow;
+use super::system::{self, EdgeTone, IconButton, NavItem, Side};
 use super::*;
 use gpui::{AnyElement, AnyView, HighlightStyle, StyledText, deferred};
 use gpui_component::tooltip::Tooltip;
 use std::collections::{BTreeMap, BTreeSet};
 use wks_native::child_agents::ChildAgent;
+
+// r5-shell (R5.4): one-line plain definitions for the words a newcomer
+// meets before anything explains them, shown on hover where they appear.
+/// "Job proposal", on hover.
+pub(super) const DEFINE_JOB_PROPOSAL: &str = "Job proposal: work an agent suggested running on a schedule. Nothing runs until you approve it in Jobs.";
+/// "Nudge", on hover.
+pub(super) const DEFINE_NUDGE: &str =
+    "Nudge: ask a quiet agent to report back. Sends “Still there? Reply with where you are.” now.";
+/// "Scratch file", on hover.
+pub(super) const DEFINE_SCRATCH_FILE: &str = "Scratch file: a script or note an agent wrote for you to review and run yourself. Workspacer never runs it.";
 
 /// Window-local state of the v2 shell.
 pub(super) struct ShellUi {
@@ -914,8 +925,7 @@ impl Workspace {
             .flex_shrink_0()
             .bg(rgb(p.base))
             .rounded(px(t.radius.panel))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.border))
+            .map(|d| system::edge(d, Side::All, EdgeTone::Divider, &p))
             .overflow_hidden()
             .flex()
             .flex_col()
@@ -990,262 +1000,174 @@ impl Workspace {
             .count()
     }
 
-    /// The global destinations at the top of the sidebar. r4-calm (R4.4):
-    /// New session keeps its labelled row; the pages are one row of icon
-    /// tiles (name and shortcut in each tooltip, a count beside its icon),
-    /// so the block is two rows, not four.
+    /// The global destinations at the top of the sidebar. r5-shell (R5.4):
+    /// one tight list of labelled `NavItem` rows (icon slot, label, count
+    /// slot, 32 each), every destination with its own glyph. Settings is
+    /// the footer's gear, so the list stays seven rows.
     fn render_destinations(&self, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let t = p.tokens;
-        let vim = self.vim();
-        let pending = self.pending_total();
-        let proposals = self.job_proposals().len();
-        let new_session = !self.demo;
-        let mac = cfg!(target_os = "macos");
         div()
             .debug_selector(|| "sidebar-destinations".into())
             .px(px(t.space.sm))
             .pb(px(t.space.sm))
             .flex()
             .flex_col()
-            .gap(px(t.space.xxs))
-            .child(
-                self.destination(
-                    "new-session",
-                    IconName::Plus,
-                    "New session",
-                    Some(if mac { "⌘ N" } else { "Ctrl N" }),
-                    false,
-                    new_session,
-                    None,
-                )
-                .w_full()
-                .debug_selector(|| "new-session-button".into())
-                .when(new_session, |d| {
-                    d.on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx)))
-                }),
+            .children(
+                self.destinations(false)
+                    .into_iter()
+                    .map(|(item, target)| self.render_destination(item, target, false, cx)),
             )
-            .child(
-                div()
-                    .debug_selector(|| "sidebar-nav-icons".into())
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .px(px(t.space.xs))
-                    // r3-fleet: every live session as a grid of tiles.
-                    .child(self.nav_tile(
-                        "nav-fleet",
-                        Icon::new(primitives::Concept::Fleet),
-                        "Fleet · every live session at a glance",
-                        Some(if mac { "⌘ Shift F" } else { "Ctrl Shift F" }),
-                        Screen::Fleet,
-                        None,
-                        cx,
-                    ))
-                    .child(self.nav_tile(
-                        "nav-projects",
-                        Icon::new(IconName::Folder),
-                        "Projects",
-                        Some(if mac { "⌘ P" } else { "Ctrl P" }),
-                        Screen::Projects,
-                        None,
-                        cx,
-                    ))
-                    .child(self.nav_tile(
-                        "nav-jobs",
-                        Icon::new(IconName::Calendar),
-                        if proposals > 0 {
-                            "Jobs · an agent's proposal is waiting for your approval"
-                        } else {
-                            "Jobs · scheduled and proposed work"
-                        },
-                        vim.then_some("g j"),
-                        Screen::Jobs,
-                        // r4-truth (R4.2): proposals waiting for approval,
-                        // counted as Needs you counts them.
-                        (proposals > 0).then(|| {
-                            div()
-                                .debug_selector(|| "jobs-needs-you-badge".into())
-                                .child(primitives::count_badge(
-                                    primitives::count_text(proposals),
-                                    primitives::CountTone::NeedsYou,
-                                    &p,
-                                ))
-                                .into_any_element()
-                        }),
-                        cx,
-                    ))
-                    .child(self.nav_tile(
-                        "nav-hosts",
-                        Icon::new(primitives::Concept::Machines),
-                        "Machines · the computers that run your agents",
-                        vim.then_some("g o"),
-                        Screen::Hosts,
-                        None,
-                        cx,
-                    ))
-                    // r4-calm (R4.6): Scratch says what it is where it shows.
-                    .child(self.nav_tile(
-                        "nav-scratch",
-                        Icon::new(IconName::FolderClosed),
-                        if pending > 0 {
+    }
+
+    /// The sidebar's destinations, in order, as `NavItem`s with what each
+    /// opens (`None`: New session). The rail (`rail`) draws the same list
+    /// as tiles, under its own ids (the flyout shows both at once).
+    fn destinations(&self, rail: bool) -> Vec<(NavItem, Option<Screen>)> {
+        let id = |row: &'static str, tile: &'static str| if rail { tile } else { row };
+        let count_id = |item: NavItem, sel: &'static str| {
+            if rail { item } else { item.count_id(sel) }
+        };
+        let vim = self.vim();
+        let mac = cfg!(target_os = "macos");
+        let key = |mac_keys: &'static str, keys: &'static str| if mac { mac_keys } else { keys };
+        let pending = self.pending_total();
+        let proposals = self.job_proposals().len();
+        let open = |screen: Screen| !self.new_session && self.screen == screen;
+        let vim_key = |keys: &'static str, item: NavItem| {
+            if vim { item.shortcut(keys) } else { item }
+        };
+        vec![
+            (
+                NavItem::new("new-session-button", IconName::Plus, "New session")
+                    .shortcut(key("⌘ N", "Ctrl N"))
+                    .selected(self.new_session)
+                    .enabled(!self.demo),
+                None,
+            ),
+            (
+                NavItem::new(id("nav-fleet", "fleet-rail"), primitives::Concept::Fleet, "Fleet")
+                    .hint("Fleet · every live session at a glance, as cards")
+                    .shortcut(key("⌘ Shift F", "Ctrl Shift F"))
+                    .selected(open(Screen::Fleet)),
+                Some(Screen::Fleet),
+            ),
+            (
+                NavItem::new(id("nav-projects", "projects-rail"), IconName::Folder, "Projects")
+                    .hint("Projects · the folders your sessions work in")
+                    .shortcut(key("⌘ P", "Ctrl P"))
+                    .selected(open(Screen::Projects)),
+                Some(Screen::Projects),
+            ),
+            (
+                // r4-truth (R4.2): proposals waiting for approval, counted
+                // as Needs you counts them.
+                vim_key(
+                    "g j",
+                    count_id(
+                        NavItem::new(id("nav-jobs", "jobs-rail"), IconName::Calendar, "Jobs")
+                            .hint(if proposals > 0 {
+                                "Jobs · a job proposal (work an agent suggested) waits for your approval"
+                            } else {
+                                "Jobs · work that runs on a schedule"
+                            })
+                            .count(proposals, primitives::CountTone::NeedsYou),
+                        "jobs-needs-you-badge",
+                    )
+                    .selected(open(Screen::Jobs)),
+                ),
+                Some(Screen::Jobs),
+            ),
+            (
+                vim_key(
+                    "g h",
+                    NavItem::new(id("nav-history", "history-rail"), primitives::Concept::History, "History")
+                        .hint("History · every session you have run, by project")
+                        .selected(open(Screen::Recent)),
+                ),
+                Some(Screen::Recent),
+            ),
+            (
+                vim_key(
+                    "g o",
+                    NavItem::new(id("nav-hosts", "hosts-rail"), primitives::Concept::Machines, "Machines")
+                        .hint("Machines · the computers that run your agents")
+                        .selected(open(Screen::Hosts)),
+                ),
+                Some(Screen::Hosts),
+            ),
+            (
+                // r4-calm (R4.6): Scratch says what it is where it shows.
+                vim_key(
+                    "g x",
+                    count_id(
+                        NavItem::new(
+                            id("nav-scratch", "scratch-rail"),
+                            primitives::Concept::Scratch,
+                            "Scratch",
+                        )
+                        .hint(if pending > 0 {
                             "Scratch · files agents wrote for you to review and run; some are waiting"
                         } else {
                             "Scratch · files agents wrote for you to review and run"
-                        },
-                        vim.then_some("g x"),
-                        Screen::Scratch,
-                        (pending > 0).then(|| {
-                            div()
-                                .debug_selector(|| "scratch-pending-badge".into())
-                                .child(primitives::count_badge(
-                                    primitives::count_text(pending),
-                                    primitives::CountTone::Neutral,
-                                    &p,
-                                ))
-                                .into_any_element()
-                        }),
-                        cx,
-                    ))
-                    .child(self.nav_tile(
-                        "nav-settings",
-                        Icon::new(IconName::Settings),
-                        if self.update_available() {
-                            "Settings · an update is ready"
-                        } else {
-                            "Settings"
-                        },
-                        Some(if mac { "⌘ ," } else { "Ctrl ," }),
-                        Screen::Settings,
-                        self.update_available().then(|| {
-                            div()
-                                .debug_selector(|| "update-pill".into())
-                                .size(px(t.layout.status_dot))
-                                .rounded(px(t.radius.full))
-                                .bg(rgb(p.accent))
-                                .into_any_element()
-                        }),
-                        cx,
-                    )),
-            )
+                        })
+                        .count(pending, primitives::CountTone::Neutral),
+                        "scratch-pending-badge",
+                    )
+                    .selected(open(Screen::Scratch)),
+                ),
+                Some(Screen::Scratch),
+            ),
+        ]
     }
 
-    // r4-calm (R4.4)
-    /// One page in the destinations' icon row: a square tile, highlighted
-    /// while its page is open, widened by its count when it has one.
-    #[allow(clippy::too_many_arguments)]
-    fn nav_tile(
+    /// One destination as a row (or, on the rail, a tile), wired to open
+    /// its page (New session when `target` is `None`).
+    fn render_destination(
         &self,
-        id: &'static str,
-        icon: Icon,
-        tip: &'static str,
-        shortcut: Option<&'static str>,
-        screen: Screen,
-        badge: Option<AnyElement>,
+        item: NavItem,
+        target: Option<Screen>,
+        tile: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = self.palette();
-        let t = p.tokens;
-        let open = !self.new_session && self.screen == screen;
-        let badged = badge.is_some();
-        chrome::interactive_control(div().id(id), p, true)
-            .debug_selector(move || id.into())
-            .h(px(t.layout.control_height_sm))
-            .min_w(px(t.layout.control_height_sm))
-            .when(badged, |d| d.px(px(t.space.sm)))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(t.space.xs))
-            .rounded(px(t.radius.control))
-            .text_color(rgb(if open { p.text } else { p.roles.text_secondary }))
-            .when(open, |d| d.bg(rgb(p.selected)))
-            .when(!open, |d| {
-                d.hover(move |s| s.bg(rgb(p.roles.hover)).text_color(rgb(p.text)))
-            })
-            .tooltip(tooltip_view(tip, shortcut, &p))
-            .child(icon.size(px(t.icon.md)))
-            .children(badge)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if matches!(screen, Screen::Projects | Screen::Settings) {
+        let enabled = target.is_some() || !self.demo;
+        let control = if tile {
+            item.render_tile(&p)
+        } else {
+            item.render(&p)
+        };
+        control.when(enabled, |d| {
+            d.on_click(cx.listener(move |this, _, window, cx| match target {
+                None => this.show_new_session(window, cx),
+                Some(screen @ (Screen::Projects | Screen::Settings)) => {
                     this.show_screen(screen, window, cx)
-                } else {
-                    this.open_feature(screen, window, cx)
                 }
+                Some(screen) => this.open_feature(screen, window, cx),
             }))
+        })
     }
 
-    /// One destination row: icon, label, then a badge; the shortcut in
-    /// its tooltip.
-    #[allow(clippy::too_many_arguments)]
-    fn destination(
-        &self,
-        id: &'static str,
-        icon: IconName,
-        label: &'static str,
-        shortcut: Option<&'static str>,
-        open: bool,
-        enabled: bool,
-        badge: Option<AnyElement>,
-    ) -> Stateful<Div> {
+    /// Settings, as the footer's (or the rail's) gear: an accent dot when
+    /// an update is ready.
+    fn settings_button(&self, id: &'static str, cx: &mut Context<Self>) -> Stateful<Div> {
         let p = self.palette();
-        let t = p.tokens;
-        chrome::interactive_control(div().id(id), p, enabled)
-            .min_w_0()
-            .h(px(t.layout.control_height_sm))
-            .px(px(t.space.md))
-            .rounded(px(t.radius.control))
-            .flex()
-            .items_center()
-            .gap(px(t.space.md))
-            .text_size(px(t.text.body))
-            .font_weight(FontWeight(t.weight.medium))
-            .text_color(rgb(if open { p.text } else { p.roles.text_secondary }))
-            .when(open, |d| d.bg(rgb(p.selected)))
-            .when(!open && enabled, |d| {
-                d.hover(move |s| s.bg(rgb(p.roles.hover)).text_color(rgb(p.text)))
-            })
-            .child(Icon::new(icon).size(px(t.icon.md)).text_color(rgb(if open {
-                p.text
-            } else {
-                p.roles.text_tertiary
-            })))
-            .child(div().flex_1().min_w_0().truncate().child(label))
-            .children(badge)
-            .tooltip(tooltip_view(label, shortcut, &p))
-    }
-
-    /// A rail icon that opens a page, highlighted while it is open.
-    fn nav_icon(
-        &self,
-        id: &'static str,
-        icon: impl Into<Icon>,
-        tip: &'static str,
-        shortcut: Option<&'static str>,
-        screen: Screen,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let p = self.palette();
-        let open = !self.new_session && self.screen == screen;
-        primitives::icon_button_with_shortcut(
+        let mac = cfg!(target_os = "macos");
+        let update = self.update_available();
+        IconButton::new(
             id,
-            icon,
-            tip,
-            shortcut,
-            ButtonVariant::Tertiary,
-            true,
-            &p,
-        )
-        .debug_selector(move || id.into())
-        .when(open, |d| d.bg(rgb(p.selected)).text_color(rgb(p.text)))
-        .on_click(cx.listener(move |this, _, window, cx| {
-            if matches!(screen, Screen::Projects | Screen::Settings) {
-                this.show_screen(screen, window, cx)
+            IconName::Settings,
+            if update {
+                "Settings · an update is ready"
             } else {
-                this.open_feature(screen, window, cx)
-            }
-        }))
+                "Settings"
+            },
+        )
+        .shortcut(if mac { "⌘ ," } else { "Ctrl ," })
+        .selected(!self.new_session && self.screen == Screen::Settings)
+        .dot(update.then_some("update-pill"))
+        .render(&p)
+        .on_click(cx.listener(|this, _, window, cx| this.show_screen(Screen::Settings, window, cx)))
     }
 
     fn sidebar_toggle_v2(&self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -1255,19 +1177,13 @@ impl Workspace {
         } else {
             (IconName::PanelLeftClose, "Collapse sidebar")
         };
-        primitives::icon_button(
-            "toggle-sidebar",
-            icon,
-            tip,
-            ButtonVariant::Tertiary,
-            true,
-            &p,
-        )
-        .debug_selector(|| "sidebar-toggle".into())
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.sidebar_collapsed = !this.sidebar_collapsed;
-            cx.notify();
-        }))
+        IconButton::new("toggle-sidebar", icon, tip)
+            .render(&p)
+            .debug_selector(|| "sidebar-toggle".into())
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.sidebar_collapsed = !this.sidebar_collapsed;
+                cx.notify();
+            }))
     }
 
     /// The filtered project, above the list: its mark and name, waiting
@@ -1299,8 +1215,7 @@ impl Workspace {
                 .px(px(t.space.md))
                 .h(px(t.layout.control_height))
                 .rounded(px(t.radius.control))
-                .border(px(t.stroke.hairline))
-                .border_color(rgb(p.border))
+                .map(|d| system::edge(d, Side::All, EdgeTone::Divider, &p))
                 .flex()
                 .items_center()
                 .gap(px(t.space.md))
@@ -1667,10 +1582,12 @@ impl Workspace {
                 .text_color(rgb(p.roles.text_tertiary))
                 .child(
                     div()
+                        .id(SharedString::from(format!("sidebar-proposal-what-{id}")))
                         .debug_selector(move || format!("sidebar-reason-{ix}"))
                         .flex_1()
                         .min_w_0()
                         .truncate()
+                        .tooltip(tooltip_view(DEFINE_JOB_PROPOSAL, None, &p))
                         .child(from.clone()),
                 )
         });
@@ -2504,29 +2421,34 @@ impl Workspace {
             .flex_shrink_0()
             .px(px(t.space.sm))
             .py(px(t.space.xxs))
-            .border_t(px(t.stroke.hairline))
-            .border_color(rgb(p.border))
+            .map(|d| system::edge(d, Side::Top, EdgeTone::Divider, &p))
             .flex()
             .items_center()
             .gap(px(t.space.sm))
             .map(|d| match self.footer_connection_label() {
-                Some(label) => d.child(
-                    div()
-                        .debug_selector(|| "sidebar-connection-status".into())
-                        .px(px(t.space.sm))
-                        .flex()
-                        .items_center()
-                        .gap(px(t.space.xs))
-                        .text_size(px(t.text.meta))
-                        .text_color(rgb(p.roles.text_secondary))
-                        .when(!self.view.connected, |d| {
-                            d.child(status_indicator(StatusKind::Failed, &p))
-                        })
-                        .child(label),
-                ),
-                None => d.children(self.render_usage_compact(cx)),
+                Some(label) => d
+                    .child(
+                        div()
+                            .debug_selector(|| "sidebar-connection-status".into())
+                            .px(px(t.space.sm))
+                            .flex()
+                            .items_center()
+                            .gap(px(t.space.xs))
+                            .text_size(px(t.text.meta))
+                            .text_color(rgb(p.roles.text_secondary))
+                            .when(!self.view.connected, |d| {
+                                d.child(status_indicator(StatusKind::Failed, &p))
+                            })
+                            .child(label),
+                    )
+                    .child(div().flex_1()),
+                // The usage takes the room; the gear keeps its own.
+                None => match self.render_usage_compact(cx) {
+                    Some(usage) => d.child(usage.flex_1()),
+                    None => d.child(div().flex_1()),
+                },
             })
-            .child(div().flex_1().min_w_0())
+            .child(self.settings_button("nav-settings", cx))
     }
 
     fn sidebar_resize_handle(&self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -2600,8 +2522,11 @@ impl Workspace {
         let limit = t.shell().rail_visible;
         let shown: Vec<usize> = live.iter().copied().take(limit).collect();
         let rest = self.visible_sessions(cx).len().saturating_sub(shown.len());
-        let vim = self.vim();
         let mac = cfg!(target_os = "macos");
+        // r5-shell (R5.4): the sidebar's destinations as NavItem tiles,
+        // New session at the top, the pages at the foot.
+        let mut pages = self.destinations(true).into_iter();
+        let new_session = pages.next();
         div()
             .id("sidebar")
             .debug_selector(|| "session-sidebar".into())
@@ -2611,8 +2536,7 @@ impl Workspace {
             .flex_shrink_0()
             .bg(rgb(p.base))
             .rounded(px(t.radius.panel))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.border))
+            .map(|d| system::edge(d, Side::All, EdgeTone::Divider, &p))
             .overflow_hidden()
             .flex()
             .flex_col()
@@ -2629,33 +2553,15 @@ impl Workspace {
                     .child(brand_mark(t.icon.lg, p)),
             )
             .child(self.sidebar_toggle_v2(cx))
-            .child(
-                primitives::icon_button_with_shortcut(
-                    "new-session-rail",
-                    IconName::Plus,
-                    "New session",
-                    Some(if mac { "⌘ N" } else { "Ctrl N" }),
-                    ButtonVariant::Tertiary,
-                    !self.demo,
-                    &p,
-                )
-                .debug_selector(|| "new-session-button".into())
-                .when(!self.demo, |d| {
-                    d.on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx)))
-                }),
+            .children(
+                new_session.map(|(item, target)| self.render_destination(item, target, true, cx)),
             )
             .child(
-                primitives::icon_button_with_shortcut(
-                    "search-rail",
-                    IconName::Search,
-                    "Search everything",
-                    Some(if mac { "⌘ K" } else { "Ctrl K" }),
-                    ButtonVariant::Tertiary,
-                    true,
-                    &p,
-                )
-                .debug_selector(|| "sidebar-search".into())
-                .on_click(cx.listener(|this, _, window, cx| this.open_palette(window, cx))),
+                IconButton::new("search-rail", IconName::Search, "Search everything")
+                    .shortcut(if mac { "⌘ K" } else { "Ctrl K" })
+                    .render(&p)
+                    .debug_selector(|| "sidebar-search".into())
+                    .on_click(cx.listener(|this, _, window, cx| this.open_palette(window, cx))),
             )
             .when_some(self.rail_filter(), |d, mark| {
                 d.child(mark.on_click(cx.listener(|this, _, _, cx| {
@@ -2665,17 +2571,11 @@ impl Workspace {
             })
             .when(!self.ui_bus.notice.is_empty(), |d| {
                 d.child(
-                    primitives::icon_button(
-                        "notice-rail",
-                        IconName::Info,
-                        "Show the workspace notice",
-                        ButtonVariant::Tertiary,
-                        true,
-                        &p,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.open_peek(super::portrait::Peek::Pinned, cx)
-                    })),
+                    IconButton::new("notice-rail", IconName::Info, "Show the workspace notice")
+                        .render(&p)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.open_peek(super::portrait::Peek::Pinned, cx)
+                        })),
                 )
             })
             .child(
@@ -2734,8 +2634,7 @@ impl Workspace {
                                 .font_weight(FontWeight(t.weight.semibold))
                                 .map(tabular)
                                 .text_color(rgb(p.roles.text_tertiary))
-                                .border(px(t.stroke.hairline))
-                                .border_color(rgb(p.border))
+                                .map(|d| system::edge(d, Side::All, EdgeTone::Divider, &p))
                                 .hover(move |s| s.bg(rgb(p.roles.hover)))
                                 .tooltip(tooltip_view(
                                     format!(
@@ -2755,82 +2654,18 @@ impl Workspace {
             )
             .when(self.view.power_paused, |d| {
                 d.child(
-                    primitives::icon_button(
-                        "resume-rail",
-                        IconName::Redo,
-                        "Reconnect",
-                        ButtonVariant::Tertiary,
-                        self.view.can_resume_power_pause,
-                        &p,
-                    )
-                    .when(self.view.can_resume_power_pause, |d| {
-                        d.on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
-                    }),
+                    IconButton::new("resume-rail", IconName::Redo, "Reconnect")
+                        .enabled(self.view.can_resume_power_pause)
+                        .render(&p)
+                        .when(self.view.can_resume_power_pause, |d| {
+                            d.on_click(
+                                cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)),
+                            )
+                        }),
                 )
             })
-            // r3-fleet
-            .child(self.nav_icon(
-                "fleet-rail",
-                primitives::Concept::Fleet,
-                "Fleet · every live session at a glance",
-                Some(if mac { "⌘ Shift F" } else { "Ctrl Shift F" }),
-                Screen::Fleet,
-                cx,
-            ))
-            .child(self.nav_icon(
-                "projects-rail",
-                IconName::Folder,
-                "Projects",
-                Some(if mac { "⌘ P" } else { "Ctrl P" }),
-                Screen::Projects,
-                cx,
-            ))
-            .child(self.nav_icon(
-                "jobs-rail",
-                IconName::Calendar,
-                "Jobs",
-                vim.then_some("g j"),
-                Screen::Jobs,
-                cx,
-            ))
-            .child(self.nav_icon(
-                "hosts-rail",
-                primitives::Concept::Machines,
-                "Machines",
-                vim.then_some("g o"),
-                Screen::Hosts,
-                cx,
-            ))
-            .child(
-                self.nav_icon(
-                    "scratch-rail",
-                    IconName::FolderClosed,
-                    "Scratch · files agents wrote for you to review and run",
-                    vim.then_some("g x"),
-                    Screen::Scratch,
-                    cx,
-                )
-                .relative()
-                .when(self.pending_total() > 0, |d| {
-                    d.child(
-                        div()
-                            .absolute()
-                            .top(px(t.space.xxs))
-                            .right(px(t.space.xxs))
-                            .size(px(t.layout.status_dot))
-                            .rounded(px(t.radius.full))
-                            .bg(rgb(p.roles.text_secondary)),
-                    )
-                }),
-            )
-            .child(self.nav_icon(
-                "settings-rail",
-                IconName::Settings,
-                "Settings",
-                Some(if mac { "⌘ ," } else { "Ctrl ," }),
-                Screen::Settings,
-                cx,
-            ))
+            .children(pages.map(|(item, target)| self.render_destination(item, target, true, cx)))
+            .child(self.settings_button("rail-settings", cx))
             .when(!self.view.connected, |d| {
                 d.child(
                     div()
@@ -3049,14 +2884,7 @@ impl Workspace {
                 div()
                     .flex()
                     .flex_col()
-                    .child(
-                        div()
-                            .pb(px(t.space.xs))
-                            .text_size(px(t.text.meta))
-                            .font_weight(FontWeight(t.weight.semibold))
-                            .text_color(rgb(p.roles.text_tertiary))
-                            .child(title),
-                    )
+                    .child(primitives::section_label(title, &p))
                     .children(keys.into_iter().map(|(l, k)| row(l, k)))
             }));
         let dialog = primitives::dialog(&p)
@@ -3081,30 +2909,23 @@ impl Workspace {
                         &p,
                     )))
                     .child(
-                        primitives::icon_button(
-                            "shortcuts-close",
-                            IconName::Close,
-                            "Close",
-                            ButtonVariant::Tertiary,
-                            true,
-                            &p,
-                        )
-                        .debug_selector(|| "shortcuts-close".into())
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_shortcuts(cx))),
+                        IconButton::new("shortcuts-close", IconName::Close, "Close")
+                            .shortcut("Esc")
+                            .render(&p)
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_shortcuts(cx))),
                     ),
             )
             .child(body);
         Some(
+            // r5-shell (R5.4): centred on the window, over its scrim.
             deferred(
-                primitives::scrim(&p)
+                super::system::overlay(super::system::Placement::Center, dialog, &p)
                     .id("shortcuts-scrim")
                     .debug_selector(|| "shortcuts-scrim".into())
-                    .occlude()
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(|this, _, _, cx| this.toggle_shortcuts(cx)),
-                    )
-                    .child(dialog),
+                    ),
             )
             .with_priority(2)
             .into_any_element(),

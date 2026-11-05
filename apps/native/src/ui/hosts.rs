@@ -761,7 +761,8 @@ pub(super) fn pill(text: String, color: u32, p: Palette) -> Div {
 // column, and the metrics and queue behind Details. Plain words replace the
 // ops terms: the gate is "Accepting work" / "Paused: low memory", PSI lives
 // in tooltips, and queue and session ids sit behind "Copy ID".
-use super::primitives::{self, ButtonSize, ButtonVariant, Col, StatusBadge, StatusKind, tabular};
+use super::primitives::{self, ButtonSize, ButtonVariant, Col, StatusKind, tabular};
+use super::system::{self, EdgeTone, Side, StatusCell};
 
 impl Workspace {
     fn render_hosts_v2(&self, cx: &mut Context<Self>) -> Div {
@@ -926,13 +927,16 @@ impl Workspace {
         let summary = primitives::page_table_row(&p)
             .id(("host-summary", ix))
             .debug_selector(move || format!("host-summary-{ix}"))
-            .when(ix == 0, |d| d.border_t(px(0.)))
+            .when(ix == 0, |d| d.border_t_0())
             .child(
                 primitives::page_cell(Col::Flex)
                     .gap(px(t.space.md))
-                    .when(!offline, |d| {
-                        d.child(primitives::avatar_tile_sized(&name, t.layout.avatar, &p))
-                    })
+                    // r5-shell: an offline machine keeps its (yielded)
+                    // avatar, so every name shares one left edge.
+                    .child(
+                        primitives::avatar_tile_sized(&name, t.layout.avatar, &p)
+                            .when(offline, |d| d.opacity(t.wash.yielded)),
+                    )
                     .child(
                         div()
                             .min_w_0()
@@ -994,10 +998,8 @@ impl Workspace {
         if !open {
             return body;
         }
-        let mut detail = div()
+        let mut detail = system::edge(div(), Side::Top, EdgeTone::Divider, &p)
             .debug_selector(move || format!("host-detail-{ix}"))
-            .border_t(px(t.stroke.hairline))
-            .border_color(rgb(p.border))
             .px(px(t.space.xl))
             .pt(px(t.space.lg))
             .pb(px(t.space.xl))
@@ -1126,12 +1128,10 @@ impl Workspace {
                     .child("Nothing queued."),
             )
         } else {
-            let mut list = div()
+            let mut list = system::edge(div(), Side::All, EdgeTone::Divider, &p)
                 .flex()
                 .flex_col()
                 .rounded(px(t.radius.control))
-                .border(px(t.stroke.hairline))
-                .border_color(rgb(p.border))
                 .overflow_hidden();
             for (row, item) in card.items.iter().enumerate() {
                 list = list.child(self.render_queue_row_v2(ix, row, &card.host, item, now, cx));
@@ -1202,8 +1202,7 @@ impl Workspace {
         div()
             .debug_selector(move || format!("queue-row-{card}-{row}"))
             .when(row > 0, |d| {
-                d.border_t(px(t.stroke.hairline))
-                    .border_color(rgb(p.border))
+                system::edge(d, Side::Top, EdgeTone::Divider, &p)
             })
             .px(px(t.space.lg))
             .py(px(t.space.md))
@@ -1318,14 +1317,16 @@ impl Workspace {
 
 /// A machine's status in the shared vocabulary: "Accepting work",
 /// "Paused: low memory", "Offline".
-fn host_status(card: &Card) -> StatusBadge {
+/// A machine's state as a `StatusCell` (r5-shell, R5.4): every state has
+/// a glyph, the healthy one included (Ready, "Accepting work").
+fn host_status(card: &Card) -> StatusCell {
     if card.connected == Some(false) {
-        return StatusBadge::new(StatusKind::Offline);
+        return StatusCell::new(StatusKind::Offline);
     }
     match card.resources.as_ref().and_then(|r| r.gate.as_ref()) {
-        Some(gate) if gate.open => StatusBadge::new(StatusKind::Idle).label("Accepting work"),
-        Some(gate) => StatusBadge::new(StatusKind::Paused).label(paused_label(&gate.reasons)),
-        None => StatusBadge::new(StatusKind::Idle).label("No sample yet"),
+        Some(gate) if gate.open => StatusCell::new(StatusKind::Ready).label("Accepting work"),
+        Some(gate) => StatusCell::new(StatusKind::Paused).label(paused_label(&gate.reasons)),
+        None => StatusCell::new(StatusKind::Idle).label("No sample yet"),
     }
 }
 
@@ -1504,15 +1505,16 @@ fn metric_v2(
 }
 
 /// A queue item's state in the shared vocabulary.
-fn queue_status(state: &State) -> StatusBadge {
+/// A queue item's state as a `StatusCell` (r5-shell, R5.4).
+fn queue_status(state: &State) -> StatusCell {
     match state {
-        State::Queued => StatusBadge::new(StatusKind::Idle).label("Waiting to start"),
-        State::Running => StatusBadge::new(StatusKind::Working),
-        State::Done => StatusBadge::new(StatusKind::Done),
-        State::Failed => StatusBadge::new(StatusKind::Failed),
-        State::Cancelled => StatusBadge::new(StatusKind::Idle).label("Cancelled"),
-        State::Unknown => StatusBadge::new(StatusKind::Idle).label("Result unknown"),
-        State::Other(other) => StatusBadge::new(StatusKind::Idle).label(other.clone()),
+        State::Queued => StatusCell::new(StatusKind::Idle).label("Waiting to start"),
+        State::Running => StatusCell::new(StatusKind::Working),
+        State::Done => StatusCell::new(StatusKind::Done),
+        State::Failed => StatusCell::new(StatusKind::Failed),
+        State::Cancelled => StatusCell::new(StatusKind::Idle).label("Cancelled"),
+        State::Unknown => StatusCell::new(StatusKind::Idle).label("Result unknown"),
+        State::Other(other) => StatusCell::new(StatusKind::Idle).label(other.clone()),
     }
 }
 

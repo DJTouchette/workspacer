@@ -45,6 +45,8 @@ The code lives in:
 | Primary | `p.primary`, `primary_hover`, `primary_pressed`, `on_primary` | The Primary button fill, the on toggle |
 | Status | `roles.status.{attention, fault, working, done, idle}` | Status glyphs and words only (see StatusCell) |
 | Identity | `roles.avatar[6]`, `roles.avatar_text`, `roles.provider` | Monogram tiles, provider marks |
+| Caution | `roles.caution` (`Intent::Caution`) | Neutral-strong: a capacity at or past its warn share (usage and context from 80%). Never a hue |
+| Scrim | `roles.scrim_alpha` | How much a centred overlay dims the window, per theme (dark 0.5, light 0.32) |
 
 - **Amber** means blocked on you.
 - **Red** means a named failure.
@@ -102,11 +104,12 @@ All three are at least 4.5:1 on chat, surface, base and raised, and on selected 
 |---|---|---|---|---|
 | `Flat` | `chat` | `border` | none | no |
 | `Raised` | `surface` | `card_border` | `elevation.raised` | no |
-| `Overlay` | `roles.raised` | `border_strong` | `elevation.modal` | yes, when centred (`elevation.scrim_alpha` of `p.shadow`) |
+| `Overlay` | `roles.raised` | `border_strong` | `elevation.modal` | yes, when centred (`roles.scrim_alpha` of `p.shadow`; light themes dim less) |
 
 - `elevated(level, &p) -> Div` gives you the fill, edge, shadow and panel radius.
 - `Level::{fill, edge, shadow}(&p)` give the parts separately.
 - `scrim_color(&p)` gives the scrim colour.
+- `edge(el, Side::{All, Top, Bottom, Left, Right}, level, &p)` draws a hairline in `level`'s edge colour: `Flat` for dividers (a header strip's underline, a footer's rule, the sidebar's frame), `Raised` for a card's edge, `Overlay` for an input or keyboard-highlighted row. It is the one way a surface draws a rule; never call `.border_color` in a surface.
 - An overlay always has a shadow. A centred overlay also always has a scrim.
 - Menus and popovers are Overlay but anchored, so they have no scrim.
 - `floating(el, &p)` adds the floating shadow (the composer, Jump to latest: above the transcript, under an Overlay); `lifted(el, level, &p)` adds a level's shadow to a surface that draws its own fill and edge (`src/ui/system/edge.rs`).
@@ -213,6 +216,10 @@ Each entry gives:
 - **Tokens:** `layout.icon_button`, `icon.sm`, `radius.control`.
 - **API** (`system/icon_button.rs`):
   - `IconButton::new(id, impl Into<Icon>, label).shortcut("g d").variant(ButtonVariant).enabled(bool).selected(bool).render(&p) -> Stateful<Div>`. The default tier is Tertiary, and the id is also the debug selector.
+  - `.shortcut_opt(Option<&str>)` when the shortcut depends on a setting (modal keys).
+  - `.badge(Some(el))`: a trailing fact beside the icon (the Tasks count, "Branch +3 −1"); the button widens and keeps its height.
+  - `.dot(Some(selector))`: an accent dot on the corner (Settings: an update is ready); `.dot_color(Some(selector), role)` in a status role (a running shell). Absolute, so the icon never moves.
+  - `.icon_size(t.icon.md)`: the header strip's tools draw a 16 icon.
   - The older `primitives::icon_button` and `icon_button_with_shortcut` remain for existing call sites and are the same look.
   - `overflow_trigger(id, &p)` is the "…" button.
 - **Do:**
@@ -232,6 +239,10 @@ Each entry gives:
 - **States:** Rest (secondary), Hover (hover fill, primary text), Pressed, Selected (`selected` fill, primary text), Focus.
 - **Tokens:** `system().nav_row`, `nav_icon_slot`, `nav_tile`, `icon.md`, `text.body` / `weight.medium`.
 - **API** (`system/nav.rs`): `NavItem::new(id, icon, label).selected(bool).count(n, CountTone).shortcut("g p")`, then `.render(&p)` for the row or `.render_tile(&p)` for the tile. Both return `Stateful<Div>`. Keep the `nav-*` ids.
+  - `.hint("Scratch · files agents wrote for you to review and run")`: a one-line plain definition for the tooltip (the label otherwise).
+  - `.count_id(selector)`: the count badge's debug selector.
+  - `.enabled(false)`: a destination that cannot open now (New session in the demo): tertiary, no hover, not focusable.
+- **The sidebar** (r5-shell): seven 32 rows, no gaps: New session, Fleet, Projects, Jobs, History, Machines, Scratch. Settings is the footer's gear (an IconButton with the update dot). The collapsed rail draws the same list as tiles (`*-rail` ids), New session at its top. Glyphs: Plus, `Concept::Fleet`, Folder, Calendar, `Concept::History`, `Concept::Machines`, `Concept::Scratch` (a sticky note: never a second folder).
 - **Do:**
   - Prefer labelled rows.
   - Give each destination a distinct icon.
@@ -325,7 +336,8 @@ Each entry gives:
   - `menu_item(id, label, Option<IconName>, danger, enabled, &p)`
   - `menu_item_icon(…)`
   - `menu_separator(&p)`
-  - Anchor it with `system::anchored_menu(trigger, Option<menu>, MenuAnchor::{BelowStart, BelowEnd, AboveStart, AboveEnd}, &p) -> Div` (`system/menu.rs`). `split_button_with_menu` uses it.
+  - `menu_shortcut("g h", &p)`: an item's trailing keys as keycaps (`.child` it onto the item).
+  - Anchor it with `system::anchored_menu(trigger, Option<menu>, MenuAnchor::{BelowStart, BelowEnd, AboveStart, AboveEnd}, &p) -> Div` (`system/menu.rs`). `split_button_with_menu` and the header's "…" use it. The model popover hangs from whichever control opened it (the composer's chip, left edges aligned, or the header's "…"), decision pending or not.
   - The caller owns the open flag. Close the menu on a choice, on Esc and from `.on_mouse_down_out`.
 - **Don't:**
   - Hang a menu from a window corner.
@@ -367,6 +379,7 @@ Each entry gives:
 - **API:**
   - `primitives::page_table`, `page_table_head(&[(label, Col)], &p)`, `page_table_row`, `page_cell(Col)`, `action_slot`, `action_slots`, `action_slots_width(n, &p)`, `slot_button`
   - `table(headers, rows, &p)` for simple tables
+  - Row actions revealed on hover still get their own `Col::Keep(action_slots_width(n, &p))` column (History), so they never cover a value.
   - `table_style(&p)` (Markdown tables share it)
 - **Don't:**
   - Leave a status cell blank. Use Idle "Unknown", or drop the column.
@@ -400,7 +413,9 @@ Each entry gives:
   - the actions in **one** right slot
 
   The body follows, `space.xxl` below. The header and the body share one width rule.
-- **Widths:** `PageWidth::Wide` (`pages().wide`, 1240) for tables and grids; `PageWidth::Form` (`pages().form`, 760, left-aligned) for New session, Agent setup, Session details, Model, Handoff and Pull request.
+- **Widths:** `PageWidth::Wide` (`pages().wide`, 1240) for tables and grids; `PageWidth::Form` (`pages().form`, 760, left-aligned) for New session, Agent setup, Session details, Model, Handoff and Pull request; `PageWidth::Grid` (`fleet().grid_max`, 1440) for Fleet's tile grid.
+- **Header actions:** one right slot. Refresh (Tertiary, `Concept::Refresh`) comes first; the page's main action (Add…, New job) is last and **Secondary on every page**, so a pending decision on the page can own the one Primary.
+- **Pages on it (r5-shell):** every feature page (`feature_page_v2`), Projects, Settings, New session, the Changes page (stretched to the window: `.flex_1().min_h_0()` on the shell) and Fleet. Session history keeps its rows as the scroller's own children (`page_list`) for the keyboard cursor, under the same header width and spacing.
 - **API:**
   - `system::page_shell(header, Option<notice>, body, PageWidth, &p) -> Div` (`system/page.rs`), passed to `page_view(id, pages().wide, false, …)`.
   - `primitives::page_header(back, title, description, actions, &p)`, `back_link`.
@@ -415,6 +430,12 @@ Each entry gives:
 - **Anatomy:** a fully rounded chip, 12/600 tabular figures.
 - **States:** `CountTone::Neutral` (a wash with secondary text), `NeedsYou` (amber fill, only for what blocks the user now), `Failed` (red fill, a named failure).
 - **API:** `primitives::count_badge(label, CountTone, &p)`, `count_text(n)`.
+
+### Meter
+
+- **Purpose:** a share of a limit (usage windows, context).
+- **Tiers:** below 80% `Intent::Neutral` (secondary); from 80% `Intent::Caution` (`roles.caution`, neutral-strong); at 100% `Intent::Danger` (red). `level_intent(format::level(pct))` and `level_color` pick them. Never amber: amber means "needs you".
+- **API:** `primitives::meter(fraction, intent, &p)`.
 - **Don't:** use `badge(…)`, the old solid flag, for counts.
 
 ### Keycap

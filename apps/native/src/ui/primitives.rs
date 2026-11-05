@@ -32,6 +32,8 @@ pub(crate) enum Intent {
     Danger,
     /// An agent working.
     Busy,
+    /// A capacity past its warn share: neutral-strong (`roles.caution`).
+    Caution,
 }
 
 impl Intent {
@@ -45,6 +47,7 @@ impl Intent {
             Self::Warning => p.warning,
             Self::Danger => p.error,
             Self::Busy => p.busy,
+            Self::Caution => p.roles.caution,
         }
     }
 }
@@ -365,6 +368,9 @@ pub(crate) enum Concept {
     Retry,
     /// Read the current state again.
     Refresh,
+    /// Scratch: files agents wrote for you to review and run (never a
+    /// folder: that is Projects).
+    Scratch,
 }
 
 impl Concept {
@@ -379,6 +385,7 @@ impl Concept {
             Self::Tasks => "lucide/list-checks.svg",
             Self::Retry => "lucide/rotate-ccw.svg",
             Self::Refresh => "lucide/refresh-cw.svg",
+            Self::Scratch => "lucide/sticky-note.svg",
         }
     }
 }
@@ -772,16 +779,19 @@ pub(crate) fn level_color(level: wks_native::format::Level, p: &Palette) -> Opti
     use wks_native::format::Level;
     match level {
         Level::Normal => None,
-        Level::Warn => Some(p.text),
+        Level::Warn => Some(p.roles.caution),
         Level::Fault => Some(p.roles.status.fault),
     }
 }
 
-/// [`level_color`] as a meter [`Intent`]: neutral until the hard limit.
+/// [`level_color`] as a meter [`Intent`] (r5-shell, R5.4): neutral below
+/// the warn share, the neutral-strong `caution` from it (80%), red at the
+/// hard limit. Never amber: amber is for "needs you".
 pub(crate) fn level_intent(level: wks_native::format::Level) -> Intent {
     use wks_native::format::Level;
     match level {
-        Level::Normal | Level::Warn => Intent::Neutral,
+        Level::Normal => Intent::Neutral,
+        Level::Warn => Intent::Caution,
         Level::Fault => Intent::Danger,
     }
 }
@@ -1049,6 +1059,18 @@ pub(crate) fn menu_item_icon(
         .child(div().flex_1().min_w_0().truncate().child(label.into()))
 }
 
+/// A menu item's trailing shortcut ("g h", "Ctrl K"): the keys as
+/// tertiary keycaps, spaces separating them. `.child` it onto a
+/// [`menu_item`].
+pub(crate) fn menu_shortcut(keys: &str, p: &Palette) -> Div {
+    div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap(px(p.tokens.space.xxs))
+        .children(keys.split_whitespace().map(|key| kbd(key.to_owned(), p)))
+}
+
 /// A hairline between groups of menu items.
 pub(crate) fn menu_separator(p: &Palette) -> Div {
     let t = p.tokens;
@@ -1068,7 +1090,7 @@ pub(crate) fn scrim(p: &Palette) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .bg(wash(p.shadow, p.tokens.elevation.scrim_alpha))
+        .bg(super::system::scrim_color(p))
 }
 
 /// A dialog panel: [`dialog_header`], body, then [`dialog_footer`].

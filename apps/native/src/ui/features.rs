@@ -2275,9 +2275,13 @@ impl Workspace {
                     chrome::Tone::Info
                 },
             ),
+            // r5-shell: what is in force, plainly (the popover says the same).
             (false, None) if v2 && session.permission_mode.is_empty() => (
-                "Not reported yet, so it asks first, the agents' default. Choosing one sets it."
-                    .to_owned(),
+                format!(
+                    "Currently: {} (the default). {}",
+                    super::model_popover::access_word(Permission::Ask),
+                    super::model_popover::access_consequence(Permission::Ask)
+                ),
                 chrome::Tone::Info,
             ),
             (false, None) if session.permission_mode.is_empty() => (

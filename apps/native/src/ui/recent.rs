@@ -3,6 +3,7 @@
 //! in `wks_native::history`; this is the page, its keyboard cursor and the
 //! per-group collapse and "Show more" state.
 use super::primitives::{self, Col, tabular};
+use super::system::StatusCell;
 use super::*;
 use gpui::AnyElement;
 use gpui_component::input::{InputEvent, MoveDown, MoveUp};
@@ -1119,6 +1120,22 @@ impl Workspace {
         danger: bool,
     ) -> Stateful<Div> {
         let p = self.palette();
+        if self.design().is_v2() {
+            // r5-shell: the system's Tertiary / Destructive small button.
+            return primitives::button(
+                id,
+                label,
+                None,
+                if danger {
+                    primitives::ButtonVariant::Destructive
+                } else {
+                    primitives::ButtonVariant::Tertiary
+                },
+                primitives::ButtonSize::Small,
+                enabled,
+                &p,
+            );
+        }
         let (wash, ink) = if danger {
             (gpui::Hsla::from(rgb(p.error)).opacity(0.12), p.error)
         } else {
@@ -1245,17 +1262,19 @@ pub(super) fn recent_place(cwd: &str, group: &Group, worktree_root: &str) -> Str
 
 // r3-pages (R3.6): history as one dense, left-aligned table: a column
 // header, each project a band, each session a row (name, state, agent,
-// folder, last active), actions over the row's end while hovered.
+// folder, last active). r5-shell (R5.4): the actions have their own fixed
+// column at the row's end, shown while hovered, never covering a value.
 impl Workspace {
-    fn recent_columns(&self) -> [(&'static str, Col); 5] {
-        let t = self.tokens();
-        let pg = t.pages();
+    fn recent_columns(&self) -> [(&'static str, Col); 6] {
+        let p = self.palette();
+        let pg = p.tokens.pages();
         [
             ("Session", Col::Flex),
             ("Status", Col::Fixed(pg.status)),
             ("Agent", Col::Fixed(pg.machine)),
             ("Folder", Col::Fixed(pg.when)),
             ("Last active", Col::Fixed(pg.age)),
+            ("", Col::Keep(primitives::action_slots_width(3, &p))),
         ]
     }
 
@@ -1264,7 +1283,7 @@ impl Workspace {
         let t = p.tokens;
         primitives::page_table_head(&self.recent_columns(), &p)
             .debug_selector(|| "history-head".into())
-            .border_t(px(0.))
+            .border_t_0()
             .rounded(px(t.radius.control))
             .mt(px(t.space.sm))
     }
@@ -1356,7 +1375,7 @@ impl Workspace {
     ) -> Stateful<Div> {
         let p = self.palette();
         let t = p.tokens;
-        let [_, status_col, agent_col, folder_col, age_col] = self.recent_columns();
+        let [_, status_col, agent_col, folder_col, age_col, actions_col] = self.recent_columns();
         let s = &entry.session;
         let open = s.clone();
         let connected = self.view.connected;
@@ -1373,14 +1392,13 @@ impl Workspace {
             .items_center()
             .gap(px(t.space.xs))
             .on_click(|_, _, cx| cx.stop_propagation());
-        let fill = if selected { p.selected } else { p.roles.hover };
         primitives::page_table_row(&p)
             .id(("recent-row", ix))
             .group(ROW_GROUP)
             .debug_selector(move || format!("recent-row-{ix}"))
             .relative()
             .rounded(px(t.radius.control))
-            .border_t(px(0.))
+            .border_t_0()
             .when(connected, |d| {
                 d.cursor_pointer()
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -1416,8 +1434,21 @@ impl Workspace {
                     }),
             )
             .child(
-                primitives::page_cell(status_col.1)
-                    .when(live, |d| d.child(self.session_status_v2(s).render(&p))),
+                // r5-shell (R5.4): every row states its status; an ended
+                // session says so.
+                primitives::page_cell(status_col.1).child(
+                    if live {
+                        let badge = self.session_status_v2(s);
+                        let cell = StatusCell::new(badge.kind);
+                        match badge.label {
+                            Some(label) => cell.label(label),
+                            None => cell,
+                        }
+                    } else {
+                        StatusCell::new(primitives::StatusKind::Idle).label("Ended")
+                    }
+                    .render(&p),
+                ),
             )
             .child(
                 primitives::page_cell(agent_col.1)
@@ -1447,36 +1478,22 @@ impl Workspace {
                             .whitespace_nowrap()
                             .text_size(px(t.text.meta))
                             .text_color(rgb(p.roles.text_secondary))
-                            .when(!reveal, |d| d.group_hover(ROW_GROUP, |s| s.opacity(0.)))
                             .child(age),
                     )),
             )
             .child(
-                // Hovered (or under the cursor), the actions cover the row's
-                // end on its own fill; only the cursor's row is in the Tab order.
-                div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .right_0()
-                    .flex()
-                    .items_center()
+                // Hovered (or under the cursor), the actions show in their
+                // own column; only the cursor's row is in the Tab order.
+                primitives::page_cell(actions_col.1)
+                    .justify_end()
                     .when(!reveal, |d| {
                         d.opacity(0.).group_hover(ROW_GROUP, |s| s.opacity(1.))
                     })
                     .child(
-                        div().h_full().flex().bg(rgb(p.chat)).child(
-                            cluster
-                                .h_full()
-                                .pl(px(t.space.md))
-                                .pr(px(t.space.xs))
-                                .rounded(px(t.radius.control))
-                                .bg(rgb(fill))
-                                .children(
-                                    actions
-                                        .into_iter()
-                                        .map(|a| if reveal { a } else { a.tab_stop(false) }),
-                                ),
+                        cluster.children(
+                            actions
+                                .into_iter()
+                                .map(|a| if reveal { a } else { a.tab_stop(false) }),
                         ),
                     ),
             )

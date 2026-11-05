@@ -4,6 +4,7 @@
 //! v1 keeps Ctrl+K as the sidebar's session search.
 use super::primitives::{self, Concept, StatusKind, kbd, status_indicator};
 use super::settings::SettingsSection;
+use super::system::{self, EdgeTone, Level, Placement, Side};
 use super::*;
 use gpui::{AnyElement, HighlightStyle, StyledText, deferred};
 use std::ops::Range;
@@ -748,7 +749,8 @@ impl Workspace {
         let hits = self.palette_hits(cx);
         let cursor = self.shell.palette.cursor.min(hits.len().saturating_sub(1));
         let viewport = window.viewport_size();
-        let width = px(s.palette_width).min(viewport.width - px(2. * t.space.xl));
+        let sys = t.system();
+        let width = px(sys.overlay_width).min(viewport.width - px(t.space.xl * 2.));
         let mut list: Vec<AnyElement> = Vec::new();
         let mut last = None;
         for (n, hit) in hits.into_iter().enumerate() {
@@ -775,7 +777,8 @@ impl Workspace {
             list.push(self.palette_row(hit, n, n == cursor, cx));
         }
         let empty = list.is_empty();
-        let card = div()
+        // r5-shell (R5.4): the Overlay level on the window's scrim.
+        let card = system::elevated(Level::Overlay, &p)
             .id("command-palette")
             .debug_selector(|| "command-palette".into())
             .key_context("CommandPalette")
@@ -790,27 +793,17 @@ impl Workspace {
             .on_action(
                 cx.listener(|this, _: &PaletteClose, window, cx| this.close_palette(window, cx)),
             )
-            .absolute()
-            .top(px(s.palette_top))
-            .left((viewport.width - width) / 2.)
             .w(width)
             .flex()
             .flex_col()
-            .rounded(px(t.radius.panel))
-            .bg(rgb(p.roles.raised))
-            .border(px(t.stroke.hairline))
-            .border_color(rgb(p.roles.border_strong))
-            .shadow(primitives::elevation(&p, t.elevation.modal))
             .overflow_hidden()
             .child(
-                div()
+                system::edge(div(), Side::Bottom, EdgeTone::Divider, &p)
                     .h(px(t.layout.control_height + t.space.md))
                     .px(px(t.space.lg))
                     .flex()
                     .items_center()
                     .gap(px(t.space.md))
-                    .border_b(px(t.stroke.hairline))
-                    .border_color(rgb(p.border))
                     .child(
                         Icon::new(IconName::Search)
                             .size(px(t.icon.md))
@@ -818,17 +811,8 @@ impl Workspace {
                     )
                     .when_some(scope, |d, scope| {
                         d.child(
-                            div()
-                                .debug_selector(|| "command-palette-scope".into())
-                                .flex_shrink_0()
-                                .px(px(t.space.sm))
-                                .py(px(t.space.xxs))
-                                .rounded(px(t.radius.full))
-                                .bg(primitives::tonal(&p, t.wash.hover))
-                                .text_size(px(t.text.meta))
-                                .font_weight(FontWeight(t.weight.medium))
-                                .text_color(rgb(p.roles.text_secondary))
-                                .child(scope.label()),
+                            primitives::pill(scope.label(), primitives::Intent::Neutral, &p)
+                                .debug_selector(|| "command-palette-scope".into()),
                         )
                     })
                     .child(
@@ -845,7 +829,7 @@ impl Workspace {
                     .debug_selector(|| "command-palette-list".into())
                     .track_scroll(&self.shell.palette.scroll)
                     .overflow_y_scroll()
-                    .max_h(px(s.palette_list).min(viewport.height - px(s.palette_top * 2.)))
+                    .max_h(px(s.palette_list).min(viewport.height - px(sys.overlay_top * 2.)))
                     .px(px(t.space.sm))
                     .pb(px(t.space.sm))
                     .children(list)
@@ -861,14 +845,12 @@ impl Workspace {
                     }),
             )
             .child(
-                div()
+                system::edge(div(), Side::Top, EdgeTone::Divider, &p)
                     .h(px(t.layout.control_height_sm + t.space.xs))
                     .px(px(t.space.lg))
                     .flex()
                     .items_center()
                     .gap(px(t.space.lg))
-                    .border_t(px(t.stroke.hairline))
-                    .border_color(rgb(p.border))
                     .text_size(px(t.text.meta))
                     .text_color(rgb(p.roles.text_tertiary))
                     .child(hint(&["↑", "↓"], "move", &p))
@@ -880,18 +862,13 @@ impl Workspace {
             );
         Some(
             deferred(
-                div()
+                system::overlay(Placement::Top, card, &p)
                     .id("command-palette-layer")
                     .debug_selector(|| "command-palette-layer".into())
-                    .absolute()
-                    .inset_0()
-                    .occlude()
-                    .bg(primitives::wash(p.shadow, t.elevation.scrim_alpha / 2.))
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(|this, _, window, cx| this.close_palette(window, cx)),
-                    )
-                    .child(card),
+                    ),
             )
             .with_priority(3)
             .into_any_element(),

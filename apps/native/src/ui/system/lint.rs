@@ -74,18 +74,10 @@ use Rule::{BorderColour as B, RawColour as C, RawPx as P, Shadow as S};
 #[rustfmt::skip]
 const ALLOWED: &[Allowed] = &[
     // ── To migrate: v2-only surfaces ─────────────────────────────────────
-    a("src/ui/capsule.rs", P, 1, TO_MIGRATE),
     a("src/ui/capsule.rs", S, 1, TO_MIGRATE),
-    a("src/ui/capsule.rs", B, 2, TO_MIGRATE),
     a("src/ui/fleet.rs", S, 1, TO_MIGRATE),
     a("src/ui/fleet.rs", B, 4, TO_MIGRATE),
-    a("src/ui/model_popover.rs", P, 2, TO_MIGRATE),
-    a("src/ui/model_popover.rs", B, 3, TO_MIGRATE),
-    a("src/ui/palette.rs", P, 1, TO_MIGRATE),
-    a("src/ui/palette.rs", S, 1, TO_MIGRATE),
-    a("src/ui/palette.rs", B, 3, TO_MIGRATE),
     a("src/ui/review/v2.rs", B, 1, TO_MIGRATE),
-    a("src/ui/shell.rs", B, 5, TO_MIGRATE),
     // ── To migrate: shared v1/v2 files (the v1 share stays) ──────────────
     a("src/ui/async_questions.rs", P, 4, MIXED),
     a("src/ui/async_questions.rs", B, 1, MIXED),
@@ -114,8 +106,8 @@ const ALLOWED: &[Allowed] = &[
     a("src/ui/handoff.rs", P, 13, MIXED),
     a("src/ui/handoff.rs", S, 1, MIXED),
     a("src/ui/handoff.rs", B, 1, MIXED),
-    a("src/ui/hosts.rs", P, 8, MIXED),
-    a("src/ui/hosts.rs", B, 5, MIXED),
+    a("src/ui/hosts.rs", P, 7, MIXED),
+    a("src/ui/hosts.rs", B, 2, MIXED),
     a("src/ui/jobs.rs", P, 27, MIXED),
     a("src/ui/jobs.rs", S, 1, MIXED),
     a("src/ui/jobs.rs", B, 3, MIXED),
@@ -143,7 +135,7 @@ const ALLOWED: &[Allowed] = &[
     a("src/ui/queue.rs", P, 11, MIXED),
     a("src/ui/queue.rs", S, 2, MIXED),
     a("src/ui/queue.rs", B, 2, MIXED),
-    a("src/ui/recent.rs", P, 32, MIXED),
+    a("src/ui/recent.rs", P, 30, MIXED),
     a("src/ui/recent.rs", B, 1, MIXED),
     a("src/ui/remote.rs", C, 2, MIXED),
     a("src/ui/remote.rs", P, 5, MIXED),

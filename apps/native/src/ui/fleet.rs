@@ -19,6 +19,7 @@ use super::composer_v2::{
 use super::primitives::{
     self, ButtonSize, ButtonVariant, CountTone, EventRow, StatusBadge, StatusKind,
 };
+use super::system;
 use super::*;
 use gpui::AnyElement;
 
@@ -826,15 +827,20 @@ impl Workspace {
                 )
                 .into_any_element()
         };
-        let content = div()
-            .debug_selector(|| "fleet-page".into())
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap(px(t.space.xxl))
-            .child(header)
-            .child(body)
-            .child(self.fleet_hints());
+        // r5-shell (R5.4): the shared PageShell, at the grid's width.
+        let content = system::page_shell(
+            header,
+            None,
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(t.space.xxl))
+                .child(body)
+                .child(self.fleet_hints()),
+            system::PageWidth::Grid,
+            &p,
+        )
+        .debug_selector(|| "fleet-page".into());
         self.page_view("fleet-scroll", f.grid_max, false, content)
     }
 

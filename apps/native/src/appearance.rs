@@ -94,6 +94,14 @@ pub struct Roles {
     pub avatar: [u32; AVATAR_TONES],
     /// The monogram's colour on every avatar fill.
     pub avatar_text: u32,
+    /// Neutral-strong (r5-shell, R5.4): a capacity past its warn share
+    /// (usage and context at 80% and over). Heavier than secondary, never
+    /// a hue: amber is for "needs you", red for the hard limit.
+    pub caution: u32,
+    /// How much a centred overlay's scrim dims the window (0–1, of
+    /// `shadow`). Light themes dim less, so the page stays legible as
+    /// context without reading muddy.
+    pub scrim_alpha: f32,
     /// The five status roles. Colour AND shape encode status; nothing else
     /// may borrow these hues (blue/accent means "interactive" only).
     pub status: StatusRoles,
@@ -119,6 +127,10 @@ pub struct StatusRoles {
     /// Nothing to do / ended. Tertiary grey.
     pub idle: u32,
 }
+
+/// The scrim's share in light themes (r5-shell): the dark themes' 50%
+/// over a white page reads as a grey wash, so light dims a third.
+const LIGHT_SCRIM_ALPHA: f32 = 0.32;
 
 /// How many avatar fills a palette carries (R3.6; r4-calm: six, tuned).
 pub const AVATAR_TONES: usize = 6;
@@ -176,6 +188,8 @@ impl Roles {
         provider: 0,
         avatar: [0; AVATAR_TONES],
         avatar_text: 0,
+        caution: 0,
+        scrim_alpha: 0.,
         status: StatusRoles {
             attention: 0,
             fault: 0,
@@ -200,6 +214,8 @@ impl Roles {
             provider: p.muted,
             avatar: [p.selected; AVATAR_TONES],
             avatar_text: p.text,
+            caution: p.text,
+            scrim_alpha: p.tokens.elevation.scrim_alpha,
             status: StatusRoles {
                 attention: p.warning,
                 fault: p.error,
@@ -413,6 +429,12 @@ impl Appearance {
             provider: c.tertiary,
             avatar,
             avatar_text: c.text,
+            caution: c.text,
+            scrim_alpha: if dark {
+                p.tokens.elevation.scrim_alpha
+            } else {
+                LIGHT_SCRIM_ALPHA
+            },
             // r4-calm (R4.4): working is neutral (the turning arc says it
             // is moving), so amber and red are the only hues a status adds.
             status: StatusRoles {
