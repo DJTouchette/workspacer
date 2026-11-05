@@ -52,7 +52,7 @@ LANDMARKS_V2 = {
     "END_SESSION": lambda shot: (1024, 637),        # r3-integration: the form column's "End session..."
     "NEW_TASK_FIELD": lambda shot: (600, 270),      # r4-pages: the task box on the page template
     "HOSTS_DETAILS": lambda shot: (1520, 207),      # r3-pages: Machines' first "Details" (table row)
-    "JOB_OVERFLOW": lambda shot: (1549, 447),       # r3-pages: Jobs table, first scheduled job's "..."
+    "JOB_OVERFLOW": lambda shot: (1549, 516),       # r3-pages: Jobs table, first scheduled job's "..." (r4-integration: below the proposal)
     "REVIEW_DOCK_MORE": lambda shot: (1535, 30),    # r3-pages: Changes dock header "..."
     "REVIEW_DOCK_EXPAND_ITEM": lambda shot: (1440, 166),  # r3-pages: its "Open full page" item
 }
@@ -108,12 +108,15 @@ def shots():
     add("task-log", "Background task log: the dev server's output",
         [("move", "TITLE_PILL"), ("click", "TITLE_TASKS_BADGE"), ("sleep", 2), ("click", "TASK_ROW_DEV"), ("sleep", 2)])
     # r3-composer: v2's Deny with note lives in Deny's split menu.
+    # r4-integration: the menu item focuses the note itself. The typed text
+    # always lands, but Xvfb sometimes keeps presenting the frame from before
+    # the typing; End (a no-op at the end of the text) forces a fresh one.
     add("deny-with-note", "Approval dock: Deny with note",
-        [("design", [("click", "APPROVAL_DENY_NOTE")],
+        [("design", [("click", "APPROVAL_DENY_NOTE"), ("sleep", 0.5),
+                     ("type", "Run only the session tests, not the whole suite.")],
           [("click", "APPROVAL_DENY_MENU"), ("sleep", 0.5), ("click", "APPROVAL_DENY_NOTE"),
-           # r3-integration: v2's menu click leaves the note unfocused; click it.
-           ("sleep", 0.5), ("click", 851, 877), ("sleep", 0.5)]),
-         ("sleep", 0.5), ("type", "Run only the session tests, not the whole suite.")])
+           ("sleep", 0.5), ("type", "Run only the session tests, not the whole suite."),
+           ("sleep", 0.5), ("key", "End")])])
     add("file-viewer", "File viewer with README.md open from a transcript link",
         [("click", "README_LINK"), ("sleep", 2)])
     add("terminal", "Session terminal panel", [("key", "Escape"), ("key", "ctrl+grave"), ("sleep", 2)])
@@ -172,11 +175,13 @@ def shots():
     # area-transcript: the transcript itself, further back and at each reading width.
     add("transcript-earlier", "Transcript further back: tool rows, work cards, user turns",
         # r2-transcript: v2's denser rows need fewer notches; v1 keeps its own.
-        [("design", [("wheel", 10, 1000, 400)], [("wheel", 3, 1000, 400)])])
+        # (r4-integration: v2 needs 16 notches to leave the last turn.)
+        [("design", [("wheel", 16, 1000, 400)], [("wheel", 3, 1000, 400)])])
     add("transcript-start", "Transcript start: the first turns",
         [("key", "Escape"), ("keys", *(["ctrl+u"] * 12))])
     add("transcript-fleet", "Transcript: supervisor and fleet wakes, subagents",
-        [("design", [("wheel", 7, 1000, 400)], [("wheel", 2, 1000, 400)])])
+        # (r4-integration: v2 needs 24 notches to reach the delegation.)
+        [("design", [("wheel", 24, 1000, 400)], [("wheel", 2, 1000, 400)])])
     add("transcript-wide", "Rich conversation at the wide reading width",
         settings={"reading_width": "wide"})
     add("transcript-full", "Earlier transcript at the full reading width",
@@ -251,7 +256,7 @@ def shots():
     add("approvals-fleet-needs-you", "Fleet: the Needs you filter, only the tiles that wait on the user",
         fleet + [("click", 1350, 78), ("sleep", 0.5)])
     add("approvals-fleet-details", "Fleet: the approval tile's Details open in place",
-        fleet + [("click", 494, 489), ("sleep", 0.5)])
+        fleet + [("click", 482, 540), ("sleep", 0.5)])  # r4-integration: re-measured
     return s
 
 
@@ -489,12 +494,15 @@ LANDMARKS = {
     "COMPOSER_REPLY": lambda shot: (615, 970),       # r3-composer: "Reply instead…" under the card (v2)
     "QUESTION_ANSWER": lambda shot: (900, 884),      # r3-composer: the release question's answer field (v2)
     "COMPOSER_SEND_MENU": lambda shot: (1333, 960),  # r3-composer: Queue's chevron while working (v2; r3-integration re-measured)
-    "RAIL_FIRST_MARK": lambda shot: (35, 205 if shot.get("v2") else 219),  # first session in the rail
-    "README_LINK": lambda shot: (630, 684) if shot["v2"] else (591, 497),  # README.md link, last assistant message
-    "TALL_README_LINK": lambda shot: (207, 1284) if shot["v2"] else (169, 1097),  # same link, 1000x1600 tall layout
+    # (r4-integration: v2 re-measured; the first tile centres at y 179.)
+    "RAIL_FIRST_MARK": lambda shot: (35, 179 if shot.get("v2") else 219),  # first session in the rail
+    # (r4-integration: v2 re-measured after the decision gained its where line.)
+    "README_LINK": lambda shot: (630, 668) if shot["v2"] else (591, 497),  # README.md link, last assistant message
+    "TALL_README_LINK": lambda shot: (210, 1268) if shot["v2"] else (169, 1097),  # same link, 1000x1600 tall layout
     "TASK_ROW_DEV": lambda shot: (1200, 85),        # the fixture hub task in the tasks panel
     # The failed cargo test task: v2 its "Open log" button, v1 its row.
-    "TASK_ROW_FAILED": lambda shot: (1043, 345) if shot["v2"] else (1200, 270),
+    # (r4-integration: v1 re-measured; the fixture's passing run now lists first.)
+    "TASK_ROW_FAILED": lambda shot: (1043, 345) if shot["v2"] else (1200, 340),
     "MODEL_SELECT": lambda shot: (955, 207),        # Change model page, model select
     "NEW_TASK_FIELD": lambda shot: (1150, 560),     # New agent form, Task box
     "END_SESSION": lambda shot: (1337, 679),        # Session details "End session..."
