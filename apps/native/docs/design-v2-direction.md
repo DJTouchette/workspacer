@@ -229,3 +229,46 @@ Round-2 council average: 6.9 (newcomer 6.7, systems 6.6, power user 7.2, UX lead
 
 ## R3.7 Fleet view (new)
 - A "Fleet" view: a grid of live session tiles (2×2 / 3×2, responsive). Each tile: title, R3.1 status, last event line, and the pending ask with its own approve/answer keys. Click or Enter opens the session; keyboard moves focus between tiles. Reachable from nav, palette and a shortcut. v2 only.
+
+---
+
+# Round 4 addendum
+
+Round 3 council (all five reviewers, average 7.3, up from 6.9) agreed on one root cause: **the same session tells a different story on different surfaces.** Round 4 fixes truth first, then calm, then consistency.
+
+## R4.1 One source of truth for status
+- Every surface (header strip, composer, sidebar row, History row, Fleet tile, palette, title chip) reads a session's state from ONE derivation with ONE priority order: Failed (unacknowledged, actionable) > Needs you > Not responding > Working > Paused/Offline > Idle > Done. No surface computes its own.
+- A parent whose subagents are working is **Working** everywhere (sidebar, History, Fleet badge, Fleet grouping). Fleet and sidebar counts must match.
+- A failure chip clears (or mutes to history) once the same command later succeeds; it always names its task ("cargo test failed · Restore sessions").
+- A session that is streaming is never "Not responding" (fixture must update activity while streaming).
+- Change counts: one scope, one label. Header and Changes panel show the same number, labelled ("Branch +17 −3").
+
+## R4.2 "Needs you" is complete
+- Anything blocked on the user counts: tool approvals, questions, plan reviews, **job proposals awaiting approval**. Jobs nav gets the needs-you count. "All clear" only when the count is truly zero.
+
+## R4.3 One approval component everywhere
+- Conversation, Fleet tile, Jobs proposal and plan review use the same component: full command (wrapped, never truncated next to Approve), folder and host, Allow = Primary, the exact scoped rule for "Always allow …", Deny/Deny with note = Secondary. Details expands to the full request, not a menu.
+- Keycap numbers appear only on the focused/top decision, never on every button.
+
+## R4.4 Calm
+- Three text levels only: primary, secondary, faint. Row meta is faint and one line; restating defaults is deleted.
+- Colour: amber = needs you only (capacity warnings use neutral, then red at a hard limit); red = actionable failure only, one red signal per failure; working = neutral/accent, not a third hue.
+- Header toolbar: icon buttons with tooltips + shortcuts, History/Details/Model under one overflow; the session title never truncates while space exists.
+- Sidebar: one-line rows by default, compact nav, one selection style, one needs-you style; collapsed-rail avatars use the tuned ramp.
+- Bottom padding so no text ever runs under the Jump-to-latest pill or a pinned decision.
+
+## R4.5 One page template
+- `page_header`: back affordance (consistent on every page or none), title, one-line intro, right actions in one slot, same left edge on every page including New session. One New-session flow.
+- Tables reserve fixed action slots; actions align and never clip.
+
+## R4.6 Plain language and units
+- Every percentage says what it is: "Claude · 42% of 5-hour limit used", "Context 42% full".
+- "Reply instead…" says the approval stays pending. Nudge, Scratch and Fleet get a one-line explanation where first shown.
+- Distinct icons: Fleet ≠ subagent ≠ Agents settings; Details ≠ About ≠ Shortcuts; Retry ≠ Refresh.
+
+## R4.7 Fleet for bursts
+- After answering a tile, focus moves to the next blocked tile. "Needs you only" filter. Ctrl+1…9 jumps to sessions (listed in shortcuts). Tiles in one row share a height. Model names use catalog casing.
+- Top-level Not responding sessions get Nudge / Stop in the header strip.
+
+## R4.8 Light theme layering
+- Light themes separate canvas, sidebar and cards by surface tint and hairlines, not just borders.
