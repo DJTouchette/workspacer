@@ -3,12 +3,10 @@
 //! all draw it with [`composer_field`] and lay their controls out with
 //! [`composer_toolbar`]; nothing else draws a composer.
 //!
-//! The field is always there and always bordered. While a decision waits
-//! it never fades: unfocused and empty it folds to one bordered line,
-//! "Reply instead…" ([`composer_reply_line`], R6.3), and on focus it is the
-//! full field whose placeholder says the request stays open, with Send
-//! at Secondary (the decision card owns the Primary,
-//! [`super::composer_send_state`]).
+//! The field is always bordered. r8-conversation (R8.4): while a decision
+//! holds the conversation's slot the composer is hidden and its input is
+//! the card's reply ([`card_reply`]); the card folds to [`decision_line`]
+//! while reading back, and other sessions' news is [`updates_chip`].
 use super::super::primitives::{self as prim, ButtonSize, ButtonVariant, ControlState};
 use super::*;
 
@@ -135,72 +133,6 @@ pub(crate) fn composer_toolbar(
         )
 }
 
-/// R6.3: while a decision waits and the composer is not in use, it is one
-/// bordered line ("Reply instead…") that expands into the full composer on
-/// focus. `hint` (where the digit keys go, [`decision_keys_hint`]) sits at
-/// its trailing end. The caller makes it focus the input on click.
-pub(crate) fn composer_reply_line(
-    label: impl Into<SharedString>,
-    hint: Option<AnyElement>,
-    p: &Palette,
-) -> Div {
-    let t = p.tokens;
-    composer_field(ComposerState::Yielded, p).child(
-        div()
-            .h(px(t.layout.control_height))
-            .px(px(t.space.lg + t.space.xs))
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(t.space.md))
-            .text_size(px(t.text.ui))
-            .text_color(rgb(p.roles.text_tertiary))
-            .child(div().min_w_0().truncate().child(label.into()))
-            .children(hint),
-    )
-}
-
-/// r7-pages (R7.7): the composer folded under a question card. The card
-/// holds the one input, so the composer is not a second field: it is a
-/// quiet text line ("Reply — the request stays open") that opens the full
-/// composer on click, with the digit hint at its end.
-pub(crate) fn composer_reply_link(
-    label: impl Into<SharedString>,
-    hint: Option<AnyElement>,
-    p: &Palette,
-) -> Div {
-    let t = p.tokens;
-    div()
-        .w_full()
-        .h(px(t.layout.control_height))
-        .px(px(t.space.lg + t.space.xs))
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(px(t.space.md))
-        .rounded(px(t.radius.control))
-        .text_size(px(t.text.meta))
-        .text_color(rgb(p.roles.text_tertiary))
-        .hover(|s| {
-            s.bg(rgb(p.roles.hover))
-                .text_color(rgb(p.roles.text_secondary))
-        })
-        .child(
-            div()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap(px(t.space.sm))
-                .child(
-                    Icon::new(IconName::Undo2)
-                        .size(px(t.icon.sm))
-                        .flex_shrink_0(),
-                )
-                .child(div().min_w_0().truncate().child(label.into())),
-        )
-        .children(hint)
-}
-
 /// r7-qa (systems P7): one keyboard hint, "↑ ↓ Move": faint keycaps, then
 /// the plain words. Every hint footer (Fleet, Projects) is a row of these
 /// ([`key_hints`]), never shortcuts spelled out in prose.
@@ -225,26 +157,6 @@ pub(crate) fn key_hints(hints: impl IntoIterator<Item = Div>, p: &Palette) -> Di
         .text_size(px(t.text.meta))
         .text_color(rgb(p.roles.text_tertiary))
         .children(hints)
-}
-
-/// R6.3: where the digit keys go. R7.1: the hint lists exactly the keys
-/// the card shows ("1 2 4 answer the request"), each as a keycap; nothing
-/// while the composer has focus (digits type there).
-pub(crate) fn decision_keys_hint(caps: &[String], p: &Palette) -> Div {
-    let t = p.tokens;
-    div()
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap(px(t.space.xxs))
-        .text_size(px(t.text.meta))
-        .text_color(rgb(p.roles.text_tertiary))
-        .children(caps.iter().map(|k| prim::keycap_hint(k.clone(), false, p)))
-        .child(div().ml(px(t.space.xs)).child(if caps.len() > 1 {
-            "answer the request"
-        } else {
-            "answers the request"
-        }))
 }
 
 /// R6.4: the access chip beside the model chip ("Sonnet · Ask first"). Full
@@ -413,4 +325,181 @@ pub(crate) fn composer_specimen(
                 p,
             )),
     )
+}
+
+// ----- r8-conversation (R8.4): one decision-and-reply area ----------------
+
+/// R8.4: the reply inside a decision card. While a decision waits the
+/// composer is hidden; "Reply instead" on the card opens this: the one
+/// input (the composer's own, so a draft survives), a quiet line saying the
+/// request stays open, and `actions` (Cancel, then the send that names
+/// where the text goes, "Send to Claude"). It goes last in the card.
+pub(crate) fn card_reply(
+    input: impl IntoElement,
+    note: impl Into<SharedString>,
+    actions: impl IntoIterator<Item = AnyElement>,
+    p: &Palette,
+) -> Div {
+    let t = p.tokens;
+    super::edge(
+        div()
+            .w_full()
+            .min_w_0()
+            .pt(px(t.space.md))
+            .flex()
+            .flex_col()
+            .gap(px(t.space.sm)),
+        super::Side::Top,
+        super::EdgeTone::Divider,
+        p,
+    )
+    .child(
+        div()
+            .w_full()
+            .min_w_0()
+            .text_size(px(t.text.ui))
+            .child(input),
+    )
+    .child(
+        div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(t.space.md))
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(t.text.meta))
+                    .text_color(rgb(p.roles.text_tertiary))
+                    .child(note.into()),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(t.space.sm))
+                    .children(actions),
+            ),
+    )
+}
+
+/// R8.4: a waiting decision folded to one line while the reader scrolls
+/// up through the transcript ("● Needs you · Allow cargo test? · Open").
+/// The card's attention frame, one control tall; `action` (Open: back to
+/// the latest, the card unfolded) sits at its end, so no separate "Jump to
+/// latest" floats over the text.
+pub(crate) fn decision_line(
+    summary: impl Into<SharedString>,
+    action: impl IntoElement,
+    p: &Palette,
+) -> Div {
+    let t = p.tokens;
+    let kind = prim::StatusKind::NeedsYou;
+    prim::attention_frame(t.radius.panel, p)
+        .w_full()
+        .flex_shrink_0()
+        .h(px(t.layout.control_height + 2. * t.space.xs))
+        .pl(px(t.space.md + t.signals().attention_bar))
+        .pr(px(t.space.xs))
+        .flex()
+        .items_center()
+        .gap(px(t.space.sm))
+        .bg(rgb(p.surface))
+        .shadow(prim::elevation(p, t.elevation.floating))
+        .text_size(px(t.text.body))
+        .children(prim::status_glyph(kind, p))
+        .child(
+            div()
+                .flex_shrink_0()
+                .font_weight(FontWeight(t.weight.medium))
+                .text_color(rgb(kind.text_color(p)))
+                .child(kind.label()),
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_color(rgb(p.roles.text_tertiary))
+                .child("·"),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_color(rgb(p.text))
+                .child(summary.into()),
+        )
+        .child(div().flex_shrink_0().child(action))
+}
+
+/// R8.4: other sessions' news as one chip in the conversation header
+/// ("2 updates"), led by the worst state's glyph (a failure's red, else
+/// Needs you's amber) or a quiet inbox. It opens [`updates_popover`].
+pub(crate) fn updates_chip(
+    id: impl Into<gpui::ElementId>,
+    worst: Option<prim::StatusKind>,
+    label: impl Into<SharedString>,
+    p: &Palette,
+) -> Stateful<Div> {
+    let t = p.tokens;
+    let leading = match worst {
+        Some(kind) => prim::status_glyph(kind, p).map(IntoElement::into_any_element),
+        None => Some(
+            Icon::new(IconName::Inbox)
+                .size(px(t.icon.xs))
+                .text_color(rgb(p.roles.text_tertiary))
+                .into_any_element(),
+        ),
+    };
+    prim::toolbar_chip(id, leading, label, true, true, p).flex_shrink_0()
+}
+
+/// One update in the header's popover: its state glyph, what happened in
+/// words, and its own jump link (`link`, "Open").
+pub(crate) fn update_row(
+    id: impl Into<gpui::ElementId>,
+    kind: Option<prim::StatusKind>,
+    text: impl Into<SharedString>,
+    link: Option<AnyElement>,
+    p: &Palette,
+) -> Stateful<Div> {
+    let t = p.tokens;
+    prim::list_row(id, false, true, p)
+        .child(
+            div()
+                .size(px(t.icon.sm))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .map(|d| match kind {
+                    Some(kind) => d.children(prim::status_glyph(kind, p)),
+                    None => d.child(
+                        Icon::new(IconName::Inbox)
+                            .size(px(t.icon.xs))
+                            .text_color(rgb(p.roles.text_tertiary)),
+                    ),
+                }),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_color(rgb(p.roles.text_secondary))
+                .child(text.into()),
+        )
+        .children(link.map(|l| div().flex_shrink_0().child(l)))
+}
+
+/// The updates popover: one [`update_row`] per event, failures first.
+pub(crate) fn updates_popover(rows: impl IntoIterator<Item = AnyElement>, p: &Palette) -> Div {
+    let t = p.tokens;
+    prim::menu(p)
+        .w(px(t.system().overlay_width * 0.75))
+        .children(rows)
 }

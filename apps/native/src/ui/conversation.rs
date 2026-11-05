@@ -145,6 +145,9 @@ impl Workspace {
     ) -> Div {
         let p = self.palette();
         self.note_seen_rows();
+        // r8-conversation (R8.4): a focused or drafted composer opens the
+        // waiting card's reply before anything below reads it.
+        self.settle_reply(window, cx);
         let selected = self.selected_session().cloned();
         let enabled = self.view.connected
             && !self.view.loading
@@ -163,38 +166,9 @@ impl Workspace {
             enabled,
             working,
         };
-        // R6.6: other sessions' wakes sit in one slim strip above the
-        // transcript, never inside it.
-        let strip = (self.design().is_v2() && selected.is_some())
-            .then(|| self.render_wake_strip_v2(window, cx))
-            .flatten()
-            .map(|strip| {
-                let t = self.tokens();
-                // r7-pages (R7.8): the strip is opaque, on the canvas, with
-                // a hairline under it: the transcript scrolls out of view
-                // at that line, and nothing shows through or ghosts.
-                system::edge(
-                    div()
-                        .debug_selector(|| "wake-strip-band".into())
-                        .relative()
-                        .w_full()
-                        .flex_shrink_0()
-                        .bg(rgb(p.chat))
-                        .pt(self.header_bounds.size.height + px(t.transcript().group_gap)),
-                    system::Side::Bottom,
-                    system::EdgeTone::Divider,
-                    &p,
-                )
-                .child(strip)
-                .child(chrome::measure(
-                    cx.entity().downgrade(),
-                    |this: &mut Self, bounds, _| {
-                        let changed = this.wake_strip_height != bounds.size.height;
-                        this.wake_strip_height = bounds.size.height;
-                        changed
-                    },
-                ))
-            });
+        // R6.6: other sessions' wakes never sit inside the transcript.
+        // r8-conversation (R8.4): they are the header's "2 updates" chip
+        // (`render_updates_chip`), not a strip above it.
         let entity = cx.entity().downgrade();
         // r7-pages (R7.6): a short conversation reads from the top. The list
         // is bottom-aligned (it follows the tail), so the room it would
@@ -205,20 +179,11 @@ impl Workspace {
             gpui::Pixels::ZERO
         };
         let last_row = self.list.item_count().saturating_sub(1);
-        let list_top = if strip.is_some() {
-            px(0.)
-        } else {
-            self.header_bounds.size.height + px(16.)
-        };
-        // What of the pane is not the rows' room: the wake strip's band
-        // (r7-int: a short conversation under it reads from the top too),
-        // the list's own padding and the dock's inset below it.
-        let above = if strip.is_some() {
-            self.wake_strip_height
-        } else {
-            list_top
-        };
-        self.list_insets = above + px(self.tokens().space.lg) + self.transcript_inset_v2(compact);
+        let list_top = self.header_bounds.size.height + px(16.);
+        // What of the pane is not the rows' room: the header, the list's
+        // own padding and the dock's inset below it.
+        self.list_insets =
+            list_top + px(self.tokens().space.lg) + self.transcript_inset_v2(compact);
         let transcript = list(self.list.clone(), move |ix, window, cx| {
             entity
                 .update(cx, |this, cx| {
@@ -293,12 +258,7 @@ impl Workspace {
                 d.child(self.render_child_only(window, cx))
             })
             .when(!empty, |d| {
-                // r7-pages (R7.8): no fade under the wake strip (it let
-                // faded rows ghost through); the strip is opaque and ends
-                // in a hairline the transcript scrolls under.
-                d.children(strip)
-                    .child(transcript)
-                    .child(self.wheel_smoother(cx))
+                d.child(transcript).child(self.wheel_smoother(cx))
             })
             // r4-integration (R4.4): while reading history the transcript's
             // viewport ends above the dock and the pill; a short fade there
@@ -342,9 +302,10 @@ impl Workspace {
             .child(self.render_dock(layout, selected.as_ref(), window, cx))
             // r3-shell: v2's pill reaches into the dock's top padding, so it
             // paints after the dock.
-            .when(!self.follow && self.design().is_v2(), |d| {
-                d.child(self.render_jump_latest_v2(compact, cx))
-            });
+            .when(
+                !self.follow && self.design().is_v2() && !self.decision_collapsed(),
+                |d| d.child(self.render_jump_latest_v2(compact, cx)),
+            );
         div()
             .flex_1()
             .min_w_0()
@@ -406,7 +367,7 @@ impl Workspace {
         let sh = t.shell();
         let card =
             (self.composer_dock_bounds.size.height - px(dock_first_surface(compact))).max(px(0.));
-        let pill = if self.follow {
+        let pill = if self.follow || self.decision_collapsed() {
             0.
         } else {
             t.layout.control_height_sm + sh.jump_gap
@@ -653,6 +614,13 @@ impl Workspace {
         let composer_docked = selected.is_some() && self.view.child.is_none();
         let parent_line = self.render_parent_waiting(selected, cx);
         let parent_waits = self.design().is_v2() && self.view.child.is_some();
+        // r8-conversation (R8.4): scrolled up through the transcript, the
+        // waiting card folds to one line ("Needs you · … · Open").
+        let collapsed = self.decision_collapsed();
+        let folded = selected
+            .filter(|_| collapsed)
+            .map(|s| self.render_decision_line(s, cx));
+        let composer_hidden = self.composer_hidden();
         // Gutters and the gap above the composer stay inside this clip, so
         // card shadows keep their room.
         let cards = self
@@ -671,7 +639,7 @@ impl Workspace {
             .max_h(self.dock_cards_budget(selected, compact, window))
             .overflow_y_scroll()
             .pt(px(dock_cards_top(compact)))
-            .pb(px(match (composer_docked, compact) {
+            .pb(px(match (composer_docked && !composer_hidden, compact) {
                 (false, _) => 0.,
                 (true, true) => 4.,
                 (true, false) => 8.,
@@ -686,17 +654,29 @@ impl Workspace {
             // a "waiting on you" card here, above the composer.
             // r5-integration (v2): over a read-only subagent the parent's
             // decision is one line that leads back, not its live card.
+            .children(folded)
             .when_some(
                 selected
-                    .filter(|_| !parent_waits)
+                    .filter(|_| !parent_waits && !collapsed)
                     .and_then(|s| s.approval.as_ref()),
                 |d, approval| d.child(self.render_approval_card(approval, layout, window, cx)),
             )
-            .children(selected.and_then(|session| self.render_limit_card(session, compact, cx)))
+            .children(
+                selected
+                    .filter(|_| !collapsed)
+                    .and_then(|session| self.render_limit_card(session, compact, cx)),
+            )
             .when_some(
-                selected.filter(|s| s.questions.is_some() && !parent_waits),
+                selected.filter(|s| s.questions.is_some() && !parent_waits && !collapsed),
                 |d, session| {
-                    d.child(self.render_questions(session, layout.enabled, compact, window, cx))
+                    // R8.4: the question card holds the reply too.
+                    let reply = composer_hidden
+                        .then(|| self.render_card_reply(layout.enabled, cx))
+                        .flatten();
+                    d.child(
+                        self.render_questions(session, layout.enabled, compact, window, cx)
+                            .children(reply),
+                    )
                 },
             )
             .children(parent_line)
@@ -725,7 +705,12 @@ impl Workspace {
                     changed
                 },
             ))
-            .when(composer_docked, |d| {
+            // r8-conversation (R8.4): hidden, not folded, while a decision
+            // holds the slot; only the cold-cache note stays.
+            .when(composer_docked && composer_hidden, |d| {
+                d.children(self.render_cold_note(cx))
+            })
+            .when(composer_docked && !composer_hidden, |d| {
                 let composer = self.render_composer(layout, window, cx);
                 if self.design().is_v2() {
                     // r7-pages (R7.6): the one composer width, as on the

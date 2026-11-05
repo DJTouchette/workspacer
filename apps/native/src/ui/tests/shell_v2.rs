@@ -357,15 +357,12 @@ fn the_cheat_sheet_opens_and_closes(cx: &mut TestAppContext) {
 fn the_model_chip_opens_a_popover_not_a_page(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     visual.simulate_resize(size(px(1400.), px(900.)));
-    let mut view = attention_state();
-    view.selected = Some("a".into());
+    // r8-conversation (R8.4): "b" waits on nothing, so its composer (and
+    // model chip) shows; while a decision waits the composer is hidden.
+    let view = attention_state();
     open_v2(&workspace, &mut visual, view, Design::V2);
     // An unknown access mode is not shown, nor offered.
     assert!(visual.debug_bounds("title-access").is_none());
-    // R6.3: "a" waits on a decision; the composer is one line under it
-    // until it has focus, then its model chip is there.
-    assert!(visual.debug_bounds("composer-model").is_none());
-    click(&mut visual, "chat-composer");
     click(&mut visual, "composer-model");
     assert!(visual.debug_bounds("model-popover").is_some());
     assert!(visual.debug_bounds("popover-access-unknown").is_none());
@@ -382,7 +379,7 @@ fn the_model_chip_opens_a_popover_not_a_page(cx: &mut TestAppContext) {
             .is_some()
     );
     // r5-shell (R5.4): the popover hangs from the chip that opened it
-    // (above it, left edges aligned), decision or not.
+    // (above it, left edges aligned).
     let card = visual.debug_bounds("model-popover").unwrap();
     let chip = visual.debug_bounds("composer-model").unwrap();
     assert!(card.bottom() <= chip.top(), "{card:?} above {chip:?}");
@@ -399,11 +396,6 @@ fn the_model_chip_opens_a_popover_not_a_page(cx: &mut TestAppContext) {
     visual.simulate_keystrokes("escape");
     visual.run_until_parked();
     workspace.read_with(&visual, |this, _| assert!(!this.shell.model_popover));
-    // R6.3: closed, the popover may hand the focus back elsewhere; the
-    // one-line composer opens again on a click.
-    if visual.debug_bounds("composer-model").is_none() {
-        click(&mut visual, "chat-composer");
-    }
     click(&mut visual, "composer-model");
     workspace.read_with(&visual, |this, _| {
         assert_eq!(this.screen, Screen::Conversation);
@@ -424,10 +416,9 @@ fn the_model_chip_opens_a_popover_not_a_page(cx: &mut TestAppContext) {
 fn a_popover_pick_applies_at_once(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.simulate_resize(size(px(1400.), px(900.)));
-    let mut view = attention_state();
-    view.selected = Some("a".into());
+    // (r8-conversation: "b" waits on nothing, so its composer shows.)
+    let view = attention_state();
     open_v2(&workspace, &mut visual, view, Design::V2);
-    click(&mut visual, "chat-composer");
     click(&mut visual, "composer-model");
     assert!(visual.debug_bounds("model-popover").is_some());
     assert!(visual.debug_bounds("popover-apply-model").is_none());
@@ -567,39 +558,57 @@ fn the_destinations_are_a_short_labelled_block(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("sidebar-mode").is_none());
 }
 
-/// r3-shell: "Jump to latest" sits the token gap above the decision card
-/// (not the dock's own padding plus the gap), over its scrim.
+/// r3-shell: "Jump to latest" sits the token gap above the dock's first
+/// surface (not the dock's own padding plus the gap), over its scrim.
+/// r8-conversation (R8.4): with a decision waiting, the folded card line
+/// replaces it, so no pill floats over the text.
 #[gpui::test]
 fn jump_to_latest_anchors_just_above_the_decision(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     visual.simulate_resize(size(px(1600.), px(900.)));
+    let long = |view: &mut View| {
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 60,
+            first_seq: 1,
+            items: (0..60)
+                .map(|i| Item {
+                    kind: "assistant_text".into(),
+                    text: format!("Message {i}\n\nSome content."),
+                    ..Default::default()
+                })
+                .collect(),
+        });
+    };
+    let read_back = |visual: &mut VisualTestContext| {
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                this.follow = false;
+                this.list.scroll_to(gpui::ListOffset {
+                    item_ix: 0,
+                    offset_in_item: px(0.),
+                });
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        visual.update(|window, _| window.refresh());
+        visual.run_until_parked();
+    };
     let mut view = attention_state();
     view.selected = Some("a".into());
-    view.transcript.snapshot(ConversationSnapshot {
-        seq: 60,
-        first_seq: 1,
-        items: (0..60)
-            .map(|i| Item {
-                kind: "assistant_text".into(),
-                text: format!("Message {i}\n\nSome content."),
-                ..Default::default()
-            })
-            .collect(),
-    });
+    long(&mut view);
     open_v2(&workspace, &mut visual, view, Design::V2);
-    visual.update(|_, cx| {
-        workspace.update(cx, |this, cx| {
-            this.follow = false;
-            this.list.scroll_to(gpui::ListOffset {
-                item_ix: 0,
-                offset_in_item: px(0.),
-            });
-            cx.notify();
-        })
-    });
-    visual.run_until_parked();
+    read_back(&mut visual);
+    assert!(visual.debug_bounds("decision-line").is_some());
+    workspace.read_with(&visual, |this, _| assert!(this.decision_collapsed()));
+    // Nothing waiting: the pill, the gap above the composer.
+    let mut view = attention_state();
+    long(&mut view);
+    open_v2(&workspace, &mut visual, view, Design::V2);
+    read_back(&mut visual);
+    workspace.read_with(&visual, |this, _| assert!(!this.decision_collapsed()));
     let jump = visual.debug_bounds("jump-latest").unwrap();
-    let card = visual.debug_bounds("approval-card").unwrap();
+    let card = visual.debug_bounds("chat-composer").unwrap();
     assert!(visual.debug_bounds("jump-latest-scrim").is_some());
     let gap = f32::from(card.top() - jump.bottom());
     let want = Tokens::V2.shell().jump_gap;

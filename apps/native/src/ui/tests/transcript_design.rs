@@ -98,28 +98,37 @@ fn wake_view(approval: bool) -> View {
     view
 }
 
-// r3-transcript: another session's wake is a one-line event, never a card,
-// and never shows its internal id.
+fn tap(visual: &mut VisualTestContext, selector: &'static str) {
+    click(visual, selector);
+    visual.update(|window, _| window.refresh());
+    visual.run_until_parked();
+}
+
+// r8-conversation (R8.4): another session's wake is a header chip ("1
+// update"), never a card or a line in the transcript; its popover row says
+// what happened and opens the session, with no internal id.
 #[gpui::test]
-fn v2_pending_wake_is_one_line_with_go(cx: &mut TestAppContext) {
+fn v2_pending_wake_is_a_header_chip_with_open(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _) = fixture(cx);
     v2(&workspace, &mut visual, wake_view(true));
-    let line = visual.debug_bounds("fleet-card-header").unwrap();
-    assert_eq!(
-        f32::from(line.size.height),
-        Tokens::V2.transcript().tool_row,
-        "one line, not a card"
-    );
-    assert!(visual.debug_bounds("fleet-card-status").is_some());
+    let chip = visual.debug_bounds("updates-chip").unwrap();
+    let header = visual.debug_bounds("chat-header").unwrap();
+    assert!(chip.top() >= header.top() && chip.bottom() <= header.bottom());
+    assert!(visual.debug_bounds("fleet-card-header").is_none());
+    assert!(visual.debug_bounds("updates-popover").is_none());
+    tap(&mut visual, "updates-chip");
+    assert!(visual.debug_bounds("updates-popover").is_some());
+    assert!(visual.debug_bounds("update-row-0").is_some());
     assert!(visual.debug_bounds("fleet-entry-id-0").is_none());
-    click(&mut visual, "fleet-entry-open-0");
+    click(&mut visual, "update-open-0");
     let effect = next_effect(&mut commands);
     assert!(matches!(&effect, Some(Command::Select(id)) if id == "worker-1"));
 }
 
-// R6.6: other sessions' wakes leave the transcript for one strip above it.
+// R6.6 / R8.4: other sessions' wakes leave the transcript for the header's
+// chip; its popover has one row per event, failures first.
 #[gpui::test]
-fn v2_wakes_leave_the_transcript_for_one_strip(cx: &mut TestAppContext) {
+fn v2_wakes_leave_the_transcript_for_one_chip(cx: &mut TestAppContext) {
     let (workspace, mut visual, _, _) = fixture(cx);
     let mut view = wake_view(true);
     let wake = |text: &str| Item {
@@ -129,7 +138,7 @@ fn v2_wakes_leave_the_transcript_for_one_strip(cx: &mut TestAppContext) {
         ..Default::default()
     };
     view.transcript.snapshot(ConversationSnapshot {
-        seq: 3,
+        seq: 4,
         first_seq: 1,
         items: vec![
             Item {
@@ -138,88 +147,43 @@ fn v2_wakes_leave_the_transcript_for_one_strip(cx: &mut TestAppContext) {
                 ..Default::default()
             },
             wake(BLOCKED_WAKE),
+            wake("[fleet] Worker FAILED — did not complete:\n- Queue ordering (session:worker-3, cwd /x) — FAILED: Credit balance is too low\nReview each."),
             wake("[fleet] Worker finished:\n- Native controls (session:worker-2, cwd /x) — last reply: Done\nReview each."),
         ],
     });
     v2(&workspace, &mut visual, view);
-    let strip = visual.debug_bounds("wake-strip").unwrap();
-    let column = visual.debug_bounds("chat-content-column").unwrap();
-    assert!(
-        strip.bottom() <= column.top() + px(1.),
-        "above the transcript"
-    );
-    assert!(visual.debug_bounds("wake-strip-header").is_some());
-    // Folded: one line, its Go button, no wake line in the transcript.
+    assert!(visual.debug_bounds("wake-strip").is_none());
     assert!(visual.debug_bounds("fleet-card").is_none());
-    assert!(visual.debug_bounds("fleet-entry-open-0").is_some());
-    click(&mut visual, "wake-strip-header");
-    assert!(visual.debug_bounds("wake-strip-list").is_some());
-    assert!(visual.debug_bounds("fleet-card").is_some());
-}
-
-// r7-int (R7.6): a short conversation under the wake strip reads from the
-// top too: the room under its last row is padding, not a gap above it.
-#[gpui::test]
-fn v2_short_conversation_under_the_wake_strip_reads_from_the_top(cx: &mut TestAppContext) {
-    let (workspace, mut visual, _, _) = fixture(cx);
-    let mut view = wake_view(true);
-    view.transcript.snapshot(ConversationSnapshot {
-        seq: 2,
-        first_seq: 1,
-        items: vec![
-            Item {
-                kind: "assistant_text".into(),
-                text: "Working on it.".into(),
-                ..Default::default()
-            },
-            Item {
-                kind: "user_message".into(),
-                text: BLOCKED_WAKE.into(),
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                ..Default::default()
-            },
-        ],
+    assert!(visual.debug_bounds("updates-chip").is_some());
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.strip_wakes().len(), 3);
     });
-    v2(&workspace, &mut visual, view);
-    for _ in 0..3 {
-        visual.update(|window, _| window.refresh());
-        visual.run_until_parked();
-    }
-    let band = visual.debug_bounds("wake-strip-band").unwrap();
-    let column = visual.debug_bounds("chat-content-column").unwrap();
-    assert!(
-        visual.debug_bounds("transcript-short-pad").is_some(),
-        "the spare room sits under the last row"
-    );
-    assert!(
-        column.top() - band.bottom() < px(64.),
-        "the first row sits under the strip, not at the bottom: {:?} vs {:?}",
-        column.top(),
-        band.bottom()
-    );
+    tap(&mut visual, "updates-chip");
+    let rows: Vec<_> = (0..3)
+        .map(|n| {
+            let id: &'static str = ["update-row-0", "update-row-1", "update-row-2"][n];
+            visual.debug_bounds(id).unwrap()
+        })
+        .collect();
+    assert!(rows[0].top() < rows[1].top() && rows[1].top() < rows[2].top());
+    // The chip does not move the reading position (it is not a row
+    // opening in place).
+    workspace.read_with(&visual, |this, _| assert!(this.follow));
 }
 
 #[gpui::test]
-fn v2_resolved_wake_is_one_line_and_opens_its_details_on_click(cx: &mut TestAppContext) {
+fn v2_resolved_wake_is_one_row_in_the_popover(cx: &mut TestAppContext) {
     let (workspace, mut visual, _, _) = fixture(cx);
     v2(&workspace, &mut visual, wake_view(false));
-    let line = visual.debug_bounds("fleet-card").unwrap();
+    assert!(visual.debug_bounds("fleet-card").is_none());
+    tap(&mut visual, "updates-chip");
+    let row = visual.debug_bounds("update-row-0").unwrap();
     assert!(
-        f32::from(
-            visual
-                .debug_bounds("fleet-card-header")
-                .unwrap()
-                .size
-                .height
-        ) <= Tokens::V2.transcript().tool_row + 1.,
-        "one line, not a card: {:?}",
-        line.size
+        f32::from(row.size.height) <= Tokens::V2.layout.row_height + 1.,
+        "one line: {:?}",
+        row.size
     );
-    assert!(visual.debug_bounds("fleet-details").is_none());
-    click(&mut visual, "fleet-card-header");
-    assert!(visual.debug_bounds("fleet-details").is_some());
-    assert!(visual.debug_bounds("fleet-entry-reply-0").is_some());
-    assert!(visual.debug_bounds("fleet-card").unwrap().size.height > line.size.height);
+    assert!(visual.debug_bounds("update-row-1").is_none());
 }
 
 /// `n` reads that have all finished.
