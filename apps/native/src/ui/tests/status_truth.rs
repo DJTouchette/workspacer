@@ -86,7 +86,7 @@ fn open(workspace: &Entity<Workspace>, visual: &mut VisualTestContext, view: Vie
         workspace.update(cx, |this, cx| {
             this.demo = false;
             this.force_design(Some(Design::V2));
-            this.fleet.all = true;
+            this.fleet.filter = crate::ui::fleet::Filter::All;
             this.shell.folded = [false; 4];
             this.update_view(Arc::new(view), window, cx);
         })
