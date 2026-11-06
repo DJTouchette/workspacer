@@ -522,21 +522,26 @@ pub fn session_tree(sessions: &[Session], visible: &[usize]) -> Vec<(usize, usiz
 /// workers never leave their manager.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SessionSection {
-    /// Waiting on an approval or an answer.
+    /// Waiting on an approval or an answer, or finished a turn nobody has
+    /// opened since.
     NeedsYou,
     /// Mid-turn, launching, or running background tasks.
     Working,
-    /// Ready for a prompt, or ended.
+    /// Idle (seen), paused, or ended.
     Inactive,
 }
 impl SessionSection {
-    pub fn of(session: &Session) -> Self {
-        if session.stopped() {
-            Self::Inactive
-        } else if session.approval.is_some() || session.questions.is_some() {
+    /// `unseen`: the session ended a turn no client has opened since (the
+    /// hub's `sessionSeen` marks). It needs you once it is not busy again.
+    pub fn of(session: &Session, unseen: bool) -> Self {
+        if !session.stopped() && (session.approval.is_some() || session.questions.is_some()) {
             Self::NeedsYou
-        } else if session.working() || session.starting() || session.background_tasks > 0 {
+        } else if !session.stopped()
+            && (session.working() || session.starting() || session.background_tasks > 0)
+        {
             Self::Working
+        } else if unseen {
+            Self::NeedsYou
         } else {
             Self::Inactive
         }
@@ -570,6 +575,7 @@ pub fn session_activity(session: &Session) -> Option<i64> {
 pub fn session_sections(
     sessions: &[Session],
     visible: &[usize],
+    unseen: impl Fn(usize) -> bool,
 ) -> Vec<(SessionSection, Vec<(usize, usize)>)> {
     let ids: BTreeMap<_, _> = visible
         .iter()
@@ -613,7 +619,7 @@ pub fn session_sections(
         }
         let section = rows
             .iter()
-            .map(|&(ix, _)| SessionSection::of(&sessions[ix]))
+            .map(|&(ix, _)| SessionSection::of(&sessions[ix], unseen(ix)))
             .min()
             .unwrap_or(SessionSection::Inactive);
         let created = session_created(&sessions[root]).unwrap_or(i64::MIN);
@@ -702,7 +708,7 @@ mod sidebar_tests {
     }
     fn order(sessions: &[Session]) -> Vec<(SessionSection, Vec<&str>)> {
         let all: Vec<usize> = (0..sessions.len()).collect();
-        session_sections(sessions, &all)
+        session_sections(sessions, &all, |_| false)
             .into_iter()
             .map(|(section, rows)| {
                 (
@@ -751,11 +757,33 @@ mod sidebar_tests {
             child,
             timed("loner", "", "working", 50, 50),
         ];
-        let sections = session_sections(&sessions, &[0, 1, 2, 3]);
+        let sections = session_sections(&sessions, &[0, 1, 2, 3], |_| false);
         assert_eq!(sections[0].0, SessionSection::NeedsYou);
         // Children keep their parent, newest made first, one level deeper.
         assert_eq!(sections[0].1, vec![(0, 0), (2, 1), (1, 1)]);
         assert_eq!(sections[1], (SessionSection::Working, vec![(3, 0)]));
+    }
+    #[test]
+    fn a_finished_turn_nobody_opened_needs_you_until_it_is_seen_or_works_again() {
+        let sessions = vec![
+            timed("seen-idle", "", "input", 30, 30),
+            timed("unseen-idle", "", "input", 10, 40),
+            timed("unseen-ended", "", "stopped", 20, 50),
+            timed("unseen-working-again", "", "responding", 5, 60),
+        ];
+        let all: Vec<usize> = (0..sessions.len()).collect();
+        let sections = session_sections(&sessions, &all, |ix| ix > 0);
+        let ids = |rows: &[(usize, usize)]| -> Vec<&str> {
+            rows.iter()
+                .map(|&(ix, _)| sessions[ix].id.as_str())
+                .collect()
+        };
+        assert_eq!(sections[0].0, SessionSection::NeedsYou);
+        // Newest made first, like decisions.
+        assert_eq!(ids(&sections[0].1), ["unseen-ended", "unseen-idle"]);
+        assert_eq!(sections[1].0, SessionSection::Working);
+        assert_eq!(ids(&sections[1].1), ["unseen-working-again"]);
+        assert_eq!(sections[2], (SessionSection::Inactive, vec![(0, 0)]));
     }
     #[test]
     fn idle_lineages_rank_by_their_latest_member_and_missing_times_keep_hub_order() {

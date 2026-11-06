@@ -40,6 +40,9 @@ pub async fn serve_demo(listener: TcpListener, sessions: usize, turns: usize) ->
     .await
 }
 
+/// [`Options::sidebar_mix`] sessions that finished a turn nobody has opened.
+const MIX_UNSEEN: [usize; 4] = [4, 8, 14, 20];
+
 /// [`Options::sidebar_mix`]: what live session `i` is doing, when it was
 /// made and when it last did something (epoch ms). Index order is not
 /// creation order, so the sidebar's sort is visible.
@@ -141,6 +144,10 @@ struct Fixture {
     /// The first session's pending approval.
     pending: bool,
     answered: BTreeSet<String>,
+    /// Sessions opened since connecting, and the finished-turn document's
+    /// version ([`Options::sidebar_mix`]).
+    opened: BTreeSet<String>,
+    seen_version: i64,
     streaming: bool,
     /// Fragments left in the reply being streamed.
     remaining: u32,
@@ -204,6 +211,8 @@ impl Fixture {
             history: BTreeMap::new(),
             pending: !options.pending_questions,
             answered: BTreeSet::new(),
+            opened: BTreeSet::new(),
+            seen_version: 0,
             streaming: false,
             remaining: 0,
             restart_stream: false,
@@ -554,6 +563,18 @@ impl Fixture {
             "desktop.providerReadiness" => json!({"state": "unchecked"}),
             "claude.setModel" => json!({"ok": true, "disposition": "queued"}),
             "sessions.snapshots" => self.snapshots(),
+            "sessionSeen.get" => self.unseen(),
+            "sessionSeen.mark" => {
+                let id = params["sessionId"].as_str().unwrap_or_default().to_owned();
+                if self.unseen()["unseen"].get(&id).is_some() {
+                    self.opened.insert(id);
+                    self.seen_version += 1;
+                    let _ = socket
+                        .send(event("sessionSeen.changed", self.unseen()))
+                        .await;
+                }
+                self.unseen()
+            }
             "sessions.subagentConversation" if self.options.rich => {
                 rich_subagent_conversation(id, params["agentId"].as_str().unwrap_or_default())
             }
@@ -775,6 +796,26 @@ impl Fixture {
             })
         }));
         Value::Array(rows)
+    }
+
+    /// The finished-turn document: with [`Options::sidebar_mix`], a few idle
+    /// sessions finished a turn nobody has opened yet.
+    fn unseen(&self) -> Value {
+        let mut unseen = serde_json::Map::new();
+        if self.options.sidebar_mix {
+            let now = catalog::wall_now();
+            for i in MIX_UNSEEN
+                .iter()
+                .copied()
+                .filter(|&i| i < self.options.sessions)
+            {
+                let id = format!("demo-{i:04}");
+                if !self.opened.contains(&id) {
+                    unseen.insert(id, json!(sidebar_mix(i, now).2));
+                }
+            }
+        }
+        json!({"version": self.seen_version, "unseen": unseen})
     }
 
     fn snapshots(&self) -> Value {

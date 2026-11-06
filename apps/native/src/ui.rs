@@ -381,7 +381,9 @@ fn session_status(session: &Session, p: Palette) -> (&str, u32) {
         "question" | "waiting_input" => ("Needs your input", p.warning),
         "starting" | "initializing" => ("Starting", p.muted),
         "background" => ("Background", p.muted),
-        "input" | "idle" => ("Ready", p.success),
+        // Seen and waiting for the next message; a turn nobody has opened
+        // reads as Finished (`Workspace::status_of`).
+        "input" | "idle" => ("Idle", p.muted),
         "stopped" | "ended" => ("Ended", p.muted),
         "" => ("Session", p.muted),
         state => (state, p.muted),
@@ -666,6 +668,9 @@ pub struct Workspace {
     /// Which [`sidebar_list`](Self::sidebar_list) rows are headings, as last
     /// measured; a change re-measures the list.
     sidebar_shape: std::cell::RefCell<Vec<bool>>,
+    /// The finished turn this window last told the hub it saw
+    /// (`sessionSeen.mark`): session and its mark's time, sent once.
+    seen_sent: Option<(String, i64)>,
     projects_scroll: gpui::UniformListScrollHandle,
     _focus_watch: Vec<gpui::Subscription>,
     /// The built-in palette in use, or the one a custom theme derives from
@@ -939,7 +944,11 @@ impl Workspace {
         let focus = cx.focus_handle();
         focus_watch.push(cx.on_focus(&focus, window, |_, _, cx| cx.notify()));
         focus_watch.push(cx.on_blur(&focus, window, |_, _, cx| cx.notify()));
-        focus_watch.push(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        // Coming back to the window counts as looking at the open session.
+        focus_watch.push(cx.observe_window_activation(window, |this, window, cx| {
+            this.mark_viewed_seen(window, cx);
+            cx.notify()
+        }));
         // A key aimed at something the file viewer covers (focus pulled
         // behind it) is dropped before any binding or text input sees it.
         let (this, handle) = (cx.entity().downgrade(), window.window_handle());
@@ -1007,6 +1016,7 @@ impl Workspace {
             sidebar_scroll: gpui::UniformListScrollHandle::new(),
             sidebar_list: ListState::new(0, ListAlignment::Top, px(200.)),
             sidebar_shape: Default::default(),
+            seen_sent: None,
             projects_scroll: gpui::UniformListScrollHandle::new(),
             _focus_watch: focus_watch,
             appearance: Appearance::default(),
@@ -1436,6 +1446,7 @@ impl Workspace {
         }
         self.sync_projects(&view);
         self.view = view;
+        self.mark_viewed_seen(window, cx);
         self.resume_summary_handoff(window, cx);
         self.lift_child_clears(cx);
         self.ensure_project_icons(cx);
@@ -1468,6 +1479,33 @@ impl Workspace {
         self.apply_ui_requests(window, cx);
         self.hold_viewer_focus(window, cx);
         cx.notify();
+    }
+
+    /// The open conversation on a focused window is being looked at: clear
+    /// its finished-turn mark on the hub, once per finished turn.
+    fn mark_viewed_seen(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if !window.is_window_active() || self.new_session || self.screen != Screen::Conversation {
+            return;
+        }
+        let Some(id) = self.view.selected.clone() else {
+            return;
+        };
+        let Some(at) = self
+            .view
+            .session_unseen
+            .as_ref()
+            .and_then(|doc| wks_native::features::unseen_since(doc, &id))
+        else {
+            return;
+        };
+        if self.seen_sent.as_ref() == Some(&(id.clone(), at)) {
+            return;
+        }
+        self.seen_sent = Some((id.clone(), at));
+        self.command(
+            Command::Request(wks_native::features::Request::MarkSeen { session: id }),
+            cx,
+        );
     }
 
     fn command(&mut self, command: Command, cx: &mut Context<Self>) {

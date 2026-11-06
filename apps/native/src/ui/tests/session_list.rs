@@ -448,7 +448,7 @@ fn working_badges_understand_daemon_modes_and_pending_states() {
     assert!(!session.working());
     session.approval = None;
     session.state = "input".into();
-    assert_eq!(session_status(&session, p).0, "Ready");
+    assert_eq!(session_status(&session, p).0, "Idle");
     assert!(!session.working());
 }
 

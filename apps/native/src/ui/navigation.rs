@@ -132,7 +132,9 @@ impl Workspace {
                     || s.cwd.to_lowercase().contains(&query)
             },
         );
-        wks_native::navigation::session_sections(&self.view.sessions, &visible)
+        wks_native::navigation::session_sections(&self.view.sessions, &visible, |ix| {
+            self.finished_unseen(&sessions[ix])
+        })
     }
 
     pub(super) fn show_screen(

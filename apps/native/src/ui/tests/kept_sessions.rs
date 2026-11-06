@@ -69,7 +69,7 @@ fn paused_and_ended_follow_the_hub_open_set(cx: &mut TestAppContext) {
         assert!(!this.paused(c));
         assert_eq!(this.status_of(c, p).0, "Ended");
         assert!(!this.paused(d), "a live session is never paused");
-        assert_eq!(this.status_of(d, p).0, "Ready");
+        assert_eq!(this.status_of(d, p).0, "Idle");
     });
 
     // A hub without the shared open set (or before its first read) pauses
@@ -106,7 +106,7 @@ fn starting_rows_read_starting(cx: &mut TestAppContext) {
         assert!(b.starting());
         assert_eq!(this.status_of(b, p).0, "Starting");
         assert!(!c.starting(), "a state without the mark leaves starting");
-        assert_eq!(this.status_of(c, p).0, "Ready");
+        assert_eq!(this.status_of(c, p).0, "Idle");
     });
 }
 

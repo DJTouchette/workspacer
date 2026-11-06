@@ -469,7 +469,7 @@ impl Workspace {
                         .flex()
                         .flex_wrap()
                         .gap_2()
-                        .child(badge("Ready", p.success))
+                        .child(badge("Finished", p.success))
                         .child(badge("Needs approval", p.warning))
                         .child(badge("Failed", p.error))
                         .child(badge("Working", p.busy))

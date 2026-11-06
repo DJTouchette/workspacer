@@ -18,6 +18,7 @@ mod cold_cache;
 mod composer;
 mod connection;
 mod controls;
+mod finished_turns;
 mod history_screen;
 mod history_store;
 mod hosts_view;

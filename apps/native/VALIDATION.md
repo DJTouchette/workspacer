@@ -1,5 +1,46 @@
 # Native client validation — 2026-09-27
 
+## Finished, not opened: shared `sessionSeen` marks (2026-11-06)
+
+A session whose turn ended while nobody was looking now sits under **Needs
+you** as **Finished** (green), next to approvals and questions. Once looked at
+it reads **Idle** (muted; this replaces "Ready") and drops to Inactive. The
+marks are hub-owned shared view state (`docs/session-roster.md` §7), so
+opening a session on one client clears it on every other. The hub adds a mark
+only for a turn end it OBSERVES (working → idle/stopped), so upgrading or
+restarting lights nothing up. Native sends `sessionSeen.mark` for the open
+conversation on a focused window, once per finished turn, and on window
+activation. Hubs without the methods are skipped (`may_call`). Subagent rows
+say Idle too; the composer's own "Ready" hint is unchanged. `--demo`
+(`sidebar_mix`) serves the methods with four finished, unopened sessions.
+
+- Hub: `cargo test --lib session_seen` (3) and `--test session_seen` (over the
+  real bus: observed turn end, another client's mark and event, restart)
+  pass; `auth_composition` passes with `sessionSeen.mark` acknowledged as a
+  triage actor. The full hub run fails only
+  `live_controls::summary::an_unwritable_brief_falls_back_instead_of_failing`,
+  which fails on a clean tree too (the container runs as root, so the
+  "unwritable" file is writable). `history_controls` failed once under
+  parallel load and passes alone with and without this change. Hub Clippy on
+  this toolchain flags many untouched files; the changed files are clean.
+- Registries: `hub-vocabulary.json` (methods, view/triage scopes, the
+  `sessionSeen.changed` topic), `contracts/backend-capabilities.json`, the
+  regenerated `brain-capabilities.json`, `authorization-compositions.json`,
+  and desktop's parameter policy and composition decisions. Desktop's 11
+  registry/parity suites pass (95 tests).
+- Native: unit tests 288 passed; `--features ui-tests` 349 passed, 1 ignored
+  (new `finished_turns`: Needs you while unseen, no mark from a background
+  window, one mark once focused, Idle/Inactive once cleared, Working
+  outranks a mark). `--tests -- --test-threads=1` all pass (`protocol.rs`'
+  strict fake hub answers the new connect read). Strict Clippy and rustfmt
+  clean.
+
+Real windows: private Xvfb, Openbox, lavapipe, `--demo`, debug build.
+[Full list, dark](docs/ui-sidebar-finished-full-list.png) (one tall window
+cut into two columns), and
+[after opening Worker 14](docs/ui-sidebar-finished-opened.png): Needs you
+drops from 9 to 8 through the fixture's `sessionSeen.changed`.
+
 ## Sidebar groups: Needs you, Working, Inactive (2026-11-06)
 
 The docked sidebar groups sessions under short headings with counts. **Needs

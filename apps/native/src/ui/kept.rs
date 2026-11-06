@@ -27,8 +27,22 @@ impl Workspace {
 
     /// The session's status label, with an open session that stopped (the
     /// app's or host's closing) reading as paused rather than ended.
+    /// The session ended a turn no client of this hub has opened since, and
+    /// is not busy again (a decision or a new turn outranks it).
+    pub(super) fn finished_unseen(&self, session: &Session) -> bool {
+        !session.busy()
+            && !session.starting()
+            && self
+                .view
+                .session_unseen
+                .as_ref()
+                .is_some_and(|doc| wks_native::features::unseen_since(doc, &session.id).is_some())
+    }
+
     pub(super) fn status_of<'a>(&self, session: &'a Session, p: Palette) -> (&'a str, u32) {
-        if self.paused(session) {
+        if self.view.connected && self.finished_unseen(session) {
+            ("Finished", p.success)
+        } else if self.paused(session) {
             ("Paused", p.accent)
         } else {
             session_status(session, p)

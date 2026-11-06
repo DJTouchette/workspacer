@@ -398,6 +398,14 @@ pub enum Request {
     /// The hub's shared open-session document (`sessionOpen.get`): which
     /// sessions are open across every client; a stopped one reads as Paused.
     OpenSessions,
+    /// The hub's shared finished-turn document (`sessionSeen.get`): which
+    /// sessions ended a turn no client has opened since.
+    Unseen,
+    /// The user looked at `session`: clear its finished-turn mark on the hub
+    /// (`sessionSeen.mark`), for every client.
+    MarkSeen {
+        session: String,
+    },
     /// Hide (archive) the sidebar's ended sessions on the hub
     /// (`sessionOpen.cleanup`): every one, or those that ended at least
     /// `older_than_ms` ago. Never touches Paused or live sessions. Answers
@@ -647,6 +655,8 @@ impl Request {
             Self::RemoveProjectGroup { .. } => "project-group-remove",
             Self::Archive => "archive",
             Self::OpenSessions => "session-open",
+            Self::Unseen => "session-unseen",
+            Self::MarkSeen { .. } => "session-seen",
             Self::CleanupSessions { .. } => "session-cleanup",
             Self::SnoozeCleanup => "session-snooze",
             Self::UndoCleanup { .. } => "session-undo",
@@ -667,6 +677,9 @@ impl Request {
     /// connection that cannot call it.
     pub fn method(&self) -> Option<&'static str> {
         match self {
+            // Hubs before shared finished-turn marks do not list these.
+            Self::Unseen => Some("sessionSeen.get"),
+            Self::MarkSeen { .. } => Some("sessionSeen.mark"),
             Self::RewindFiles { .. } => Some("claude.rewindFiles"),
             Self::Fork { .. } => Some("agents.fork"),
             Self::PrThreads { .. } => Some("pr.threads"),
@@ -995,6 +1008,12 @@ impl Request {
             }
             Self::Archive => archive_document(backend.call("sessionArchive.get", json!({})).await?),
             Self::OpenSessions => open_document(backend.call("sessionOpen.get", json!({})).await?),
+            Self::Unseen => unseen_document(backend.call("sessionSeen.get", json!({})).await?),
+            Self::MarkSeen { session } => unseen_document(
+                backend
+                    .call("sessionSeen.mark", json!({"sessionId": session}))
+                    .await?,
+            ),
             Self::CleanupSessions { older_than_ms } => {
                 let params = match older_than_ms {
                     Some(ms) => json!({"olderThanMs": ms}),
@@ -1653,6 +1672,21 @@ pub fn open_document(value: Value) -> Result<Value> {
         "The hub returned no open-session set."
     );
     Ok(value)
+}
+
+/// A `sessionSeen` document: `{version, unseen: {sessionId: finishedAtMs}}`.
+pub fn unseen_document(value: Value) -> Result<Value> {
+    ensure!(
+        value["version"].as_i64().is_some() && value["unseen"].is_object(),
+        "The hub returned no finished-turn marks."
+    );
+    Ok(value)
+}
+
+/// When `session` ended a turn nobody has opened since, per a `sessionSeen`
+/// document.
+pub fn unseen_since(document: &Value, session: &str) -> Option<i64> {
+    document["unseen"].get(session)?.as_i64()
 }
 
 /// Whether a `sessionOpen` document says `session` stopped while open without

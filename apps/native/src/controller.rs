@@ -453,6 +453,11 @@ pub struct View {
     /// session listed here is Paused. `None` until a read succeeds, and for
     /// hubs that predate the shared open set (then nothing reads as Paused).
     pub session_open: Option<Arc<Value>>,
+    /// The hub's shared finished-turn document (`sessionSeen.get`, newest
+    /// version seen): `{version, unseen: {sessionId: finishedAtMs}}`. `None`
+    /// until a read succeeds, and for hubs that predate it (then no session
+    /// reads as finished-unseen).
+    pub session_unseen: Option<Arc<Value>>,
     pub connected: bool,
     pub power_paused: bool,
     pub power_pause_generation: u64,
@@ -750,6 +755,7 @@ struct Worker {
     /// The next `sessionOpen` document is adopted whatever its version: set
     /// on connect, since a restarted hub may count versions from zero again.
     open_resync: bool,
+    unseen_resync: bool,
     selection: u64,
     fleet_pending: bool,
     fleet_overlay: BTreeMap<String, Value>,
@@ -819,6 +825,7 @@ impl Worker {
             epoch: 0,
             archive_resync: true,
             open_resync: true,
+            unseen_resync: true,
             selection: 0,
             fleet_pending: false,
             fleet_overlay: BTreeMap::new(),
@@ -1174,7 +1181,11 @@ impl Worker {
         // Each accepted touch keeps its own job. Jobs queue on the shared
         // per-hub FIFO transaction lock; never cancel an acknowledged launch's
         // recency update merely because another launch used the same slot.
-        let queued = matches!(key, "project-touch" | "archive-set" | "session-end");
+        // Seen marks queue too: opening one session never recalls another's.
+        let queued = matches!(
+            key,
+            "project-touch" | "archive-set" | "session-end" | "session-seen"
+        );
         if !queued && let Some(abort) = self.request_aborts.remove(key) {
             abort.abort();
         }
@@ -1577,6 +1588,27 @@ impl Worker {
         self.dirty = true;
     }
 
+    /// Adopt a `sessionSeen` document unless an equal or newer one is held,
+    /// like [`Self::apply_archive`].
+    fn apply_unseen(&mut self, data: &Value) {
+        let Ok(document) = crate::features::unseen_document(data.clone()) else {
+            return;
+        };
+        let version = document["version"].as_i64().unwrap_or(0);
+        if !self.unseen_resync
+            && self
+                .view
+                .session_unseen
+                .as_ref()
+                .is_some_and(|held| held["version"].as_i64().unwrap_or(0) >= version)
+        {
+            return;
+        }
+        self.unseen_resync = false;
+        self.view.session_unseen = Some(Arc::new(document));
+        self.dirty = true;
+    }
+
     /// Adopt a `sessionOpen` document unless an equal or newer one is held,
     /// like [`Self::apply_archive`]. Anything that is not the document shape
     /// (an older hub's error object, say) is ignored.
@@ -1723,6 +1755,7 @@ impl Worker {
                 self.first_replies.clear();
                 self.archive_resync = true;
                 self.open_resync = true;
+                self.unseen_resync = true;
                 self.view.connected = true;
                 self.view.methods = self.backend.methods().map(Arc::new);
                 self.view.power_paused = false;
@@ -1739,6 +1772,8 @@ impl Worker {
                 self.request(crate::features::Request::Archive);
                 // The same for the shared open set, which says what is Paused.
                 self.request(crate::features::Request::OpenSessions);
+                // And the finished-turn marks another client may have cleared.
+                self.request(crate::features::Request::Unseen);
                 // Where a launch could run: the New Agent host picker shows
                 // only when this hub answers (older hubs have no queue).
                 self.request(crate::features::Request::QueueTargets {
@@ -1814,6 +1849,8 @@ impl Worker {
                     }
                 } else if topic == "sessionOpen.changed" {
                     self.apply_open(&data);
+                } else if topic == "sessionSeen.changed" {
+                    self.apply_unseen(&data);
                 } else if self.view.child.is_none()
                     && self
                         .view
@@ -2287,6 +2324,9 @@ impl Worker {
                 // adopt them now rather than waiting for their change events.
                 if matches!(key, "session-open" | "session-snooze") && error.is_none() {
                     self.apply_open(&value);
+                }
+                if matches!(key, "session-unseen" | "session-seen") && error.is_none() {
+                    self.apply_unseen(&value);
                 }
                 if key == "session-undo" && error.is_none() {
                     self.apply_archive(&value);
@@ -2933,6 +2973,7 @@ impl Worker {
             "agent.snapshot".into(),
             "sessionArchive.changed".into(),
             "sessionOpen.changed".into(),
+            "sessionSeen.changed".into(),
         ]);
         topics.extend(crate::ui_requests::TOPICS.iter().map(|s| s.to_string()));
         if self.scratch_watch {

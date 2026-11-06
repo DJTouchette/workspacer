@@ -31,7 +31,7 @@ pub(super) fn status(child: &ChildAgent, connected: bool) -> &'static str {
         "lost" => "Unavailable",
         "approval" | "waiting_approval" => "Needs approval",
         "question" | "waiting_input" => "Needs input",
-        "input" | "idle" => "Ready",
+        "input" | "idle" => "Idle",
         "starting" | "initializing" => "Starting",
         "background" => "Background",
         _ => "Status unavailable",
