@@ -217,7 +217,7 @@ impl Workspace {
     }
 
     pub(super) fn render_scratch(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let page = div().flex().flex_col().gap_3();
         if self.extras.scratch_project.is_none() {
             return page.child(empty_state(IconName::FolderClosed, NO_PROJECT, p));
@@ -376,7 +376,7 @@ impl Workspace {
 
     /// A folder's heading inside a multi-folder project.
     fn scratch_section(&self, cwd: &str, listing: &Listing, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let pending = listing.pending();
         div()
             .pt_2()
@@ -386,7 +386,7 @@ impl Workspace {
             .gap_2()
             .child(
                 Icon::new(IconName::Folder)
-                    .size(px(12.))
+                    .size(px(icon_size::SM))
                     .text_color(rgb(p.muted)),
             )
             .child(
@@ -470,7 +470,7 @@ impl Workspace {
         listings: Option<&[(String, Listing)]>,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let target = self.extras.scratch_project.clone().unwrap_or_default();
         let groups = self.project_groups();
         let (identity, name) = match target.strip_prefix("group:").and_then(|id| groups.get(id)) {
@@ -544,7 +544,10 @@ impl Workspace {
                     })
                     .when(!active, |d| {
                         d.text_color(rgb(p.muted))
-                            .hover(move |s| s.bg(chrome::tonal(p, 0.05)).text_color(rgb(p.text)))
+                            .hover(move |s| {
+                                s.bg(chrome::tonal(p, alpha::SUBTLE))
+                                    .text_color(rgb(p.text))
+                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.pick_scratch_project(choice.clone(), cx)
                             }))
@@ -604,7 +607,7 @@ impl Workspace {
                         .when(in_switcher, |d| {
                             d.child(
                                 Icon::new(IconName::Folder)
-                                    .size(px(12.))
+                                    .size(px(icon_size::SM))
                                     .text_color(rgb(p.muted)),
                             )
                         })
@@ -624,7 +627,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let item = row.item;
         let expanded = self
             .extras
@@ -725,7 +728,7 @@ impl Workspace {
     }
 
     fn scratch_status(&self, item: &Item) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let color = match item.status {
             Status::Pending => p.warning,
             Status::Done => p.success,
@@ -747,7 +750,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let item = row.item;
         let cwd = row.cwd.to_owned();
         let enabled = self.view.connected && !self.demo && !self.scratch_busy();
@@ -904,7 +907,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let item = row.item;
         let state = self.view.requests.get("scratch-read").filter(|s| {
             matches!(&s.request, Request::ScratchRead { cwd, path } if path == &item.path && cwd == row.cwd)
@@ -966,7 +969,7 @@ fn tag(icon: IconName, text: &'static str, color: u32) -> Div {
         .gap_1()
         .text_size(px(chrome::scale::CAPTION))
         .text_color(rgb(color))
-        .child(Icon::new(icon).size(px(11.)))
+        .child(Icon::new(icon).size(px(icon_size::XS)))
         .child(text)
 }
 
@@ -992,11 +995,15 @@ fn empty_state_toned(
             div()
                 .size(px(36.))
                 .rounded_full()
-                .bg(chrome::tonal(p, 0.06))
+                .bg(chrome::tonal(p, alpha::SUBTLE))
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Icon::new(icon).size(px(16.)).text_color(rgb(color))),
+                .child(
+                    Icon::new(icon)
+                        .size(px(icon_size::XL))
+                        .text_color(rgb(color)),
+                ),
         )
         .child(
             div()

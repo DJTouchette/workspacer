@@ -346,7 +346,7 @@ impl Workspace {
             let files = frozen.map_or(&*estimate, |f| &f.files);
             if !files.is_empty() {
                 let estimated = frozen.is_none_or(|f| f.estimated);
-                let p = self.appearance.palette();
+                let p = self.palette();
                 body = body.child(
                     div()
                         .mt_2()
@@ -362,7 +362,7 @@ impl Workspace {
                                 .child(
                                     div()
                                         .flex_1()
-                                        .text_size(px(12.))
+                                        .text_size(px(scale::META))
                                         .font_weight(FontWeight::MEDIUM)
                                         .child(format!(
                                             "{} file{} changed",
@@ -370,12 +370,24 @@ impl Workspace {
                                             if files.len() == 1 { "" } else { "s" }
                                         )),
                                 )
-                                .child(div().text_size(px(12.)).text_color(rgb(p.success)).child(
-                                    format!("+{}", files.iter().map(|f| f.added).sum::<usize>()),
-                                ))
-                                .child(div().text_size(px(12.)).text_color(rgb(p.error)).child(
-                                    format!("−{}", files.iter().map(|f| f.removed).sum::<usize>()),
-                                ))
+                                .child(
+                                    div()
+                                        .text_size(px(scale::META))
+                                        .text_color(rgb(p.success))
+                                        .child(format!(
+                                            "+{}",
+                                            files.iter().map(|f| f.added).sum::<usize>()
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(scale::META))
+                                        .text_color(rgb(p.error))
+                                        .child(format!(
+                                            "−{}",
+                                            files.iter().map(|f| f.removed).sum::<usize>()
+                                        )),
+                                )
                                 .child(
                                     self.quiet_button(
                                         "turn-changes",
@@ -393,16 +405,19 @@ impl Workspace {
                                     ),
                                 ),
                         )
-                        .child(div().text_size(px(10.)).text_color(rgb(p.muted)).child(
-                            if estimated {
-                                "Estimated from tools"
-                            } else {
-                                "Captured at turn end"
-                            },
-                        ))
+                        .child(
+                            div()
+                                .text_size(px(scale::OVERLINE))
+                                .text_color(rgb(p.muted))
+                                .child(if estimated {
+                                    "Estimated from tools"
+                                } else {
+                                    "Captured at turn end"
+                                }),
+                        )
                         .children(files.iter().map(|f| {
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(scale::META))
                                 .text_color(rgb(p.muted))
                                 .child(format!("{}  +{} −{}", f.path, f.added, f.removed))
                         })),
@@ -450,7 +465,7 @@ impl Workspace {
     /// row renders just before the reader reaches it: that is the moment to
     /// fetch the next page, keeping the scroll anchored on the current row.
     fn render_earlier(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let loading = self.view.loading_older;
         if !loading && !self.view.loading && self.view.connected {
             let this = cx.entity().downgrade();
@@ -476,7 +491,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.muted))
                     .when(loading, |d| {
                         d.child(brand_spinner(11., p))
@@ -485,7 +500,7 @@ impl Workspace {
                     .when(!loading, |d| {
                         d.cursor_pointer()
                             .hover(move |s| s.text_color(rgb(p.text)).bg(rgb(p.selected)))
-                            .child(Icon::new(IconName::ArrowUp).size(px(11.)))
+                            .child(Icon::new(IconName::ArrowUp).size(px(icon_size::XS)))
                             .child("Earlier messages")
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.command(Command::LoadOlder, cx)),
@@ -575,8 +590,8 @@ impl Workspace {
             .justify_end()
             .items_center()
             .gap_2()
-            .text_size(px(11.))
-            .text_color(rgb(self.appearance.palette().disabled))
+            .text_size(px(scale::CAPTION))
+            .text_color(rgb(self.palette().disabled))
             .children(duration)
             .when_some(timestamp, |d, timestamp| {
                 d.child(timing::timestamp_label(
@@ -594,7 +609,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let session = self.view.selected.clone().unwrap_or_default();
         let key = format!("{namespace}:{}:{}", self.chat_owner(), row.key);
         // Rows that are not anyone's message: task-list markers, the
@@ -615,7 +630,7 @@ impl Workspace {
                         .flex()
                         .items_start()
                         .gap_2()
-                        .text_size(px(12.))
+                        .text_size(px(scale::META))
                         .line_height(gpui::relative(1.45))
                         .text_color(rgb(p.muted))
                         .child(
@@ -624,7 +639,7 @@ impl Workspace {
                                 .h(px(12. * 1.45))
                                 .flex()
                                 .items_center()
-                                .child(Icon::new(IconName::Info).size(px(12.))),
+                                .child(Icon::new(IconName::Info).size(px(icon_size::SM))),
                         )
                         .child(div().flex_1().min_w_0().child(row.text.clone()));
                 }
@@ -640,7 +655,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_3()
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.muted))
                         .child(div().flex_1().h(px(1.)).bg(rgb(p.border)))
                         .child(div().flex_shrink_0().child(row.text.clone()))
@@ -697,7 +712,7 @@ impl Workspace {
                     div()
                         .flex()
                         .justify_between()
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.muted))
                         .child(
                             div()
@@ -766,7 +781,7 @@ impl Workspace {
                             .when(!origin.is_empty(), |d| {
                                 d.child(
                                     div()
-                                        .text_size(px(11.))
+                                        .text_size(px(scale::CAPTION))
                                         .text_color(rgb(p.disabled))
                                         .child(origin.to_owned()),
                                 )
@@ -804,7 +819,7 @@ impl Workspace {
                                         .id(SharedString::from(format!("{open_key}-toggle")))
                                         .debug_selector(|| "task-brief-toggle".into())
                                         .mt_1()
-                                        .text_size(px(11.))
+                                        .text_size(px(scale::CAPTION))
                                         .text_color(rgb(p.accent))
                                         .cursor_pointer()
                                         .hover(|s| s.underline())
@@ -1009,7 +1024,7 @@ impl Workspace {
                             )
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(px(scale::CAPTION))
                                     .text_color(rgb(p.muted))
                                     .child(path),
                             ),
@@ -1117,14 +1132,14 @@ impl Workspace {
                             .border_1()
                             .border_color(rgb(p.border))
                             .rounded(px(p.control_radius))
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(rgb(if enabled { p.text } else { p.disabled }))
                             .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(effect).build(window, cx))
                             .child(
                                 gpui::svg()
                                     .path(icon)
-                                    .size(px(12.))
+                                    .size(px(icon_size::SM))
                                     .flex_shrink_0()
                                     .text_color(rgb(if enabled { p.muted } else { p.disabled })),
                             )
@@ -1167,7 +1182,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let owner = self.view.selected.clone().unwrap_or_default();
-        let p = self.appearance.palette();
+        let p = self.palette();
         let label = match &link {
             wks_native::links::Link::File(target) => target.path.clone(),
             _ => label.to_owned(),
@@ -1188,7 +1203,7 @@ impl Workspace {
         .items_center()
         .gap_2()
         .py_1()
-        .text_size(px(11.))
+        .text_size(px(scale::CAPTION))
         .text_color(rgb(if self.view.connected {
             p.muted
         } else {
@@ -1296,7 +1311,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let copy = text.to_owned();
         let raw_key = format!("{key}-raw");
         let expanded = self.chat.open.get(&raw_key).copied().unwrap_or(false);
@@ -1422,7 +1437,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         self.view
             .pending_messages
             .iter()
@@ -1459,7 +1474,7 @@ impl Workspace {
                         div()
                             .debug_selector(|| "pending-message-status".into())
                             .px_1()
-                            .text_size(px(11.))
+                            .text_size(px(scale::CAPTION))
                             .text_color(rgb(p.disabled))
                             .child(status),
                     )
@@ -1469,7 +1484,7 @@ impl Workspace {
     }
 
     pub(super) fn render_pending(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mut body = div()
             .w_full()
             .max_w(px(CHAT_WIDTH))

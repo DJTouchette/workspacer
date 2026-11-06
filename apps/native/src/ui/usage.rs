@@ -77,7 +77,7 @@ fn account_header(account: &Account, p: Palette) -> Div {
         .flex()
         .items_center()
         .gap_2()
-        .text_size(px(12.))
+        .text_size(px(scale::META))
         .font_weight(FontWeight::MEDIUM)
         .child(chrome::brand_badge(
             &account.provider,
@@ -88,7 +88,7 @@ fn account_header(account: &Account, p: Palette) -> Div {
         .when(account.stale, |d| {
             d.child(
                 div()
-                    .text_size(px(10.))
+                    .text_size(px(scale::OVERLINE))
                     .text_color(rgb(p.disabled))
                     .child("stale"),
             )
@@ -133,7 +133,7 @@ fn usage_card(accounts: &[Account], error: Option<&str>, p: Palette) -> Div {
                                     div()
                                         .flex()
                                         .justify_between()
-                                        .text_size(px(10.))
+                                        .text_size(px(scale::OVERLINE))
                                         .child(div().text_color(rgb(p.muted)).child(w.label))
                                         .child(
                                             div()
@@ -162,7 +162,7 @@ fn usage_card(accounts: &[Account], error: Option<&str>, p: Palette) -> Div {
         })
         .child(
             div()
-                .text_size(px(10.))
+                .text_size(px(scale::OVERLINE))
                 .text_color(rgb(p.disabled))
                 .child("Click for details"),
         )
@@ -222,7 +222,7 @@ impl Workspace {
         if strip.is_none() && notes.is_empty() {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         Some(
             // A hairline above, like the footer's: the session list scrolls
             // under this strip, and without an edge a half-clipped row reads
@@ -250,7 +250,11 @@ impl Workspace {
                                 .text_color(rgb(p.muted))
                                 .cursor_pointer()
                                 .hover(move |s| s.bg(rgb(p.surface)))
-                                .child(Icon::new(icon).size(px(11.)).text_color(rgb(p.accent)))
+                                .child(
+                                    Icon::new(icon)
+                                        .size(px(icon_size::XS))
+                                        .text_color(rgb(p.accent)),
+                                )
                                 .child(div().flex_1().min_w_0().truncate().child(text))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.open_feature(Screen::Setup, window, cx)
@@ -289,14 +293,20 @@ impl Workspace {
         accounts: Vec<Account>,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let error = self.view.usage_error.clone();
         if accounts.is_empty() && error.is_none() {
             return None;
         }
         let hover = accounts.clone();
         let hover_error = error.clone();
-        let row = || div().flex().items_center().gap_2().text_size(px(11.));
+        let row = || {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_size(px(scale::CAPTION))
+        };
         Some(
             div()
                 .id("sidebar-usage")
@@ -317,7 +327,7 @@ impl Workspace {
                             .debug_selector(|| "sidebar-usage-error".into())
                             .child(
                                 Icon::new(IconName::TriangleAlert)
-                                    .size(px(11.))
+                                    .size(px(icon_size::XS))
                                     .text_color(rgb(p.warning)),
                             )
                             .child(
@@ -330,7 +340,7 @@ impl Workspace {
                             .child(
                                 div()
                                     .flex_shrink_0()
-                                    .text_size(px(10.))
+                                    .text_size(px(scale::OVERLINE))
                                     .text_color(rgb(p.muted))
                                     .child("Retry"),
                             ),
@@ -357,7 +367,7 @@ impl Workspace {
                             .child(
                                 div()
                                     .flex_shrink_0()
-                                    .text_size(px(10.))
+                                    .text_size(px(scale::OVERLINE))
                                     .text_color(rgb(p.muted))
                                     .child(w.label),
                             )
@@ -368,7 +378,7 @@ impl Workspace {
                                     .flex_shrink_0()
                                     .flex()
                                     .justify_end()
-                                    .text_size(px(10.))
+                                    .text_size(px(scale::OVERLINE))
                                     .text_color(rgb(color(w, p)))
                                     .child(format!("{}%", w.pct.round() as u64)),
                             ),
@@ -394,7 +404,7 @@ impl Workspace {
         if !self.usage_open {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (accounts, now) = self.usage_accounts().unwrap_or_default();
         let updated = self
             .view
@@ -432,13 +442,13 @@ impl Workspace {
                             .gap_1()
                             .child(
                                 div()
-                                    .text_size(px(16.))
+                                    .text_size(px(scale::HEADING))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child("Usage"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.))
+                                    .text_size(px(scale::META))
                                     .text_color(rgb(p.muted))
                                     .child(match &updated {
                                         Some(updated) => format!("Rate-limit windows per account · {updated}"),
@@ -477,7 +487,7 @@ impl Workspace {
                     .when_some(account.failure.clone().filter(|_| account.unmeasured.is_none()), |d, failure| {
                         d.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(scale::CAPTION))
                                 .text_color(rgb(p.warning))
                                 .child(format!("Last refresh failed: {failure}")),
                         )
@@ -494,13 +504,13 @@ impl Workspace {
                                     .gap_2()
                                     .child(
                                         div()
-                                            .text_size(px(13.))
+                                            .text_size(px(scale::BODY))
                                             .font_weight(FontWeight::MEDIUM)
                                             .child(long_label(w)),
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(13.))
+                                            .text_size(px(scale::BODY))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .text_color(rgb(color(w, p)))
                                             .child(format!("{}%", w.pct.round() as u64)),
@@ -509,7 +519,7 @@ impl Workspace {
                                     .when_some(w.resets_at, |d, reset| {
                                         d.child(
                                             div()
-                                                .text_size(px(11.))
+                                                .text_size(px(scale::CAPTION))
                                                 .text_color(rgb(p.muted))
                                                 .child(format!(
                                                     "resets in {}",
@@ -520,7 +530,7 @@ impl Workspace {
                             )
                             .child(meter(w, 8., p))
                             .when_some(pace_line(w, p), |d, (line, tone)| {
-                                d.child(div().text_size(px(11.)).text_color(rgb(tone)).child(line))
+                                d.child(div().text_size(px(scale::CAPTION)).text_color(rgb(tone)).child(line))
                             })
                     }))
             }))
@@ -546,7 +556,7 @@ impl Workspace {
                         .py_6()
                         .border_t_1()
                         .border_color(rgb(p.border))
-                        .text_size(px(12.))
+                        .text_size(px(scale::META))
                         .text_color(rgb(p.muted))
                         .child("No account has a measured window right now."),
                 )
@@ -557,7 +567,7 @@ impl Workspace {
                     .py_3()
                     .border_t_1()
                     .border_color(rgb(p.border))
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.disabled))
                     .child("Windows are account-wide: every session on a login shares them. The tick marks an even pace."),
             );

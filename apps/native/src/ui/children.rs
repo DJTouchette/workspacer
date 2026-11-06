@@ -154,7 +154,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mut body = div()
             .ml_3()
             .pl_3()
@@ -352,26 +352,26 @@ impl Workspace {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_size(px(12.))
+                                .text_size(px(scale::META))
                                 .font_weight(FontWeight::MEDIUM)
                                 .child(label),
                         )
                         .child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(scale::CAPTION))
                                 .text_color(rgb(color))
                                 .child(status(child, self.view.connected)),
                         )
                         .child(
                             Icon::new(IconName::ArrowRight)
-                                .size(px(12.))
+                                .size(px(icon_size::SM))
                                 .text_color(rgb(if enabled { p.muted } else { p.disabled })),
                         ),
                 )
                 .when(!metadata.is_empty(), |d| {
                     d.child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(px(scale::CAPTION))
                             .text_color(rgb(p.muted))
                             .child(metadata.join(" · ")),
                     )
@@ -379,7 +379,7 @@ impl Workspace {
                 .when(!child.telemetry.last_tool_name.is_empty(), |d| {
                     d.child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(px(scale::CAPTION))
                             .text_color(rgb(p.muted))
                             .child(format!(
                                 "{}{}",
@@ -411,7 +411,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(state)=self.view.requests.get("subagent-history").filter(|s|matches!(&s.request,Request::SubagentHistory{session,agent:target} if session==parent && target==agent)).cloned() else{return div().into_any_element();};
         if self.child_ui.closed == Some(state.number) {
             return div()
@@ -444,7 +444,7 @@ impl Workspace {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .child(format!("{title} · retained transcript")),
                     )
                     .child({
@@ -506,7 +506,7 @@ impl Workspace {
         if state.value["omitted"] == true || state.value["first_seq"].as_u64().unwrap_or(0) > 1 {
             body = body.child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.muted))
                     .child("Earlier child events were trimmed."),
             );
@@ -637,7 +637,7 @@ impl Workspace {
     /// subagent's title and model, and refresh.
     pub(super) fn render_child_title_bar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let (parent, child) = self.viewed_child()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let title = Self::child_title(child.as_ref());
         let status = child
             .as_ref()
@@ -675,13 +675,13 @@ impl Workspace {
                         .flex_shrink_0()
                         .max_w(px(140.))
                         .truncate()
-                        .text_size(px(12.))
+                        .text_size(px(scale::META))
                         .text_color(rgb(p.muted))
                         .child(parent_title),
                 )
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(scale::META))
                         .text_color(rgb(p.disabled))
                         .child("/"),
                 )
@@ -691,7 +691,7 @@ impl Workspace {
                         .min_w_0()
                         .max_w(px(320.))
                         .truncate()
-                        .text_size(px(13.))
+                        .text_size(px(scale::BODY))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(title),
                 )
@@ -702,7 +702,7 @@ impl Workspace {
                         .py(px(3.))
                         .rounded_full()
                         .bg(rgb(p.selected))
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .font_weight(FontWeight::MEDIUM)
                         .child(chrome::brand_badge(
                             wks_native::model::model_provider(&model).unwrap_or(&parent.provider),
@@ -715,7 +715,7 @@ impl Workspace {
                     div()
                         .flex_shrink_0()
                         .pr_2()
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.muted))
                         .child(status),
                 )
@@ -736,7 +736,7 @@ impl Workspace {
     /// Stands in for the composer: provider-native subagents take no input.
     pub(super) fn render_child_bar(&self, cx: &mut Context<Self>) -> Option<Div> {
         let (_, child) = self.viewed_child()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let running = child.as_ref().is_some_and(ChildAgent::running);
         Some(
             div()
@@ -755,7 +755,7 @@ impl Workspace {
                 .gap_3()
                 .child(
                     Icon::new(IconName::EyeOff)
-                        .size(px(16.))
+                        .size(px(icon_size::XL))
                         .text_color(rgb(p.muted)),
                 )
                 .child(
@@ -767,17 +767,20 @@ impl Workspace {
                         .gap(px(2.))
                         .child(
                             div()
-                                .text_size(px(13.))
+                                .text_size(px(scale::BODY))
                                 .font_weight(FontWeight::MEDIUM)
                                 .child("Read-only subagent"),
                         )
-                        .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(
-                            if running {
-                                "Its parent drives it; this view updates as it works."
-                            } else {
-                                "Its parent drove it. Message the parent to follow up."
-                            },
-                        )),
+                        .child(
+                            div()
+                                .text_size(px(scale::META))
+                                .text_color(rgb(p.muted))
+                                .child(if running {
+                                    "Its parent drives it; this view updates as it works."
+                                } else {
+                                    "Its parent drove it. Message the parent to follow up."
+                                }),
+                        ),
                 )
                 .child(
                     self.quiet_button(
@@ -804,7 +807,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let total = children.len();
         let settled = children.iter().all(ChildAgent::settled);
         let working = children.iter().filter(|c| c.running()).count();
@@ -846,7 +849,7 @@ impl Workspace {
         let chip = |text: String, color: u32| {
             div()
                 .flex_shrink_0()
-                .text_size(px(11.))
+                .text_size(px(scale::CAPTION))
                 .text_color(rgb(color))
                 .child(text)
         };
@@ -876,11 +879,15 @@ impl Workspace {
                     .gap_2()
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(p.selected)))
-                    .child(Icon::new(icon).size(px(14.)).text_color(rgb(tone)))
+                    .child(
+                        Icon::new(icon)
+                            .size(px(icon_size::LG))
+                            .text_color(rgb(tone)),
+                    )
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(title),
                     )

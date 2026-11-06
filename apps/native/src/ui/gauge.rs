@@ -240,7 +240,7 @@ pub(super) fn detail(gauge: Gauge, cold: Option<String>, p: Palette) -> Stateful
         .items_center()
         .gap_1()
         .px_1()
-        .text_size(px(11.))
+        .text_size(px(scale::CAPTION))
         .text_color(rgb(p.muted))
         .when(cold.is_some(), |d| {
             d.child(cache::marker(p, 11., true).debug_selector(|| "title-context-cold".into()))
@@ -284,7 +284,7 @@ pub(super) fn context_meter(session: &Session, p: Palette) -> Option<Stateful<Di
             .px_2()
             .h(px(28.))
             .rounded_full()
-            .text_size(px(11.))
+            .text_size(px(scale::CAPTION))
             .child(div().text_color(rgb(p.muted)).child("ctx"))
             .child(
                 div()

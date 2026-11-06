@@ -186,7 +186,10 @@ Existing-hub mode does not own or stop backend processes on exit. The connected 
 Native appearance uses Dark, Light and Nord semantic palettes plus five ported
 from Omarchy's stock themes (Tokyo Night, Catppuccin Mocha, Catppuccin Latte,
 Gruvbox, Everforest), selected in **Settings → Appearance** and saved on this
-device. Floating composer and approval
+device. **Settings → Custom themes** forks the theme in use so you can change any
+palette color and the corner shape; see [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) for the
+tokens and components every screen uses (Settings → Appearance → Design system shows
+them live). Floating composer and approval
 surfaces use palette-specific shadows. Native palettes are independent of the
 Electron client's custom-theme registry.
 

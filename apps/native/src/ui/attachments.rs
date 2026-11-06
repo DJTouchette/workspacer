@@ -176,7 +176,7 @@ impl Workspace {
         cwd: &str,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.view.busy;
         let remove = |this: &Self, ix: usize, cx: &mut Context<Self>| {
             this.icon_button(
@@ -276,11 +276,17 @@ impl Workspace {
                                 .child(match preview {
                                     None => brand_spinner(12., p).into_any_element(),
                                     Some(_) => Icon::new(IconName::File)
-                                        .size(px(14.))
+                                        .size(px(icon_size::LG))
                                         .text_color(rgb(p.accent))
                                         .into_any_element(),
                                 })
-                                .child(div().min_w_0().truncate().text_size(px(12.)).child(name))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_size(px(scale::META))
+                                        .child(name),
+                                )
                                 .child(remove(self, ix, cx)),
                         }
                     }),
@@ -296,7 +302,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .text_size(px(12.))
+                        .text_size(px(scale::META))
                         .text_color(rgb(p.muted))
                         .child(brand_spinner(12., p))
                         .child("Attaching…"),

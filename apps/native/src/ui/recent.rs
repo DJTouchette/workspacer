@@ -405,7 +405,7 @@ impl Workspace {
 
     /// The page's items below its header: toolbar, status, groups, footer.
     pub(super) fn render_recent(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let page = self.recent_page(cx);
         // Until the first answer there is nothing to call empty.
         let loading = self.view.requests.get("recent").is_none_or(|s| s.loading);
@@ -446,7 +446,7 @@ impl Workspace {
                         Input::new(&self.extras.recent.query)
                             .prefix(
                                 Icon::new(IconName::Search)
-                                    .size(px(14.))
+                                    .size(px(icon_size::LG))
                                     .text_color(rgb(p.muted)),
                             )
                             .cleanable(true)
@@ -536,8 +536,8 @@ impl Workspace {
                             .text_size(px(chrome::scale::META))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(rgb(p.accent))
-                            .hover(move |s| s.bg(chrome::tonal(p, 0.06)))
-                            .child(Icon::new(IconName::ChevronDown).size(px(12.)))
+                            .hover(move |s| s.bg(chrome::tonal(p, alpha::SUBTLE)))
+                            .child(Icon::new(IconName::ChevronDown).size(px(icon_size::SM)))
                             .child(format!(
                                 "Show {more} more{}",
                                 if more < hidden {
@@ -616,7 +616,7 @@ impl Workspace {
     /// "142 sessions in 12 projects", or how many a search found, with
     /// fold-all and clear-search actions.
     fn render_recent_summary(&self, page: &RecentPage, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let plural =
             |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
         let groups = plural(page.groups.len(), "project", "projects");
@@ -704,7 +704,7 @@ impl Workspace {
     /// Nothing to list: a search that found nothing, an empty Hidden
     /// filter, or a hub with no sessions yet. Says which, and the way out.
     fn render_recent_empty(&self, page: &RecentPage, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (icon, title, body) = match (page.searching, self.extras.show_archived) {
             (true, _) => (
                 IconName::Search,
@@ -735,11 +735,15 @@ impl Workspace {
                     .size(px(36.))
                     .mb_1()
                     .rounded_full()
-                    .bg(chrome::tonal(p, 0.06))
+                    .bg(chrome::tonal(p, alpha::SUBTLE))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(Icon::new(icon).size(px(16.)).text_color(rgb(p.muted))),
+                    .child(
+                        Icon::new(icon)
+                            .size(px(icon_size::XL))
+                            .text_color(rgb(p.muted)),
+                    ),
             )
             .child(
                 div()
@@ -779,7 +783,7 @@ impl Workspace {
         searching: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let key = group.key.clone();
         let count = if searching {
             format!("{} of {}", group.entries.len(), group.total)
@@ -804,7 +808,7 @@ impl Workspace {
             .items_center()
             .gap_2()
             .when(!searching, |d| {
-                d.hover(move |s| s.bg(chrome::tonal(p, 0.04)))
+                d.hover(move |s| s.bg(chrome::tonal(p, alpha::FAINT)))
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_recent_group(&key, cx)))
             })
             .child(
@@ -842,7 +846,7 @@ impl Workspace {
                     .min_w(px(22.))
                     .px(px(6.))
                     .rounded_full()
-                    .bg(chrome::tonal(p, 0.07))
+                    .bg(chrome::tonal(p, alpha::REST))
                     .flex()
                     .justify_center()
                     .text_size(px(chrome::scale::CAPTION))
@@ -866,7 +870,7 @@ impl Workspace {
         now: i64,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let s = &entry.session;
         let open = s.clone();
         let resume = s.clone();
@@ -952,7 +956,7 @@ impl Workspace {
                 if selected {
                     d.bg(rgb(p.selected))
                 } else {
-                    d.hover(move |s| s.bg(chrome::tonal(p, 0.04)))
+                    d.hover(move |s| s.bg(chrome::tonal(p, alpha::FAINT)))
                 }
             })
             // The keyboard cursor: the row's fill plus an accent rule.
@@ -999,7 +1003,7 @@ impl Workspace {
                                         .flex_shrink_0()
                                         .px(px(6.))
                                         .rounded_full()
-                                        .bg(chrome::tonal(p, 0.07))
+                                        .bg(chrome::tonal(p, alpha::REST))
                                         .text_size(px(chrome::scale::CAPTION))
                                         .text_color(rgb(p.muted))
                                         .debug_selector(move || format!("recent-hidden-{ix}"))
@@ -1074,7 +1078,7 @@ impl Workspace {
                                         .pl_3()
                                         .pr(px(6.))
                                         .rounded(px(p.control_radius))
-                                        .bg(chrome::tonal(p, 0.04))
+                                        .bg(chrome::tonal(p, alpha::FAINT))
                                         .children(actions.into_iter().map(|a| a.tab_stop(false))),
                                 ),
                         ),
@@ -1091,11 +1095,11 @@ impl Workspace {
         enabled: bool,
         danger: bool,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (wash, ink) = if danger {
             (gpui::Hsla::from(rgb(p.error)).opacity(0.12), p.error)
         } else {
-            (chrome::tonal(p, 0.08), p.text)
+            (chrome::tonal(p, alpha::REST), p.text)
         };
         chrome::interactive_control(div().id(id), p, enabled)
             .h(px(28.))

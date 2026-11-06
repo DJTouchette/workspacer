@@ -73,7 +73,7 @@ impl Workspace {
     }
 
     pub(super) fn render_jobs(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let rows = self.job_rows();
         let list = rows.clone().unwrap_or_default();
         let runs = self.job_runs();
@@ -142,7 +142,7 @@ impl Workspace {
     /// The hub did not answer `jobs.list`: say so plainly, with its reason
     /// and a way to ask again, instead of opening on a bare error.
     fn jobs_unavailable(&self, error: String, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let connected = self.view.connected;
         jobs_state(
             IconName::TriangleAlert,
@@ -177,7 +177,7 @@ impl Workspace {
 
     /// Jobs / Runs, a segmented control; Runs counts today's failures.
     fn job_tabs(&self, list: &[Job], runs: Option<&[Run]>, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let now = now_ms();
         let failed_today = runs.map_or(0, |runs| {
             runs.iter()
@@ -266,7 +266,7 @@ impl Workspace {
         runs: Option<Vec<Run>>,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let caption = |text: String, color: u32| {
             div()
                 .py_6()
@@ -381,7 +381,7 @@ impl Workspace {
         list: &[Job],
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let key = (run.job_id.clone(), run.started_at);
         let open = self.extras.job_run_open.as_ref() == Some(&key);
         let job = list.iter().find(|j| j.id == run.job_id);
@@ -412,7 +412,7 @@ impl Workspace {
             .gap_3()
             .min_w_0()
             .cursor_pointer()
-            .hover(|s| s.bg(chrome::tonal(p, 0.04)))
+            .hover(|s| s.bg(chrome::tonal(p, alpha::FAINT)))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.extras.job_run_open = if this.extras.job_run_open.as_ref() == Some(&toggle) {
                     None
@@ -515,7 +515,7 @@ impl Workspace {
     }
 
     fn run_detail(&self, ix: usize, run: &Run, job: Option<&Job>, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let now = now_ms();
         let mut when = format!(
             "Started {} ({})",
@@ -605,7 +605,7 @@ impl Workspace {
 
     /// A job's last runs as small bars, oldest to newest.
     fn run_strip(&self, id: &str, runs: Option<&[Run]>) -> Option<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mut last: Vec<&Run> = runs?
             .iter()
             .filter(|r| r.job_id == id)
@@ -625,7 +625,7 @@ impl Workspace {
                     div()
                         .w(px(4.))
                         .h(px(if run.status == "error" { 12. } else { 8. }))
-                        .rounded(px(1.))
+                        .rounded(px(radius::HAIRLINE))
                         .bg(rgb(run_color(run, p)))
                 })),
         )
@@ -639,7 +639,7 @@ impl Workspace {
         runs: Option<&[Run]>,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let expanded = self.extras.job_expanded.as_deref() == Some(job.id.as_str());
         let target = job
             .change()
@@ -782,7 +782,7 @@ impl Workspace {
 
     /// Right of a job's name: how its last run went.
     fn job_status(&self, job: &Job, now: i64) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let caption = |text: String, color: u32| {
             div()
                 .flex_shrink_0()
@@ -889,7 +889,7 @@ impl Workspace {
 
     /// A text-only, low-emphasis row action.
     fn job_quiet(&self, id: SharedString, label: &'static str, enabled: bool) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         chrome::interactive_control(div().id(id), p, enabled)
             .px_3()
             .py_2()
@@ -898,8 +898,9 @@ impl Workspace {
             .text_size(px(chrome::scale::META))
             .text_color(rgb(if enabled { p.muted } else { p.disabled }))
             .when(enabled, |d| {
-                d.cursor_pointer()
-                    .hover_text_style(|s| s.bg(chrome::tonal(p, 0.07)).text_color(rgb(p.text)))
+                d.cursor_pointer().hover_text_style(|s| {
+                    s.bg(chrome::tonal(p, alpha::REST)).text_color(rgb(p.text))
+                })
             })
             .child(label)
     }
@@ -918,7 +919,7 @@ impl Workspace {
     /// The whole spec (beside the job a change would replace) and, for an
     /// approved job, its recent runs.
     fn job_detail(&self, job: &Job, target: Option<&Job>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let note = if job.change() {
             Some(CHANGE_NOTE)
         } else if job.proposal() {
@@ -961,7 +962,7 @@ impl Workspace {
     }
 
     fn spec_block(&self, title: Option<&'static str>, job: &Job, base: Option<&Job>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let before = base.map(|base| self.job_details(base));
         div()
             .flex()
@@ -1002,7 +1003,7 @@ impl Workspace {
     }
 
     fn job_history(&self, id: &str) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self
             .view
             .requests
@@ -1128,7 +1129,7 @@ fn chip(text: &'static str, color: u32, p: Palette) -> Div {
         .py(px(1.))
         .rounded(px(p.control_radius))
         .bg(if color == p.muted {
-            chrome::tonal(p, 0.08)
+            chrome::tonal(p, alpha::REST)
         } else {
             tint(color, 0.14)
         })
@@ -1172,11 +1173,15 @@ pub(super) fn jobs_state(
                 .items_center()
                 .justify_center()
                 .bg(if tone == p.muted {
-                    chrome::tonal(p, 0.07)
+                    chrome::tonal(p, alpha::REST)
                 } else {
                     tint(tone, 0.14)
                 })
-                .child(Icon::new(icon).size(px(18.)).text_color(rgb(tone))),
+                .child(
+                    Icon::new(icon)
+                        .size(px(icon_size::HERO))
+                        .text_color(rgb(tone)),
+                ),
         )
         .child(
             div()

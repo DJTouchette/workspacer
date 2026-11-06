@@ -451,11 +451,20 @@ fn settings_categories_and_search_filter_preferences(cx: &mut TestAppContext) {
     // One category at a time; Appearance first.
     assert!(visual.debug_bounds("setting-theme").is_some());
     assert!(visual.debug_bounds("setting-vim").is_none());
-    // j / k step through categories in Normal mode.
+    // j / k step through categories in Normal mode: Custom themes, then
+    // Typography.
+    visual.simulate_keystrokes("j");
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("setting-custom-themes").is_some());
     visual.simulate_keystrokes("j");
     visual.run_until_parked();
     assert!(visual.debug_bounds("setting-interface-font").is_some());
-    assert!(visual.debug_bounds("setting-theme").is_none());
+    // Debug bounds can linger a frame after a category with few rows, so
+    // pin the category itself rather than a selector's absence.
+    assert_eq!(
+        workspace.read_with(&visual, |this, _| this.settings_section),
+        settings::SettingsSection::Typography
+    );
     let keyboard = visual.debug_bounds("settings-nav-Keyboard").unwrap();
     visual.simulate_click(keyboard.center(), gpui::Modifiers::default());
     visual.run_until_parked();
@@ -912,4 +921,124 @@ fn remote_settings_pair_and_revoke_through_owner_requests(cx: &mut TestAppContex
     visual.run_until_parked();
     assert!(sent(&mut commands).iter().any(|r| matches!(r,
         wks_native::features::Request::RemoteAction(wks_native::remote::Action::Revoke(token)) if token == "t-view")));
+}
+
+/// Settings → Custom themes: a new theme forks the one in use, a typed hex
+/// value repaints at once, reset restores the base, Corners reshape, and
+/// choosing a built-in leaves the custom theme. The gallery then opens.
+#[gpui::test]
+fn custom_theme_editor_repaints_live_and_falls_back_to_built_ins(cx: &mut TestAppContext) {
+    use wks_native::appearance::Corners;
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(state("a")), window, cx);
+            this.set_appearance(Appearance::Nord, window, cx);
+            this.show_screen(Screen::Settings, window, cx);
+            this.settings_section = settings::SettingsSection::Themes;
+        })
+    });
+    visual.run_until_parked();
+    let new = visual.debug_bounds("new-custom-theme").unwrap();
+    visual.simulate_click(new.center(), gpui::Modifiers::none());
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, _| {
+        let theme = this.custom_themes.active().expect("a new theme is active");
+        assert_eq!(
+            (theme.name.as_str(), theme.base),
+            ("My theme", Appearance::Nord)
+        );
+        assert_eq!(this.palette().chat, Appearance::Nord.palette().chat);
+        // Tests never write the user's config.
+        assert!(this.custom_themes_path.is_none());
+    });
+    assert!(visual.debug_bounds("theme-token-accent").is_some());
+    assert!(visual.debug_bounds("theme-contrast").is_some());
+
+    // Typing a full hex value applies it; a partial one waits.
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let editor = this.theme_editor.as_ref().unwrap();
+            let accent = editor.field("accent").unwrap();
+            accent.update(cx, |input, cx| input.set_value("#ff88", window, cx));
+        })
+    });
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.palette().accent, Appearance::Nord.palette().accent)
+    });
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let accent = this.theme_editor.as_ref().unwrap().field("accent").unwrap();
+            accent.update(cx, |input, cx| input.set_value("#ff8800", window, cx));
+        })
+    });
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, cx| {
+        assert_eq!(this.palette().accent, 0xff8800);
+        let theme = this.custom_themes.active().unwrap();
+        assert_eq!(
+            theme.colors.get("accent").map(String::as_str),
+            Some("#ff8800")
+        );
+        // The component library follows too (focus rings, links).
+        assert_eq!(
+            gpui_component::Theme::global(cx).colors.ring,
+            gpui::Hsla::from(rgb(0xff8800))
+        );
+    });
+
+    // Reset restores the base color and its field. A large landscape
+    // window keeps the accent row on screen.
+    visual.simulate_resize(gpui::size(px(2400.), px(2000.)));
+    visual.run_until_parked();
+    let reset = visual.debug_bounds("reset-token-accent").unwrap();
+    visual.simulate_click(reset.center(), gpui::Modifiers::none());
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, cx| {
+        let nord = Appearance::Nord.palette().accent;
+        assert_eq!(this.palette().accent, nord);
+        let field = this.theme_editor.as_ref().unwrap().field("accent").unwrap();
+        assert_eq!(field.read(cx).value().as_ref(), format!("#{nord:06x}"));
+    });
+
+    // Corners reshape every surface together.
+    let crisp = visual.debug_bounds("theme-corners-0").unwrap();
+    visual.simulate_click(crisp.center(), gpui::Modifiers::none());
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.custom_themes.active().unwrap().corners, Corners::Crisp);
+        let p = this.palette();
+        let (control, panel, composer) = Corners::Crisp.radii();
+        assert_eq!(
+            (p.control_radius, p.panel_radius, p.composer_radius),
+            (control, panel, composer)
+        );
+    });
+
+    // A built-in tile leaves the custom theme but keeps it for later.
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.enter_settings_section(settings::SettingsSection::Appearance, cx);
+            window.refresh();
+        })
+    });
+    visual.run_until_parked();
+    let light = visual.debug_bounds("theme-Light").unwrap();
+    visual.simulate_click(light.center(), gpui::Modifiers::none());
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.custom_themes.active.is_none());
+        assert_eq!(this.custom_themes.themes.len(), 1);
+        assert_eq!(this.palette().chat, Appearance::Light.palette().chat);
+    });
+
+    // The design-system gallery draws every palette role.
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.show_screen(Screen::DesignSystem, window, cx)
+        })
+    });
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("design-system").is_some());
 }

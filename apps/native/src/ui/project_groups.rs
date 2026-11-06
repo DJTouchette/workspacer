@@ -321,7 +321,7 @@ impl Workspace {
     /// The Projects page's projects: a card per group, the New project
     /// action, and the editor when it is open.
     pub(super) fn render_project_groups(&self, compact: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let groups = self.project_groups();
         let can_write = self.view.connected
             && !self.demo
@@ -390,7 +390,7 @@ impl Workspace {
                             .gap_3()
                             .child(
                                 Icon::new(IconName::FolderClosed)
-                                    .size(px(16.))
+                                    .size(px(icon_size::XL))
                                     .text_color(rgb(p.muted)),
                             )
                             .child(
@@ -429,7 +429,7 @@ impl Workspace {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (all, live) = sessions.unwrap_or_default();
         let pending = self.pending_in(&group.folders);
         let folders = group.folders.len();
@@ -625,7 +625,7 @@ impl Workspace {
                                 .min_w_0()
                                 .child(
                                     Icon::new(IconName::Folder)
-                                        .size(px(11.))
+                                        .size(px(icon_size::XS))
                                         .text_color(rgb(p.muted)),
                                 )
                                 .child(
@@ -649,7 +649,7 @@ impl Workspace {
     }
 
     fn render_group_editor(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(draft) = self.extras.group_draft.clone() else {
             return div();
         };
@@ -700,7 +700,7 @@ impl Workspace {
                 .min_w_0()
                 .child(
                     Icon::new(IconName::Folder)
-                        .size(px(12.))
+                        .size(px(icon_size::SM))
                         .text_color(rgb(p.muted)),
                 )
                 .child(
@@ -745,14 +745,14 @@ impl Workspace {
                 .h(px(24.))
                 .px_2()
                 .rounded_full()
-                .bg(chrome::tonal(p, 0.06))
+                .bg(chrome::tonal(p, alpha::SUBTLE))
                 .text_size(px(chrome::scale::CAPTION))
                 .text_color(rgb(p.muted))
-                .hover(move |s| s.bg(chrome::tonal(p, 0.12)).text_color(rgb(p.text)))
+                .hover(move |s| s.bg(chrome::tonal(p, alpha::HOVER)).text_color(rgb(p.text)))
                 .flex()
                 .items_center()
                 .gap_1()
-                .child(Icon::new(IconName::Plus).size(px(10.)))
+                .child(Icon::new(IconName::Plus).size(px(icon_size::XS)))
                 .child(self.project_name(&path))
                 .tooltip({
                     let path = SharedString::from(path.clone());

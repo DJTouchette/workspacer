@@ -86,12 +86,13 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("native-smoke.png"))
     parser.add_argument("--settle-seconds", type=float, default=3)
     parser.add_argument("--sample-seconds", type=float, default=3)
-    parser.add_argument("--screen", choices=("conversation", "projects", "settings", "history", "jobs", "scratch", "changes", "setup", "session", "model"), default="conversation")
+    parser.add_argument("--screen", choices=("conversation", "projects", "settings", "history", "jobs", "scratch", "changes", "setup", "session", "model", "design"), default="conversation")
     parser.add_argument("--theme", choices=("dark", "light", "nord", "tokyo-night", "catppuccin", "gruvbox",
                                             "everforest", "catppuccin-latte"), default="dark")
     parser.add_argument("--width", type=int, default=1000)
     parser.add_argument("--height", type=int, default=700)
     parser.add_argument("--scroll-pages", type=int, default=0, help="Scroll chat upward by this many half-pages before capture")
+    parser.add_argument("--wheel", type=int, default=0, help="Scroll the page under the window's center down by this many wheel steps before capture")
     parser.add_argument("--no-input", action="store_true", help="Capture without sending a fixture message")
     parser.add_argument("--paint-region", action="append", default=[], metavar="X,Y,W,H",
                         help="Require a region to paint content, not a blank background; repeatable")
@@ -103,6 +104,7 @@ def main():
     parser.add_argument("--keys", nargs="+", help="Additional X11 keys before capture, for example Escape Tab")
     parser.add_argument("--new-session", action="store_true", help="Capture the creation form; requires a fixture --bus")
     parser.add_argument("--session", help="Open this session ID at startup; requires a fixture --bus")
+    parser.add_argument("--custom-themes", type=Path, help="Seed native-custom-themes.json from this file (custom themes and the active one)")
     parser.add_argument("--setting", action="append", default=[], metavar="KEY=JSON",
                         help="Seed native-settings.json, for example merge_turn_tools=true; repeatable")
     args = parser.parse_args()
@@ -176,6 +178,8 @@ def main():
     config = Path(settings.name) / "workspacer"
     config.mkdir()
     (config / "native-theme.json").write_text(json.dumps(args.theme))
+    if args.custom_themes:
+        (config / "native-custom-themes.json").write_text(args.custom_themes.read_text())
     if seeded:
         (config / "native-settings.json").write_text(json.dumps(seeded))
     environment = dict(os.environ, XDG_CONFIG_HOME=settings.name)
@@ -202,11 +206,15 @@ def main():
             drive("key", "ctrl+Return")
         if args.screen != "conversation":
             drive("key", "Escape")
-            drive("key", "--delay", "80", "g", {"projects": "p", "settings": "s", "history": "h", "jobs": "j", "scratch": "n", "changes": "d", "setup": "a", "session": "e", "model": "m"}[args.screen])
+            drive("key", "--delay", "80", "g", {"projects": "p", "settings": "s", "history": "h", "jobs": "j", "scratch": "n", "changes": "d", "setup": "a", "session": "e", "model": "m", "design": "y"}[args.screen])
         if args.scroll_pages:
             drive("key", "Escape")
             drive("key", "--delay", "80", *(["ctrl+u"] * min(50, max(0, args.scroll_pages))))
         time.sleep(1)
+        if args.wheel:
+            drive("mousemove", "--window", window, str(args.width * 2 // 3), str(args.height // 2))
+            drive("click", "--repeat", str(args.wheel), "--delay", "30", "5")
+            time.sleep(1)
         for click in clicks:
             drive("mousemove", "--window", window, str(click[0]), str(click[1]), "click", "1")
             # Capture the resulting layout, without a tooltip left behind by

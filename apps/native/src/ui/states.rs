@@ -75,7 +75,7 @@ impl Workspace {
     }
 
     pub(super) fn render_connection_banner(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let copy = self.connection_copy();
         div()
             .debug_selector(|| "connection-banner".into())
@@ -87,7 +87,7 @@ impl Workspace {
             .flex_wrap()
             .items_center()
             .gap_2()
-            .text_size(px(12.))
+            .text_size(px(scale::META))
             .child(if copy.animated {
                 brand_spinner(12., p)
             } else {
@@ -96,7 +96,7 @@ impl Workspace {
             .child(
                 div().flex_1().min_w_0().child(copy.title).child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.muted))
                         .child(copy.description),
                 ),
@@ -113,7 +113,7 @@ impl Workspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let copy = self.connection_copy();
         let conversation_error =
             self.view.connected && self.view.notice.starts_with("Conversation unavailable:");
@@ -239,7 +239,7 @@ impl Workspace {
                     .child(
                         div()
                             .size(px(if compact { 36. } else { 48. }))
-                            .rounded(px(12.))
+                            .rounded(px(p.control_radius))
                             .bg(rgb(p.surface))
                             .flex()
                             .items_center()
@@ -260,7 +260,7 @@ impl Workspace {
                     .child(
                         div()
                             .text_center()
-                            .text_size(px(13.))
+                            .text_size(px(scale::BODY))
                             .line_height(gpui::relative(1.5))
                             .text_color(rgb(p.muted))
                             .child(description),

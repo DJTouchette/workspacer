@@ -62,14 +62,14 @@ impl Workspace {
 
     fn note(&self, text: impl Into<SharedString>, color: u32) -> Div {
         div()
-            .text_size(px(12.))
+            .text_size(px(scale::META))
             .text_color(rgb(color))
             .child(text.into())
     }
 
     /// Tailscale status and the HTTPS switch.
     pub(super) fn render_remote_sharing(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.remote_busy();
         let state = self.remote_state();
         let refresh = self
@@ -119,7 +119,7 @@ impl Workspace {
     }
 
     fn render_serve_switch(&self, remote: &Remote, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let serving = remote.serving;
         let enabled = remote.can_serve && !busy;
         let confirm = self.remote.confirm_reset;
@@ -146,7 +146,7 @@ impl Workspace {
                             .flex_col()
                             .child(
                                 div()
-                                    .text_size(px(13.))
+                                    .text_size(px(scale::BODY))
                                     .font_weight(FontWeight::MEDIUM)
                                     .child(if remote.reachable() {
                                         format!("https://{}", remote.magic_name)
@@ -235,7 +235,7 @@ impl Workspace {
 
     /// Scope picker, QR code and link for one pairing.
     pub(super) fn render_phone_pairing(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.remote_busy();
         let Some(remote) = self.remote_state() else {
             return div().child(self.note("Check Tailscale above first.", p.muted));
@@ -298,7 +298,7 @@ impl Workspace {
                                     .rounded(px(p.control_radius))
                                     .bg(rgb(p.base))
                                     .font_family(self.fonts.resolved(&self.settings.code_font, "JetBrains Mono", cx))
-                                    .text_size(px(11.))
+                                    .text_size(px(scale::CAPTION))
                                     .text_color(rgb(p.muted))
                                     .overflow_hidden()
                                     .child(url),
@@ -357,7 +357,7 @@ impl Workspace {
 
     /// Every pairing token, each revocable.
     pub(super) fn render_paired_devices(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.remote_busy();
         let pairings = self
             .remote_state()
@@ -394,7 +394,7 @@ impl Workspace {
                             .flex_col()
                             .child(
                                 div()
-                                    .text_size(px(13.))
+                                    .text_size(px(scale::BODY))
                                     .font_weight(FontWeight::MEDIUM)
                                     .child(wks_native::remote::scope_label(&pairing.scope)),
                             )
@@ -442,7 +442,7 @@ fn qr_code(text: &str) -> Div {
     div()
         .flex_shrink_0()
         .p_3()
-        .rounded(px(8.))
+        .rounded(px(radius::BADGE))
         .bg(rgb(0xffffff))
         .flex()
         .flex_col()

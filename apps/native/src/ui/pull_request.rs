@@ -199,7 +199,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(session) = self.selected_session().cloned() else {
             return features::empty_note("Select a session in the sidebar first.", p);
         };
@@ -218,7 +218,7 @@ impl Workspace {
     }
 
     fn render_pr_header(&self, link: &Link, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let connected = self.view.connected;
         let open = link.url.clone();
         let refresh = link.url.clone();
@@ -353,7 +353,7 @@ impl Workspace {
     /// Link a pull request: the one open for the session's branch, or any
     /// pasted URL.
     fn render_pr_linker(&self, session: &Session, relinking: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let connected = self.view.connected;
         let branch =
             self.view.requests.get("pr-branch").filter(
@@ -420,7 +420,7 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .bg(chrome::tonal(p, 0.07))
+                            .bg(chrome::tonal(p, alpha::REST))
                             .child(icon().size(px(15.)).text_color(rgb(p.muted))),
                     )
                     .child(div().flex_1().min_w_0().child(features::card_heading(
@@ -446,7 +446,7 @@ impl Workspace {
                     .gap_3()
                     .p_3()
                     .rounded(px(p.control_radius))
-                    .bg(chrome::tonal(p, 0.05))
+                    .bg(chrome::tonal(p, alpha::SUBTLE))
                     .child(icon().size(px(14.)).text_color(rgb(p.success)))
                     .child(
                         div()
@@ -527,7 +527,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let connected = self.view.connected;
         let (threads, loading, error) = self.pr_threads(&link.url);
         let mut column = div().flex().flex_col().gap_3();
@@ -673,7 +673,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let id = thread.id.clone();
         let replying = self.pr.replying.as_deref() == Some(id.as_str());
         let busy = self.pr_busy("pr-action");

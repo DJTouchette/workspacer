@@ -95,7 +95,7 @@ impl Workspace {
     }
 
     pub(super) fn render_terminal_shell(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let writable = self.terminal_shell_writable();
         let value = self.extras.terminal_shell.as_ref();
         let choices = value
@@ -134,14 +134,14 @@ impl Workspace {
                             .child(div().w(px(14.)).flex_shrink_0().when(active, |d| {
                                 d.child(
                                     Icon::new(IconName::Check)
-                                        .size(px(14.))
+                                        .size(px(icon_size::LG))
                                         .text_color(rgb(p.accent)),
                                 )
                             }))
                             .child(
                                 div()
                                     .flex_shrink_0()
-                                    .text_size(px(13.))
+                                    .text_size(px(scale::BODY))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(rgb(match (writable, active) {
                                         (false, false) => p.muted,
@@ -155,7 +155,7 @@ impl Workspace {
                                     .min_w_0()
                                     .truncate()
                                     .font_family(code.clone())
-                                    .text_size(px(12.))
+                                    .text_size(px(scale::META))
                                     .text_color(rgb(p.muted))
                                     .child(choice.detail),
                             )

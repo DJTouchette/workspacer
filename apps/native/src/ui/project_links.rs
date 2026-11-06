@@ -15,7 +15,7 @@ const DESCRIPTION: &str = "The same project on each peer, under that machine's o
 
 impl Workspace {
     pub(super) fn render_project_links(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self.view.requests.get("project-links");
         let loading = state.is_some_and(|s| s.loading);
         let header = div()
@@ -97,7 +97,7 @@ impl Workspace {
         links: &[wks_native::project_links::Link],
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let head = div()
             .flex()
             .items_baseline()
@@ -154,7 +154,7 @@ impl Workspace {
         view: &CellView,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let action = self.view.requests.get("link-action");
         let busy = action.is_some_and(|s| s.loading);
         let enabled = self.view.connected && !busy;
@@ -392,7 +392,7 @@ impl Workspace {
         choice: &Directory,
         enabled: bool,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         chrome::interactive_control(
             div().id(SharedString::from(format!("link-choice-{row}-{col}-{ix}"))),
             p,

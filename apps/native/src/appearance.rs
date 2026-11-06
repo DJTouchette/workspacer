@@ -363,6 +363,503 @@ impl Appearance {
     }
 }
 
+/// One editable palette color: its key in a custom theme's `colors`, the
+/// label the editor shows, and the group it is listed under.
+pub struct Token {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub group: &'static str,
+    pub help: &'static str,
+}
+
+const fn token(
+    key: &'static str,
+    label: &'static str,
+    group: &'static str,
+    help: &'static str,
+) -> Token {
+    Token {
+        key,
+        label,
+        group,
+        help,
+    }
+}
+
+/// Every palette color a custom theme can change, in editor order. Radii and
+/// shadows are chosen as a whole (see [`Corners`]); `selection` carries alpha.
+pub const TOKENS: [Token; 24] = [
+    token(
+        "chat",
+        "Conversation",
+        "Surfaces",
+        "The reading surface behind messages and pages.",
+    ),
+    token(
+        "base",
+        "Chrome",
+        "Surfaces",
+        "Sidebar and window background.",
+    ),
+    token(
+        "surface",
+        "Card",
+        "Surfaces",
+        "Raised cards, menus and popovers.",
+    ),
+    token(
+        "selected",
+        "Selected",
+        "Surfaces",
+        "The chosen row and hovered controls.",
+    ),
+    token("border", "Border", "Surfaces", "Dividers and card edges."),
+    token(
+        "user",
+        "Your message",
+        "Surfaces",
+        "The bubble behind messages you send.",
+    ),
+    token("text", "Text", "Text", "Titles and primary labels."),
+    token("prose", "Prose", "Text", "Message body copy."),
+    token(
+        "muted",
+        "Muted",
+        "Text",
+        "Descriptions and secondary labels.",
+    ),
+    token(
+        "disabled",
+        "Faint",
+        "Text",
+        "Timestamps and unavailable controls.",
+    ),
+    token(
+        "accent",
+        "Accent",
+        "Accent",
+        "Links, focus rings and the active choice.",
+    ),
+    token("primary", "Primary", "Accent", "The main action's fill."),
+    token(
+        "primary_hover",
+        "Primary hover",
+        "Accent",
+        "The main action under the pointer.",
+    ),
+    token(
+        "primary_pressed",
+        "Primary pressed",
+        "Accent",
+        "The main action being pressed.",
+    ),
+    token(
+        "on_primary",
+        "On primary",
+        "Accent",
+        "Text on the main action.",
+    ),
+    token("success", "Success", "Status", "Done, ready and passing."),
+    token(
+        "warning",
+        "Warning",
+        "Status",
+        "Needs you, approvals and caution.",
+    ),
+    token(
+        "error",
+        "Error",
+        "Status",
+        "Failures and destructive actions.",
+    ),
+    token("busy", "Working", "Status", "An agent at work."),
+    token(
+        "code_inline",
+        "Inline code",
+        "Code",
+        "Behind `code` in prose.",
+    ),
+    token(
+        "code_block",
+        "Code block",
+        "Code",
+        "Behind fenced code and diffs.",
+    ),
+    token(
+        "code_header",
+        "Code header",
+        "Code",
+        "A code block's title strip.",
+    ),
+    token(
+        "selection",
+        "Selection",
+        "Code",
+        "Selected text; translucent (#rrggbbaa).",
+    ),
+    token(
+        "shadow",
+        "Shadow",
+        "Code",
+        "Floating surfaces' shadow color.",
+    ),
+];
+
+impl Palette {
+    pub fn get(&self, key: &str) -> Option<u32> {
+        Some(match key {
+            "base" => self.base,
+            "surface" => self.surface,
+            "chat" => self.chat,
+            "selected" => self.selected,
+            "border" => self.border,
+            "text" => self.text,
+            "prose" => self.prose,
+            "muted" => self.muted,
+            "disabled" => self.disabled,
+            "accent" => self.accent,
+            "primary" => self.primary,
+            "primary_hover" => self.primary_hover,
+            "primary_pressed" => self.primary_pressed,
+            "on_primary" => self.on_primary,
+            "warning" => self.warning,
+            "error" => self.error,
+            "success" => self.success,
+            "busy" => self.busy,
+            "user" => self.user,
+            "code_inline" => self.code_inline,
+            "code_block" => self.code_block,
+            "code_header" => self.code_header,
+            "selection" => self.selection,
+            "shadow" => self.shadow,
+            _ => return None,
+        })
+    }
+
+    fn slot(&mut self, key: &str) -> Option<&mut u32> {
+        Some(match key {
+            "base" => &mut self.base,
+            "surface" => &mut self.surface,
+            "chat" => &mut self.chat,
+            "selected" => &mut self.selected,
+            "border" => &mut self.border,
+            "text" => &mut self.text,
+            "prose" => &mut self.prose,
+            "muted" => &mut self.muted,
+            "disabled" => &mut self.disabled,
+            "accent" => &mut self.accent,
+            "primary" => &mut self.primary,
+            "primary_hover" => &mut self.primary_hover,
+            "primary_pressed" => &mut self.primary_pressed,
+            "on_primary" => &mut self.on_primary,
+            "warning" => &mut self.warning,
+            "error" => &mut self.error,
+            "success" => &mut self.success,
+            "busy" => &mut self.busy,
+            "user" => &mut self.user,
+            "code_inline" => &mut self.code_inline,
+            "code_block" => &mut self.code_block,
+            "code_header" => &mut self.code_header,
+            "selection" => &mut self.selection,
+            "shadow" => &mut self.shadow,
+            _ => return None,
+        })
+    }
+
+    /// `#rrggbb` (or `#rrggbbaa` for the translucent selection).
+    pub fn hex(&self, key: &str) -> Option<String> {
+        let value = self.get(key)?;
+        Some(if key == "selection" {
+            format!("#{value:08x}")
+        } else {
+            format!("#{value:06x}")
+        })
+    }
+}
+
+/// Parse `#rgb`, `#rrggbb`, or, when `alpha` is allowed, `#rrggbbaa`
+/// (a 6-digit value then gets an opaque alpha). The `#` is optional.
+pub fn parse_hex(text: &str, alpha: bool) -> Option<u32> {
+    let digits = text.trim().trim_start_matches('#');
+    if !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let rgb = match digits.len() {
+        3 => {
+            let v = u32::from_str_radix(digits, 16).ok()?;
+            let (r, g, b) = ((v >> 8) & 0xf, (v >> 4) & 0xf, v & 0xf);
+            ((r * 0x11) << 16) | ((g * 0x11) << 8) | (b * 0x11)
+        }
+        6 => u32::from_str_radix(digits, 16).ok()?,
+        8 if alpha => return u32::from_str_radix(digits, 16).ok(),
+        _ => return None,
+    };
+    Some(if alpha { rgb << 8 | 0xff } else { rgb })
+}
+
+/// Relative luminance (WCAG) of an opaque 0xRRGGBB color.
+pub fn luminance(color: u32) -> f64 {
+    let channel = |shift: u32| {
+        let c = ((color >> shift) & 0xff) as f64 / 255.;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+}
+
+/// WCAG contrast ratio between two opaque colors (1 to 21).
+pub fn contrast(a: u32, b: u32) -> f64 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// One pairing a theme should keep readable, measured.
+pub struct ContrastCheck {
+    pub label: String,
+    pub ratio: f64,
+    pub required: f64,
+}
+
+impl ContrastCheck {
+    pub fn passes(&self) -> bool {
+        self.ratio >= self.required
+    }
+}
+
+/// The readability floors the built-in themes are tested against, for the
+/// custom theme editor to report as you change colors.
+pub fn contrast_checks(p: &Palette) -> Vec<ContrastCheck> {
+    let mut checks = Vec::new();
+    for (surface, fill) in [
+        ("conversation", p.chat),
+        ("card", p.surface),
+        ("chrome", p.base),
+    ] {
+        for (name, color, required) in [
+            ("Text", p.text, 7.),
+            ("Prose", p.prose, 4.5),
+            ("Muted", p.muted, 3.),
+            ("Accent", p.accent, 3.),
+            ("Success", p.success, 3.),
+            ("Warning", p.warning, 3.),
+            ("Error", p.error, 3.),
+        ] {
+            checks.push(ContrastCheck {
+                label: format!("{name} on {surface}"),
+                ratio: contrast(color, fill),
+                required,
+            });
+        }
+    }
+    checks.push(ContrastCheck {
+        label: "Faint on conversation".into(),
+        ratio: contrast(p.disabled, p.chat),
+        required: 2.4,
+    });
+    checks.push(ContrastCheck {
+        label: "On primary on primary".into(),
+        ratio: contrast(p.on_primary, p.primary),
+        required: 4.5,
+    });
+    checks.push(ContrastCheck {
+        label: "Border on card".into(),
+        ratio: contrast(p.border, p.surface),
+        required: 1.1,
+    });
+    checks
+}
+
+/// Corner shapes a custom theme picks as a set, so controls, panels and the
+/// composer stay in proportion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Corners {
+    Crisp,
+    #[default]
+    Soft,
+    Round,
+}
+
+impl Corners {
+    pub const ALL: [Self; 3] = [Self::Crisp, Self::Soft, Self::Round];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Crisp => "Crisp",
+            Self::Soft => "Soft",
+            Self::Round => "Round",
+        }
+    }
+
+    /// (control, panel, composer) radii.
+    pub fn radii(self) -> (f32, f32, f32) {
+        match self {
+            Self::Crisp => (6., 8., 12.),
+            Self::Soft => (12., 16., 24.),
+            Self::Round => (16., 20., 28.),
+        }
+    }
+}
+
+/// A user's palette: a built-in base plus the colors they changed. Only
+/// changed colors are stored, so a color the base gains later still applies.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CustomTheme {
+    pub id: String,
+    pub name: String,
+    pub base: Appearance,
+    /// Token key → `#rrggbb` (`#rrggbbaa` for `selection`).
+    #[serde(default)]
+    pub colors: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub corners: Corners,
+}
+
+impl CustomTheme {
+    pub fn new(id: String, name: String, base: Appearance) -> Self {
+        Self {
+            id,
+            name,
+            base,
+            colors: Default::default(),
+            corners: Corners::Soft,
+        }
+    }
+
+    /// The base palette with this theme's colors and corners applied.
+    /// Unreadable stored values are ignored (the base color shows).
+    pub fn palette(&self) -> Palette {
+        let mut palette = self.base.palette();
+        for (key, value) in &self.colors {
+            if let (Some(color), Some(slot)) =
+                (parse_hex(value, key == "selection"), palette.slot(key))
+            {
+                *slot = color;
+            }
+        }
+        (
+            palette.control_radius,
+            palette.panel_radius,
+            palette.composer_radius,
+        ) = self.corners.radii();
+        palette
+    }
+
+    /// Set one color; `None` (or the base's own value) restores the base.
+    pub fn set_color(&mut self, key: &str, color: Option<u32>) {
+        let base = self.base.palette().get(key);
+        match color {
+            Some(color) if Some(color) != base => {
+                let mut palette = self.base.palette();
+                if let Some(slot) = palette.slot(key) {
+                    *slot = color;
+                }
+                if let Some(hex) = palette.hex(key) {
+                    self.colors.insert(key.to_owned(), hex);
+                }
+            }
+            _ => {
+                self.colors.remove(key);
+            }
+        }
+    }
+
+    /// Whether the theme reads as dark (its conversation surface decides).
+    pub fn is_dark(&self) -> bool {
+        luminance(self.palette().chat) < 0.4
+    }
+}
+
+/// Every custom theme on this device and which one, if any, is in use.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CustomThemes {
+    #[serde(default)]
+    pub active: Option<String>,
+    #[serde(default)]
+    pub themes: Vec<CustomTheme>,
+}
+
+impl CustomThemes {
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        match std::fs::read(path) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_vec_pretty(self)?)?;
+        Ok(())
+    }
+
+    pub fn active(&self) -> Option<&CustomTheme> {
+        let id = self.active.as_deref()?;
+        self.themes.iter().find(|t| t.id == id)
+    }
+
+    pub fn active_mut(&mut self) -> Option<&mut CustomTheme> {
+        let id = self.active.clone()?;
+        self.themes.iter_mut().find(|t| t.id == id)
+    }
+
+    /// A fresh theme forked from `base` (and, when one is active, its
+    /// colors), made active. Names count up: "My theme", "My theme 2"…
+    pub fn create(&mut self, base: Appearance) -> &CustomTheme {
+        let mut theme = match self.active() {
+            Some(current) => CustomTheme {
+                id: String::new(),
+                name: String::new(),
+                ..current.clone()
+            },
+            None => CustomTheme::new(String::new(), String::new(), base),
+        };
+        let mut n = 1;
+        let name = loop {
+            let name = if n == 1 {
+                "My theme".to_owned()
+            } else {
+                format!("My theme {n}")
+            };
+            if !self.themes.iter().any(|t| t.name == name) {
+                break name;
+            }
+            n += 1;
+        };
+        let mut id_n = self.themes.len() + 1;
+        while self.themes.iter().any(|t| t.id == format!("custom-{id_n}")) {
+            id_n += 1;
+        }
+        theme.id = format!("custom-{id_n}");
+        theme.name = name;
+        self.active = Some(theme.id.clone());
+        self.themes.push(theme);
+        self.themes.last().unwrap()
+    }
+
+    /// Remove a theme; the active one falls back to its base.
+    pub fn remove(&mut self, id: &str) -> Option<Appearance> {
+        let index = self.themes.iter().position(|t| t.id == id)?;
+        let removed = self.themes.remove(index);
+        if self.active.as_deref() == Some(id) {
+            self.active = None;
+        }
+        Some(removed.base)
+    }
+}
+
+/// Custom themes live beside the built-in choice, in their own file, so an
+/// older build reading `native-theme.json` is unaffected.
+pub fn custom_themes_path() -> Option<PathBuf> {
+    Some(preference_path()?.with_file_name("native-custom-themes.json"))
+}
+
 pub fn preference_path() -> Option<PathBuf> {
     let dirs = directories::BaseDirs::new()?;
     let base = if cfg!(target_os = "windows") {
@@ -382,23 +879,6 @@ pub fn preference_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn luminance(color: u32) -> f64 {
-        let channel = |shift: u32| {
-            let c = ((color >> shift) & 0xff) as f64 / 255.;
-            if c <= 0.03928 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
-    }
-
-    fn contrast(a: u32, b: u32) -> f64 {
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
-    }
 
     #[test]
     fn quiet_text_stays_legible_on_the_chat_surface() {
@@ -587,6 +1067,66 @@ mod tests {
                     contrast(p.border, fill)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn custom_themes_store_only_changes_and_round_trip() {
+        let mut themes = CustomThemes::default();
+        let theme = themes.create(Appearance::Nord).clone();
+        assert_eq!(theme.name, "My theme");
+        assert_eq!(theme.palette().chat, Appearance::Nord.palette().chat);
+        let active = themes.active_mut().unwrap();
+        active.set_color("accent", Some(0xff8800));
+        active.set_color("selection", parse_hex("#ff880040", true));
+        // Setting the base's own value stores nothing.
+        active.set_color("chat", Some(Appearance::Nord.palette().chat));
+        active.corners = Corners::Crisp;
+        assert_eq!(active.colors.len(), 2);
+        let p = active.palette();
+        assert_eq!(
+            (p.accent, p.selection, p.control_radius),
+            (0xff8800, 0xff880040, 6.)
+        );
+        // A second theme forks the active one and gets its own name.
+        assert_eq!(themes.create(Appearance::Dark).name, "My theme 2");
+        assert_eq!(themes.active().unwrap().palette().accent, 0xff8800);
+        let json = serde_json::to_vec(&themes).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<CustomThemes>(&json).unwrap(),
+            themes
+        );
+        // Unreadable stored values fall back to the base.
+        let mut broken = CustomTheme::new("x".into(), "x".into(), Appearance::Dark);
+        broken.colors.insert("text".into(), "nope".into());
+        broken.colors.insert("unknown".into(), "#ffffff".into());
+        assert_eq!(broken.palette().text, Appearance::Dark.palette().text);
+        let id = themes.active.clone().unwrap();
+        assert_eq!(themes.remove(&id), Some(Appearance::Nord));
+        assert_eq!(themes.active, None);
+    }
+
+    #[test]
+    fn hex_parsing_and_editor_tokens() {
+        assert_eq!(parse_hex("#abc", false), Some(0xaabbcc));
+        assert_eq!(parse_hex("1a2B3c", false), Some(0x1a2b3c));
+        assert_eq!(parse_hex("#1a2b3c", true), Some(0x1a2b3cff));
+        assert_eq!(parse_hex("#1a2b3c80", true), Some(0x1a2b3c80));
+        assert_eq!(parse_hex("#1a2b3c80", false), None);
+        assert_eq!(parse_hex("#12345", false), None);
+        assert_eq!(parse_hex("#ggg", false), None);
+        let p = Appearance::Dark.palette();
+        for token in TOKENS {
+            let hex = p.hex(token.key).unwrap();
+            assert_eq!(parse_hex(&hex, token.key == "selection"), p.get(token.key));
+        }
+        // Every built-in passes its own checks except the documented exceptions.
+        for appearance in [Appearance::TokyoNight, Appearance::Gruvbox] {
+            assert!(
+                contrast_checks(&appearance.palette())
+                    .iter()
+                    .all(|c| c.passes())
+            );
         }
     }
 

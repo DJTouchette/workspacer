@@ -8,6 +8,7 @@ mod chrome;
 mod cleanup;
 mod conversation;
 mod default_shell;
+mod design_system;
 mod explorer;
 mod features;
 mod file_viewer;
@@ -46,7 +47,9 @@ mod states;
 mod syntax;
 mod tasks;
 mod terminal;
+mod theme_editor;
 mod titles;
+mod tokens;
 mod tools;
 mod transcript;
 mod typography;
@@ -62,6 +65,7 @@ use gpui::{
     SharedString, Stateful, Task, Window, actions, canvas, div, list, prelude::*, rgb,
     uniform_list,
 };
+use tokens::{alpha, control, icon_size, radius, scale};
 
 /// Interface size multiplier on top of the OS display scale (which GPUI
 /// already applies): 1.0 = 100%. Every literal size in the UI goes through
@@ -175,6 +179,17 @@ impl gpui::AssetSource for Assets {
 }
 
 pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: &mut App) {
+    configure_palette(appearance, appearance.palette(), window, cx);
+}
+
+/// Point the component library at `p`; `appearance` supplies the syntax
+/// colors and light/dark mode (a custom theme passes the built-in it reads like).
+pub fn configure_palette(
+    appearance: Appearance,
+    p: Palette,
+    window: Option<&mut Window>,
+    cx: &mut App,
+) {
     typography::register_fonts(cx);
     use gpui_component::{Theme, ThemeMode};
     Theme::change(
@@ -186,7 +201,6 @@ pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: 
         window,
         cx,
     );
-    let p = appearance.palette();
     let theme = Theme::global_mut(cx);
     theme.colors.background = rgb(p.base).into();
     theme.colors.foreground = rgb(p.text).into();
@@ -247,7 +261,7 @@ fn brand_mark(size: f32, p: Palette) -> Div {
             div()
                 .w(px(size * 0.22))
                 .h(px(size * 0.72))
-                .rounded(px(1.))
+                .rounded(px(radius::HAIRLINE))
                 .bg(rgb(p.accent)),
         )
         .child("}")
@@ -340,9 +354,9 @@ fn overline(label: impl Into<SharedString>, p: Palette) -> Div {
 fn keycap(label: &'static str, p: Palette) -> Div {
     div()
         .px_1()
-        .rounded(px(4.))
+        .rounded(px(radius::TAG))
         .bg(rgb(p.surface))
-        .text_size(px(10.))
+        .text_size(px(scale::OVERLINE))
         .font_family(mono_font())
         .text_color(rgb(p.muted))
         .child(label)
@@ -384,7 +398,7 @@ fn session_badge(session: &Session, p: Palette, connected: bool) -> Div {
         .flex()
         .items_center()
         .gap_2()
-        .text_size(px(11.))
+        .text_size(px(scale::CAPTION))
         .text_color(rgb(color))
         .child(if connected && session.working() {
             brand_spinner(12., p)
@@ -423,6 +437,7 @@ actions!(
         ShowHistory,
         ShowChanges,
         ShowSetup,
+        ShowDesignSystem,
         ShowSessionDetails,
         ShowModel,
         ShowJobs,
@@ -495,6 +510,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("g h", ShowHistory, Some("VimNormal")),
         KeyBinding::new("g d", ShowChanges, Some("VimNormal")),
         KeyBinding::new("g a", ShowSetup, Some("VimNormal")),
+        KeyBinding::new("g y", ShowDesignSystem, Some("VimNormal")),
         KeyBinding::new("g e", ShowSessionDetails, Some("VimNormal")),
         KeyBinding::new("g m", ShowModel, Some("VimNormal")),
         KeyBinding::new("g j", ShowJobs, Some("VimNormal")),
@@ -646,7 +662,18 @@ pub struct Workspace {
     sidebar_scroll: gpui::UniformListScrollHandle,
     projects_scroll: gpui::UniformListScrollHandle,
     _focus_watch: Vec<gpui::Subscription>,
+    /// The built-in palette in use, or the one a custom theme derives from
+    /// (syntax colors and light/dark mode follow it).
     appearance: Appearance,
+    /// Custom themes on this device; the active one overrides the palette.
+    custom_themes: wks_native::appearance::CustomThemes,
+    /// Where custom themes are saved; set when they are loaded at startup
+    /// (tests leave it empty, so they never write the user's config).
+    custom_themes_path: Option<std::path::PathBuf>,
+    /// The active custom theme's resolved palette, cached.
+    palette_override: Option<Palette>,
+    /// Hex fields for the custom theme editor, built when Settings opens it.
+    theme_editor: Option<theme_editor::ThemeEditor>,
     theme_error: String,
     controller: Controller,
     view: Arc<View>,
@@ -974,6 +1001,10 @@ impl Workspace {
             projects_scroll: gpui::UniformListScrollHandle::new(),
             _focus_watch: focus_watch,
             appearance: Appearance::default(),
+            custom_themes: Default::default(),
+            custom_themes_path: None,
+            palette_override: None,
+            theme_editor: None,
             theme_error: String::new(),
             controller,
             view: Arc::new(View::default()),
@@ -1049,9 +1080,17 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.appearance = appearance;
+        self.palette_override = None;
         configure_theme(appearance, Some(window), cx);
         self.apply_typography(cx);
         cx.notify();
+    }
+
+    /// The palette everything is drawn with: the active custom theme's, or
+    /// the built-in appearance's.
+    pub(super) fn palette(&self) -> Palette {
+        self.palette_override
+            .unwrap_or_else(|| self.appearance.palette())
     }
 
     fn choose_theme(
@@ -1061,6 +1100,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.set_appearance(appearance, window, cx);
+        if self.custom_themes.active.take().is_some() {
+            self.save_custom_themes();
+        }
         self.theme_error = match preference_path() {
             Some(path) => appearance
                 .save(&path)
@@ -1791,21 +1833,27 @@ impl Workspace {
         enabled: bool,
         primary: bool,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
+        // Every text button shares one minimum height (a long hub-provided
+        // label may still wrap) so mixed rows of actions line up.
         chrome::interactive_control(div().id(id.into()), p, enabled)
+            .min_h(px(control::HEIGHT))
             .px_3()
-            .py_2()
+            .py_1()
+            .flex()
+            .items_center()
+            .justify_center()
             .font_weight(FontWeight::MEDIUM)
             .rounded(px(p.control_radius))
             .text_color(rgb(if enabled { p.text } else { p.disabled }))
-            .text_size(px(12.))
+            .text_size(px(scale::META))
             // A secondary button is tonal at rest — a faint wash of the text
             // color, so it reads as a control on any surface and in every
             // theme — and the 2px edge stays free for the focus ring.
             .bg(if primary {
                 rgb(if enabled { p.primary } else { p.selected }).into()
             } else {
-                chrome::tonal(p, if enabled { 0.07 } else { 0.04 })
+                chrome::tonal(p, if enabled { alpha::REST } else { alpha::FAINT })
             })
             .when(primary, |d| {
                 d.text_color(rgb(if enabled { p.on_primary } else { p.disabled }))
@@ -1815,14 +1863,15 @@ impl Workspace {
                     if primary {
                         s.bg(rgb(p.primary_hover)).text_color(rgb(p.on_primary))
                     } else {
-                        s.bg(chrome::tonal(p, 0.12)).text_color(rgb(p.text))
+                        s.bg(chrome::tonal(p, alpha::HOVER)).text_color(rgb(p.text))
                     }
                 })
                 .active_text_style(move |s| {
                     if primary {
                         s.bg(rgb(p.primary_pressed)).text_color(rgb(p.on_primary))
                     } else {
-                        s.bg(chrome::tonal(p, 0.17)).text_color(rgb(p.text))
+                        s.bg(chrome::tonal(p, alpha::PRESSED))
+                            .text_color(rgb(p.text))
                     }
                 })
             })
@@ -1892,6 +1941,7 @@ impl Render for Workspace {
                 | Screen::PullRequest => self.render_feature(window, cx).into_any_element(),
                 Screen::Projects => self.render_projects(window, cx).into_any_element(),
                 Screen::Settings => self.render_settings(window, cx).into_any_element(),
+                Screen::DesignSystem => self.render_design_system(window, cx).into_any_element(),
                 Screen::Conversation => self
                     .render_conversation(narrow, compact, window, cx)
                     .into_any_element(),

@@ -130,7 +130,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let selected = self.selected_session().cloned();
         let enabled = self.view.connected
             && !self.view.loading
@@ -224,7 +224,7 @@ impl Workspace {
     /// The session's tools in a floating pill at the chat's right edge,
     /// centred between the title and the composer.
     fn render_tool_rail(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .absolute()
             .top(self.header_bounds.size.height)
@@ -256,7 +256,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let title = selected
             .map(|s| self.session_title(s))
             .unwrap_or_else(|| "Your sessions".into());
@@ -392,7 +392,7 @@ impl Workspace {
     }
 
     fn render_jump_latest(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .absolute()
             .left_0()
@@ -429,7 +429,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let compact = layout.compact;
         let composer_docked = selected.is_some() && self.view.child.is_none();
         // Gutters and the gap above the composer stay inside this clip, so
@@ -563,7 +563,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         use serde_json::Value;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (compact, enabled) = (layout.compact, layout.enabled);
         if let Some(plan) = approval
             .get("toolName")
@@ -775,7 +775,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (compact, enabled) = (layout.compact, layout.enabled);
         let card = self.selected_session().and_then(Session::card);
         let note_card = card.clone();
@@ -859,7 +859,7 @@ impl Workspace {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let limits = &session.limits;
         let card = || {
             div()
@@ -1028,7 +1028,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let ChatLayout {
             narrow,
             compact,
@@ -1343,7 +1343,7 @@ impl Workspace {
     /// sides with flared feet, its base covering the composer's border so
     /// the two read as one surface.
     fn render_notch(&self, label: &str, animate: bool, edge: gpui::Hsla, compact: bool) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let height = notch_height(compact);
         let fill = gpui::Hsla::from(rgb(p.surface));
         div()
@@ -1409,7 +1409,7 @@ impl Workspace {
         steering: bool,
         activity: ComposerActivity,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let enter_sends = self.settings.enter_sends;
         let send_key = if enter_sends {
             "Enter"

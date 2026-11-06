@@ -10,6 +10,7 @@ use wks_native::features::Request;
 pub(super) enum SettingsSection {
     #[default]
     Appearance,
+    Themes,
     Typography,
     Workspace,
     Remote,
@@ -20,8 +21,9 @@ pub(super) enum SettingsSection {
 }
 
 impl SettingsSection {
-    pub(super) const ALL: [Self; 8] = [
+    pub(super) const ALL: [Self; 9] = [
         Self::Appearance,
+        Self::Themes,
         Self::Typography,
         Self::Workspace,
         Self::Remote,
@@ -34,6 +36,7 @@ impl SettingsSection {
     fn label(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
+            Self::Themes => "Custom themes",
             Self::Typography => "Typography",
             Self::Workspace => "Workspace",
             Self::Remote => "Remote",
@@ -47,6 +50,7 @@ impl SettingsSection {
     fn description(self) -> &'static str {
         match self {
             Self::Appearance => "Choose the palette for your workspace.",
+            Self::Themes => "Make a palette your own: every color, the corners, live.",
             Self::Typography => "Fonts and reading size. Saved on this device.",
             Self::Workspace => "How the app fits into your day.",
             Self::Remote => "Reach this machine from your phone over Tailscale.",
@@ -59,7 +63,8 @@ impl SettingsSection {
 
     fn icon(self) -> IconName {
         match self {
-            Self::Appearance => IconName::Palette,
+            Self::Appearance => IconName::Sun,
+            Self::Themes => IconName::Palette,
             Self::Typography => IconName::CaseSensitive,
             Self::Workspace => IconName::LayoutDashboard,
             Self::Remote => IconName::Globe,
@@ -156,7 +161,7 @@ impl Workspace {
         on_pick: impl Fn(&mut Self, T, &mut Window, &mut Context<Self>) + Clone + 'static,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .flex_shrink_0()
             .flex()
@@ -171,14 +176,14 @@ impl Workspace {
                 let on_pick = on_pick.clone();
                 chrome::interactive_control(div().id((id, ix)), p, enabled)
                     .debug_selector(move || format!("{id}-{ix}"))
-                    .h(px(28.))
+                    .h(px(control::HEIGHT_SM))
                     .min_w(px(44.))
                     .px_3()
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded_full()
-                    .text_size(px(12.))
+                    .text_size(px(scale::META))
                     .line_height(px(16.))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(rgb(match (enabled, active) {
@@ -200,7 +205,7 @@ impl Workspace {
 
     fn settings_entries(&self, cx: &mut Context<Self>) -> Vec<Entry> {
         use SettingsSection as S;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mut entries = Vec::new();
 
         let themes = div()
@@ -216,98 +221,26 @@ impl Workspace {
                     .flex_wrap()
                     .gap_2()
                     .children(Appearance::ALL.into_iter().map(|appearance| {
-                        let colors = appearance.palette();
-                        let active = self.appearance == appearance;
-                        chrome::interactive_control(div().id(appearance.label()), p, true)
-                            .debug_selector(move || format!("theme-{}", appearance.label()))
-                            .w(px(148.))
-                            .flex_shrink_0()
-                            .rounded(px(p.panel_radius))
-                            .overflow_hidden()
-                            .cursor_pointer()
-                            .border_color(if active { rgb(p.accent) } else { gpui::rgba(0) })
-                            .bg(rgb(p.base))
-                            .hover(|style| style.bg(rgb(p.selected)))
-                            .child(
-                                div()
-                                    .m_2()
-                                    .h(px(64.))
-                                    .rounded(px(p.control_radius))
-                                    .bg(rgb(colors.chat))
-                                    .flex()
-                                    .overflow_hidden()
-                                    .child(
-                                        div()
-                                            .w(px(24.))
-                                            .h_full()
-                                            .bg(rgb(colors.base))
-                                            .p_2()
-                                            .child(status_dot(colors.accent)),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .p_2()
-                                            .flex()
-                                            .flex_col()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .h(px(6.))
-                                                    .w(px(36.))
-                                                    .rounded_full()
-                                                    .bg(rgb(colors.text)),
-                                            )
-                                            .child(
-                                                div()
-                                                    .h(px(4.))
-                                                    .w_full()
-                                                    .rounded_full()
-                                                    .bg(rgb(colors.border)),
-                                            )
-                                            .child(
-                                                div()
-                                                    .h(px(14.))
-                                                    .w_full()
-                                                    .rounded(px(4.))
-                                                    .bg(rgb(colors.surface)),
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .px_3()
-                                    .pb_3()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(px(12.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(rgb(if active { p.accent } else { p.text }))
-                                            .child(appearance.label()),
-                                    )
-                                    .when(active, |d| {
-                                        d.child(
-                                            Icon::new(IconName::Check)
-                                                .size(px(14.))
-                                                .text_color(rgb(p.accent)),
-                                        )
-                                    }),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.choose_theme(appearance, window, cx)
-                            }))
-                    })),
+                        let active =
+                            self.custom_themes.active.is_none() && self.appearance == appearance;
+                        theme_editor::theme_tile(
+                            appearance.label().into(),
+                            appearance.label().into(),
+                            appearance.palette(),
+                            active,
+                            p,
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.choose_theme(appearance, window, cx)
+                        }))
+                        .into_any_element()
+                    }))
+                    .children(self.custom_theme_tiles(cx)),
             )
             .when(!self.theme_error.is_empty(), |d| {
                 d.child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(scale::META))
                         .text_color(rgb(p.warning))
                         .child(self.theme_error.clone()),
                 )
@@ -322,6 +255,93 @@ impl Workspace {
             themes,
         ));
 
+        let custom_tiles = div()
+            .debug_selector(|| "custom-theme-picker".into())
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .children(self.custom_theme_tiles(cx));
+        entries.push(Entry::new(
+            S::Themes,
+            "custom-themes",
+            "Your themes",
+            if self.custom_themes.active.is_some() {
+                "Changes apply as you type and are saved on this device. New theme starts from the one in use."
+            } else {
+                "New theme copies the palette in use; then change any color below. Saved on this device."
+            },
+            "custom theme palette color colour create new make own personal editor",
+            Layout::Block,
+            custom_tiles,
+        ));
+        if let Some(name) = self.render_theme_name() {
+            entries.push(Entry::new(
+                S::Themes,
+                "custom-theme-name",
+                "Name",
+                "Shown on its tile in Appearance.",
+                "custom theme name rename title",
+                Layout::Row,
+                name,
+            ));
+        }
+        if let Some(corners) = self.render_theme_corners(cx) {
+            entries.push(Entry::new(
+                S::Themes,
+                "custom-theme-corners",
+                "Corners",
+                "Controls, cards and the composer round together: Crisp, Soft (the default) or Round.",
+                "custom theme corners radius rounded square sharp round shape",
+                Layout::Row,
+                corners,
+            ));
+        }
+        if let Some(colors) = self.render_theme_colors(cx) {
+            entries.push(Entry::new(
+                S::Themes,
+                "custom-theme-colors",
+                "Colors",
+                "Type a hex value (#rrggbb; Selection takes #rrggbbaa). A dot marks a color you changed; the arrow restores the base theme's.",
+                "custom theme colors colour hex palette accent background text surface border status code",
+                Layout::Block,
+                colors,
+            ));
+        }
+        if let Some(report) = self.render_theme_contrast() {
+            entries.push(Entry::new(
+                S::Themes,
+                "custom-theme-contrast",
+                "Readability",
+                "The same contrast floors every built-in theme is tested against.",
+                "custom theme contrast readability accessibility wcag legible",
+                Layout::Block,
+                report,
+            ));
+        }
+        if let Some(actions) = self.render_theme_actions(cx) {
+            entries.push(Entry::new(
+                S::Themes,
+                "custom-theme-actions",
+                "Manage",
+                "Duplicate to try a variation. Deleting returns you to the built-in it started from.",
+                "custom theme duplicate copy delete remove",
+                Layout::Row,
+                actions,
+            ));
+        }
+
+        entries.push(Entry::new(
+            S::Appearance,
+            "design-system",
+            "Design system",
+            "Every color, type size, control and status tone in the current theme, side by side. Normal mode: g y.",
+            "design system gallery tokens components style guide preview palette swatches",
+            Layout::Row,
+            self.button("open-design-system", "Open gallery", true)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.show_screen(Screen::DesignSystem, window, cx)
+                })),
+        ));
         entries.push(Entry::new(
             S::Appearance,
             "interface-size",
@@ -634,7 +654,7 @@ impl Workspace {
                     )
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .text_color(rgb(if selected == Permission::FullAccess {
                                 p.warning
                             } else {
@@ -832,7 +852,7 @@ impl Workspace {
                         .child(keycap(keys, p).w(px(120.)).flex_shrink_0())
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(scale::META))
                                 .text_color(rgb(p.muted))
                                 .child(label),
                         )
@@ -853,7 +873,7 @@ impl Workspace {
     }
 
     fn render_child_access(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self.view.requests.get("child-access");
         let pending = state.is_some_and(|s| s.loading);
         let can_write = self.view.connected && !self.demo && !pending;
@@ -913,7 +933,7 @@ impl Workspace {
     }
 
     fn render_job_access(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self.view.requests.get("job-access");
         let pending = state.is_some_and(|s| s.loading);
         let can_write = self.view.connected && !self.demo && !pending;
@@ -973,7 +993,7 @@ impl Workspace {
     /// The `agents.ignoreExternalMcp` switch and its status line; also shown
     /// on the Session page's MCP card.
     pub(super) fn render_external_mcp(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self.view.requests.get("external-mcp");
         let pending = state.is_some_and(|s| s.loading);
         let can_write = self.view.connected && !self.demo && !pending;
@@ -1028,7 +1048,7 @@ impl Workspace {
                     )
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .child("Skip external MCP servers in new sessions"),
                     ),
             )
@@ -1036,7 +1056,7 @@ impl Workspace {
     }
 
     fn render_entry(&self, entry: Entry, first: bool) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let id = entry.id;
         let text = div()
             .flex_1()
@@ -1046,13 +1066,13 @@ impl Workspace {
             .gap(px(2.))
             .child(
                 div()
-                    .text_size(px(14.))
+                    .text_size(px(scale::LABEL))
                     .font_weight(FontWeight::MEDIUM)
                     .child(entry.title),
             )
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(px(scale::META))
                     .text_color(rgb(p.muted))
                     .child(entry.description),
             );
@@ -1073,7 +1093,7 @@ impl Workspace {
     }
 
     fn settings_card(&self, entries: Vec<Entry>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .rounded(px(p.panel_radius))
             .border_1()
@@ -1089,7 +1109,7 @@ impl Workspace {
     }
 
     pub(super) fn render_settings(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let short = window.viewport_size().height < px(620.);
         // Beside a wide sidebar the category rail shrinks to icons, so the
         // preferences themselves keep a readable measure.
@@ -1140,7 +1160,7 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .text_size(px(13.))
+                            .text_size(px(scale::BODY))
                             .font_weight(if active {
                                 FontWeight::SEMIBOLD
                             } else {
@@ -1155,15 +1175,17 @@ impl Workspace {
                             }))
                             .when(active, |d| d.bg(rgb(p.selected)))
                             .hover(move |s| s.bg(rgb(p.selected)).text_color(rgb(p.text)))
-                            .child(Icon::new(section.icon()).size(px(15.)).text_color(rgb(
-                                if active {
-                                    p.accent
-                                } else if dimmed {
-                                    p.disabled
-                                } else {
-                                    p.muted
-                                },
-                            )))
+                            .child(
+                                Icon::new(section.icon())
+                                    .size(px(icon_size::LG))
+                                    .text_color(rgb(if active {
+                                        p.accent
+                                    } else if dimmed {
+                                        p.disabled
+                                    } else {
+                                        p.muted
+                                    })),
+                            )
                             .when(!tight, |d| d.child(div().flex_1().child(section.label())))
                             .when(!tight && searching && count > 0, |d| {
                                 d.child(
@@ -1171,7 +1193,7 @@ impl Workspace {
                                         .px(px(6.))
                                         .rounded_full()
                                         .bg(gpui::Hsla::from(rgb(p.accent)).opacity(0.15))
-                                        .text_size(px(11.))
+                                        .text_size(px(scale::CAPTION))
                                         .text_color(rgb(p.accent))
                                         .child(count.to_string()),
                                 )
@@ -1199,7 +1221,7 @@ impl Workspace {
             .gap_2()
             .child(
                 Icon::new(IconName::Search)
-                    .size(px(15.))
+                    .size(px(icon_size::LG))
                     .text_color(rgb(p.muted)),
             )
             .child(
@@ -1241,7 +1263,7 @@ impl Workspace {
                         .gap_2()
                         .child(
                             Icon::new(IconName::Search)
-                                .size(px(22.))
+                                .size(px(icon_size::HERO))
                                 .text_color(rgb(p.disabled)),
                         )
                         .child(
@@ -1251,7 +1273,7 @@ impl Workspace {
                         )
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(scale::META))
                                 .text_color(rgb(p.muted))
                                 .child("Try a broader word, like “font”, “theme” or “keys”."),
                         ),
@@ -1267,13 +1289,13 @@ impl Workspace {
                         .gap_1()
                         .child(
                             div()
-                                .text_size(px(20.))
+                                .text_size(px(scale::SUBTITLE))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(section.label()),
                         )
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(scale::META))
                                 .text_color(rgb(p.muted))
                                 .child(section.description()),
                         ),

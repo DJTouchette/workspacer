@@ -621,7 +621,7 @@ impl Workspace {
         path: &str,
         size: f32,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let light = !self.appearance.is_dark();
         let (bg, fg): (gpui::Hsla, gpui::Hsla) = match project.and_then(|p| p.color) {
             Some(color) => {
@@ -849,7 +849,7 @@ impl Workspace {
 
     pub(super) fn render_identity_editor(&self, cx: &mut Context<Self>) -> Option<Div> {
         let editor = self.projects.editor.as_ref()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let saving = self
             .view
             .requests
@@ -1004,7 +1004,7 @@ impl Workspace {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let cwd = self.projects.cwd.clone();
         let project = self.known_project(&cwd);
         let title = project
@@ -1124,7 +1124,7 @@ impl Workspace {
                                     .flex()
                                     .items_center()
                                     .flex_shrink_0()
-                                    .child(Icon::new(status_icon).size(px(11.))),
+                                    .child(Icon::new(status_icon).size(px(icon_size::XS))),
                             )
                             .child(div().flex_1().min_w_0().child(status)),
                     ),
@@ -1158,7 +1158,7 @@ impl Workspace {
 
     /// Search, recent/pinned projects, a typed path, and browse.
     pub(super) fn render_project_picker(&self, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let rows = self.pick_rows(cx);
         let has_rows = !rows.is_empty();
         let query = self.project_query.read(cx).value().trim().to_owned();
@@ -1188,7 +1188,7 @@ impl Workspace {
                         Input::new(&self.project_query)
                             .prefix(
                                 Icon::new(IconName::Search)
-                                    .size(px(14.))
+                                    .size(px(icon_size::LG))
                                     .text_color(rgb(p.muted)),
                             )
                             .disabled(busy),
@@ -1314,7 +1314,7 @@ impl Workspace {
                         .text_color(rgb(p.warning))
                         .child(
                             Icon::new(IconName::TriangleAlert)
-                                .size(px(12.))
+                                .size(px(icon_size::SM))
                                 .flex_shrink_0(),
                         )
                         .child(
@@ -1356,7 +1356,7 @@ impl Workspace {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let path = row.path().to_owned();
         let choose = path.clone();
         let saving = self
@@ -1395,7 +1395,7 @@ impl Workspace {
                         .justify_center()
                         .child(
                             Icon::new(IconName::FolderOpen)
-                                .size(px(16.))
+                                .size(px(icon_size::XL))
                                 .text_color(rgb(p.accent)),
                         ),
                 )
@@ -1489,7 +1489,7 @@ impl Workspace {
                     .when(current, |d| {
                         d.child(
                             Icon::new(IconName::Check)
-                                .size(px(14.))
+                                .size(px(icon_size::LG))
                                 .text_color(rgb(p.accent)),
                         )
                     })
@@ -1516,7 +1516,7 @@ impl Workspace {
 
     /// One level of the hub's filesystem. Choosing never creates anything.
     fn render_folder_browser(&self, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (loading, listing, error) = self.listing();
         let path = listing.as_ref().map(|l| l.path.clone()).unwrap_or_default();
         let parent = listing
@@ -1628,7 +1628,7 @@ impl Workspace {
                                 }))
                                 .child(
                                     Icon::new(IconName::Folder)
-                                        .size(px(13.))
+                                        .size(px(icon_size::MD))
                                         .text_color(rgb(p.muted)),
                                 )
                                 .child(div().min_w_0().truncate().child(name))
@@ -1664,7 +1664,7 @@ impl Workspace {
     /// The Project card: summary when chosen, the chooser otherwise, and the
     /// result of the user's last pin/forget.
     pub(super) fn render_project_section(&self, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .flex()
             .flex_col()
@@ -1734,7 +1734,7 @@ impl Workspace {
         can_write: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let detected = self
             .view
             .requests

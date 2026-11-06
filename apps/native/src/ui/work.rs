@@ -72,7 +72,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let tool = row.tool.as_ref().expect("tool row");
         let session = self.chat_owner();
         let identity = tools::identity(row);
@@ -123,7 +123,7 @@ impl Workspace {
             .hover(|s| s.bg(rgb(p.selected)))
             .child(
                 Icon::new(category_icon(tool))
-                    .size(px(13.))
+                    .size(px(icon_size::MD))
                     .flex_shrink_0()
                     .text_color(rgb(if tool.is_error { p.error } else { p.muted })),
             )
@@ -132,7 +132,7 @@ impl Workspace {
                     .flex_shrink_0()
                     .max_w(px(320.))
                     .truncate()
-                    .text_size(px(12.))
+                    .text_size(px(scale::META))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(rgb(p.text))
                     .child(preview.title.clone()),
@@ -143,14 +143,14 @@ impl Workspace {
                     .min_w_0()
                     .truncate()
                     .font_family(mono)
-                    .text_size(px(11.5))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.muted))
                     .child(target),
             )
             .when(preview.added > 0, |d| {
                 d.child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.success))
                         .child(format!("+{}", preview.added)),
                 )
@@ -158,7 +158,7 @@ impl Workspace {
             .when(preview.removed > 0, |d| {
                 d.child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.error))
                         .child(format!("−{}", preview.removed)),
                 )
@@ -166,7 +166,7 @@ impl Workspace {
             .when(tool.is_error, |d| {
                 d.child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.error))
                         .child("Failed"),
                 )
@@ -174,7 +174,7 @@ impl Workspace {
             .when_some(duration, |d, label| {
                 d.child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.disabled))
                         .child(label),
                 )
@@ -211,7 +211,7 @@ impl Workspace {
                     div()
                         .px_3()
                         .pb_2()
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.warning))
                         .child("Tool content was clipped to the retained-history limit."),
                 );
@@ -246,7 +246,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let key = row.key;
         div()
             .debug_selector(move || format!("work-note-{key}"))
@@ -271,7 +271,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let view = self.view.clone();
         let rows = &view.transcript.rows;
         let session = self.chat_owner();
@@ -318,11 +318,11 @@ impl Workspace {
             } else if summary.failed > 0 {
                 div()
                     .text_color(rgb(p.error))
-                    .child(Icon::new(IconName::TriangleAlert).size(px(13.)))
+                    .child(Icon::new(IconName::TriangleAlert).size(px(icon_size::MD)))
             } else {
                 div()
                     .text_color(rgb(p.success))
-                    .child(Icon::new(IconName::Check).size(px(13.)))
+                    .child(Icon::new(IconName::Check).size(px(icon_size::MD)))
             };
             let toggle_key = card_key.clone();
             card = card.child(
@@ -342,7 +342,7 @@ impl Workspace {
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(p.text))
                             .child(format!("{steps} steps")),
@@ -352,14 +352,14 @@ impl Workspace {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .text_color(rgb(p.muted))
                             .child(summary.text.clone()),
                     )
                     .when(summary.added > 0, |d| {
                         d.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(scale::CAPTION))
                                 .text_color(rgb(p.success))
                                 .child(format!("+{}", summary.added)),
                         )
@@ -367,7 +367,7 @@ impl Workspace {
                     .when(summary.removed > 0, |d| {
                         d.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(scale::CAPTION))
                                 .text_color(rgb(p.error))
                                 .child(format!("−{}", summary.removed)),
                         )
@@ -375,7 +375,7 @@ impl Workspace {
                     .when(summary.running > 0, |d| {
                         d.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(scale::CAPTION))
                                 .text_color(rgb(p.busy))
                                 .child(format!("{} running", summary.running)),
                         )
@@ -383,7 +383,7 @@ impl Workspace {
                     .when(summary.failed > 0, |d| {
                         d.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(scale::CAPTION))
                                 .text_color(rgb(p.error))
                                 .child(format!("{} failed", summary.failed)),
                         )
@@ -391,7 +391,7 @@ impl Workspace {
                     .when_some(summary.duration_ms, |d, ms| {
                         d.child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(scale::CAPTION))
                                 .text_color(rgb(p.disabled))
                                 .child(timing::duration_label(ms)),
                         )
@@ -423,7 +423,7 @@ impl Workspace {
                         .py(px(5.))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(p.selected)))
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.muted))
                         .child(match hidden_steps {
                             0 => "Earlier notes".to_owned(),

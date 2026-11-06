@@ -158,7 +158,7 @@ impl Workspace {
 
     /// The open menu, drawn inside the composer above the input.
     pub(super) fn render_slash_menu(&self, rows: Vec<SlashCommand>, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let highlight = self.slash_highlight(rows.len(), cx);
         div()
             .debug_selector(|| "slash-menu".into())
@@ -188,7 +188,7 @@ impl Workspace {
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .text_color(rgb(if selected { p.accent } else { p.text }))
                             .child(label),
                     )
@@ -197,7 +197,7 @@ impl Workspace {
                             div()
                                 .min_w_0()
                                 .truncate()
-                                .text_size(px(12.))
+                                .text_size(px(scale::META))
                                 .text_color(rgb(p.muted))
                                 .child(description),
                         )

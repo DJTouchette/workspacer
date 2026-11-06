@@ -491,14 +491,19 @@ fn tree_row(
                 .child(row.entry.name.clone()),
         )
         .when(row.loading, |d| {
-            d.child(div().text_size(px(10.)).text_color(rgb(p.muted)).child("…"))
+            d.child(
+                div()
+                    .text_size(px(scale::OVERLINE))
+                    .text_color(rgb(p.muted))
+                    .child("…"),
+            )
         })
         .when_some(mark, |d, (letter, color)| {
             d.child(
                 div()
                     .flex_shrink_0()
                     .font_family(mono_font())
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(color))
                     .child(letter.to_string()),
             )

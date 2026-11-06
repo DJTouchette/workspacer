@@ -192,7 +192,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.spawn_pending || self.view.creating || self.extras.queue_sent;
         let can_create = self.view.connected && !busy && !self.demo;
         let resume = self.extras.resume.is_some();
@@ -318,7 +318,7 @@ impl Workspace {
                         .gap_2()
                         .text_size(px(chrome::scale::META))
                         .text_color(rgb(p.accent))
-                        .child(Icon::new(IconName::Info).size(px(12.)))
+                        .child(Icon::new(IconName::Info).size(px(icon_size::SM)))
                         .child(
                             "Your previous conversation will be resumed with the choices above.",
                         ),
@@ -362,7 +362,7 @@ impl Workspace {
     }
 
     fn render_provider_choice(&self, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div().flex().gap_2().children(
             [
                 ("claude", "Claude", "Claude Code"),
@@ -416,7 +416,7 @@ impl Workspace {
                     .when(selected, |d| {
                         d.child(
                             Icon::new(IconName::Check)
-                                .size(px(14.))
+                                .size(px(icon_size::LG))
                                 .text_color(rgb(p.accent)),
                         )
                     })
@@ -426,7 +426,7 @@ impl Workspace {
 
     /// Non-default options, readable without opening the fold.
     fn launch_option_chips(&self, cx: &App) -> Vec<(String, u32)> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mut chips = Vec::new();
         let default_access = self.settings.default_access(self.provider);
         chips.push((
@@ -450,7 +450,7 @@ impl Workspace {
     }
 
     fn render_launch_disclosure(&self, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let open = self.launch_details_open;
         div()
             .flex()
@@ -548,7 +548,7 @@ impl Workspace {
         short: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let model = if self.model_choice == "__custom" {
             let custom = self.model.read(cx).value().trim().to_owned();
             if custom.is_empty() {
@@ -668,7 +668,7 @@ impl Workspace {
                     .text_size(px(chrome::scale::META))
                     .text_color(rgb(color))
                     .when_some(icon, |d, icon| {
-                        d.child(Icon::new(icon).size(px(13.)).flex_shrink_0())
+                        d.child(Icon::new(icon).size(px(icon_size::MD)).flex_shrink_0())
                     })
                     .when(busy, |d| d.child(work::spinner(13.)))
                     .child(div().min_w_0().truncate().child(status)),
@@ -711,7 +711,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(Icon::new(IconName::ArrowRight).size(px(14.)))
+                        .child(Icon::new(IconName::ArrowRight).size(px(icon_size::LG)))
                         .when(can_create, |d| {
                             d.on_click(cx.listener(|this, _, window, cx| this.create(window, cx)))
                         }),
@@ -741,7 +741,7 @@ impl Workspace {
     /// error never pushes the Start button off a small window and never hides
     /// what it says about the outcome.
     fn render_launch_error(&self, uncertain: bool, short: bool) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         // Only an outcome-unknown failure gets a recovery step; for anything
         // else the hub's own wording is the explanation, unembellished.
         let (headline, guidance) = if uncertain {
@@ -765,7 +765,7 @@ impl Workspace {
             .text_size(px(chrome::scale::META))
             .child(
                 Icon::new(IconName::TriangleAlert)
-                    .size(px(13.))
+                    .size(px(icon_size::MD))
                     .flex_shrink_0()
                     .text_color(rgb(p.warning)),
             )
@@ -923,7 +923,7 @@ impl Workspace {
         with_effort: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let catalog = &self.view.catalog;
         let current = catalog.key == self.catalog_key(cx);
         let loading = current && catalog.loading;
@@ -1048,7 +1048,7 @@ impl Workspace {
     /// Context windows the chosen model offers; Default only for a custom ID,
     /// whose windows the client cannot know.
     pub(super) fn render_context_choice(&self, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let windows = self
             .catalog_models
             .iter()
@@ -1111,7 +1111,7 @@ impl Workspace {
     }
 
     pub(super) fn render_access_options(&self, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .flex()
             .flex_col()
@@ -1128,7 +1128,7 @@ impl Workspace {
                         .flex_wrap()
                         .gap_1()
                         .p(px(3.))
-                        .rounded(px(18.))
+                        .rounded(px(radius::SEGMENTED_GROUP))
                         .bg(rgb(p.base))
                         .border_1()
                         .border_color(rgb(p.border))
@@ -1317,7 +1317,7 @@ impl Workspace {
             return None;
         }
         let targets = self.launch_targets()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let options = hosts::host_options(&targets);
         let chips = options.iter().enumerate().map(|(ix, option)| {
             let selected = self.extras.launch_host == option.choice;
@@ -1352,7 +1352,7 @@ impl Workspace {
                         .when(selected, |d| {
                             d.child(
                                 Icon::new(IconName::Check)
-                                    .size(px(12.))
+                                    .size(px(icon_size::SM))
                                     .text_color(rgb(p.accent)),
                             )
                         }),
@@ -1425,7 +1425,7 @@ impl Workspace {
                             .child(
                                 div()
                                     .size(px(14.))
-                                    .rounded(px(3.))
+                                    .rounded(px(radius::MARK))
                                     .border_1()
                                     .border_color(rgb(if queue { p.accent } else { p.border }))
                                     .bg(rgb(if queue { p.accent } else { p.chat }))
@@ -1435,7 +1435,7 @@ impl Workspace {
                                     .when(queue, |d| {
                                         d.child(
                                             Icon::new(IconName::Check)
-                                                .size(px(10.))
+                                                .size(px(icon_size::XS))
                                                 .text_color(rgb(p.on_primary)),
                                         )
                                     }),
@@ -1457,7 +1457,7 @@ impl Workspace {
     /// folder there is preselected and says how it was matched; a folder
     /// that may be it is offered as "Link & use".
     fn render_peer_folders(&self, peer: &str, busy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let target = self.launch_targets().and_then(|t| t.find(peer).cloned());
         let for_local = self.targets_for_local();
         let dirs = target.as_ref().map(|t| t.cwds.clone()).unwrap_or_default();
@@ -1502,7 +1502,7 @@ impl Workspace {
                                 cx.notify();
                             }))
                     })
-                    .child(Icon::new(IconName::Folder).size(px(13.)))
+                    .child(Icon::new(IconName::Folder).size(px(icon_size::MD)))
                     .child(
                         div()
                             .flex_1()
@@ -1532,7 +1532,7 @@ impl Workspace {
                     .when(selected, |d| {
                         d.child(
                             Icon::new(IconName::Check)
-                                .size(px(13.))
+                                .size(px(icon_size::MD))
                                 .text_color(rgb(p.accent)),
                         )
                     }),

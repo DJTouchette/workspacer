@@ -436,7 +436,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let short = window.viewport_size().height < px(620.);
         let caption = chrome::custom_caption();
         let back = self
@@ -577,7 +577,7 @@ impl Workspace {
     }
 
     fn diff_panel_shell(&self) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         chrome::card(p)
             .flex_1()
             .min_w_0()
@@ -588,7 +588,7 @@ impl Workspace {
     }
 
     fn diff_placeholder(&self, text: &'static str) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .flex_1()
             .flex()
@@ -651,7 +651,7 @@ impl Workspace {
     }
 
     fn diff_header(&self) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .px_3()
             .py_2()
@@ -691,7 +691,7 @@ impl Workspace {
         open_hint: &'static str,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(state) = state else {
             return panel.child(
                 div()
@@ -764,7 +764,7 @@ impl Workspace {
     }
 
     fn render_diff_panel(&mut self, changes: &[Change], cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let panel = self.diff_panel_shell();
         let loaded = self.review_status().is_some();
         let Some(selected) = self.review.selected.clone() else {
@@ -813,7 +813,7 @@ impl Workspace {
                 d.child(
                     div()
                         .font_family(mono_font())
-                        .text_size(px(12.))
+                        .text_size(px(scale::META))
                         .font_weight(FontWeight::BOLD)
                         .text_color(rgb(explorer::status_color(c.letter, p)))
                         .child(c.letter.to_string()),
@@ -977,7 +977,7 @@ impl Workspace {
     }
 
     fn render_commit_panel(&mut self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let panel = self.diff_panel_shell();
         let Some(hash) = self.review.commit.clone() else {
             return panel
@@ -1034,7 +1034,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let mode = self.review.mode;
         let segment = |id: &'static str, label: String, active: bool| {
             chrome::interactive_control(div().id(id), p, true)
@@ -1119,7 +1119,7 @@ impl Workspace {
         root: &str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let hide_untracked = self.review.hide_untracked;
         let tree = self
             .explorer
@@ -1256,7 +1256,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let busy = self.git_busy() || !self.view.connected;
         let staged = changes.iter().filter(|c| c.has_staged()).count();
         let unstaged = changes.iter().filter(|c| c.has_unstaged()).count();
@@ -1464,7 +1464,7 @@ impl Workspace {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let active = self.review.selected.as_ref() == Some(&change.path);
         let (name, dir) = match change.path.rsplit_once(['/', '\\']) {
             Some((dir, name)) => (name.to_owned(), dir.to_owned()),
@@ -1526,7 +1526,7 @@ impl Workspace {
             .on_click(cx.listener(move |this, _, _, cx| this.show_diff(&clicked, None, cx)))
             .child(
                 Icon::new(IconName::File)
-                    .size(px(13.))
+                    .size(px(icon_size::MD))
                     .flex_shrink_0()
                     .text_color(rgb(if active { p.accent } else { p.muted })),
             )
@@ -1547,7 +1547,7 @@ impl Workspace {
                             div()
                                 .truncate()
                                 .font_family(mono_font())
-                                .text_size(px(10.))
+                                .text_size(px(scale::OVERLINE))
                                 .text_color(rgb(p.muted))
                                 .child(dir),
                         )
@@ -1556,7 +1556,7 @@ impl Workspace {
             .when(change.has_staged() && change.has_unstaged(), |d| {
                 d.child(
                     div()
-                        .text_size(px(10.))
+                        .text_size(px(scale::OVERLINE))
                         .text_color(rgb(p.muted))
                         .child("partly staged"),
                 )
@@ -1564,7 +1564,7 @@ impl Workspace {
             .when(change.has_staged() && !change.has_unstaged(), |d| {
                 d.child(
                     div()
-                        .text_size(px(10.))
+                        .text_size(px(scale::OVERLINE))
                         .text_color(rgb(p.accent))
                         .child("staged"),
                 )
@@ -1574,7 +1574,7 @@ impl Workspace {
                     .w(px(12.))
                     .flex_shrink_0()
                     .font_family(mono_font())
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .font_weight(FontWeight::BOLD)
                     .text_color(rgb(color))
                     .child(change.letter.to_string()),
@@ -1583,7 +1583,7 @@ impl Workspace {
     }
 
     fn render_commit_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let state = self.view.requests.get("git-log");
         if state.is_none_or(|s| s.loading) {
             return div()
@@ -1642,7 +1642,7 @@ impl Workspace {
         now: i64,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let active = self.review.commit.as_deref() == Some(hash);
         let clicked = hash.to_owned();
         div()
@@ -1672,7 +1672,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_size(px(10.))
+                    .text_size(px(scale::OVERLINE))
                     .text_color(rgb(p.muted))
                     .child(
                         div()

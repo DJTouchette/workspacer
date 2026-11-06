@@ -41,7 +41,7 @@ fn signature(steps: &[Step]) -> String {
 pub(super) fn step_row(step: &Step, p: Palette, live: bool) -> Div {
     let icon = match step.status {
         Status::Completed => Icon::new(IconName::CircleCheck)
-            .size(px(13.))
+            .size(px(icon_size::MD))
             .text_color(rgb(p.success))
             .into_any_element(),
         Status::InProgress if live => brand_spinner(11., p).into_any_element(),
@@ -57,7 +57,7 @@ pub(super) fn step_row(step: &Step, p: Palette, live: bool) -> Div {
         .flex()
         .items_start()
         .gap_2()
-        .text_size(px(12.))
+        .text_size(px(scale::META))
         .line_height(gpui::relative(1.4))
         .child(
             div()
@@ -138,7 +138,7 @@ impl Workspace {
     ) -> Option<Div> {
         let steps = self.pinned_plan()?;
         let session = self.view.selected.clone()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (done, total) = task_plan::progress(&steps);
         let open = self.plan_open(&session, &steps, compact);
         let active = task_plan::active(&steps);
@@ -158,7 +158,7 @@ impl Workspace {
             .px_2()
             .py(px(3.))
             .rounded(px(p.control_radius))
-            .text_size(px(12.))
+            .text_size(px(scale::META))
             .hover(|s| s.bg(rgb(p.selected)))
             .child(
                 Icon::new(if open {
@@ -172,7 +172,7 @@ impl Workspace {
             .child(match (active, done == total) {
                 (Some(_), _) => brand_spinner(11., p).into_any_element(),
                 (None, true) => Icon::new(IconName::CircleCheck)
-                    .size(px(13.))
+                    .size(px(icon_size::MD))
                     .text_color(rgb(p.success))
                     .into_any_element(),
                 (None, false) => status_dot(p.muted).into_any_element(),
@@ -245,7 +245,7 @@ impl Workspace {
         if steps.is_empty() {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (done, total) = task_plan::progress(&steps);
         let open_key = format!("{key}-plan");
         let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
@@ -268,7 +268,7 @@ impl Workspace {
                     .gap_2()
                     .px_1()
                     .rounded(px(p.control_radius))
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.muted))
                     .hover(|s| s.text_color(rgb(p.text)))
                     .child(

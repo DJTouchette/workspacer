@@ -144,7 +144,7 @@ impl Workspace {
         panel: impl IntoElement,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         div()
             .id(id)
             .debug_selector(move || id.into())
@@ -396,7 +396,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let peek = self.layout.peek.filter(|_| self.sidebar_collapsed)?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let left = px(8. + RAIL_WIDTH + FLYOUT_GAP);
         let panel = self.render_sidebar_panel(window, cx);
         let flyout = div()

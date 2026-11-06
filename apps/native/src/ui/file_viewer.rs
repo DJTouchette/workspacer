@@ -936,9 +936,9 @@ impl PreviewPane {
                 .justify_center()
                 .gap_2()
                 .p_6()
-                .text_size(px(13.))
+                .text_size(px(scale::BODY))
                 .text_color(rgb(p.muted))
-                .child(Icon::new(IconName::FolderOpen).size(px(22.)))
+                .child(Icon::new(IconName::FolderOpen).size(px(icon_size::HERO)))
                 .child("Choose a file in the explorer to open it here.")
                 .into_any_element();
         }
@@ -959,13 +959,13 @@ impl PreviewPane {
                 .p_6()
                 .child(
                     Icon::new(IconName::TriangleAlert)
-                        .size(px(20.))
+                        .size(px(icon_size::HERO))
                         .text_color(rgb(p.warning)),
                 )
                 .child(
                     div()
                         .max_w(px(480.))
-                        .text_size(px(13.))
+                        .text_size(px(scale::BODY))
                         .text_color(rgb(p.text))
                         .child(error.clone()),
                 )
@@ -978,7 +978,7 @@ impl PreviewPane {
                 .items_center()
                 .justify_center()
                 .gap_2()
-                .text_size(px(12.))
+                .text_size(px(scale::META))
                 .text_color(rgb(p.muted))
                 .child(brand_spinner(14., p))
                 .child(format!("Loading {name}…"))
@@ -1091,7 +1091,7 @@ impl PreviewPane {
                 .px_2()
                 .py(px(3.))
                 .rounded(px(p.control_radius))
-                .text_size(px(12.))
+                .text_size(px(scale::META))
                 .when(active, |d| {
                     d.bg(rgb(p.surface))
                         .text_color(rgb(p.text))
@@ -1267,7 +1267,7 @@ impl Render for PreviewPane {
                 ],
             };
             (
-                ws.appearance.palette(),
+                ws.palette(),
                 ws.settings.text_size as f32,
                 ws.settings.text_size.clamp(12, 20) as f32,
                 style,
@@ -1381,7 +1381,7 @@ impl Render for PreviewPane {
             .child(files)
             .child(
                 Icon::new(icon)
-                    .size(px(16.))
+                    .size(px(icon_size::XL))
                     .text_color(rgb(p.muted))
                     .flex_shrink_0(),
             )
@@ -1402,7 +1402,7 @@ impl Render for PreviewPane {
                                     .debug_selector(|| "file-viewer-title".into())
                                     .min_w_0()
                                     .truncate()
-                                    .text_size(px(14.))
+                                    .text_size(px(scale::LABEL))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(title),
                             )
@@ -1420,7 +1420,7 @@ impl Render for PreviewPane {
                     .child(
                         div()
                             .truncate()
-                            .text_size(px(11.))
+                            .text_size(px(scale::CAPTION))
                             .text_color(rgb(p.muted))
                             .child(subtitle),
                     ),
@@ -1442,10 +1442,10 @@ impl Render for PreviewPane {
                 .border_b_1()
                 .border_color(rgb(p.border))
                 .bg(gpui::Hsla::from(rgb(tone)).opacity(0.08))
-                .text_size(px(12.))
+                .text_size(px(scale::META))
                 .child(
                     Icon::new(icon)
-                        .size(px(13.))
+                        .size(px(icon_size::MD))
                         .text_color(rgb(tone))
                         .flex_shrink_0(),
                 )
@@ -1461,9 +1461,13 @@ impl Render for PreviewPane {
                 .gap_2()
                 .border_b_1()
                 .border_color(rgb(p.border))
-                .text_size(px(12.))
+                .text_size(px(scale::META))
                 .text_color(rgb(p.warning))
-                .child(Icon::new(IconName::Info).size(px(12.)).flex_shrink_0())
+                .child(
+                    Icon::new(IconName::Info)
+                        .size(px(icon_size::SM))
+                        .flex_shrink_0(),
+                )
                 .child(div().flex_1().min_w_0().child(notice))
         });
         let note = self.note.clone().filter(|_| !dirty).map(|note| {
@@ -1476,9 +1480,13 @@ impl Render for PreviewPane {
                 .gap_2()
                 .border_b_1()
                 .border_color(rgb(p.border))
-                .text_size(px(11.))
+                .text_size(px(scale::CAPTION))
                 .text_color(rgb(p.success))
-                .child(Icon::new(IconName::Check).size(px(12.)).flex_shrink_0())
+                .child(
+                    Icon::new(IconName::Check)
+                        .size(px(icon_size::SM))
+                        .flex_shrink_0(),
+                )
                 .child(note)
         });
         let name = target
@@ -2398,7 +2406,7 @@ impl Workspace {
             return None;
         }
         let pane = self.chat.viewer.pane.clone()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let viewport = window.viewport_size();
         let width = (viewport.width - px(24.)).min(px(820.)).max(px(280.));
         pane.update(cx, |pane, _| {

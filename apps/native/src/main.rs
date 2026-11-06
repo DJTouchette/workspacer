@@ -397,6 +397,7 @@ fn main() -> Result<()> {
                         view.configure_settings(settings, settings_path, project_scope, window, cx);
                         view.configure_local(local_requested, keep_running.clone());
                         view.set_appearance(appearance, window, cx);
+                        view.load_custom_themes(window, cx);
                         view.open_session(args.session);
                         view.start_update_checks(cx);
                         view

@@ -213,7 +213,7 @@ impl Workspace {
     }
 
     pub(super) fn render_title_model(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let writable = self.titles_writable();
         let pinned = self
             .title_value()
@@ -257,7 +257,7 @@ impl Workspace {
         if !pinned.is_empty() && pinned_choice.is_empty() {
             controls = controls.child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(px(scale::META))
                     .text_color(rgb(p.muted))
                     .child(format!("Pinned to {} on this hub", harness_label(&pinned))),
             );
@@ -282,7 +282,7 @@ impl Workspace {
             .when(pinned.is_empty(), |d| {
                 d.child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(scale::META))
                         .text_color(rgb(p.muted))
                         .child("Model for"),
                 )
@@ -337,7 +337,7 @@ impl Workspace {
             .child(
                 div()
                     .debug_selector(|| "title-model-note".into())
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.muted))
                     .child(explain),
             )

@@ -233,7 +233,7 @@ impl Workspace {
         interactive: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let message = Elicitation {
             server: server.to_owned(),
             kind: Kind::Url(url.to_owned()),
@@ -251,7 +251,7 @@ impl Workspace {
             .when(!message.is_empty(), |d| {
                 d.child(
                     div()
-                        .text_size(px(14.))
+                        .text_size(px(scale::LABEL))
                         .line_height(gpui::relative(1.4))
                         .text_color(rgb(p.text))
                         .child(message),
@@ -266,7 +266,7 @@ impl Workspace {
                     .border_1()
                     .border_color(rgb(p.border))
                     .font_family(mono_font())
-                    .text_size(px(12.))
+                    .text_size(px(scale::META))
                     .text_color(rgb(p.text))
                     .child(url.to_owned()),
             )
@@ -426,7 +426,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let list = session
             .questions
             .as_ref()
@@ -447,7 +447,7 @@ impl Workspace {
             .flex()
             .items_center()
             .gap_2()
-            .text_size(px(12.))
+            .text_size(px(scale::META))
             .child(status_dot(p.warning))
             .child(
                 div()
@@ -736,7 +736,7 @@ impl Workspace {
         children: &mut Vec<AnyElement>,
         focused: &mut Option<usize>,
     ) {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let multiple = q["multiSelect"].as_bool().unwrap_or(false);
         let options = q["options"].as_array().cloned().unwrap_or_default();
         let header = q["header"]
@@ -817,7 +817,7 @@ impl Workspace {
                             .text_size(px(chrome::scale::CAPTION))
                             .font_weight(FontWeight::NORMAL)
                             .text_color(rgb(p.success))
-                            .child(Icon::new(IconName::CircleCheck).size(px(12.)))
+                            .child(Icon::new(IconName::CircleCheck).size(px(icon_size::SM)))
                             .child("Answered"),
                     )
                 })
@@ -827,7 +827,7 @@ impl Workspace {
             div()
                 .debug_selector(move || format!("question-{ix}-text"))
                 .mb(px(if compact { 1. } else { 3. }))
-                .text_size(px(14.))
+                .text_size(px(scale::LABEL))
                 .line_height(gpui::relative(1.4))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(p.text))
@@ -898,7 +898,7 @@ impl Workspace {
         focus: Option<&FocusHandle>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let label = option["label"]
             .as_str()
             .or(option.as_str())
@@ -919,7 +919,7 @@ impl Workspace {
             .flex()
             .items_center()
             .justify_center()
-            .text_size(px(10.))
+            .text_size(px(scale::OVERLINE))
             .font_weight(FontWeight::SEMIBOLD)
             .map(|d| {
                 if chosen {
@@ -932,7 +932,7 @@ impl Workspace {
                 }
             })
             .map(|d| match (multiple, chosen) {
-                (true, true) => d.child(Icon::new(IconName::Check).size(px(11.))),
+                (true, true) => d.child(Icon::new(IconName::Check).size(px(icon_size::XS))),
                 (true, false) => d,
                 (false, _) => d.child(format!("{}", option_ix + 1)),
             });

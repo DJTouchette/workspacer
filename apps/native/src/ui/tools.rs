@@ -72,7 +72,7 @@ pub(super) fn card(
         (Some(start), Some(end)) if end >= start => Some(timing::duration_label(end - start)),
         _ => None,
     };
-    let status_icon = Icon::new(icon).size(px(12.));
+    let status_icon = Icon::new(icon).size(px(icon_size::SM));
     let status_icon = if !tool.complete && !tool.is_error {
         let turn = motion::looping(std::time::Duration::from_millis(800), 0.);
         status_icon
@@ -120,7 +120,7 @@ pub(super) fn card(
             .id(SharedString::from(format!("{element_key}-icon")))
             .child(
                 Icon::new(category_icon(tool.category()))
-                    .size(px(14.))
+                    .size(px(icon_size::LG))
                     .flex_shrink_0()
                     .text_color(rgb(if tool.is_error { p.error } else { p.accent })),
             ),
@@ -165,7 +165,7 @@ pub(super) fn card(
                 .min_w_0()
                 .max_w(px(320.))
                 .truncate()
-                .text_size(px(12.))
+                .text_size(px(scale::META))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(p.text))
                 .child(title),
@@ -176,14 +176,14 @@ pub(super) fn card(
                 .min_w_0()
                 .truncate()
                 .font_family(mono)
-                .text_size(px(11.5))
+                .text_size(px(scale::CAPTION))
                 .text_color(rgb(p.muted))
                 .child(subtitle),
         )
         .when(preview.added > 0, |d| {
             d.child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.success))
                     .child(format!("+{}", preview.added)),
             )
@@ -191,7 +191,7 @@ pub(super) fn card(
         .when(preview.removed > 0, |d| {
             d.child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.error))
                     .child(format!("−{}", preview.removed)),
             )
@@ -206,7 +206,7 @@ pub(super) fn card(
                 .py(px(1.))
                 .rounded_full()
                 .bg(gpui::Hsla::from(rgb(color)).opacity(0.12))
-                .text_size(px(11.))
+                .text_size(px(scale::CAPTION))
                 .text_color(rgb(color))
                 .child(status_icon)
                 .child(status),
@@ -215,7 +215,7 @@ pub(super) fn card(
             d.child(
                 div()
                     .flex_shrink_0()
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.disabled))
                     .child(label),
             )
@@ -223,7 +223,7 @@ pub(super) fn card(
         .child(
             div()
                 .flex_shrink_0()
-                .text_size(px(11.))
+                .text_size(px(scale::CAPTION))
                 .text_color(rgb(p.disabled))
                 .child(tool.category()),
         )
@@ -281,7 +281,7 @@ pub(super) fn card(
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .text_size(px(12.))
+                    .text_size(px(scale::META))
                     .text_color(rgb(p.muted))
                     .children(extras),
             )
@@ -291,7 +291,7 @@ pub(super) fn card(
                 div()
                     .px_3()
                     .pb_2()
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.warning))
                     .child("Tool content was clipped to the retained-history limit."),
             )
@@ -332,7 +332,7 @@ pub(super) fn details(
         .when(!preview.working_directory.is_empty(), |d| {
             d.child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.muted))
                     .child(preview.working_directory.clone()),
             )
@@ -340,7 +340,7 @@ pub(super) fn details(
         .when(!preview.description.is_empty(), |d| {
             d.child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(px(scale::META))
                     .text_color(rgb(p.text))
                     .child(preview.description.clone()),
             )
@@ -360,7 +360,7 @@ pub(super) fn details(
                         .flex()
                         .items_center()
                         .gap_2()
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(p.muted))
                         .child(
                             div()
@@ -396,19 +396,22 @@ pub(super) fn details(
                 .when(
                     block.label == "Output" && tool.completed_at_ms.is_some(),
                     |d| {
-                        d.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
-                            timing::timestamp_label(
-                                tool.completed_at_ms,
-                                timing::now_ms(),
-                                twelve_hour,
-                            ),
-                        ))
+                        d.child(
+                            div()
+                                .text_size(px(scale::CAPTION))
+                                .text_color(rgb(p.muted))
+                                .child(timing::timestamp_label(
+                                    tool.completed_at_ms,
+                                    timing::now_ms(),
+                                    twelve_hour,
+                                )),
+                        )
                     },
                 )
                 .when(clipped, |d| {
                     d.child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(px(scale::CAPTION))
                             .text_color(rgb(p.muted))
                             .child("Preview shortened"),
                     )
@@ -418,7 +421,7 @@ pub(super) fn details(
     if preview.blocks.len() > 16 {
         body = body.child(
             div()
-                .text_size(px(11.))
+                .text_size(px(scale::CAPTION))
                 .text_color(rgb(p.muted))
                 .child(format!(
                     "{} additional sections omitted from preview",

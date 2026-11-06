@@ -1419,13 +1419,7 @@ fn fleet_wakes_render_as_named_worker_cards_not_user_bubbles(cx: &mut TestAppCon
     let status = |this: &Workspace| {
         let fleet = wks_native::transcript::fleet(BLOCKED_WAKE).unwrap();
         let live = this.view.sessions.iter().find(|s| s.id == "worker-1");
-        fleet_card::entry_status(
-            fleet.kind,
-            &fleet.entries[0],
-            live,
-            this.appearance.palette(),
-        )
-        .0
+        fleet_card::entry_status(fleet.kind, &fleet.entries[0], live, this.palette()).0
     };
     workspace.read_with(&visual, |this, _| {
         assert_eq!(status(this), "Needs approval")

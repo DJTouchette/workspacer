@@ -135,7 +135,7 @@ fn panel(p: Palette) -> Div {
         .flex()
         .flex_col()
         .gap_2()
-        .text_size(px(12.))
+        .text_size(px(scale::META))
 }
 
 impl Workspace {
@@ -150,7 +150,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let open_key = format!("{key}-thinking");
         let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
         let rows = &self.view.transcript.rows;
@@ -189,7 +189,7 @@ impl Workspace {
             .py_1()
             .flex()
             .flex_col()
-            .text_size(px(12.))
+            .text_size(px(scale::META))
             .text_color(rgb(p.muted))
             .child(
                 div()
@@ -452,7 +452,7 @@ impl Workspace {
         if action.row != row.key || self.view.selected.as_ref() != Some(&action.session) {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         let enabled = self.view.connected && !self.view.busy;
         let cancel = |label: &'static str| {
             self.button("message-action-cancel", label, true)
@@ -568,7 +568,7 @@ impl Workspace {
                                 .pl(px(19.))
                                 .truncate()
                                 .font_family(mono_font())
-                                .text_size(px(11.))
+                                .text_size(px(scale::CAPTION))
                                 .text_color(rgb(p.muted))
                                 .child(file.clone())
                         }))
@@ -690,7 +690,7 @@ impl Workspace {
 
     /// Session page: compaction and forking for a managed session.
     pub(super) fn render_context_card(&self, s: &Session, cx: &mut Context<Self>) -> Option<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let managed = matches!(s.provider_id(), "claude" | "codex");
         let compact = managed && self.view.may_call("claude.compact");
         let fork = managed && self.view.may_call("agents.fork");
@@ -832,7 +832,7 @@ impl Workspace {
     /// Reconnect for a failed one.
     pub(super) fn render_mcp_card(&self, s: &Session, cx: &mut Context<Self>) -> Option<Div> {
         let servers = s.status.mcp_servers.as_ref()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let live = self.view.connected && !s.stopped() && !self.view.busy;
         let reconnect = live && self.view.may_call("claude.mcpReconnect");
         let refresh = live && self.view.may_call("sessions.mcpStatus");
@@ -969,7 +969,7 @@ impl Workspace {
         if s.provider_id() != "codex" {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         let live = self.view.connected && !s.stopped() && !self.view.busy;
         let goals = self.view.may_call("agents.setGoal");
         let review = self.view.may_call("agents.review");
@@ -1256,7 +1256,7 @@ impl Workspace {
         narrow: bool,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let chip = |id: &'static str, text: String, color: u32| {
             div()
                 .id(id)
@@ -1268,7 +1268,7 @@ impl Workspace {
                 .py(px(3.))
                 .rounded_full()
                 .bg(rgb(p.selected))
-                .text_size(px(11.))
+                .text_size(px(scale::CAPTION))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(rgb(color))
                 .child(text)

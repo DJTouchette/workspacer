@@ -531,7 +531,7 @@ impl Workspace {
     }
 
     fn set_terminal_palette(&self, cx: &mut App) {
-        cx.set_global(TerminalPalette(self.appearance.palette()));
+        cx.set_global(TerminalPalette(self.palette()));
     }
 
     /// Popouts keep their palette and font metrics current even while the
@@ -646,7 +646,7 @@ impl Workspace {
         if !self.terminal.open {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         self.set_terminal_palette(cx);
         let agent = self.terminal.agent.clone()?;
         let session = self.view.sessions.iter().find(|s| s.id == agent).cloned();
@@ -694,13 +694,13 @@ impl Workspace {
             .border_color(rgb(p.border))
             .child(
                 Icon::new(IconName::SquareTerminal)
-                    .size(px(14.))
+                    .size(px(icon_size::LG))
                     .text_color(rgb(p.accent)),
             )
             .child(
                 div()
                     .flex_shrink_0()
-                    .text_size(px(12.))
+                    .text_size(px(scale::META))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Terminal"),
             )
@@ -709,7 +709,7 @@ impl Workspace {
                     .min_w_0()
                     .max_w(px(200.))
                     .truncate()
-                    .text_size(px(12.))
+                    .text_size(px(scale::META))
                     .text_color(rgb(p.muted))
                     .child(title),
             )
@@ -719,7 +719,7 @@ impl Workspace {
                     .min_w_0()
                     .truncate()
                     .font_family(mono_font())
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(p.muted))
                     .child(cwd.clone()),
             )
@@ -730,7 +730,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .text_size(px(11.))
+                    .text_size(px(scale::CAPTION))
                     .text_color(rgb(tone))
                     .child(status_dot(tone))
                     .child(label),
@@ -826,7 +826,7 @@ impl Workspace {
                 .justify_center()
                 .gap_3()
                 .bg(rgb(p.code_block))
-                .text_size(px(12.))
+                .text_size(px(scale::META))
                 .text_color(rgb(p.muted))
                 .child(if state.as_ref().is_some_and(|t| t.status == Status::Exited) {
                     "The shell exited. Start a new one in this agent’s folder."
@@ -876,7 +876,7 @@ impl Workspace {
                                     .debug_selector(|| "terminal-error".into())
                                     .px_3()
                                     .py_1()
-                                    .text_size(px(11.))
+                                    .text_size(px(scale::CAPTION))
                                     .text_color(rgb(p.warning))
                                     .child(error),
                             )
@@ -1035,12 +1035,12 @@ impl Render for TerminalWindow {
                     .border_color(rgb(p.border))
                     .child(
                         Icon::new(IconName::SquareTerminal)
-                            .size(px(14.))
+                            .size(px(icon_size::LG))
                             .text_color(rgb(p.accent)),
                     )
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(self.title.clone()),
                     )
@@ -1050,13 +1050,13 @@ impl Render for TerminalWindow {
                             .min_w_0()
                             .truncate()
                             .font_family(mono_font())
-                            .text_size(px(11.))
+                            .text_size(px(scale::CAPTION))
                             .text_color(rgb(p.muted))
                             .child(cwd),
                     )
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(px(scale::CAPTION))
                             .text_color(rgb(p.muted))
                             .child(status),
                     )
@@ -1067,7 +1067,7 @@ impl Render for TerminalWindow {
                             .px_2()
                             .py_1()
                             .rounded(px(p.control_radius))
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(p.selected)))
                             .child("Dock under the chat")

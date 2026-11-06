@@ -170,7 +170,7 @@ impl Workspace {
 
     /// Settings → About: channel, versions, status and actions.
     pub(super) fn render_update_card(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let installed = wks_native::features::installed_version();
         let channel = wks_native::updates::Channel::of(&installed);
         let checking = self.view.requests.get("updates").is_some_and(|s| s.loading);
@@ -215,7 +215,7 @@ impl Workspace {
                     .flex()
                     .flex_wrap()
                     .gap_2()
-                    .text_size(px(12.))
+                    .text_size(px(scale::META))
                     .text_color(rgb(p.muted))
                     .child(format!("Installed {installed}"))
                     .child(
@@ -234,7 +234,7 @@ impl Workspace {
             .child(
                 div()
                     .debug_selector(|| "update-status".into())
-                    .text_size(px(13.))
+                    .text_size(px(scale::BODY))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(rgb(tone))
                     .child(line),
@@ -311,10 +311,15 @@ impl Workspace {
                 )
             })
             .when(available && installable, |d| {
-                d.child(div().text_size(px(11.)).text_color(rgb(p.disabled)).child(
-                    "The app closes, the installer runs silently, and the app reopens. \
+                d.child(
+                    div()
+                        .text_size(px(scale::CAPTION))
+                        .text_color(rgb(p.disabled))
+                        .child(
+                            "The app closes, the installer runs silently, and the app reopens. \
                              Unsaved edits are saved or discarded first.",
-                ))
+                        ),
+                )
             })
     }
 }

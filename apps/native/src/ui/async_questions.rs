@@ -271,7 +271,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let session = self.view.selected.clone().unwrap_or_default();
         let key = card_key(&session, &row.item_id);
         let live = live && !row.item_id.is_empty() && self.view.child.is_none();
@@ -307,7 +307,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
-            .text_size(px(12.))
+            .text_size(px(scale::META))
             .child(
                 div()
                     .flex()
@@ -378,7 +378,7 @@ impl Workspace {
                 .px_2()
                 .py_1()
                 .rounded(px(p.control_radius))
-                .text_size(px(12.))
+                .text_size(px(scale::META))
                 .text_color(rgb(if enabled { p.text } else { p.muted }))
                 .bg(if chosen {
                     gpui::Hsla::from(rgb(p.accent)).opacity(0.16)
@@ -406,7 +406,7 @@ impl Workspace {
                     div()
                         .debug_selector(move || format!("async-question-{qix}"))
                         .mt_1()
-                        .text_size(px(13.))
+                        .text_size(px(scale::BODY))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(rgb(p.text))
                         .child(question.title.clone()),
@@ -473,7 +473,7 @@ pub(super) fn render_reply(replies: &[Reply], p: Palette) -> Div {
         .gap_1()
         .child(
             div()
-                .text_size(px(11.))
+                .text_size(px(scale::CAPTION))
                 .text_color(rgb(p.muted))
                 .child(if replies.len() > 1 {
                     "Answered the agent's questions"

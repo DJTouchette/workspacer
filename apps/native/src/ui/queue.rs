@@ -310,7 +310,7 @@ impl Workspace {
         if !(queue.visible() || edit.is_some()) || self.view.child.is_some() {
             return None;
         }
-        let p = self.appearance.palette();
+        let p = self.palette();
         let live = enabled && !session.stopped();
         let tidy = self.view.connected && !self.view.busy && !self.view.loading;
         let count = queue.entries.len();
@@ -318,7 +318,7 @@ impl Workspace {
             .flex()
             .items_center()
             .gap_2()
-            .text_size(px(12.))
+            .text_size(px(scale::META))
             .child(status_dot(if queue.paused { p.warning } else { p.accent }))
             .child(
                 div()
@@ -368,7 +368,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap(px(if compact { 4. } else { 6. }))
-            .text_size(px(12.))
+            .text_size(px(scale::META))
             .child(header);
         if queue.paused {
             card = card.child(self.render_queue_paused(queue, tidy, cx));
@@ -390,7 +390,7 @@ impl Workspace {
     }
 
     fn render_queue_paused(&self, queue: &Queue, tidy: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let reason = queue
             .error
             .clone()
@@ -422,7 +422,7 @@ impl Workspace {
         live: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let id = uncertain.id.clone();
         let text = uncertain.text.clone();
         let complete = uncertain.complete();
@@ -513,7 +513,7 @@ impl Workspace {
         tidy: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let id = confirmed.id.clone();
         div()
             .debug_selector(|| "queue-confirmed".into())
@@ -565,7 +565,7 @@ impl Workspace {
 
     /// The inline editor with what stands in the way of saving, if anything.
     fn render_queue_editor(&self, edit: &Edit, live: bool, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let saving = edit.pending.is_some();
         let action = |id: &'static str, label: &'static str, primary: bool, enabled: bool| {
             if primary {
@@ -705,7 +705,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let id = entry.id.clone();
         let open = self.queue.expanded.contains(&id);
         let foldable = long(&entry.text);

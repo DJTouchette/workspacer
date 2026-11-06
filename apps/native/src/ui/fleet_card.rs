@@ -99,7 +99,7 @@ fn status_badge(label: &'static str, tone: u32) -> Div {
         .rounded_full()
         .bg(gpui::Hsla::from(rgb(tone)).opacity(0.14))
         .text_color(rgb(tone))
-        .text_size(px(11.))
+        .text_size(px(scale::CAPTION))
         .font_weight(FontWeight::SEMIBOLD)
         .child(label)
 }
@@ -158,7 +158,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let owner = self.view.selected.clone().unwrap_or_default();
         let (overline, icon, tone) = kind_face(fleet.kind, p);
         let single = fleet.entries.len() == 1;
@@ -220,7 +220,7 @@ impl Workspace {
                                 div()
                                     .debug_selector(|| "fleet-card-title".into())
                                     .truncate()
-                                    .text_size(px(14.))
+                                    .text_size(px(scale::LABEL))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(rgb(p.text))
                                     .child(title),
@@ -299,7 +299,7 @@ impl Workspace {
                                     d.child(
                                         div()
                                             .truncate()
-                                            .text_size(px(13.))
+                                            .text_size(px(scale::BODY))
                                             .font_weight(FontWeight::MEDIUM)
                                             .text_color(rgb(p.text))
                                             .child(name),
@@ -313,7 +313,7 @@ impl Workspace {
                                         .items_center()
                                         .gap(px(6.))
                                         .min_w_0()
-                                        .text_size(px(11.))
+                                        .text_size(px(scale::CAPTION))
                                         .text_color(rgb(p.muted))
                                         .when(!model.is_empty(), |d| {
                                             d.child(div().flex_shrink_0().child(model))
@@ -388,7 +388,7 @@ impl Workspace {
             if let Some(failed) = &entry.failed {
                 details = details.child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(scale::META))
                         .text_color(rgb(p.error))
                         .child(failed.clone()),
                 );
@@ -396,7 +396,7 @@ impl Workspace {
             if let Some(crossed) = &entry.crossed {
                 details = details.child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(scale::META))
                         .text_color(rgb(p.warning))
                         .child(crossed.clone()),
                 );
@@ -408,7 +408,7 @@ impl Workspace {
                         .pl_2()
                         .border_l_2()
                         .border_color(rgb(p.accent))
-                        .text_size(px(13.))
+                        .text_size(px(scale::BODY))
                         .text_color(rgb(p.prose))
                         .child(note.clone()),
                 );
@@ -429,7 +429,7 @@ impl Workspace {
                             .pl_2()
                             .border_l_2()
                             .border_color(rgb(p.border))
-                            .text_size(px(13.))
+                            .text_size(px(scale::BODY))
                             .text_color(rgb(p.prose))
                             .child(last.clone()),
                     );
@@ -452,7 +452,7 @@ impl Workspace {
                         .gap_1()
                         .child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(scale::CAPTION))
                                 .text_color(rgb(p.muted))
                                 .child(report_title(title)),
                         )
@@ -491,7 +491,7 @@ impl Workspace {
         open: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         chrome::interactive_control(
             div().id(SharedString::from(format!("toggle-{key}"))),
             p,
@@ -503,7 +503,7 @@ impl Workspace {
         .gap_1()
         .px_1()
         .rounded(px(p.control_radius))
-        .text_size(px(11.))
+        .text_size(px(scale::CAPTION))
         .font_weight(FontWeight::MEDIUM)
         .text_color(rgb(p.muted))
         .hover(move |s| s.text_color(rgb(p.text)))
@@ -546,7 +546,7 @@ fn interactive_reply(
     .child(
         gpui::svg()
             .path("lucide/reply.svg")
-            .size(px(13.))
+            .size(px(icon_size::MD))
             .text_color(rgb(if ws.view.connected {
                 p.muted
             } else {

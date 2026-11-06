@@ -162,7 +162,7 @@ impl Workspace {
     pub(super) fn render_link_status(&self) -> Option<Div> {
         let (_, link) = self.links.hovered.as_ref()?;
         let text = links::describe(link)?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         Some(
             div()
                 .absolute()
@@ -179,7 +179,7 @@ impl Workspace {
                         .border_color(rgb(p.border))
                         .bg(rgb(p.surface))
                         .shadow(chrome::floating_shadow(p))
-                        .text_size(px(11.))
+                        .text_size(px(scale::CAPTION))
                         .text_color(rgb(if matches!(link, Link::Refused(_)) {
                             p.warning
                         } else {
@@ -194,7 +194,7 @@ impl Workspace {
     /// The open link menu over everything, with a backdrop that closes it.
     pub(super) fn render_link_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let menu = self.links.menu.as_ref()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let local = match &menu.link {
             Link::File(target) => std::path::Path::new(&target.path).exists(),
             _ => false,
@@ -242,7 +242,7 @@ impl Workspace {
                             .rounded_md()
                             .cursor_pointer()
                             .hover(|d| d.bg(rgb(p.selected)))
-                            .text_size(px(12.))
+                            .text_size(px(scale::META))
                             .text_color(rgb(p.text))
                             .child(action.label())
                             .on_click(

@@ -249,7 +249,7 @@ impl Workspace {
     }
 
     pub(super) fn render_handoff(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let Some(source) = self.selected_session().cloned() else {
             return div().child(chrome::notice_line(
                 "Choose a session to continue.",
@@ -468,9 +468,10 @@ impl Workspace {
                     .flex()
                     .items_start()
                     .gap_3()
-                    .when(chosen, |d| d.bg(chrome::tonal(p, 0.06)))
+                    .when(chosen, |d| d.bg(chrome::tonal(p, alpha::SUBTLE)))
                     .when(enabled && !chosen, |d| {
-                        d.cursor_pointer().hover(|s| s.bg(chrome::tonal(p, 0.03)))
+                        d.cursor_pointer()
+                            .hover(|s| s.bg(chrome::tonal(p, alpha::FAINT)))
                     })
                     .when(enabled, |d| {
                         d.on_click(cx.listener(move |this, _, _, cx| {

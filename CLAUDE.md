@@ -170,6 +170,9 @@ to the explicit reference checkout, not an expected missing production file.
   hand-authored notes below the rivet markers, never inside them.
 - **Touching renderer UI** → follow `apps/desktop/DESIGN_LANGUAGE.md` (icon system, color
   tokens, type scale, intentional exceptions) before styling anything.
+- **Touching native (GPUI) UI** → follow `apps/native/DESIGN_SYSTEM.md`: palette roles via
+  `self.palette()`, sizes from `src/ui/tokens.rs` (a test rejects raw literals), shared
+  buttons/cards/notices from `chrome.rs`.
 
 _Keep this guide short. If a note is really about one subsystem, prefer a `.rivet/context/`
 doc over growing this file._

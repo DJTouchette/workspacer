@@ -139,7 +139,7 @@ fn rail_spinner(p: Palette) -> Div {
         .child(
             div()
                 .px(px(2.))
-                .rounded(px(3.))
+                .rounded(px(radius::MARK))
                 .bg(rgb(p.base))
                 .child(brand_spinner(8., p)),
         )
@@ -254,7 +254,7 @@ impl Workspace {
         rail: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let p = self.palette();
         // Children inherit the parent's provider unless their model says otherwise.
         let provider = self
             .view
@@ -365,7 +365,7 @@ impl Workspace {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_size(px(14.))
+                                .text_size(px(scale::LABEL))
                                 .font_weight(FontWeight::MEDIUM)
                                 .child(title),
                         )
@@ -684,7 +684,7 @@ impl Workspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let rows = self.sidebar_rows(cx);
         div()
             // The same id as the full sidebar, so a control focused in one
@@ -973,7 +973,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let editing = [
             &self.composer,
             &self.search,
@@ -1068,7 +1068,7 @@ impl Workspace {
                         .py_1()
                         .child(
                             Icon::new(IconName::Search)
-                                .size(px(14.))
+                                .size(px(icon_size::LG))
                                 .text_color(rgb(p.muted)),
                         )
                         .child(Input::new(&self.search).appearance(false)),
@@ -1370,7 +1370,7 @@ impl Workspace {
                                                         .flex_1()
                                                         .min_w_0()
                                                         .truncate()
-                                                        .text_size(px(14.))
+                                                        .text_size(px(scale::LABEL))
                                                         .font_weight(if active {
                                                             FontWeight::SEMIBOLD
                                                         } else {
@@ -1466,14 +1466,14 @@ impl Workspace {
                                                             .items_center()
                                                             .gap(px(3.))
                                                             .text_color(rgb(p.accent))
-                                                            .child(Icon::new(IconName::Calendar).size(px(11.)))
+                                                            .child(Icon::new(IconName::Calendar).size(px(icon_size::XS)))
                                                             .child("Job"),
                                                     )
                                                 })
                                                 .child(div().text_color(rgb(p.disabled)).child("·"))
                                                 .child(
                                                     Icon::new(IconName::Folder)
-                                                        .size(px(11.))
+                                                        .size(px(icon_size::XS))
                                                         .flex_shrink_0(),
                                                 )
                                                 .child(div().flex_1().min_w_0().truncate().child(
@@ -1731,7 +1731,7 @@ impl Workspace {
     fn pending_badge(&self) -> Option<Div> {
         let total = self.pending_total();
         (total > 0).then(|| {
-            let p = self.appearance.palette();
+            let p = self.palette();
             div()
                 .absolute()
                 .top(px(-3.))
@@ -1760,7 +1760,7 @@ impl Workspace {
     /// project's mark, ringed, with a tooltip saying how to clear it.
     fn rail_filter(&self) -> Option<Stateful<Div>> {
         let filter = self.project_filter.clone()?;
-        let p = self.appearance.palette();
+        let p = self.palette();
         let (known, title) = match self.filter_group() {
             Some(group) => (Some(group.as_known()), group.name),
             None => (

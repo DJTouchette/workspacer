@@ -156,7 +156,7 @@ impl Workspace {
 
     /// The prompt, or the Undo after a cleanup, below the sidebar search.
     pub(super) fn render_cleanup_banner(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let p = self.appearance.palette();
+        let p = self.palette();
         let card = || {
             div()
                 .mx_3()
