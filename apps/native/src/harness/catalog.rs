@@ -72,7 +72,7 @@ pub fn live_stopped(index: usize) -> bool {
     index >= 3 && index.is_multiple_of(3)
 }
 
-fn wall_now() -> i64 {
+pub(super) fn wall_now() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 

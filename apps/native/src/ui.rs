@@ -660,6 +660,12 @@ pub struct Workspace {
     layout: portrait::LayoutUi,
     has_connected: bool,
     sidebar_scroll: gpui::UniformListScrollHandle,
+    /// The docked sidebar's sessions: variable height, so group headings sit
+    /// between full-height rows. The rail keeps `sidebar_scroll`.
+    sidebar_list: ListState,
+    /// Which [`sidebar_list`](Self::sidebar_list) rows are headings, as last
+    /// measured; a change re-measures the list.
+    sidebar_shape: std::cell::RefCell<Vec<bool>>,
     projects_scroll: gpui::UniformListScrollHandle,
     _focus_watch: Vec<gpui::Subscription>,
     /// The built-in palette in use, or the one a custom theme derives from
@@ -830,6 +836,7 @@ impl Workspace {
                         .scroll_to_item(0, gpui::ScrollStrategy::Top);
                     this.sidebar_scroll
                         .scroll_to_item(0, gpui::ScrollStrategy::Top);
+                    this.sidebar_list.scroll_to(ListOffset::default());
                     cx.notify();
                 }
             },
@@ -998,6 +1005,8 @@ impl Workspace {
             layout: Default::default(),
             has_connected: false,
             sidebar_scroll: gpui::UniformListScrollHandle::new(),
+            sidebar_list: ListState::new(0, ListAlignment::Top, px(200.)),
+            sidebar_shape: Default::default(),
             projects_scroll: gpui::UniformListScrollHandle::new(),
             _focus_watch: focus_watch,
             appearance: Appearance::default(),
@@ -1793,10 +1802,7 @@ impl Workspace {
         let index = current
             .map(|ix| (ix as isize + step).rem_euclid(rows.len() as isize) as usize)
             .unwrap_or(if step < 0 { rows.len() - 1 } else { 0 });
-        self.sidebar_scroll.scroll_to_item(
-            self.sidebar_session_position(index, cx),
-            gpui::ScrollStrategy::Center,
-        );
+        self.reveal_sidebar_session(index, cx);
         self.command(
             Command::Select(self.view.sessions[rows[index]].id.clone()),
             cx,

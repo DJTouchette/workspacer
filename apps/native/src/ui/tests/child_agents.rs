@@ -235,7 +235,13 @@ fn finished_native_subagents_stay_under_their_parent_across_focus_and_turns(
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 this.update_view(Arc::new(view), window, cx);
-                (this.sidebar_rows(cx).len(), provider_rows(this, cx))
+                // Group headings follow the parent's state; count rows only.
+                let rows = this
+                    .sidebar_rows(cx)
+                    .iter()
+                    .filter(|row| !matches!(row, sidebar::SidebarRow::Header { .. }))
+                    .count();
+                (rows, provider_rows(this, cx))
             })
         })
     };
@@ -623,9 +629,12 @@ fn clear_finished_on_the_parent_leaves_running_children(cx: &mut TestAppContext)
         let rows: Vec<String> = this
             .sidebar_rows(cx)
             .iter()
-            .map(|row| match row {
-                sidebar::SidebarRow::Session { index, .. } => this.view.sessions[*index].id.clone(),
-                sidebar::SidebarRow::Provider { child, .. } => format!("native:{}", child.id),
+            .filter_map(|row| match row {
+                sidebar::SidebarRow::Header { .. } => None,
+                sidebar::SidebarRow::Session { index, .. } => {
+                    Some(this.view.sessions[*index].id.clone())
+                }
+                sidebar::SidebarRow::Provider { child, .. } => Some(format!("native:{}", child.id)),
             })
             .collect();
         // w1 was cleared but its working child g keeps it as context.
@@ -804,8 +813,10 @@ fn worktree_workers_stay_nested_under_their_manager_when_its_project_is_open(
             let mut next = state("manager");
             next.sessions = Arc::new(fleet_sessions());
             this.update_view(Arc::new(next), window, cx);
-            // No filter: every session, workers under their manager.
-            assert_eq!(this.visible_sessions(cx), vec![3, 4, 0, 1, 2]);
+            // No filter: every session, workers under their manager. Its
+            // workers are mid-turn, so the fleet sits in Working above the
+            // idle unrelated session.
+            assert_eq!(this.visible_sessions(cx), vec![4, 0, 1, 2, 3]);
             // The manager's project was the hiding case (sidebar said 1).
             this.project_filter = Some("/home/u/Work/worky/workspacer".into());
             assert_eq!(this.visible_sessions(cx), vec![4, 0, 1, 2]);

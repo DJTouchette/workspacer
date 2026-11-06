@@ -1,5 +1,44 @@
 # Native client validation — 2026-09-27
 
+## Sidebar groups: Needs you, Working, Inactive (2026-11-06)
+
+The docked sidebar groups sessions under short headings with counts. **Needs
+you** (amber: a pending approval or question) comes first, then **Working**
+(mid-turn, starting, or running background tasks), then **Inactive** (ready
+for a prompt, or ended). Needs you and Working are ordered newest made first
+(`started_at`); Inactive is most recent activity first (`updated_at`, falling
+back to completed/started). A lineage moves as one: a manager and its workers
+sit in the most urgent group any member is in, and Inactive ranks a lineage by
+its latest member. Children stay nested, newest made first. Missing times keep
+the hub's order. The order lives in `navigation::session_sections`, and
+`visible_sessions` (keyboard next/previous, first/last, portrait, bus) follows
+it. The docked list moved from `uniform_list` to a variable-height `list` so
+headings are short; it re-measures, keeping its scroll offset, only when the
+heading positions change. The rail keeps `uniform_list` and has no headings
+(its avatars run in the same order). Debug selectors (`sidebar-session-N`…)
+count sessions and children only, so headings never shift them.
+
+`--demo` (and `native-harness serve --sidebar-mix`) now staggers live
+sessions' creation and activity times and mixes approval, question, working,
+idle and ended states.
+
+- `cargo test --features ui-tests --bin wks-native`: 348 passed, 1 ignored.
+  Two tests changed expectations on purpose: the fleet test now expects the
+  mid-turn fleet above the idle unrelated session, and the subagent stability
+  test counts rows without headings.
+- `cargo test --no-fail-fast --tests -- --test-threads=1`: all passed (the
+  embedded-backend tests clash when run in parallel, as before).
+- New unit tests in `navigation::sidebar_tests` cover group order, lineage
+  promotion and Inactive ranking. `cargo clippy --all-targets --features
+  ui-tests -- -D warnings` and `cargo fmt --check` are clean.
+
+Real windows: private Xvfb, Openbox, lavapipe, `--demo`, debug build.
+[Dark 1200×900](docs/ui-sidebar-sections-dark.png),
+[Catppuccin Latte 1200×900](docs/ui-sidebar-sections-latte.png),
+[full list, dark](docs/ui-sidebar-sections-full-list.png) (one tall window, cut
+into two columns). Limits: no Windows/macOS or hardware-GPU capture; group
+moves during a live session were checked by tests, not by capture.
+
 ## Hosts view and launch host picker (host work queue, 2026-11-04)
 
 Built against `docs/host-work-queue.md`. A Hosts page (`g o`, sidebar rail and

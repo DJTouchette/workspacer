@@ -87,6 +87,18 @@ impl Workspace {
     }
 
     pub(super) fn visible_sessions(&self, cx: &App) -> Vec<usize> {
+        self.session_sections(cx)
+            .into_iter()
+            .flat_map(|(_, rows)| rows.into_iter().map(|(ix, _)| ix))
+            .collect()
+    }
+
+    /// The sidebar's sessions, grouped and ordered as it draws them; see
+    /// [`wks_native::navigation::session_sections`].
+    pub(super) fn session_sections(
+        &self,
+        cx: &App,
+    ) -> Vec<(wks_native::navigation::SessionSection, Vec<(usize, usize)>)> {
         if self.archive_loading() {
             return Vec::new();
         }
@@ -120,10 +132,7 @@ impl Workspace {
                     || s.cwd.to_lowercase().contains(&query)
             },
         );
-        wks_native::navigation::session_tree(&self.view.sessions, &visible)
-            .into_iter()
-            .map(|(ix, _)| ix)
-            .collect()
+        wks_native::navigation::session_sections(&self.view.sessions, &visible)
     }
 
     pub(super) fn show_screen(
@@ -378,10 +387,7 @@ impl Workspace {
                 0
             };
             if let Some(&ix) = rows.get(index) {
-                self.sidebar_scroll.scroll_to_item(
-                    self.sidebar_session_position(index, cx),
-                    gpui::ScrollStrategy::Center,
-                );
+                self.reveal_sidebar_session(index, cx);
                 self.command(Command::Select(self.view.sessions[ix].id.clone()), cx);
             }
         }

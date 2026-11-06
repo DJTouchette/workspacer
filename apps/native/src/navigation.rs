@@ -517,6 +517,131 @@ pub fn session_tree(sessions: &[Session], visible: &[usize]) -> Vec<(usize, usiz
     result
 }
 
+/// The sidebar's groups, top to bottom. A lineage (a session and its
+/// descendants) sits in the most urgent group any member belongs to, so
+/// workers never leave their manager.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SessionSection {
+    /// Waiting on an approval or an answer.
+    NeedsYou,
+    /// Mid-turn, launching, or running background tasks.
+    Working,
+    /// Ready for a prompt, or ended.
+    Inactive,
+}
+impl SessionSection {
+    pub fn of(session: &Session) -> Self {
+        if session.stopped() {
+            Self::Inactive
+        } else if session.approval.is_some() || session.questions.is_some() {
+            Self::NeedsYou
+        } else if session.working() || session.starting() || session.background_tasks > 0 {
+            Self::Working
+        } else {
+            Self::Inactive
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NeedsYou => "NEEDS YOU",
+            Self::Working => "WORKING",
+            Self::Inactive => "INACTIVE",
+        }
+    }
+}
+
+/// When the session was made (epoch ms); `None` when the hub never said.
+pub fn session_created(session: &Session) -> Option<i64> {
+    session.telemetry.started_at_ms
+}
+
+/// The session's last activity (epoch ms), falling back to when it finished
+/// or started.
+pub fn session_activity(session: &Session) -> Option<i64> {
+    let t = &session.telemetry;
+    t.last_activity_ms.or(t.completed_at_ms).or(t.started_at_ms)
+}
+
+/// [`session_tree`] split into [`SessionSection`]s. Lineages in Needs you and
+/// Working are newest made first; Inactive lineages are most recent activity
+/// (by any member) first. Children stay under their parent, newest made
+/// first. Ties and missing times keep the hub's order. Empty sections are
+/// left out.
+pub fn session_sections(
+    sessions: &[Session],
+    visible: &[usize],
+) -> Vec<(SessionSection, Vec<(usize, usize)>)> {
+    let ids: BTreeMap<_, _> = visible
+        .iter()
+        .map(|&ix| (sessions[ix].id.as_str(), ix))
+        .collect();
+    let mut children: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    let mut roots = Vec::new();
+    for &ix in visible {
+        match ids.get(sessions[ix].parent_session_id.as_str()).copied() {
+            Some(parent) if parent != ix => children.entry(parent).or_default().push(ix),
+            _ => roots.push(ix),
+        }
+    }
+    // Newest made first; a missing time sorts last, and the stable sort keeps
+    // the hub's order among equals.
+    let newest = |list: &mut Vec<usize>| {
+        list.sort_by_key(|&ix| {
+            std::cmp::Reverse(session_created(&sessions[ix]).unwrap_or(i64::MIN))
+        })
+    };
+    for list in children.values_mut() {
+        newest(list);
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut lineages = Vec::new();
+    // Malformed cycles have no root; they become lineages of their own.
+    for root in roots.into_iter().chain(visible.iter().copied()) {
+        let mut rows = Vec::new();
+        let mut stack = vec![(root, 0)];
+        while let Some((ix, depth)) = stack.pop() {
+            if !seen.insert(ix) {
+                continue;
+            }
+            rows.push((ix, depth));
+            if let Some(children) = children.get(&ix) {
+                stack.extend(children.iter().rev().map(|&child| (child, depth + 1)));
+            }
+        }
+        if rows.is_empty() {
+            continue;
+        }
+        let section = rows
+            .iter()
+            .map(|&(ix, _)| SessionSection::of(&sessions[ix]))
+            .min()
+            .unwrap_or(SessionSection::Inactive);
+        let created = session_created(&sessions[root]).unwrap_or(i64::MIN);
+        let activity = rows
+            .iter()
+            .filter_map(|&(ix, _)| session_activity(&sessions[ix]))
+            .max()
+            .unwrap_or(i64::MIN);
+        lineages.push((section, created, activity, rows));
+    }
+    lineages.sort_by_key(|(section, created, activity, _)| {
+        let key = if *section == SessionSection::Inactive {
+            *activity
+        } else {
+            *created
+        };
+        (*section, std::cmp::Reverse(key))
+    });
+    let mut out: Vec<(SessionSection, Vec<(usize, usize)>)> = Vec::new();
+    for (section, _, _, rows) in lineages {
+        match out.last_mut() {
+            Some((last, list)) if *last == section => list.extend(rows),
+            _ => out.push((section, rows)),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod sidebar_tests {
     use super::*;
@@ -566,6 +691,93 @@ mod sidebar_tests {
         assert_eq!(
             cleared_hidden(&sessions, |ix| ix != 2, |ix| ix == 1),
             vec![false, true, false, false]
+        );
+    }
+    fn timed(id: &str, parent: &str, state: &str, created: i64, activity: i64) -> Session {
+        let mut s = session(id, parent);
+        s.state = state.into();
+        s.telemetry.started_at_ms = Some(created);
+        s.telemetry.last_activity_ms = Some(activity);
+        s
+    }
+    fn order(sessions: &[Session]) -> Vec<(SessionSection, Vec<&str>)> {
+        let all: Vec<usize> = (0..sessions.len()).collect();
+        session_sections(sessions, &all)
+            .into_iter()
+            .map(|(section, rows)| {
+                (
+                    section,
+                    rows.iter()
+                        .map(|&(ix, _)| sessions[ix].id.as_str())
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+    #[test]
+    fn sections_put_needs_you_first_and_inactive_last() {
+        let mut asking = timed("asking", "", "input", 10, 10);
+        asking.questions = Some(serde_json::json!([{"question": "Which?"}]));
+        let mut approving = timed("approving", "", "working", 30, 30);
+        approving.approval = Some(serde_json::json!({"toolName": "Bash"}));
+        let sessions = vec![
+            timed("old-idle", "", "input", 1, 50),
+            timed("ended-recently", "", "stopped", 2, 90),
+            timed("older-work", "", "working", 5, 5),
+            asking,
+            timed("newer-work", "", "thinking", 20, 20),
+            approving,
+            timed("ended-long-ago", "", "ended", 40, 41),
+        ];
+        assert_eq!(
+            order(&sessions),
+            vec![
+                (SessionSection::NeedsYou, vec!["approving", "asking"]),
+                (SessionSection::Working, vec!["newer-work", "older-work"]),
+                (
+                    SessionSection::Inactive,
+                    vec!["ended-recently", "old-idle", "ended-long-ago"]
+                ),
+            ]
+        );
+    }
+    #[test]
+    fn a_lineage_moves_together_into_its_most_urgent_section() {
+        let mut child = timed("child", "mgr", "input", 30, 30);
+        child.approval = Some(serde_json::json!({"toolName": "Edit"}));
+        let sessions = vec![
+            timed("mgr", "", "stopped", 10, 12),
+            timed("sibling", "mgr", "stopped", 20, 20),
+            child,
+            timed("loner", "", "working", 50, 50),
+        ];
+        let sections = session_sections(&sessions, &[0, 1, 2, 3]);
+        assert_eq!(sections[0].0, SessionSection::NeedsYou);
+        // Children keep their parent, newest made first, one level deeper.
+        assert_eq!(sections[0].1, vec![(0, 0), (2, 1), (1, 1)]);
+        assert_eq!(sections[1], (SessionSection::Working, vec![(3, 0)]));
+    }
+    #[test]
+    fn idle_lineages_rank_by_their_latest_member_and_missing_times_keep_hub_order() {
+        let sessions = vec![
+            timed("quiet-parent", "", "input", 1, 1),
+            timed("busy-child", "quiet-parent", "stopped", 2, 99),
+            timed("middle", "", "input", 3, 50),
+            session("untimed-a", ""),
+            session("untimed-b", ""),
+        ];
+        assert_eq!(
+            order(&sessions),
+            vec![(
+                SessionSection::Inactive,
+                vec![
+                    "quiet-parent",
+                    "busy-child",
+                    "middle",
+                    "untimed-a",
+                    "untimed-b"
+                ]
+            )]
         );
     }
     fn located(id: &str, parent: &str, cwd: &str, label: &str) -> Session {

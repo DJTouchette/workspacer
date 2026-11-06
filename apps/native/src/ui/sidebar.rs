@@ -172,6 +172,11 @@ fn initials(title: &str) -> String {
 
 #[derive(Clone)]
 pub(super) enum SidebarRow {
+    /// A group's heading, with how many sessions it holds.
+    Header {
+        section: wks_native::navigation::SessionSection,
+        count: usize,
+    },
     Session {
         index: usize,
         depth: usize,
@@ -185,28 +190,33 @@ pub(super) enum SidebarRow {
 
 impl Workspace {
     pub(super) fn sidebar_rows(&self, cx: &App) -> Vec<SidebarRow> {
-        let visible = self.visible_sessions(cx);
         let mut rows = Vec::new();
-        for (index, depth) in wks_native::navigation::session_tree(&self.view.sessions, &visible) {
-            rows.push(SidebarRow::Session { index, depth });
-            let parent = &self.view.sessions[index];
-            let native = self.native_children(parent);
-            // Provider-native subagents stay under their parent through every
-            // turn and focus change, finished or not, until the user clears
-            // them. The one being viewed stays put so its highlight has a home.
-            for child in native.iter().filter(|child| {
-                !self.provider_cleared(&parent.id, child)
-                    || self
-                        .view
-                        .child
-                        .as_ref()
-                        .is_some_and(|t| t.parent == parent.id && t.agent == child.id)
-            }) {
-                rows.push(SidebarRow::Provider {
-                    parent: parent.id.clone(),
-                    child: Box::new(child.clone()),
-                    depth: depth + 1,
-                });
+        for (section, members) in self.session_sections(cx) {
+            rows.push(SidebarRow::Header {
+                section,
+                count: members.len(),
+            });
+            for (index, depth) in members {
+                rows.push(SidebarRow::Session { index, depth });
+                let parent = &self.view.sessions[index];
+                let native = self.native_children(parent);
+                // Provider-native subagents stay under their parent through every
+                // turn and focus change, finished or not, until the user clears
+                // them. The one being viewed stays put so its highlight has a home.
+                for child in native.iter().filter(|child| {
+                    !self.provider_cleared(&parent.id, child)
+                        || self
+                            .view
+                            .child
+                            .as_ref()
+                            .is_some_and(|t| t.parent == parent.id && t.agent == child.id)
+                }) {
+                    rows.push(SidebarRow::Provider {
+                        parent: parent.id.clone(),
+                        child: Box::new(child.clone()),
+                        depth: depth + 1,
+                    });
+                }
             }
         }
         rows
@@ -234,15 +244,85 @@ impl Workspace {
         children
     }
 
-    pub(super) fn sidebar_session_position(&self, index: usize, cx: &App) -> usize {
+    /// Where the `index`th visible session sits in `rows`.
+    fn sidebar_session_position(&self, rows: &[SidebarRow], index: usize, cx: &App) -> usize {
         let sessions = self.visible_sessions(cx);
-        self.sidebar_rows(cx)
-            .iter()
+        rows.iter()
             .position(|row| {
                 matches!(row,
             SidebarRow::Session { index: ix, .. } if Some(ix) == sessions.get(index))
             })
             .unwrap_or(index)
+    }
+
+    /// Scroll the `index`th visible session into view, in the rail or the
+    /// docked list (whose rows include group headings).
+    pub(super) fn reveal_sidebar_session(&self, index: usize, cx: &App) {
+        let rows = self.sidebar_rows(cx);
+        let panel = self.sidebar_session_position(&rows, index, cx);
+        self.sidebar_list.scroll_to_reveal_item(panel);
+        let rail: Vec<_> = rows
+            .into_iter()
+            .filter(|row| !matches!(row, SidebarRow::Header { .. }))
+            .collect();
+        self.sidebar_scroll.scroll_to_item(
+            self.sidebar_session_position(&rail, index, cx),
+            gpui::ScrollStrategy::Center,
+        );
+    }
+
+    /// Keep the docked list's measurements in step with `rows`: headings and
+    /// sessions differ in height, so a change in where headings fall
+    /// re-measures every row, keeping the scroll position.
+    fn sync_sidebar_list(&self, rows: &[SidebarRow]) {
+        let shape: Vec<bool> = rows
+            .iter()
+            .map(|row| matches!(row, SidebarRow::Header { .. }))
+            .collect();
+        let mut held = self.sidebar_shape.borrow_mut();
+        if *held == shape && self.sidebar_list.item_count() == rows.len() {
+            return;
+        }
+        let top = self.sidebar_list.logical_scroll_top();
+        self.sidebar_list
+            .splice(0..self.sidebar_list.item_count(), rows.len());
+        if !rows.is_empty() {
+            self.sidebar_list.scroll_to(ListOffset {
+                item_ix: top.item_ix.min(rows.len() - 1),
+                offset_in_item: top.offset_in_item,
+            });
+        }
+        *held = shape;
+    }
+
+    /// A group's heading in the docked list: short, so the full-height
+    /// session rows around it read as one group.
+    fn render_sidebar_header(
+        &self,
+        section: wks_native::navigation::SessionSection,
+        count: usize,
+        ix: usize,
+    ) -> Div {
+        use wks_native::navigation::SessionSection;
+        let p = self.palette();
+        let color = if section == SessionSection::NeedsYou {
+            p.warning
+        } else {
+            p.muted
+        };
+        div()
+            .debug_selector(move || format!("sidebar-section-{ix}"))
+            .px_4()
+            .when(ix > 0, |d| d.pt_3())
+            .pb_1()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_size(px(chrome::scale::OVERLINE))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(color))
+            .child(section.label())
+            .child(div().text_color(rgb(p.disabled)).child(count.to_string()))
     }
 
     fn render_sidebar_provider(
@@ -685,7 +765,12 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let p = self.palette();
-        let rows = self.sidebar_rows(cx);
+        // The rail's avatars run on without group headings.
+        let rows: Vec<_> = self
+            .sidebar_rows(cx)
+            .into_iter()
+            .filter(|row| !matches!(row, SidebarRow::Header { .. }))
+            .collect();
         div()
             // The same id as the full sidebar, so a control focused in one
             // (the collapse toggle) is still focused in the other.
@@ -788,6 +873,8 @@ impl Workspace {
                             .map(|ix| {
                                 let (index, depth) = match &rows[ix] {
                                     SidebarRow::Session { index, depth } => (*index, *depth),
+                                    // Filtered out above; the rail has no headings.
+                                    SidebarRow::Header { .. } => return div(),
                                     SidebarRow::Provider {
                                         parent,
                                         child,
@@ -1116,7 +1203,7 @@ impl Workspace {
                             .count();
                         format!("{} / {total}", self.visible_sessions(cx).len())
                     } else {
-                        visible_sessions.len().to_string()
+                        self.visible_sessions(cx).len().to_string()
                     }),
             )
             .when_some(self.project_filter.clone(), |d, filter| {
@@ -1248,14 +1335,28 @@ impl Workspace {
                         }),
                 )
             })
-            .child(
-                uniform_list(
-                    "sessions",
-                    visible_sessions.len(),
-                    cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                        range
-                            .map(|ix| {
-                                let (index, depth) = match &visible_sessions[ix] {
+            .child({
+                self.sync_sidebar_list(&visible_sessions);
+                let entity = cx.entity().downgrade();
+                let visible_sessions = std::rc::Rc::new(visible_sessions.clone());
+                list(self.sidebar_list.clone(), move |ix, _, cx| {
+                    let visible_sessions = visible_sessions.clone();
+                    entity
+                        .update(cx, |this, cx| {
+                            let row = (|| -> Div {
+                                let row = &visible_sessions[ix];
+                                if let SidebarRow::Header { section, count } = row {
+                                    return this.render_sidebar_header(*section, *count, ix);
+                                }
+                                // Selectors count sessions and children only,
+                                // as the rail does, so headings never shift them.
+                                let ix = ix
+                                    - visible_sessions[..ix]
+                                        .iter()
+                                        .filter(|row| matches!(row, SidebarRow::Header { .. }))
+                                        .count();
+                                let (index, depth) = match row {
+                                    SidebarRow::Header { .. } => return div(),
                                     SidebarRow::Session { index, depth } => (*index, *depth),
                                     SidebarRow::Provider {
                                         parent,
@@ -1502,14 +1603,14 @@ impl Workspace {
                                             }),
                                         ),
                                     )
-                            })
-                            .collect::<Vec<_>>()
-                    }),
-                )
-                .track_scroll(self.sidebar_scroll.clone())
+                            })();
+                            row.into_any_element()
+                        })
+                        .unwrap_or_else(|_| div().into_any_element())
+                })
                 .flex_1()
-                .min_h_0(),
-            )
+                .min_h_0()
+            })
             .children(self.render_usage_strip(cx))
             .child(
                 div()

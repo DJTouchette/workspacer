@@ -26,6 +26,42 @@ pub async fn serve(listener: TcpListener, sessions: usize, turns: usize) -> Resu
     serve_with_transcript(listener, sessions, turns, false).await
 }
 
+/// The in-app `--demo` hub: [`serve`] with [`Options::sidebar_mix`].
+pub async fn serve_demo(listener: TcpListener, sessions: usize, turns: usize) -> Result<()> {
+    serve_feedback_fixture(
+        listener,
+        Options {
+            sessions,
+            turns,
+            sidebar_mix: true,
+            ..Options::default()
+        },
+    )
+    .await
+}
+
+/// [`Options::sidebar_mix`]: what live session `i` is doing, when it was
+/// made and when it last did something (epoch ms). Index order is not
+/// creation order, so the sidebar's sort is visible.
+fn sidebar_mix(i: usize, now: i64) -> (&'static str, i64, i64) {
+    const MIN: i64 = 60_000;
+    // A fixed scramble of creation times: newest is not index 0.
+    let age = ((i as i64 * 37) % 101 + 3) * 9 * MIN;
+    let created = now - age;
+    let state = match i {
+        2 | 9 => "approval",
+        6 => "question",
+        3 | 7 | 12 => "responding",
+        _ if i % 3 == 1 && i > 12 => "stopped",
+        _ => "input",
+    };
+    let activity = match state {
+        "input" | "stopped" => created + (age / 7) * ((i as i64 % 5) + 1),
+        _ => now - (i as i64 % 4) * MIN,
+    };
+    (state, created, activity.min(now))
+}
+
 pub async fn serve_with_transcript(
     listener: TcpListener,
     sessions: usize,
@@ -85,6 +121,10 @@ pub struct Options {
     /// under fixture paths (`/home/dev/...`), with the live sessions running
     /// in those folders. Off: the fixture is unchanged.
     pub catalog: bool,
+    /// Live sessions carry staggered creation and activity times and a mix
+    /// of states (approval, question, working, idle, ended), so the
+    /// sidebar's groups and ordering show. Off: every session idles untimed.
+    pub sidebar_mix: bool,
 }
 
 /// One connection's fixture hub: what it serves and remembers between frames.
@@ -797,6 +837,26 @@ impl Fixture {
                 && let Some(row) = &self.finished_parent
             {
                 snapshot = row.clone();
+            }
+            if self.options.sidebar_mix {
+                let now = catalog::wall_now();
+                let (state, created, activity) = sidebar_mix(i, now);
+                snapshot["startedAt"] = json!(created);
+                snapshot["updatedAt"] = json!(activity);
+                let streaming = self.streaming && self.active_id == id;
+                match state {
+                    _ if streaming || i == 0 => {}
+                    "approval" => {
+                        snapshot["pendingApproval"] = json!({"toolName": "Bash",
+                            "toolInput": {"command": format!("cargo test -p worker-{i}")}});
+                    }
+                    "question" if !self.answered.contains(&id) => {
+                        snapshot["pendingQuestions"] = fixture_questions(2).unwrap_or_default();
+                        snapshot["mode"] = json!("question");
+                    }
+                    "question" => {}
+                    state => snapshot["mode"] = json!(state),
+                }
             }
             if self.options.pending_questions
                 && !self.answered.contains(&id)

@@ -74,6 +74,11 @@ enum Command {
         /// those project folders.
         #[arg(long)]
         catalog: bool,
+        /// Stagger live sessions' creation and activity times and mix their
+        /// states (approval, question, working, idle, ended), for sidebar
+        /// grouping captures. `--demo` always does this.
+        #[arg(long)]
+        sidebar_mix: bool,
     },
     /// Measure the real turn-footer summary path, excluding GPUI layout/GPU work.
     BenchTurnSummary {
@@ -183,6 +188,7 @@ async fn main() -> Result<()> {
             child_lifecycle,
             plan_and_limit,
             catalog,
+            sidebar_mix,
         } => {
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("Fixture hub: ws://{}/bus", listener.local_addr()?);
@@ -197,6 +203,7 @@ async fn main() -> Result<()> {
                     child_lifecycle,
                     plan_and_limit,
                     catalog,
+                    sidebar_mix,
                 },
             )
             .await?;

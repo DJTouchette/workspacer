@@ -207,7 +207,7 @@ async fn run(
         Mode::Demo => {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let url = format!("ws://{}/bus", listener.local_addr()?);
-            tokio::spawn(crate::harness::serve(listener, 100, 1000));
+            tokio::spawn(crate::harness::serve_demo(listener, 100, 1000));
             Config::new(url, None)?
         }
     };
