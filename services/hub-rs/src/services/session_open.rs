@@ -179,6 +179,8 @@ pub struct SessionOpen {
     live_now: Mutex<BTreeSet<String>>,
     /// Hub config, for `sessions.cleanupThreshold` (absent before config).
     config: Mutex<Option<Arc<super::config::Config>>>,
+    /// Finished-turn marks, fed every row this set observes.
+    unseen: Mutex<Option<Arc<super::session_seen::SessionSeen>>>,
     stop: tokio::sync::watch::Sender<bool>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -240,6 +242,7 @@ impl SessionOpen {
             legacy_kept,
             live_now: Mutex::new(BTreeSet::new()),
             config: Mutex::new(None),
+            unseen: Mutex::new(None),
             stop,
             task: Mutex::new(None),
         }
@@ -531,8 +534,21 @@ impl SessionOpen {
         }
     }
 
+    /// Feed every row this set observes to the finished-turn marks too: both
+    /// the bus observer and the embedded publish path already call
+    /// [`Self::observe`].
+    pub fn set_unseen(&self, unseen: Arc<super::session_seen::SessionSeen>) {
+        *self.unseen.lock().unwrap() = Some(unseen);
+    }
+
     /// Fold one observed session row in. Returns whether the set changed.
     pub fn observe(&self, row: &Value, shells: &BTreeSet<String>) -> bool {
+        let unseen = self.unseen.lock().unwrap().clone();
+        if let Some(unseen) = unseen
+            && !shells.contains(row_id(row).unwrap_or(""))
+        {
+            unseen.observe(row);
+        }
         let Some(id) = row_id(row) else {
             return false;
         };

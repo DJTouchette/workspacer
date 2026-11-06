@@ -245,6 +245,26 @@ the sidebar needs a cleanup. Each client renders the same prompt.
     actions.
   - every hidden session stays in History.
 
+### 7. Finished but not opened (`sessionSeen`)
+
+A turn that ended while nobody was looking needs the user as much as an
+approval does. The hub keeps that as shared view state too, in
+`session-seen.json`: `{version, unseen: {sessionId: finishedAtMs}}`.
+
+- **Marked by the hub only.** The open set's observer feeds every row it sees
+  to `services/hub-rs/src/services/session_seen.rs`. A mark is added only on
+  an OBSERVED working → idle/stopped transition in this hub run. A row that is
+  already idle when first seen (upgrade, restart, reconnect) marks nothing,
+  and a pending approval or question pauses the turn rather than ending it.
+- **Cleared by any client.** `sessionSeen.mark {sessionId}` (triage tier)
+  removes the mark; `sessionSeen.get` (view tier) reads the document; every
+  change publishes it whole as `sessionSeen.changed`.
+- **Rendering.** A marked session that is not busy reads **Finished** and sits
+  under the sidebar's Needs you heading. Once seen, an idle session reads
+  **Idle**. A decision or a new turn outranks the mark. Native marks the open
+  conversation seen when its window is focused, once per finished turn.
+  Desktop, web and the CLI do not read the marks yet.
+
 ### Clients in scope
 
 Every surface renders the same roster, Paused/Ended/Starting, Hide = archive

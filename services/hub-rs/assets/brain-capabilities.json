@@ -74,6 +74,8 @@
     "sessionOpen.get",
     "sessionOpen.set",
     "sessionOpen.snoozeCleanup",
+    "sessionSeen.get",
+    "sessionSeen.mark",
     "usage.pacingSchedule",
     "usage.report",
     "usage.setPacingSchedule"

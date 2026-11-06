@@ -191,6 +191,8 @@
     "sessionOpen.get",
     "sessionOpen.set",
     "sessionOpen.snoozeCleanup",
+    "sessionSeen.get",
+    "sessionSeen.mark",
     "sessions.attachTerminal",
     "sessions.conversation",
     "sessions.delete",
@@ -1024,6 +1026,8 @@
       "sessionOpen.set",
       "sessionOpen.snoozeCleanup",
       "sessionOpen.cleanup",
+      "sessionSeen.get",
+      "sessionSeen.mark",
       "sessions.kept",
       "sessions.taskOutput",
       "sessions.taskStop",
@@ -1069,6 +1073,7 @@
       "agents.reportProgress",
       "sessionArchive.get",
       "sessionOpen.get",
+      "sessionSeen.get",
       "sessions.kept",
       "sessions.taskOutput",
       "sessions.mcpStatus",
@@ -1393,6 +1398,13 @@
       "Disposition": "open-by-decision",
       "Method": "",
       "Reason": "the hub's whole open-session document: session ids and the millisecond each was opened (docs/session-roster.md). Its read (sessionOpen.get) is in the view tier and the ids are the same ones agent.snapshot already discloses, so receiving it reveals nothing new. The topic is hub-published only (refused to non-trusted publishers by the publish-ownership half of this registry), so no client can forge another client's Paused sessions.",
+      "Publisher": ""
+    },
+    {
+      "Pattern": "sessionSeen.changed",
+      "Disposition": "open-by-decision",
+      "Method": "",
+      "Reason": "the hub's whole finished-turn document: session ids and the millisecond each ended a turn no client has opened since. Its read (sessionSeen.get) is in the view tier and the ids and turn ends are what agent.snapshot already discloses, so receiving it reveals nothing new. The topic is hub-published only (refused to non-trusted publishers by the publish-ownership half of this registry), so no client can forge another client's marks",
       "Publisher": ""
     },
     {

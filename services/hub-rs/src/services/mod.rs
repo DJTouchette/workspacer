@@ -54,6 +54,7 @@ pub mod search;
 pub mod session_archive;
 pub mod session_facade;
 pub mod session_open;
+pub mod session_seen;
 pub mod sessions;
 pub mod snapshots;
 pub mod spawn_plan;
@@ -342,12 +343,29 @@ pub(crate) fn install(
     // native's legacy per-device `kept_open` settings.
     let open = Arc::new(session_open::SessionOpen::open(
         Some(directory.join("session-open.json")),
-        Some(handle),
+        Some(handle.clone()),
         Some(archive.clone()),
         kept_sessions::settings_path(),
     ));
+    // Finished turns nobody has opened yet: shared view state, fed by the
+    // open set's observation.
+    let unseen = Arc::new(session_seen::SessionSeen::open(
+        Some(directory.join("session-seen.json")),
+        Some(handle.clone()),
+    ));
+    open.set_unseen(unseen.clone());
     options.layout = Some(layout.clone());
     options.session_open = Some(open.clone());
+    let get_unseen = unseen.clone();
+    let options = options
+        .handler("sessionSeen.get", move |_, _| {
+            let service = get_unseen.clone();
+            async move { Ok(service.get()) }
+        })
+        .handler("sessionSeen.mark", move |_, params| {
+            let service = unseen.clone();
+            async move { tokio::task::spawn_blocking(move || service.mark(params)).await? }
+        });
     let get = layout.clone();
     let options = options
         .handler("layout.get", move |_, _| {
