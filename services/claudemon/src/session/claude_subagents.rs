@@ -9,7 +9,15 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-pub const MAX_CHILD_BYTES: u64 = 4 * 1024 * 1024;
+/// A child transcript larger than this is refused: a guard against a runaway
+/// file, not a budget for a normal one. Claude Code writes its context
+/// attachments into every child transcript (one `prompt_snapshot` row runs to
+/// ~250 KB), so a working subagent passes a few MB within a few dozen tool
+/// calls. Reads stream line by line and skip attachment rows unparsed, so
+/// memory follows the conversation, not the file.
+pub const MAX_CHILD_BYTES: u64 = 512 * 1024 * 1024;
+/// Newest conversation items a child replay returns.
+const MAX_REPLAY_ITEMS: usize = 2000;
 const MAX_CHILDREN: usize = 128;
 fn valid_id(id: &str) -> bool {
     !id.is_empty()
@@ -305,17 +313,23 @@ pub async fn replay(state: &SessionState, id: &str) -> Result<Replay> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("parent transcript unavailable"))?;
     let path = child_path(main, id).await?;
-    let rows = read_rows(&path).await?;
-    let mut items = Vec::new();
-    for mut row in rows {
+    let mut items = std::collections::VecDeque::new();
+    let mut seq = 0usize;
+    // A final line with no newline yet is read as well: a whole-file replay
+    // shows it if it already parses.
+    scan_rows(&path, 0, Vec::new(), |mut row, _complete| {
         // In the child's own transcript sidechain rows are its main timeline.
         row["isSidechain"] = Value::Bool(false);
-        items.extend(conversation::items_from_row(&row, ApiErrorMarking::Tailer));
-    }
-    let seq = items.len();
-    if items.len() > 2000 {
-        items.drain(..items.len() - 2000);
-    }
+        for item in conversation::items_from_row(&row, ApiErrorMarking::Tailer) {
+            seq += 1;
+            items.push_back(item);
+            if items.len() > MAX_REPLAY_ITEMS {
+                items.pop_front();
+            }
+        }
+    })
+    .await?;
+    let items = Vec::from(items);
     let first_seq = if items.is_empty() {
         0
     } else {
@@ -328,35 +342,103 @@ pub async fn replay(state: &SessionState, id: &str) -> Result<Replay> {
     })
 }
 
-async fn read_rows(path: &Path) -> Result<Vec<Value>> {
-    Ok(parse_rows(&read_from(path, 0).await?))
+/// One transcript line as a row, or `None` for a blank, malformed or
+/// non-object line, or an `attachment` row. Attachments (prompt snapshots,
+/// skill and tool listings, reminders) carry no `message`, so neither the
+/// conversation nor the summary reads them, and they are most of a child
+/// transcript's bytes: their type is checked without building the row.
+fn row_from_line(line: &[u8]) -> Option<Value> {
+    #[derive(serde::Deserialize)]
+    struct Kind<'a> {
+        #[serde(rename = "type", borrow, default)]
+        kind: Option<std::borrow::Cow<'a, str>>,
+    }
+    let line = String::from_utf8_lossy(line);
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    if serde_json::from_str::<Kind>(line).is_ok_and(|row| row.kind.as_deref() == Some("attachment"))
+    {
+        return None;
+    }
+    serde_json::from_str::<Value>(line)
+        .ok()
+        .filter(Value::is_object)
 }
 
-/// A child transcript's bytes from `from` to its end, within the same
-/// [`MAX_CHILD_BYTES`] bound as a whole-file read.
-async fn read_from(path: &Path, from: u64) -> Result<Vec<u8>> {
+#[cfg(test)]
+fn parse_rows(bytes: &[u8]) -> Vec<Value> {
+    bytes
+        .split(|&b| b == b'\n')
+        .filter_map(row_from_line)
+        .collect()
+}
+
+/// Where a [`scan_rows`] pass stopped.
+struct Scanned {
+    /// Just past the last newline-terminated line.
+    end: u64,
+    /// Up to [`SUMMARY_TAIL_BYTES`] bytes just before `end`.
+    tail: Vec<u8>,
+}
+
+/// Stream a child transcript's rows from byte `from` to its end, one line at a
+/// time, refusing a file past [`MAX_CHILD_BYTES`]. `row` sees every row and
+/// whether its line was newline-terminated (a final line without one may
+/// still be mid-write). `tail` is the bytes just before `from`.
+async fn scan_rows(
+    path: &Path,
+    from: u64,
+    mut tail: Vec<u8>,
+    mut row: impl FnMut(Value, bool),
+) -> Result<Scanned> {
+    use tokio::io::AsyncBufReadExt;
     let mut file = tokio::fs::File::open(path).await?;
     let metadata = file.metadata().await?;
     if !metadata.is_file() || metadata.len() > MAX_CHILD_BYTES || from > metadata.len() {
         bail!("child transcript too large");
     }
     file.seek(std::io::SeekFrom::Start(from)).await?;
-    let mut bytes = Vec::new();
-    file.take(MAX_CHILD_BYTES + 1 - from)
-        .read_to_end(&mut bytes)
-        .await?;
-    if from + bytes.len() as u64 > MAX_CHILD_BYTES {
-        bail!("child transcript too large");
+    let mut reader =
+        tokio::io::BufReader::with_capacity(64 * 1024, file.take(MAX_CHILD_BYTES + 1 - from));
+    let mut end = from;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = reader.read_until(b'\n', &mut line).await?;
+        if read == 0 {
+            break;
+        }
+        if end + read as u64 > MAX_CHILD_BYTES {
+            bail!("child transcript too large");
+        }
+        let complete = line.last() == Some(&b'\n');
+        if let Some(value) = row_from_line(&line) {
+            row(value, complete);
+        }
+        if !complete {
+            break;
+        }
+        end += read as u64;
+        tail.extend_from_slice(&line[line.len().saturating_sub(SUMMARY_TAIL_BYTES)..]);
+        if tail.len() > SUMMARY_TAIL_BYTES {
+            tail.drain(..tail.len() - SUMMARY_TAIL_BYTES);
+        }
     }
-    Ok(bytes)
+    Ok(Scanned { end, tail })
 }
 
-fn parse_rows(bytes: &[u8]) -> Vec<Value> {
-    String::from_utf8_lossy(bytes)
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(Value::is_object)
-        .collect()
+/// Whether the file still holds `expected` at `at`: a fold resumed there
+/// continues the same file, not one rewritten in place.
+async fn continues(path: &Path, at: u64, expected: &[u8]) -> Result<bool> {
+    let mut file = tokio::fs::File::open(path).await?;
+    file.seek(std::io::SeekFrom::Start(at)).await?;
+    let mut bytes = Vec::with_capacity(expected.len());
+    file.take(expected.len() as u64)
+        .read_to_end(&mut bytes)
+        .await?;
+    Ok(bytes == expected)
 }
 
 /// Everything `artifacts` derives from a child transcript's rows, independent
@@ -579,23 +661,24 @@ async fn read_summary(path: &Path) -> Result<std::sync::Arc<RowSummary>> {
         .filter(|c| c.pricing == pricing && c.offset <= key.0)
         .unwrap_or_else(fresh);
     let resume_at = entry.offset - entry.tail.len() as u64;
-    let mut bytes = read_from(path, resume_at).await?;
-    if !bytes.starts_with(&entry.tail) {
+    if !continues(path, resume_at, &entry.tail).await? {
         entry = fresh();
-        bytes = read_from(path, 0).await?;
     }
-    let appended = &bytes[entry.tail.len()..];
-    let complete = appended
-        .iter()
-        .rposition(|&b| b == b'\n')
-        .map_or(0, |i| i + 1);
-    entry.fold.push(&parse_rows(&appended[..complete]));
-    entry.offset += complete as u64;
-    let folded = &bytes[..entry.tail.len() + complete];
-    entry.tail = folded[folded.len().saturating_sub(SUMMARY_TAIL_BYTES)..].to_vec();
     // A final line with no newline yet counts as a whole-file read would count
     // it, without being committed: it may still be mid-write.
-    let partial = parse_rows(&appended[complete..]);
+    let (mut appended, mut partial) = (Vec::new(), Vec::new());
+    let tail = std::mem::take(&mut entry.tail);
+    let scanned = scan_rows(path, entry.offset, tail, |row, complete| {
+        if complete {
+            appended.push(row);
+        } else {
+            partial.push(row);
+        }
+    })
+    .await?;
+    entry.fold.push(&appended);
+    entry.offset = scanned.end;
+    entry.tail = scanned.tail;
     let summary = if partial.is_empty() {
         entry.fold.summary()
     } else {
@@ -1095,6 +1178,76 @@ mod tests {
                 .as_deref(),
             Some("Bash")
         );
+    }
+
+    /// Claude Code writes its context attachments into child transcripts; a
+    /// `prompt_snapshot` row alone runs to ~250 KB, so a working subagent
+    /// passes 4 MB within a few dozen tool calls. Such a child still replays
+    /// and summarizes, and its attachments never reach either.
+    #[tokio::test]
+    async fn attachment_heavy_child_transcripts_replay_and_summarize() {
+        let unique = uuid::Uuid::new_v4().simple().to_string();
+        let parent = format!("parent{unique}");
+        let cwd = format!("/project{unique}");
+        let root = std::env::temp_dir().join(format!("claude-heavy-{unique}"));
+        let projects = root.join("projects");
+        let project = projects.join(transcript::project_dir_name(&cwd).unwrap());
+        let child_dir = project.join(&parent).join("subagents");
+        std::fs::create_dir_all(&child_dir).unwrap();
+        transcript::allow_root(projects);
+        std::fs::write(project.join(format!("{parent}.jsonl")), "").unwrap();
+        let snapshot =
+            json!({"type":"attachment","isSidechain":true,"timestamp":"2026-10-01T09:00:00Z",
+            "attachment":{"type":"prompt_snapshot","text":"x".repeat(250 * 1024)}})
+            .to_string();
+        let mut lines = vec![
+            json!({"type":"user","isSidechain":true,"timestamp":"2026-10-01T10:00:00Z",
+            "message":{"content":"Audit the parser"}})
+            .to_string(),
+        ];
+        for i in 0..24 {
+            lines.push(snapshot.clone());
+            lines.push(json!({"type":"assistant","isSidechain":true,"timestamp":"2026-10-01T10:00:01Z",
+                "message":{"id":format!("m{i}"),"model":"claude-sonnet-4-6","usage":{"input_tokens":1,"output_tokens":1},
+                "content":[{"type":"tool_use","id":format!("t{i}"),"name":"Read","input":{"file_path":"a.rs"}}]}})
+            .to_string());
+            lines.push(json!({"type":"user","isSidechain":true,"message":{"content":[{"type":"tool_result","tool_use_id":format!("t{i}"),"content":"ok"}]}}).to_string());
+        }
+        let path = child_dir.join("agent-child.jsonl");
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        assert!(std::fs::metadata(&path).unwrap().len() > 4 * 1024 * 1024);
+        let mut state = SessionState::new(parent.clone(), Some(cwd.clone()));
+        state.transcript_path = discover_parent(&state).await;
+        state.subagents = artifacts(&state).await.unwrap();
+        let child = &state.subagents[0];
+        assert_eq!(child.tool_calls, Some(24));
+        assert_eq!(child.tokens, Some(48));
+        // An attachment's timestamp is not the child's start.
+        assert_eq!(
+            child.started_at,
+            milliseconds(
+                time::OffsetDateTime::parse(
+                    "2026-10-01T10:00:00Z",
+                    &time::format_description::well_known::Rfc3339
+                )
+                .unwrap()
+            )
+        );
+        let replay = replay(&state, "child").await.unwrap();
+        assert_eq!(replay.seq, replay.items.len());
+        assert_eq!(replay.first_seq, 1);
+        assert!(
+            matches!(&replay.items[0], ConversationItem::UserMessage { text, .. } if text == "Audit the parser")
+        );
+        assert_eq!(
+            replay
+                .items
+                .iter()
+                .filter(|item| matches!(item, ConversationItem::ToolResult { .. }))
+                .count(),
+            24
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
