@@ -482,6 +482,78 @@ pub fn session_finished(session: &Session) -> bool {
             .flatten()
             .any(|child| !provider_terminal(child["status"].as_str().unwrap_or("")))
 }
+/// Work still running on a session's behalf after its own turn ended. The
+/// daemon keeps such a session's mode at `input` (a mode held busy by a
+/// background shell never clears), so the roll-up is derived here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delegated {
+    /// Other agents are doing this session's work: Workspacer sessions it
+    /// spawned, provider subagents, teammates, cloud agents or workflows.
+    Agents,
+    /// Only background tasks that are not agents (a shell, a watcher).
+    Tasks,
+}
+impl Delegated {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Agents => "Agents working",
+            Self::Tasks => "Background task",
+        }
+    }
+}
+/// How deep a chain of waiting managers is followed.
+const MAX_DELEGATION_DEPTH: usize = 8;
+/// What `session` is waiting on while it is not mid-turn itself. `None` for a
+/// session that is working, starting, stopped or waiting on the user: those
+/// states speak for themselves.
+pub fn delegated(session: &Session, fleet: &[Session]) -> Option<Delegated> {
+    delegated_within(session, fleet, MAX_DELEGATION_DEPTH)
+}
+fn delegated_within(session: &Session, fleet: &[Session], depth: usize) -> Option<Delegated> {
+    use crate::background_tasks::Kind;
+    if session.stopped()
+        || session.working()
+        || session.starting()
+        || session.approval.is_some()
+        || session.questions.is_some()
+    {
+        return None;
+    }
+    let agent_task = |task: &crate::background_tasks::Task| {
+        task.running()
+            && matches!(
+                task.kind,
+                Kind::Agent | Kind::Teammate | Kind::Remote | Kind::Workflow
+            )
+    };
+    let subagent = session.subagents.as_array().into_iter().flatten().any(|c| {
+        matches!(
+            c["status"].as_str().unwrap_or(""),
+            "running" | "responding" | "streaming" | "working" | "thinking" | "background"
+        )
+    });
+    // A child waiting on the user is not working; it shows that itself.
+    let spawned = || {
+        !session.id.is_empty()
+            && fleet.iter().any(|child| {
+                child.parent_session_id == session.id
+                    && child.id != session.id
+                    && (child.working()
+                        || child.starting()
+                        || depth > 0
+                            && delegated_within(child, fleet, depth - 1)
+                                == Some(Delegated::Agents))
+            })
+    };
+    if subagent || session.tasks.iter().any(agent_task) || spawned() {
+        Some(Delegated::Agents)
+    } else if session.background_tasks > 0 || crate::background_tasks::running(&session.tasks) > 0
+    {
+        Some(Delegated::Tasks)
+    } else {
+        None
+    }
+}
 /// Remember a clear, keeping the newest `MAX_CLEARED`.
 pub fn remember_clear(marks: &mut BTreeMap<String, ClearMark>, key: String, mark: ClearMark) {
     marks.insert(key, mark);
@@ -501,6 +573,51 @@ pub fn remember_clear(marks: &mut BTreeMap<String, ClearMark>, key: String, mark
 mod tests {
     use super::*;
     use crate::transcript::Tool;
+    #[test]
+    fn delegated_work_is_agents_before_tasks_and_never_a_session_that_speaks_for_itself() {
+        let session = |id: &str, parent: &str, state: &str| Session {
+            id: id.into(),
+            parent_session_id: parent.into(),
+            state: state.into(),
+            ..Default::default()
+        };
+        let idle = session("p", "", "input");
+        assert_eq!(delegated(&idle, &[]), None);
+        // A spawned session mid-turn, directly or through a waiting manager.
+        let fleet = [
+            session("p", "", "input"),
+            session("m", "p", "input"),
+            session("w", "m", "responding"),
+            session("other", "x", "responding"),
+        ];
+        assert_eq!(delegated(&fleet[0], &fleet), Some(Delegated::Agents));
+        assert_eq!(delegated(&fleet[1], &fleet), Some(Delegated::Agents));
+        assert_eq!(delegated(&fleet[2], &fleet), None, "working says so itself");
+        // A child waiting on the user, or done, is not work under way.
+        let mut blocked = session("c", "p", "responding");
+        blocked.approval = Some(Default::default());
+        let quiet = [idle.clone(), blocked, session("d", "p", "stopped")];
+        assert_eq!(delegated(&idle, &quiet), None);
+        // A malformed cycle ends.
+        let cycle = [session("a", "b", "input"), session("b", "a", "input")];
+        assert_eq!(delegated(&cycle[0], &cycle), None);
+        // Provider subagents and agent tasks; shells are only tasks.
+        let mut sub = idle.clone();
+        sub.subagents = std::sync::Arc::new(serde_json::json!([{"id":"x","status":"running"}]));
+        assert_eq!(delegated(&sub, &[]), Some(Delegated::Agents));
+        sub.subagents = std::sync::Arc::new(serde_json::json!([{"id":"x","status":"completed"}]));
+        assert_eq!(delegated(&sub, &[]), None);
+        let mut tasks = idle.clone();
+        tasks.background_tasks = 1;
+        assert_eq!(delegated(&tasks, &[]), Some(Delegated::Tasks));
+        tasks.tasks = crate::background_tasks::parse(&serde_json::json!([
+            {"id":"t1","taskType":"local_bash","status":"running"},
+            {"id":"t2","taskType":"local_workflow","status":"running"}
+        ]));
+        assert_eq!(delegated(&tasks, &[]), Some(Delegated::Agents));
+        tasks.state = "stopped".into();
+        assert_eq!(delegated(&tasks, &[]), None);
+    }
     #[test]
     fn overview_pins_children_where_they_started_and_reports_settling() {
         let row = |at: Option<i64>| Row {

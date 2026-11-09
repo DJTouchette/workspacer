@@ -132,8 +132,11 @@ impl Workspace {
                     || s.cwd.to_lowercase().contains(&query)
             },
         );
+        // A turn that only handed work to agents is not waiting on you yet.
         wks_native::navigation::session_sections(&self.view.sessions, &visible, |ix| {
             self.finished_unseen(&sessions[ix])
+                && self.delegated(&sessions[ix])
+                    != Some(wks_native::child_agents::Delegated::Agents)
         })
     }
 

@@ -1,5 +1,25 @@
 # Native client validation — 2026-09-27
 
+## Delegated work keeps a parent working (2026-11-09)
+
+A session whose own turn ended while other agents still do its work no longer
+reads Idle or Finished. With a Workspacer session it spawned mid-turn (or one
+of that session's own workers), a running provider subagent, or a running
+agent, teammate, cloud-agent or workflow task, it reads **Agents working**
+(busy colour, with the loader on its card and rail mark) and stays out of
+Needs you until they finish; the unopened turn then reads Finished as before.
+With only other background tasks (a shell, a watcher) it reads **Background
+task** once the turn has been seen: a shell can outlive every turn, so it
+never hides Finished and never spins. The roll-up is derived in the client
+(`child_agents::delegated`) from the fleet and the snapshot's existing
+`subagents`, `background_tasks` and `background_task_list`; the daemon's mode
+is unchanged (it deliberately does not ride on ambient tasks), and nothing is
+shown while offline.
+
+- `cargo test --lib delegated` passes (`child_agents::tests::delegated_work_…`).
+- Not checked on a display: this container has none, so the card and rail
+  were not looked at.
+
 ## Finished, not opened: shared `sessionSeen` marks (2026-11-06)
 
 A session whose turn ended while nobody was looking now sits under **Needs

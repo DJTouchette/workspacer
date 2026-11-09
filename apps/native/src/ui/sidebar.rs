@@ -909,7 +909,7 @@ impl Workspace {
                                 };
                                 let needs_you =
                                     session.approval.is_some() || session.questions.is_some();
-                                let working = session.working() && connected;
+                                let working = this.shows_working(session);
                                 rail_row(depth, active, p).child(
                                     chrome::interactive_control(
                                         div().id(SharedString::from(format!(
@@ -1480,7 +1480,7 @@ impl Workspace {
                                                         .child(title),
                                                 )
                                                 .when(
-                                                    session.working() && this.view.connected,
+                                                    this.shows_working(session),
                                                     |d| {
                                                         d.child(brand_spinner(12., p))
                                                     },

@@ -73,3 +73,63 @@ fn a_finished_turn_needs_you_until_it_is_looked_at_on_a_focused_window(cx: &mut 
     });
     assert!(marks(&mut commands).is_empty());
 }
+
+/// A session whose own turn ended while agents still do its work reads as
+/// working, not Finished or Idle; a background shell is named without
+/// hiding a finished turn.
+#[gpui::test]
+fn a_session_waiting_on_delegated_work_says_so(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    let mut view = state("a");
+    view.session_unseen = unseen(1, &["a", "b"]);
+    {
+        let sessions = Arc::make_mut(&mut view.sessions);
+        // b spawned a Workspacer session that is mid-turn.
+        sessions.push(Session {
+            id: "worker".into(),
+            parent_session_id: "b".into(),
+            state: "responding".into(),
+            ..Default::default()
+        });
+        // a only runs a background shell.
+        sessions[0].background_tasks = 1;
+    }
+    let show = |view: View, visual: &mut VisualTestContext| {
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+    };
+    show(view.clone(), &mut visual);
+    workspace.read_with(&visual, |this, cx| {
+        let p = this.palette();
+        let s = &this.view.sessions;
+        // Neither unopened turn is in Needs you while its work goes on.
+        let sections = this.session_sections(cx);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].0, SessionSection::Working);
+        assert_eq!(this.status_of(&s[1], p), ("Agents working", p.busy));
+        assert!(this.shows_working(&s[1]));
+        assert_eq!(this.status_of(&s[0], p).0, "Finished");
+        assert!(!this.shows_working(&s[0]));
+    });
+    // Seen, the shell's session names its task; the worker done, b is Finished.
+    view.session_unseen = unseen(2, &["b"]);
+    Arc::make_mut(&mut view.sessions)[2].state = "input".into();
+    show(view.clone(), &mut visual);
+    workspace.read_with(&visual, |this, cx| {
+        let p = this.palette();
+        let s = &this.view.sessions;
+        assert_eq!(this.status_of(&s[0], p), ("Background task", p.busy));
+        assert_eq!(this.status_of(&s[1], p).0, "Finished");
+        assert!(!this.shows_working(&s[1]));
+        assert_eq!(this.session_sections(cx)[0].0, SessionSection::NeedsYou);
+    });
+    // Offline, the last fleet seen proves nothing.
+    view.connected = false;
+    Arc::make_mut(&mut view.sessions)[2].state = "responding".into();
+    show(view, &mut visual);
+    workspace.read_with(&visual, |this, _| {
+        assert!(!this.shows_working(&this.view.sessions[1]));
+    });
+}

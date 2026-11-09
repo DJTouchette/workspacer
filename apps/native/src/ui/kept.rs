@@ -6,6 +6,7 @@
 //! not, and reads Paused. This device keeps no list of its own and reads
 //! nothing back by id. See docs/session-roster.md.
 use super::*;
+use wks_native::child_agents::Delegated;
 
 /// Prefix of the notice a failed resume leaves on the conversation.
 pub(super) const RESUME_FAILED: &str = "Could not resume this session: ";
@@ -40,13 +41,38 @@ impl Workspace {
     }
 
     pub(super) fn status_of<'a>(&self, session: &'a Session, p: Palette) -> (&'a str, u32) {
-        if self.view.connected && self.finished_unseen(session) {
+        let delegated = self.delegated(session);
+        // Agents still at work outrank Finished: the turn that ended only
+        // handed the work off, and their results wake this session again. A
+        // background shell can outlive every turn, so it never hides one.
+        if delegated == Some(Delegated::Agents) {
+            (Delegated::Agents.label(), p.busy)
+        } else if self.view.connected && self.finished_unseen(session) {
             ("Finished", p.success)
         } else if self.paused(session) {
             ("Paused", p.accent)
+        } else if let Some(delegated) = delegated {
+            (delegated.label(), p.busy)
         } else {
             session_status(session, p)
         }
+    }
+
+    /// What a session that is not mid-turn is still waiting on: agents it
+    /// handed work to, or background tasks. Nothing while offline, when the
+    /// fleet is only the last one seen.
+    pub(super) fn delegated(&self, session: &Session) -> Option<Delegated> {
+        self.view
+            .connected
+            .then(|| wks_native::child_agents::delegated(session, &self.view.sessions))
+            .flatten()
+    }
+
+    /// The session shows the working loader: mid-turn itself, or waiting on
+    /// agents doing its work.
+    pub(super) fn shows_working(&self, session: &Session) -> bool {
+        self.view.connected
+            && (session.working() || self.delegated(session) == Some(Delegated::Agents))
     }
 
     /// Resume a paused session with `text` as its next message: the same
