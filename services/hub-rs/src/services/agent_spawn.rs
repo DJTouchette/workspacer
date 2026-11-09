@@ -682,6 +682,7 @@ impl SpawnCoordinator {
                     }
                 }
             }
+            resume_selection(&mut params, &previous.metadata);
         }
         let replacements = self.replacements.lock().unwrap().clone();
         let _lineage_guard = if let Some(state) = &replacements {
@@ -1041,4 +1042,90 @@ fn truncate(value: &str, max: usize) -> (String, bool) {
     let mut chars = value.chars();
     let out = chars.by_ref().take(max).collect();
     (out, chars.next().is_some())
+}
+
+/// A resume continues the session it names, so what the caller leaves out
+/// comes from that session's launch: its model selection (context window,
+/// effort, exact identity) and its access. Without this a client that only
+/// knows the model (native's composer, the idle-shutdown auto-resume) came
+/// back at the configured default window, and a conversation that had grown
+/// past it could not be resumed at all. Selection fields are only inherited
+/// for the same model: a resume onto a different model takes that model's
+/// defaults, never the old model's window.
+fn resume_selection(params: &mut Value, previous: &Value) {
+    let absent = |params: &Value, key: &str| params.get(key).is_none_or(Value::is_null);
+    let prior_model = text(&previous["settings"], "model").to_owned();
+    if absent(params, "model") && !prior_model.is_empty() {
+        params["model"] = json!(prior_model);
+    }
+    let requested = text(params, "model").trim().to_owned();
+    if requested.is_empty() || requested == prior_model {
+        let selection = &previous["launchSelection"];
+        for key in ["contextWindow", "effort", "modelIdentity", "exactModel"] {
+            let value = &selection[key];
+            if absent(params, key) && !value.is_null() && value.as_str() != Some("") {
+                params[key] = value.clone();
+            }
+        }
+    }
+    // Access: only when the caller states none at all, so an explicit choice
+    // (narrower or wider) always wins.
+    if absent(params, "permissionMode") && absent(params, "skipPermissions") {
+        let settings = &previous["settings"];
+        if let Some(mode) = settings["permissionMode"]
+            .as_str()
+            .filter(|m| !m.is_empty())
+        {
+            params["permissionMode"] = json!(mode);
+        }
+        if let Some(skip) = settings["bypassAvailable"].as_bool() {
+            params["skipPermissions"] = json!(skip);
+        }
+    }
+}
+
+#[cfg(test)]
+mod resume_selection_tests {
+    use super::*;
+
+    fn launched() -> Value {
+        json!({
+            "settings": {"model": "opus", "permissionMode": "acceptEdits", "bypassAvailable": false},
+            "launchSelection": {"contextWindow": 1000000, "effort": "high", "modelIdentity": "opus"}
+        })
+    }
+
+    #[test]
+    fn a_resume_keeps_the_window_and_effort_it_launched_with() {
+        let mut params = json!({"resumeSessionId": "s", "model": "opus"});
+        resume_selection(&mut params, &launched());
+        assert_eq!(params["contextWindow"], 1000000);
+        assert_eq!(params["effort"], "high");
+        assert_eq!(params["permissionMode"], "acceptEdits");
+        assert_eq!(params["skipPermissions"], false);
+
+        // Nothing named at all (an auto-resume): the whole selection.
+        let mut params = json!({"resumeSessionId": "s"});
+        resume_selection(&mut params, &launched());
+        assert_eq!(params["model"], "opus");
+        assert_eq!(params["contextWindow"], 1000000);
+    }
+
+    #[test]
+    fn explicit_choices_win_and_another_model_takes_its_own_defaults() {
+        let mut params =
+            json!({"model": "opus", "contextWindow": 200000, "permissionMode": "plan"});
+        resume_selection(&mut params, &launched());
+        assert_eq!(params["contextWindow"], 200000);
+        assert_eq!(params["permissionMode"], "plan");
+        assert!(
+            params.get("skipPermissions").is_none(),
+            "access is all or nothing"
+        );
+
+        let mut params = json!({"model": "sonnet"});
+        resume_selection(&mut params, &launched());
+        assert!(params.get("contextWindow").is_none());
+        assert!(params.get("effort").is_none());
+    }
 }

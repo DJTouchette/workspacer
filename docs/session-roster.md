@@ -100,6 +100,10 @@ The hub maintains it itself, so every client agrees:
   by the app or host closing therefore stay unmarked and read as **Paused** on
   the next run. The same is true of any session already stopped the first time
   this hub run sees it.
+- A stop whose row carries `stop_reason: "idle"` (the engine's idle shutdown,
+  see `.rivet/context/domains/session-lifecycle.md`) never gets an `ended`
+  mark either: the process was freed, nobody finished the session, so it reads
+  **Paused** and its next message resumes it.
 - **Hide = archive.** `sessionArchive` archiving an id removes it from `open`
   and `ended`. Restoring it adds it back to `open`, with an `ended` mark if
   the row is stopped. Every client's Hide/Close calls `sessionArchive.set`.

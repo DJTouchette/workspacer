@@ -30,6 +30,11 @@ use crate::store::Db;
 /// of open agents without flooding the UI with stale history.
 const SESSION_HYDRATE_LIMIT: usize = 100;
 
+/// How often the idle-shutdown sweep checks thresholds. Bounds how far past
+/// its threshold a quiet session can run, and how soon a changed setting
+/// applies.
+const IDLE_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// How often the maintenance sweep runs: evict archived sessions from the
 /// in-memory map and GC old rows from SQLite. These bound slow growth over days
 /// of uptime, not a hot path, so hourly is ample.
@@ -228,6 +233,25 @@ async fn run_controlled(
             loop {
                 tick.tick().await;
                 store.sweep_ghost_sessions(time::Duration::minutes(15));
+            }
+        });
+    }
+
+    // Idle shutdown: off until a host sets a threshold
+    // (`EmbeddedClient::set_idle_shutdown`). Each minute, quiet managed
+    // sessions past it have their provider process tree stopped; the row
+    // stays, reads Paused (`stop_reason: "idle"`) and resumes on its next
+    // message. See SessionStore::stop_idle_sessions for the race fence.
+    {
+        let store = store.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(IDLE_SWEEP_EVERY);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                if let Some(after) = store.idle_shutdown() {
+                    store.stop_idle_sessions(after);
+                }
             }
         });
     }

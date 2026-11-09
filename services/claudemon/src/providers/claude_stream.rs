@@ -2211,7 +2211,9 @@ async fn run_session(
     // `claude_status`); an older CLI would refuse the unknown flag.
     gated.extend(super::claude_status::hook_events_args(version, &argv));
     insert_after_fixed_head(&mut argv, gated);
-    // `_tie` lives as long as the session: the CLI cannot outlive the app.
+    // The CLI leads its own process group (see `ProviderGroup`): its MCP
+    // servers and background shells go down with it instead of being
+    // orphaned, and it cannot outlive the app.
     let mut command = Command::new(&cfg.bin);
     command.args(&argv).envs(&cfg.env);
     if let Some((key, value)) = todo_tools_env(&cfg.env, std::env::var_os(TODO_TOOLS_ENV)) {
@@ -2222,7 +2224,7 @@ async fn run_session(
     {
         command.env(key, value);
     }
-    let (mut child, _tie) = crate::tied_child::spawn(
+    let mut group = crate::provider_group::ProviderGroup::spawn(
         command
             .current_dir(&cfg.cwd)
             .stdin(Stdio::piped())
@@ -2233,6 +2235,7 @@ async fn run_session(
             .no_console_window(),
     )
     .with_context(|| format!("spawning `{} {}`", cfg.bin, argv.join(" ")))?;
+    let child = group.child_mut();
 
     let mut stdin = child.stdin.take().context("claude stream: no stdin")?;
     let stdout = child.stdout.take().context("claude stream: no stdout")?;
@@ -2290,7 +2293,7 @@ async fn run_session(
     store.register_managed_task_control(
         &session_id,
         ManagedTaskControl {
-            provider_pid: child.id(),
+            provider_pid: Some(group.id()),
             stop: sttx,
         },
     );
@@ -2532,8 +2535,10 @@ async fn run_session(
                     );
                 }
             },
-            status = child.wait() => {
-                tracing::info!(?status, session = %session_id, "claude stream child exited");
+            // Observed without reaping: the group teardown below still needs
+            // the unreaped CLI to pin its process-group id.
+            _ = group.exited() => {
+                tracing::info!(session = %session_id, "claude stream child exited");
                 // The unbiased select! can pick this arm while the CLI's final
                 // lines (the `result` carrying the error/usage/Idle) still sit
                 // buffered in the reader — drain them before winding down so
@@ -2558,9 +2563,18 @@ async fn run_session(
         }
     }
 
-    let _ = child.start_kill();
+    // Closing stdin is the CLI's own wind-down signal: it flushes its
+    // transcript (what a later resume reads) and stops its MCP servers. Then
+    // the group goes, so nothing it started outlives the session.
+    drop(out_tx);
+    let teardown = group.shutdown(STREAM_EXIT_GRACE).await;
+    tracing::info!(session = %session_id, ?teardown, "claude stream provider torn down");
     Ok(())
 }
+
+/// How long a Claude CLI gets to exit on its own after stdin closes before
+/// its process group is terminated.
+const STREAM_EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
 fn unix_ms() -> i64 {
     std::time::SystemTime::now()
@@ -6483,6 +6497,98 @@ done
         // Unknown sessions and missing transcripts are a quiet no-op.
         seed_resumed_history(&store, &conv, "never-seen").await;
         assert!(!conv.has_conversation("never-seen"));
+    }
+
+    /// Idle shutdown end to end through the real driver: the quiet session's
+    /// CLI is wound down, the row ends Stopped with `stop_reason: "idle"`
+    /// (Paused, resumable), and a process the CLI started — an MCP server, a
+    /// background shell — dies with it instead of being orphaned.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn idle_shutdown_stops_the_cli_and_everything_it_started() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = ScratchDir(
+            std::env::temp_dir().join(format!("claudemon-idle-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir_all(&dir.0).expect("scratch dir");
+        let pidfile = dir.0.join("server.pid");
+        let bin = dir.0.join("stub-claude-idle");
+        // Starts a long-lived child (a stand-in MCP server), then reads stdin
+        // until EOF like the real CLI.
+        let script = format!(
+            "#!/bin/sh\nsleep 600 </dev/null >/dev/null 2>&1 &\necho $! > '{}'\nwhile IFS= read -r line; do :; done\n",
+            pidfile.display()
+        );
+        std::fs::write(&bin, script).expect("writing the stub CLI");
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let sid = "idle-e2e";
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed(sid, &dir.0.to_string_lossy(), "claude");
+        store.set_transport(sid, crate::session::state::Transport::Stream);
+        spawn_session(
+            store.clone(),
+            conv.clone(),
+            SpawnConfig {
+                session_id: sid.to_string(),
+                cwd: dir.0.to_string_lossy().to_string(),
+                bin: bin.to_string_lossy().to_string(),
+                model: None,
+                effort: None,
+                permission_mode: None,
+                resume: None,
+                fork_session: false,
+                resume_at: None,
+                extra_args: vec![],
+                env: HashMap::new(),
+                yolo: false,
+                facade: Facade::default(),
+            },
+        );
+        assert!(settles(|| store.is_managed(sid) && pidfile.exists()).await);
+        let server: i32 = settles_value(|| {
+            std::fs::read_to_string(&pidfile)
+                .ok()
+                .and_then(|pid| pid.trim().parse().ok())
+        })
+        .await
+        .expect("the stub's server pid");
+        let alive = |pid: i32| {
+            std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+                stat.rsplit_once(')')
+                    .and_then(|(_, rest)| rest.trim_start().chars().next())
+                    .is_some_and(|state| state != 'Z' && state != 'X')
+            })
+        };
+        assert!(alive(server));
+
+        assert_eq!(
+            store.stop_idle_sessions(std::time::Duration::ZERO),
+            vec![sid.to_string()]
+        );
+        assert!(
+            settles(|| store
+                .get(sid)
+                .is_some_and(|s| s.mode == SessionMode::Stopped))
+            .await,
+            "the driver winds down and publishes the end"
+        );
+        assert_eq!(store.get(sid).unwrap().stop_reason.as_deref(), Some("idle"));
+        assert!(
+            settles(|| !alive(server)).await,
+            "the CLI's child must not outlive the session"
+        );
+    }
+
+    async fn settles_value<T>(mut value: impl FnMut() -> Option<T>) -> Option<T> {
+        for _ in 0..600 {
+            if let Some(value) = value() {
+                return Some(value);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        value()
     }
 
     /// Background tasks end to end through the real driver: the list fills

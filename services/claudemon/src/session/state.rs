@@ -879,6 +879,13 @@ pub struct SessionState {
     /// "Allow all edits this session" grant) is visible. Omitted until known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_mode: Option<String>,
+    /// Why this life ended, when it ended for a reason clients must not read
+    /// as "the user or the agent finished it". Only `"idle"` today: the
+    /// daemon's idle shutdown stopped a quiet session to free its process,
+    /// and the session is meant to read Paused and resume on its next
+    /// message. Cleared when the id starts a new life. Omitted otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
     /// The agent's current plan / checklist, last-write-wins. Additive and
     /// back-compatible like `provider` — absent until the agent writes a plan,
     /// and omitted from the wire when empty. Fed by `SessionStore::set_plan`.
@@ -1045,6 +1052,7 @@ impl SessionState {
             provider: default_provider(),
             transport: Transport::default(),
             permission_mode: None,
+            stop_reason: None,
             plan: None,
             subagents: Vec::new(),
             compacting: false,

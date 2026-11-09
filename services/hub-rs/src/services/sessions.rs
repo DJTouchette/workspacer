@@ -49,6 +49,11 @@ struct Sessions {
     /// one of these is published once even if it is off the sidebar, so no
     /// client that read it as live keeps a ghost row.
     announced: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// Single-flight for resuming idle-stopped sessions on a message (see
+    /// `send::resume_idle`): two messages racing to one paused session must
+    /// produce one resume, never two lives fighting over its id.
+    /// Held across the resume; maps ids resumed this way to when.
+    idle_resumes: tokio::sync::Mutex<BTreeMap<String, std::time::Instant>>,
     /// Pull request links (see `pull_requests`).
     pull_requests: Option<Arc<super::pull_requests::Service>>,
     /// Sidebar sessions claudemon evicted from memory (see `sidebar_fill`).
@@ -83,6 +88,7 @@ pub(crate) async fn install(
     let service = Arc::new(Sessions {
         queue: queues,
         announced: Default::default(),
+        idle_resumes: Default::default(),
         evicted: Default::default(),
         pull_requests: options.pull_requests.clone(),
         titles: title_offers,
@@ -1408,6 +1414,7 @@ mod projection_tests {
             titles: None,
             queue: Default::default(),
             announced: Default::default(),
+            idle_resumes: Default::default(),
             evicted: Default::default(),
         });
         let http = reqwest::Client::new();
@@ -1533,6 +1540,7 @@ mod projection_tests {
             titles: None,
             queue: Default::default(),
             announced: Default::default(),
+            idle_resumes: Default::default(),
             evicted: Default::default(),
         });
         reqwest::Client::new()
@@ -1627,6 +1635,7 @@ mod projection_tests {
             titles: None,
             queue: Default::default(),
             announced: Default::default(),
+            idle_resumes: Default::default(),
             evicted: Default::default(),
         });
         let now = time::OffsetDateTime::now_utc()

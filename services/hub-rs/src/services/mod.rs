@@ -90,6 +90,24 @@ pub(crate) fn local_lookup(options: &Options) -> task_store::OwnerLookup {
     })
 }
 
+/// Minutes a quiet Claude or Codex session keeps its process when hub config
+/// does not set `sessions.idleShutdownMinutes`.
+pub(crate) const DEFAULT_IDLE_SHUTDOWN_MINUTES: u64 = 30;
+
+/// `sessions.idleShutdownMinutes` as the engine's idle threshold: absent or
+/// unreadable means the default, `0` turns idle shutdown off. An idle-stopped
+/// session reads Paused and resumes, same conversation, on its next message.
+pub(crate) fn idle_shutdown_after(config: &serde_json::Value) -> Option<std::time::Duration> {
+    let minutes = match &config["sessions"]["idleShutdownMinutes"] {
+        serde_json::Value::Number(n) => n
+            .as_u64()
+            .or_else(|| n.as_f64().filter(|m| *m >= 0.0).map(|m| m.round() as u64))
+            .unwrap_or(DEFAULT_IDLE_SHUTDOWN_MINUTES),
+        _ => DEFAULT_IDLE_SHUTDOWN_MINUTES,
+    };
+    (minutes > 0).then(|| std::time::Duration::from_secs(minutes.saturating_mul(60)))
+}
+
 pub(crate) fn install_config(
     mut options: Options,
     directory: PathBuf,
@@ -155,6 +173,16 @@ pub(crate) fn install_config(
     // The sidebar cleanup prompt's threshold (`sessions.cleanupThreshold`).
     if let Some(open) = &options.session_open {
         open.set_config(config.clone());
+    }
+    // Idle shutdown (`sessions.idleShutdownMinutes`): the embedded engine
+    // reads it live on each idle sweep. See `idle_shutdown_after`.
+    if let Some(engine) = &options.engine {
+        let config = config.clone();
+        let source: claudemon::session::store::IdleShutdownSource =
+            Arc::new(move || idle_shutdown_after(&config.get()));
+        if let Err(error) = engine.set_idle_shutdown_source(source) {
+            eprintln!("idle shutdown unavailable: {error:#}");
+        }
     }
     if let Some(home) = options.home_dir.clone() {
         options = provider_utilities::install(options, config.clone(), home);
@@ -554,3 +582,36 @@ pub(crate) fn atomic_json(
 
 pub mod live_streams;
 pub(crate) mod owned_process;
+
+#[cfg(test)]
+mod idle_shutdown_tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::Duration;
+
+    #[test]
+    fn idle_shutdown_config_defaults_on_and_zero_turns_it_off() {
+        let minutes = |m: u64| Some(Duration::from_secs(m * 60));
+        assert_eq!(
+            idle_shutdown_after(&json!({})),
+            minutes(DEFAULT_IDLE_SHUTDOWN_MINUTES)
+        );
+        assert_eq!(
+            idle_shutdown_after(&json!({"sessions":{"idleShutdownMinutes":5}})),
+            minutes(5)
+        );
+        assert_eq!(
+            idle_shutdown_after(&json!({"sessions":{"idleShutdownMinutes":0}})),
+            None
+        );
+        assert_eq!(
+            idle_shutdown_after(&json!({"sessions":{"idleShutdownMinutes":"soon"}})),
+            minutes(DEFAULT_IDLE_SHUTDOWN_MINUTES),
+            "an unreadable value keeps the default rather than leaking processes"
+        );
+        assert_eq!(
+            idle_shutdown_after(&json!({"sessions":{"idleShutdownMinutes":-3}})),
+            minutes(DEFAULT_IDLE_SHUTDOWN_MINUTES)
+        );
+    }
+}

@@ -435,7 +435,21 @@ pub struct SessionStore {
     /// is marked here, so `ingest` drops its hooks entirely: a warm is recorded
     /// in the `heartbeats` table, never as a session.
     heartbeat_ids: Arc<DashSet<String>>,
+    /// Native managed sessions' last idle-relevant activity: when it
+    /// happened, and a sequence number the idle fence compares exactly (two
+    /// `Instant`s can tie on a coarse clock). Present exactly while a
+    /// managed driver is registered; see [`SessionStore::stop_idle_sessions`].
+    managed_activity: Arc<DashMap<String, (tokio::time::Instant, u64)>>,
+    activity_seq: Arc<AtomicU64>,
+    /// Idle shutdown threshold in seconds; 0 = off. Host-set at runtime.
+    idle_shutdown_secs: Arc<AtomicU64>,
+    /// When set, the host's live source for that threshold, read on every
+    /// idle sweep (so a config edit by any writer applies within a minute).
+    idle_shutdown_source: Arc<std::sync::RwLock<Option<IdleShutdownSource>>>,
 }
+
+/// A host's live idle-shutdown threshold; `None` = off.
+pub type IdleShutdownSource = Arc<dyn Fn() -> Option<std::time::Duration> + Send + Sync + 'static>;
 
 /// A live model/effort switch request for a managed adapter's driver loop.
 /// Either field may be absent — absent means "leave as is".
@@ -933,6 +947,10 @@ impl SessionStore {
                 std::sync::RwLock::new(std::collections::HashMap::new()),
             ),
             heartbeat_ids: Arc::new(DashSet::new()),
+            managed_activity: Arc::new(DashMap::new()),
+            activity_seq: Arc::new(AtomicU64::new(0)),
+            idle_shutdown_secs: Arc::new(AtomicU64::new(0)),
+            idle_shutdown_source: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -1831,6 +1849,8 @@ impl SessionStore {
                 entry.clear_pending();
                 entry.updated_at = OffsetDateTime::now_utc();
             }
+            // A new life: whatever ended the last one no longer describes it.
+            entry.stop_reason = None;
             // A spawn onto an existing id is a new telemetry life (resume or
             // restart). The prior process' context evidence cannot cross it.
             entry.execution_engine = self.engines.metadata(session_id);
@@ -1883,6 +1903,7 @@ impl SessionStore {
                     SessionState::new(session_id.to_string(), Some(cwd.to_string()))
                 });
             entry.mode = SessionMode::Input;
+            entry.stop_reason = None;
             entry.provider = provider.to_string();
             entry.execution_engine = self.engines.metadata(session_id);
             entry.context_telemetry_epoch = fresh_epoch;
@@ -1900,6 +1921,12 @@ impl SessionStore {
             event: "Spawn".to_string(),
             state: state.clone(),
         });
+        // Idle accounting starts with the life: a session nobody ever sends
+        // anything to is still shut down once its threshold passes.
+        self.managed_activity.insert(
+            session_id.to_string(),
+            (tokio::time::Instant::now(), self.next_activity_seq()),
+        );
         state
     }
 
@@ -1953,8 +1980,15 @@ impl SessionStore {
     ) -> Option<SessionState> {
         let state = {
             let mut entry = self.states.get_mut(session_id)?;
+            let before = (entry.mode, entry.pending().is_some());
             if !entry.write_pending(mode, write) {
                 return Some(entry.clone());
+            }
+            // A real transition (not a repeated liveness write) restarts the
+            // idle clock. Bumped under the row lock so the idle fence, which
+            // re-reads the row after the sequence, can never miss it.
+            if before != (entry.mode, entry.pending().is_some()) {
+                self.note_managed_activity(session_id);
             }
             if mode == SessionMode::Input {
                 // Turn boundary. A subagent row still `Running` now is stale by
@@ -2778,6 +2812,17 @@ impl SessionStore {
         self.wrappers.remove(session_id);
         self.buffers.remove(session_id);
         self.bytes_tx.remove(session_id);
+        // The rest of the per-id plumbing a PTY teardown clears too
+        // (`release_spawn_plumbing`). A hybrid/fallback TUI populates these
+        // for a managed id, and a resume of the same id must not inherit a
+        // previous life's queued input or terminal geometry.
+        self.pending_messages.remove(session_id);
+        self.input_since.remove(session_id);
+        self.flush_epochs.remove(session_id);
+        self.client_input_at.remove(session_id);
+        self.paste_modes.remove(session_id);
+        self.term_sizes.remove(session_id);
+        self.managed_activity.remove(session_id);
         if let Some(mut entry) = self.states.get_mut(session_id) {
             if entry.mode == SessionMode::Stopped {
                 return false; // This generation already published its end.
@@ -2867,6 +2912,7 @@ impl SessionStore {
                 return;
             }
             entry.background_tasks = live;
+            self.note_managed_activity(session_id);
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
         };
@@ -3083,6 +3129,139 @@ impl SessionStore {
                 event: "SessionEnd".to_string(),
                 state,
             });
+            stopped.push(id);
+        }
+        stopped
+    }
+
+    // --- idle shutdown ------------------------------------------------------
+
+    fn next_activity_seq(&self) -> u64 {
+        self.activity_seq.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Restart a managed session's idle clock. Only ids with a registered
+    /// driver are tracked, so this never grows the map for PTY sessions.
+    fn note_managed_activity(&self, session_id: &str) {
+        if let Some(mut entry) = self.managed_activity.get_mut(session_id) {
+            *entry = (tokio::time::Instant::now(), self.next_activity_seq());
+        }
+    }
+
+    /// Set (or, with `None`/zero, turn off) the idle shutdown threshold the
+    /// daemon's idle sweep applies. Takes effect on the next sweep.
+    pub fn set_idle_shutdown(&self, after: Option<std::time::Duration>) {
+        let secs = after.map_or(0, |after| after.as_secs());
+        self.idle_shutdown_secs.store(secs, Ordering::Relaxed);
+    }
+
+    /// Read the threshold from `source` on every sweep from now on, instead
+    /// of a value set once. Replaces any earlier source.
+    pub fn set_idle_shutdown_source(&self, source: IdleShutdownSource) {
+        *self.idle_shutdown_source.write().unwrap() = Some(source);
+    }
+
+    pub fn idle_shutdown(&self) -> Option<std::time::Duration> {
+        let source = self.idle_shutdown_source.read().unwrap().clone();
+        if let Some(source) = source {
+            return source().filter(|after| !after.is_zero());
+        }
+        match self.idle_shutdown_secs.load(Ordering::Relaxed) {
+            0 => None,
+            secs => Some(std::time::Duration::from_secs(secs)),
+        }
+    }
+
+    /// Whether a row is quiet enough to shut down: a native Claude stream or
+    /// Codex session sitting at its prompt with nothing outstanding — no card,
+    /// no turn, no compaction, no subagent and no background task (a dev
+    /// server the agent started is work the user expects to keep running).
+    fn idle_stoppable(state: &SessionState) -> bool {
+        state.mode == SessionMode::Input
+            && state.pending().is_none()
+            && state.background_tasks == 0
+            && !state.compacting
+            && !state
+                .background_task_list
+                .iter()
+                .any(|task| task.is_running())
+            && !state
+                .subagents
+                .iter()
+                .any(|sub| sub.status == SubagentStatus::Running)
+            && match state.provider.as_str() {
+                "claude" => state.transport == Transport::Stream,
+                "codex" => true,
+                _ => false,
+            }
+    }
+
+    /// Shut down managed sessions that have been idle for `max_idle`.
+    ///
+    /// The provider process (and everything it started) goes; the session
+    /// does not. Its row is stopped with `stop_reason: "idle"`, which hubs
+    /// read as Paused rather than Ended, and its next message resumes the
+    /// same conversation. Returns the ids it stopped.
+    ///
+    /// The fence: the managed input channel is removed only if the activity
+    /// sequence read before the row check is still current AND the row is
+    /// still idle, both evaluated under the channel map's write lock. Every
+    /// submit bumps the sequence before it looks the channel up, so a message
+    /// racing the sweep either cancels the shutdown or finds no channel — it
+    /// is never accepted into a driver that is then torn down.
+    ///
+    /// Sessions bound to an execution engine, or with a terminal attached (a
+    /// hybrid or fallback TUI the user may be typing into, which bypasses the
+    /// activity clock), are never stopped here.
+    pub fn stop_idle_sessions(&self, max_idle: std::time::Duration) -> Vec<String> {
+        let now = tokio::time::Instant::now();
+        let due: Vec<(String, u64)> = self
+            .managed_activity
+            .iter()
+            .filter(|entry| now.saturating_duration_since(entry.value().0) >= max_idle)
+            .map(|entry| (entry.key().clone(), entry.value().1))
+            .collect();
+        let mut stopped = Vec::new();
+        for (id, seq) in due {
+            if self.engines.bound(&id).is_some() || self.wrappers.contains_key(&id) {
+                continue;
+            }
+            // Lock order: managed_inputs, then managed_activity / states. No
+            // path takes managed_inputs while holding either of those.
+            let removed = self
+                .managed_inputs
+                .remove_if(&id, |_, _| {
+                    // Separate statements: the activity guard must be released
+                    // before the row is read. A mode write holds the row lock
+                    // while it bumps the sequence; holding both here in the
+                    // other order would deadlock against it.
+                    let current =
+                        self.managed_activity.get(&id).map(|entry| entry.value().1) == Some(seq);
+                    let stop = current
+                        && self
+                            .states
+                            .get(&id)
+                            .is_some_and(|state| Self::idle_stoppable(&state));
+                    // Untracked in the same step: nothing restarts the clock
+                    // of a session that is already on its way down.
+                    if stop {
+                        self.managed_activity.remove(&id);
+                    }
+                    stop
+                })
+                .is_some();
+            if !removed {
+                continue;
+            }
+            // Before the driver's teardown publishes SessionEnd, so the end
+            // every client sees already says why.
+            if let Some(mut state) = self.states.get_mut(&id) {
+                state.stop_reason = Some("idle".to_string());
+            }
+            // Drop the remaining channels; the driver sees its input closed,
+            // winds the provider down and deregisters under its generation.
+            self.native_terminate_managed(&id);
+            tracing::info!(session = %id, idle_secs = max_idle.as_secs(), "idle shutdown: stopping quiet session (resumable)");
             stopped.push(id);
         }
         stopped
@@ -3670,6 +3849,13 @@ impl SessionStore {
     ) -> MessageOutcome {
         // Managed (adapter-driven) sessions forward the prompt to the provider's
         // own API via the driver task — no PTY, no Input-mode gating.
+        //
+        // The activity bump comes FIRST: the idle fence removes the input
+        // channel only if the sequence it read is still current, so a message
+        // either restarts the clock before the fence looks, or finds the
+        // channel already gone. It is never delivered into a driver that is
+        // about to be shut down for idleness.
+        self.note_managed_activity(session_id);
         if let Some(tx) = self.managed_input(session_id) {
             return if tx.send(text, delivery, sender, uuid, images) {
                 MessageOutcome::Sent
@@ -6735,6 +6921,142 @@ mod tests {
             store.deregister_managed("m1", gen2),
             "and the owning life must report that it did"
         );
+    }
+
+    // --- idle shutdown -----------------------------------------------------
+
+    fn idle_codex(store: &SessionStore, id: &str) -> mpsc::UnboundedReceiver<String> {
+        store.register_managed(id, "/repo", "codex");
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input(id, tx);
+        rx
+    }
+
+    /// A quiet session past the threshold loses its provider, not its row:
+    /// the input closes (the driver's signal to wind down), the end it then
+    /// publishes says `idle`, and the next life clears the reason.
+    #[tokio::test(start_paused = true)]
+    async fn idle_shutdown_stops_a_quiet_session_and_marks_it_idle() {
+        let store = SessionStore::new();
+        let mut rx = idle_codex(&store, "m1");
+        let gen = store.claim_generation("m1");
+        let mut updates = store.subscribe();
+
+        let after = std::time::Duration::from_secs(30 * 60);
+        assert!(store.stop_idle_sessions(after).is_empty(), "not due yet");
+        tokio::time::advance(after).await;
+        assert_eq!(store.stop_idle_sessions(after), vec!["m1".to_string()]);
+        assert!(rx.recv().await.is_none(), "the driver's input is closed");
+        assert!(!store.is_managed("m1"));
+
+        // The driver's own teardown publishes the end, carrying the reason.
+        assert!(store.deregister_managed("m1", gen));
+        let end = loop {
+            let update = updates.recv().await.unwrap();
+            if update.event == "SessionEnd" {
+                break update;
+            }
+        };
+        assert_eq!(end.state.mode, SessionMode::Stopped);
+        assert_eq!(end.state.stop_reason.as_deref(), Some("idle"));
+        assert_eq!(
+            serde_json::to_value(&end.state).unwrap()["stop_reason"],
+            "idle"
+        );
+        assert!(store
+            .stop_idle_sessions(std::time::Duration::ZERO)
+            .is_empty());
+
+        // Resume: a new life is not an idle-stopped one.
+        store.register_managed("m1", "/repo", "codex");
+        assert_eq!(store.get("m1").unwrap().stop_reason, None);
+    }
+
+    /// A message restarts the clock, and a real transition does too; a
+    /// repeated liveness write does not.
+    #[tokio::test(start_paused = true)]
+    async fn activity_restarts_the_idle_clock() {
+        let store = SessionStore::new();
+        let mut rx = idle_codex(&store, "m1");
+        let after = std::time::Duration::from_secs(600);
+
+        tokio::time::advance(after).await;
+        assert_eq!(
+            store.submit_message("m1", "hi".into()),
+            MessageOutcome::Sent
+        );
+        assert_eq!(rx.recv().await.as_deref(), Some("hi"));
+        assert!(
+            store.stop_idle_sessions(after).is_empty(),
+            "the send restarted it"
+        );
+
+        tokio::time::advance(after).await;
+        store.set_managed_mode("m1", SessionMode::Responding, PendingWrite::Keep);
+        store.set_managed_mode("m1", SessionMode::Input, PendingWrite::Keep);
+        assert!(
+            store.stop_idle_sessions(after).is_empty(),
+            "the turn restarted it"
+        );
+
+        tokio::time::advance(after / 2).await;
+        store.set_managed_mode("m1", SessionMode::Input, PendingWrite::Keep);
+        tokio::time::advance(after / 2).await;
+        assert_eq!(
+            store.stop_idle_sessions(after),
+            vec!["m1".to_string()],
+            "a repeated Input write is not activity"
+        );
+    }
+
+    /// Anything outstanding keeps the process: a turn, a card, background
+    /// work the user expects to keep running, an attached terminal, and every
+    /// provider but native Claude stream and Codex.
+    #[tokio::test(start_paused = true)]
+    async fn idle_shutdown_never_stops_a_session_with_something_outstanding() {
+        let store = SessionStore::new();
+        let _busy = idle_codex(&store, "busy");
+        store.set_managed_mode("busy", SessionMode::Responding, PendingWrite::Keep);
+        let _bg = idle_codex(&store, "bg");
+        store.set_background_tasks("bg", 1);
+        let _term = idle_codex(&store, "term");
+        store.attach_pty("term", handle());
+        store.register_managed("pty-claude", "/repo", "claude");
+        let (tx, _claude_rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("pty-claude", tx);
+        store.register_managed("oc", "/repo", "opencode");
+        let (tx, _oc_rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("oc", tx);
+        // A Claude STREAM session at its prompt is eligible.
+        store.register_managed("stream", "/repo", "claude");
+        store.set_transport("stream", Transport::Stream);
+        let (tx, _stream_rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("stream", tx);
+
+        tokio::time::advance(std::time::Duration::from_secs(3600)).await;
+        let stopped = store.stop_idle_sessions(std::time::Duration::from_secs(60));
+        assert_eq!(stopped, vec!["stream".to_string()]);
+        for id in ["busy", "bg", "term", "pty-claude", "oc"] {
+            assert!(store.is_managed(id), "{id} must keep its process");
+        }
+    }
+
+    /// Managed teardown releases every per-id map a PTY teardown does, so
+    /// spawn/stop churn (idle shutdowns included) leaves nothing behind and a
+    /// resume of the same id starts clean.
+    #[test]
+    fn managed_teardown_leaves_no_per_session_plumbing() {
+        let store = SessionStore::new();
+        let _rx = idle_codex(&store, "m1");
+        let gen = store.claim_generation("m1");
+        store.attach_pty("m1", handle());
+        store.note_term_size("m1", 80, 24);
+        assert!(store.deregister_managed("m1", gen));
+        assert!(!store.term_sizes.contains_key("m1"));
+        assert!(!store.managed_activity.contains_key("m1"));
+        assert!(!store.wrappers.contains_key("m1"));
+        assert!(!store.buffers.contains_key("m1"));
+        assert!(!store.pending_messages.contains_key("m1"));
     }
 
     /// The ghost sweep is the belt for every teardown escape hatch: a row with

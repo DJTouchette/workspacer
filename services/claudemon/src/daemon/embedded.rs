@@ -163,6 +163,33 @@ impl EmbeddedClient {
             .map(|store| store.subscribe())
             .ok_or_else(|| anyhow!("embedded daemon stopped"))
     }
+    /// Set the idle shutdown threshold (`None` turns it off): managed Claude
+    /// stream and Codex sessions quiet for this long have their provider
+    /// process stopped and read Paused, resumable on their next message. See
+    /// [`crate::session::SessionStore::stop_idle_sessions`]. Live: the next
+    /// sweep (at most a minute away) applies it.
+    pub fn set_idle_shutdown(&self, after: Option<std::time::Duration>) -> Result<()> {
+        self.store
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|store| store.set_idle_shutdown(after))
+            .ok_or_else(|| anyhow!("embedded daemon stopped"))
+    }
+    /// [`Self::set_idle_shutdown`] read live: `source` is asked for the
+    /// threshold on every idle sweep, so a host can hand over its config
+    /// lookup once instead of pushing each change.
+    pub fn set_idle_shutdown_source(
+        &self,
+        source: crate::session::store::IdleShutdownSource,
+    ) -> Result<()> {
+        self.store
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|store| store.set_idle_shutdown_source(source))
+            .ok_or_else(|| anyhow!("embedded daemon stopped"))
+    }
     /// High-frequency status lines are distinct from durable hook events.
     pub fn subscribe_status_lines(
         &self,

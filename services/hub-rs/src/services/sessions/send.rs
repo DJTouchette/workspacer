@@ -10,6 +10,10 @@ use claudemon::{
 };
 use serde_json::{Value, json};
 
+/// How long after resuming an idle-stopped session a message that raced the
+/// resume keeps retrying definite refusals while the new driver comes up.
+const RESUME_SEND_WINDOW: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// What became of one message send.
 #[derive(Debug)]
 pub(super) enum MessageOutcome {
@@ -94,12 +98,25 @@ impl Sessions {
             ));
         };
         let from = from.filter(|s| !s.is_empty());
-        let sender = if from.is_some() {
-            MessageSender::Agent
-        } else {
-            MessageSender::Human
-        };
-        let text = match from {
+        let text = self.attributed(text, from);
+        let outcome = self
+            .send_once(id, &text, delivery, from, uuid, images)
+            .await;
+        // Only a definite refusal can mean "this session was idle-stopped":
+        // an uncertain send may have been delivered and is never replayed.
+        if !matches!(outcome, MessageOutcome::Rejected(_)) || !images.is_empty() {
+            return outcome;
+        }
+        match self.resume_idle(id, &text, delivery, from, uuid).await {
+            Some(resumed) => resumed,
+            None => outcome,
+        }
+    }
+
+    /// `text` as the target reads it: an agent's message carries a sender
+    /// header naming who wrote it.
+    fn attributed(&self, text: &str, from: Option<&str>) -> String {
+        match from {
             Some(from) => {
                 let label = self.sender_label(from);
                 format!(
@@ -111,6 +128,112 @@ impl Sessions {
                 )
             }
             None => text.to_owned(),
+        }
+    }
+
+    /// Whether claudemon (authoritative, not this hub's projection, which can
+    /// lag a resume by a snapshot) holds `id` stopped by idle shutdown.
+    async fn idle_stopped(&self, id: &str) -> Option<Value> {
+        let row = self
+            .request("GET", format!("/sessions/{id}"), None)
+            .await
+            .ok()?;
+        (super::super::roster::ended(&row) && super::super::session_open::idle_stopped(&row))
+            .then_some(row)
+    }
+
+    /// A message to a session the engine stopped for idleness resumes it —
+    /// same id, same conversation, the launch's own settings — with the
+    /// message as its first prompt, so idle shutdown is invisible to whoever
+    /// sends: the native composer, the hub queue, a child's completion wake,
+    /// a job. `None` when the session is not idle-stopped (the original
+    /// refusal stands).
+    ///
+    /// Single-flight: a message that waited behind another's resume finds the
+    /// session already live and is sent normally, retrying only definite
+    /// refusals while the resumed driver comes up (claudemon refuses input
+    /// until then rather than queue it).
+    async fn resume_idle(
+        &self,
+        id: &str,
+        text: &str,
+        delivery: Delivery,
+        from: Option<&str>,
+        uuid: Option<&str>,
+    ) -> Option<MessageOutcome> {
+        // A replaced manager routes elsewhere; never revive its old life.
+        if let Some(state) = &self.replacements {
+            if state.wake_target(id).ok().as_deref() != Some(id) {
+                return None;
+            }
+        }
+        let mut flight = self.idle_resumes.lock().await;
+        let now = std::time::Instant::now();
+        flight.retain(|_, at| now.duration_since(*at) < RESUME_SEND_WINDOW);
+        let Some(row) = self.idle_stopped(id).await else {
+            // Resumed while this message waited (or never idle-stopped): send
+            // into the new life once its driver takes input.
+            if !flight.contains_key(id) {
+                return None;
+            }
+            let deadline = tokio::time::Instant::now() + RESUME_SEND_WINDOW;
+            loop {
+                let outcome = self.send_once(id, text, delivery, from, uuid, &[]).await;
+                if !matches!(outcome, MessageOutcome::Rejected(_))
+                    || tokio::time::Instant::now() >= deadline
+                {
+                    return Some(outcome);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        };
+        let mut params = json!({"resumeSessionId": id, "message": text});
+        // A launch record (this hub launched it) supplies everything else; the
+        // row covers a session it did not.
+        for key in ["provider", "cwd", "transport"] {
+            if let Some(value) = row[key].as_str().filter(|v| !v.is_empty()) {
+                params[key] = json!(value);
+            }
+        }
+        let resumed = async {
+            let client = crate::client::Client::connect_service(&self.hub).await?;
+            client.call("agents.spawn", params).await
+        }
+        .await;
+        Some(match resumed {
+            Ok(reply) if reply["messageQueued"] == true => {
+                flight.insert(id.to_owned(), std::time::Instant::now());
+                tracing::info!(session = %id, "idle-stopped session resumed by a message");
+                MessageOutcome::Delivered(json!({"ok":true,"resumed":true}))
+            }
+            Ok(_) => {
+                flight.insert(id.to_owned(), std::time::Instant::now());
+                MessageOutcome::Rejected(anyhow!(
+                    "the paused session was resumed but did not accept the message; send it again"
+                ))
+            }
+            // A spawn that errored may still have started (timeout): never
+            // claim the message was refused outright.
+            Err(error) => MessageOutcome::Uncertain(anyhow!(
+                "resuming the paused session failed; check it before resending: {error:#}"
+            )),
+        })
+    }
+
+    /// One send attempt, no resume. `text` is already attributed.
+    async fn send_once(
+        &self,
+        id: &str,
+        text: &str,
+        delivery: Delivery,
+        from: Option<&str>,
+        uuid: Option<&str>,
+        images: &[String],
+    ) -> MessageOutcome {
+        let sender = if from.is_some() {
+            MessageSender::Agent
+        } else {
+            MessageSender::Human
         };
         if let Some(tracker) = &self.message_tracker {
             let target = match &self.replacements {
@@ -125,7 +248,7 @@ impl Sessions {
                 &self.engine,
                 tracker,
                 &target,
-                &text,
+                text,
                 &[],
                 None,
                 false,

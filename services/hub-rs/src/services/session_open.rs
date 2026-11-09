@@ -159,6 +159,12 @@ fn classify(row: &Value, shells: &BTreeSet<String>) -> Observation {
     }
 }
 
+/// Stopped by the engine's idle shutdown (`stop_reason: "idle"`), not by the
+/// user or the agent.
+pub(crate) fn idle_stopped(row: &Value) -> bool {
+    row["stop_reason"] == "idle" || row["stopReason"] == "idle"
+}
+
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -576,6 +582,13 @@ impl SessionOpen {
             }
             Observation::Ended => {
                 self.live_now.lock().unwrap().remove(id);
+                // An idle shutdown freed the process, nobody finished the
+                // session: like a closing app's stop it stays unmarked, so
+                // every client reads it Paused and resumes it on its next
+                // message.
+                if idle_stopped(row) {
+                    return false;
+                }
                 if self.closing.load(Ordering::Acquire) || !self.seen.lock().unwrap().contains(id) {
                     return false;
                 }
@@ -828,6 +841,24 @@ mod tests {
         assert!(second.ids().contains("a"));
         assert!(ended(&second).is_empty());
         assert_eq!(second.kept()["sessions"][0]["sessionId"], "a");
+    }
+
+    /// An idle shutdown is not an end: the session reads Paused and its next
+    /// message resumes it. A later real end still marks it.
+    #[test]
+    fn an_idle_shutdown_stays_paused() {
+        let open = SessionOpen::open(None, None, None, None);
+        open.observe(&live("a"), &none());
+        let mut idle = stopped("a");
+        idle["stop_reason"] = json!("idle");
+        assert!(!open.observe(&idle, &none()));
+        assert!(open.ids().contains("a"));
+        assert!(ended(&open).is_empty(), "idle-stopped sessions stay Paused");
+        assert_eq!(open.kept()["sessions"][0]["sessionId"], "a");
+        // Resumed, then ended for real.
+        open.observe(&live("a"), &none());
+        assert!(open.observe(&stopped("a"), &none()));
+        assert_eq!(ended(&open), ["a".to_owned()].into());
     }
 
     #[test]

@@ -159,6 +159,47 @@ runtime plumbing and idle thresholds; it does not reap a session merely because
 no token update arrived. Do not substitute context occupancy, cumulative usage,
 or a progress fingerprint for process liveness.
 
+## Idle shutdown and provider teardown
+
+Hosts that embed the engine (native, `workspacer-rust serve`) stop quiet Claude
+stream and Codex sessions after `sessions.idleShutdownMinutes` (default 30, 0
+off; read live from hub config on each one-minute sweep through
+`EmbeddedClient::set_idle_shutdown_source`). `SessionStore::stop_idle_sessions`
+only takes a session at its prompt with no card, compaction, running subagent
+or background task, no attached terminal and no execution engine. Its fence:
+every managed submit bumps a per-session activity sequence before looking up
+the input channel, and the sweep removes the channel only if that sequence is
+unchanged and the row is still idle, under the channel map's write lock. A
+racing message either cancels the shutdown or is refused; it is never accepted
+into a driver that is then torn down. Mode writes bump the sequence while
+holding the row lock, so the fence reads the activity guard and the row in
+separate statements (holding both would deadlock).
+
+The stopped row carries `stop_reason: "idle"` (cleared by `register_managed` /
+`register_spawn`). `session_open` gives it no `ended` mark, so it reads Paused.
+Hub `agents.sendMessage` turns a definite refusal for such a session into a
+resume carrying the message (`sessions/send.rs::resume_idle`, single-flight,
+claudemon state checked rather than the lagging projection), so senders that
+are not native's composer (hub queue, child wakes, jobs) resume it too. Image
+sends are not auto-resumed. Claudemon still refuses input before a managed
+driver registers; the resume uses the spawn's first message rather than
+changing that.
+
+A resume inherits the launch record's model selection (`contextWindow`,
+`effort`, `modelIdentity`, `exactModel`, for the same model only) and, when
+the caller states no access at all, its permission mode
+(`agent_spawn::resume_selection`). Native resumes pass no window, so without
+this a 1M-context conversation came back at the default window.
+
+The Claude stream CLI leads its own process group (`provider_group.rs`).
+Teardown closes stdin (the CLI flushes its transcript and stops its MCP
+servers), waits three seconds, SIGTERMs the group, then always SIGKILLs it
+while the unreaped CLI still pins the group id; exit is observed with
+`WNOWAIT`. Drop kills the group when a runtime is cancelled. Codex's
+`OwnedAppServer` already used the same group discipline. Managed deregister
+also clears the PTY-side per-id maps (`term_sizes`, `pending_messages`,
+`paste_modes` and the flush bookkeeping) so churn leaves nothing behind.
+
 The daemon `/events` stream emits `session.resync` after broadcast lag. Desktop
 and brain consumers reconcile authoritative state on reconnect/resync because a
 lost terminal event may never have a later update to repair it. Other clients

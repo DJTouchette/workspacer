@@ -16,6 +16,7 @@ pub mod cli;
 pub mod daemon;
 pub mod execution;
 pub mod protocol;
+pub mod provider_group;
 pub mod providers;
 pub mod scratch;
 pub mod session;
