@@ -16,7 +16,10 @@ never hides Finished and never spins. The roll-up is derived in the client
 is unchanged (it deliberately does not ride on ambient tasks), and nothing is
 shown while offline.
 
-- `cargo test --lib delegated` passes (`child_agents::tests::delegated_work_…`).
+- `cargo test --locked --no-fail-fast --features ui-tests -- --test-threads=1`
+  passes (289 library and 350 UI tests among them), including
+  `child_agents::tests::delegated_work_…` and
+  `finished_turns::a_session_waiting_on_delegated_work_says_so`.
 - Not checked on a display: this container has none, so the card and rail
   were not looked at.
 
