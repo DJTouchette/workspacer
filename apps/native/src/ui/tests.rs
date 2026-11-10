@@ -32,6 +32,7 @@ mod project_groups;
 mod project_registry;
 mod pull_requests;
 mod question_sets;
+mod quoting;
 mod scratch_store;
 mod scrolling;
 mod session_cleanup;

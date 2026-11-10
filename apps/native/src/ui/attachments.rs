@@ -57,8 +57,14 @@ impl Workspace {
                 {
                     draft.retain(|item| !sent.contains(item));
                 }
+                if let Some(sent) = self.extras.sent_quotes.remove(&receipt.session)
+                    && let Some(draft) = self.extras.quotes.get_mut(&receipt.session)
+                {
+                    draft.retain(|quote| !sent.contains(quote));
+                }
             } else {
                 self.extras.sent_attachments.remove(&receipt.session);
+                self.extras.sent_quotes.remove(&receipt.session);
                 self.extras.sent_drafts.remove(&receipt.session);
             }
         }
@@ -356,7 +362,8 @@ impl Workspace {
             .collect()
     }
 
-    /// The text a send carries: a line per attachment, then the draft. A
+    /// The text a send carries: the draft's quotes
+    /// ([`wks_native::quotes::prefix`]), a line per attachment, then the draft. A
     /// real image ([`Self::attachment_images`]) is only named, so the
     /// transcript shows it was attached; anything else is a path marker the
     /// agent reads the file by.
@@ -367,7 +374,12 @@ impl Workspace {
     /// [`Self::attachment_text`] naming `images` as the real images; with
     /// none, every attachment is a path marker.
     pub(super) fn attachment_text_with(&self, id: &str, text: &str, images: &[String]) -> String {
-        let mut result = String::new();
+        let mut result = self
+            .extras
+            .quotes
+            .get(id)
+            .map(|quotes| wks_native::quotes::prefix(quotes))
+            .unwrap_or_default();
         for (name, path) in self.extras.attachments.get(id).into_iter().flatten() {
             if images.contains(path) {
                 result.push_str(&format!("[Image attached: {name}]\n"));

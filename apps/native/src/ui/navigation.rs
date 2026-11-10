@@ -424,6 +424,7 @@ impl Workspace {
             .children(self.render_tasks_sheet(window, cx))
             .children(self.render_link_menu(cx))
             .children(self.render_nav_menu(cx))
+            .children(self.render_quote_pick(cx))
             .key_context(if viewer {
                 "FileViewer"
             } else if self.settings.vim_navigation && self.focus.is_focused(window) {
@@ -574,6 +575,7 @@ impl Workspace {
             .on_action(
                 cx.listener(|this, _: &FocusComposer, window, cx| this.focus_editor(window, cx)),
             )
+            .on_action(cx.listener(Self::quote_selected))
             .on_action(cx.listener(|this, _: &Search, window, cx| {
                 if this.screen == Screen::Settings && !this.new_session {
                     this.settings_search

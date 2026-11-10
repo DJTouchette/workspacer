@@ -186,3 +186,11 @@ Native interaction polish also patches:
   costs a comparison per visible message instead of a channel send.
 
 Reapply these interaction changes explicitly when upgrading the component.
+
+Chat quoting adds one hook:
+
+- `TextView::on_selection` (`SelectionFn` in `style.rs`, wired in
+  `text_view.rs`) reports a selectable view's selection to the application:
+  the selected text and the release position when a drag ends with text
+  selected, and `None` when a press clears it. The native chat offers its
+  Quote action from it. A selection dropped by a reparse is not reported.

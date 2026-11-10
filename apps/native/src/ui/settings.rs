@@ -821,6 +821,7 @@ impl Workspace {
                     ("g n", "Scratch"),
                     ("g s", "Settings"),
                     ("g c", "Conversation"),
+                    ("r", "Quote the selected chat text in your reply"),
                     ("n", "New session in the selected project"),
                     (
                         "t / v / a",

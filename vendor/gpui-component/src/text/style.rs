@@ -15,6 +15,13 @@ pub type LinkHoverFn = dyn Fn(usize, Option<&str>, &mut Window, &mut App) + Send
 /// the window position of the click. Without it right-clicks fall through.
 pub type LinkMenuFn = dyn Fn(&str, Point<Pixels>, &mut Window, &mut App) + Send + Sync + 'static;
 
+/// Application reporting of a view's text selection (Workspacer patch):
+/// `Some(text)` when a drag ends with text selected, at the window position
+/// of the release, and `None` when that selection is cleared by a press. A
+/// selection dropped because the content reparsed is not reported.
+pub type SelectionFn =
+    dyn Fn(Option<&str>, Point<Pixels>, &mut Window, &mut App) + Send + Sync + 'static;
+
 /// Where text handed to [`LinkifyFn`] came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkifySource {

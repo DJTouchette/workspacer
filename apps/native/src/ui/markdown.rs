@@ -35,7 +35,8 @@ impl Workspace {
                     cx,
                 )
                 .style(style)
-                .selectable(true),
+                .selectable(true)
+                .on_selection(self.quote_selection_events(cx)),
             )
     }
 }

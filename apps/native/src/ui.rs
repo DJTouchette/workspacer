@@ -33,6 +33,7 @@ mod projects;
 mod pull_request;
 mod questions;
 mod queue;
+mod quotes;
 mod recent;
 mod remote;
 mod review;
@@ -166,6 +167,7 @@ bundled_icons!(
     "lucide/history.svg",
     "lucide/server.svg",
     "lucide/notebook-pen.svg",
+    "lucide/text-quote.svg",
 );
 
 impl gpui::AssetSource for Assets {
@@ -434,6 +436,7 @@ actions!(
         NextSession,
         PreviousSession,
         FocusComposer,
+        QuoteSelection,
         Refresh,
         NormalMode,
         ShowProjects,
@@ -507,6 +510,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("j", NextSession, Some("VimNormal")),
         KeyBinding::new("k", PreviousSession, Some("VimNormal")),
         KeyBinding::new("i", FocusComposer, Some("VimNormal")),
+        // A chat text view holds focus once text is selected in it.
+        KeyBinding::new("r", QuoteSelection, Some("Workspace > TextView")),
         KeyBinding::new("n", CreateSession, Some("VimNormal")),
         KeyBinding::new("/", Search, Some("VimNormal")),
         KeyBinding::new("g p", ShowProjects, Some("VimNormal")),
@@ -1166,6 +1171,7 @@ impl Workspace {
                             self.extras.notice.clear();
                         }
                         self.drafts.remove(&resumed);
+                        self.extras.quotes.remove(&resumed);
                         if self.view.selected.as_ref() == Some(&resumed) {
                             self.composer
                                 .update(cx, |input, cx| input.set_value("", window, cx));
@@ -1653,7 +1659,9 @@ impl Workspace {
             .get(&id)
             .cloned()
             .unwrap_or_default();
+        let quotes = self.extras.quotes.get(&id).cloned().unwrap_or_default();
         self.extras.sent_drafts.insert(id.clone(), draft);
+        self.extras.sent_quotes.insert(id.clone(), quotes);
         self.extras.sent_attachments.insert(id, attachments);
         self.act(action, cx);
     }

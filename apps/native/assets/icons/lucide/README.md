@@ -18,3 +18,6 @@ Pull request page) comes from the same `icons/` directory.
 history, Hosts and Scratch rows, so none of them reads as another
 folder or as the title bar's conversation history) come from `lucide-react`
 0.564's icon nodes.
+
+`text-quote.svg` (the chat's Quote action on selected text) comes from the
+same `lucide-react` 0.564 icon nodes.

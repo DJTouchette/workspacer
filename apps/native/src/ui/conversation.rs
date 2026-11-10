@@ -1163,6 +1163,16 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
+            .when(!self.draft_quotes().is_empty(), |d| {
+                d.child(
+                    div()
+                        .id("composer-quotes-scroll")
+                        .debug_selector(|| "composer-quotes-scroll".into())
+                        .max_h((viewport * 0.2).min(px(160.)))
+                        .overflow_y_scroll()
+                        .child(self.render_draft_quotes(cx)),
+                )
+            })
             .when(!draft_files.is_empty() || uploading, |d| {
                 d.child(
                     div()

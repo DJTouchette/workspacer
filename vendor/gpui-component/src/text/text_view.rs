@@ -172,6 +172,7 @@ pub struct TextView {
     selectable: bool,
     scrollable: bool,
     code_block_actions: Option<Arc<CodeBlockActionsFn>>,
+    on_selection: Option<Arc<super::SelectionFn>>,
 }
 
 #[derive(PartialEq)]
@@ -531,6 +532,7 @@ impl TextView {
             selectable: false,
             scrollable: false,
             code_block_actions: None,
+            on_selection: None,
         }
     }
 
@@ -562,6 +564,7 @@ impl TextView {
             selectable: false,
             scrollable: false,
             code_block_actions: None,
+            on_selection: None,
         }
     }
 
@@ -601,6 +604,16 @@ impl TextView {
     /// Set the text view to be selectable, default is false.
     pub fn selectable(mut self, selectable: bool) -> Self {
         self.selectable = selectable;
+        self
+    }
+
+    /// Report this view's selection to the application (Workspacer patch):
+    /// see [`SelectionFn`](super::SelectionFn). Only a selectable view reports.
+    pub fn on_selection<F>(mut self, f: F) -> Self
+    where
+        F: Fn(Option<&str>, Point<Pixels>, &mut Window, &mut App) + Send + Sync + 'static,
+    {
+        self.on_selection = Some(Arc::new(f));
         self
     }
 
@@ -825,18 +838,28 @@ impl Element for TextView {
             window.on_mouse_event({
                 let state = self.state.clone();
                 let hitbox = hitbox.clone();
+                let on_selection = self.on_selection.clone();
                 move |event: &MouseDownEvent, phase, window, cx| {
                     if hitbox.is_hovered(window) {
                         if phase.bubble() {
+                            // A new drag replaces whatever was selected.
+                            let had = state.read(cx).has_selection();
                             state.update(cx, |state, _| {
                                 state.start_selection(event.position);
                             });
+                            if had && let Some(on_selection) = &on_selection {
+                                on_selection(None, event.position, window, cx);
+                            }
                             cx.notify(entity_id);
                         }
                     } else if phase.capture() {
                         let current = state.read(cx);
                         if current.is_selecting || current.has_selection() {
+                            let had = current.has_selection();
                             state.update(cx, |state, _| state.clear_selection());
+                            if had && let Some(on_selection) = &on_selection {
+                                on_selection(None, event.position, window, cx);
+                            }
                             cx.notify(entity_id);
                         }
                     }
@@ -872,11 +895,25 @@ impl Element for TextView {
             // running then followed the pointer until the next release.
             window.on_mouse_event({
                 let state = self.state.clone();
-                move |_: &MouseUpEvent, phase, _, cx| {
+                let on_selection = self.on_selection.clone();
+                move |event: &MouseUpEvent, phase, window, cx| {
                     if phase.capture() && state.read(cx).is_selecting {
                         state.update(cx, |state, _| {
                             state.end_selection();
                         });
+                        // The drag is over: hand the application what it
+                        // selected (as Copy would read it), where it ended.
+                        if let Some(on_selection) = &on_selection {
+                            let current = state.read(cx);
+                            let text = current
+                                .has_selection()
+                                .then(|| current.selection_text())
+                                .flatten()
+                                .filter(|text| !text.trim().is_empty());
+                            if let Some(text) = text {
+                                on_selection(Some(text.trim()), event.position, window, cx);
+                            }
+                        }
                         cx.notify(entity_id);
                     }
                 }

@@ -133,6 +133,11 @@ pub(super) struct Extras {
     pub sent_drafts: HashMap<String, String>,
     pub answer_watches: Vec<gpui::Subscription>,
     pub sent_attachments: HashMap<String, Vec<(String, String)>>,
+    /// Passages quoted from the chat for each session's next message, the
+    /// ones a send in flight carried, and the selection Quote would take.
+    pub quotes: HashMap<String, Vec<String>>,
+    pub sent_quotes: HashMap<String, Vec<String>>,
+    pub quote_pick: Option<super::quotes::QuotePick>,
     pub history_page: usize,
     pub history_scroll: gpui::ScrollHandle,
     pub question_signature: String,
@@ -324,6 +329,9 @@ impl Extras {
             sent_drafts: HashMap::new(),
             answer_watches: Vec::new(),
             sent_attachments: HashMap::new(),
+            quotes: HashMap::new(),
+            sent_quotes: HashMap::new(),
+            quote_pick: None,
             history_page: 0,
             history_scroll: gpui::ScrollHandle::new(),
             question_signature: String::new(),

@@ -984,7 +984,9 @@ impl Workspace {
             }));
         }
         if continued || !matches!(row.role.as_str(), "You" | "Assistant") {
-            return body.child(literal(key, &row.text, window, cx));
+            return body.child(
+                literal(key, &row.text, window, cx).on_selection(self.quote_selection_events(cx)),
+            );
         }
         let cwd = self
             .selected_session()
@@ -1039,7 +1041,24 @@ impl Workspace {
             // A reply to the agent's async questions reads as its answers.
             let body = match wks_native::questions::parse_reply(&row.text) {
                 Some(replies) => body.child(super::async_questions::render_reply(&replies, p)),
-                None => body.child(literal(key, &text, window, cx)),
+                None => {
+                    // Quotes the message opened with read as quotes, and
+                    // only its own words stay literal.
+                    let (quotes, own) = wks_native::quotes::split(&text);
+                    let body = if quotes.is_empty() {
+                        body
+                    } else {
+                        body.child(super::quotes::sent_quotes(&quotes, p))
+                    };
+                    if own.trim().is_empty() && !quotes.is_empty() {
+                        body
+                    } else {
+                        body.child(
+                            literal(key, own, window, cx)
+                                .on_selection(self.quote_selection_events(cx)),
+                        )
+                    }
+                }
             };
             return match panel {
                 Some(panel) => div().w_full().flex().flex_col().child(body).child(panel),

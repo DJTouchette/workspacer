@@ -30,6 +30,7 @@ pub mod provider_status;
 pub mod pull_requests;
 pub mod questions;
 pub mod queue;
+pub mod quotes;
 pub mod reading;
 pub mod remote;
 pub mod scratch;
