@@ -364,11 +364,11 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
 
 /// GET /usage — account-level rate-limit windows, independent of any session.
 /// Serves the poller's cached reading while fresh; otherwise fetches on demand
-/// (the OAuth usage query has no session dependency — the background poller is
+/// (the usage probe has no session dependency — the background poller is
 /// merely *gated* on live sessions to keep an idle daemon quiet). On-demand
 /// readings go through `set_account_usage`, so live gauges refresh too.
 ///
-/// 503 when the account can't be queried (no OAuth credentials, expired token,
+/// 503 when the account can't be queried (no plan login, expired login,
 /// offline) — callers must be able to tell "unknown" from "no active window".
 async fn get_usage(State(store): State<SessionStore>) -> Response {
     // The DEFAULT account's windows (root ""): this endpoint predates account
@@ -376,23 +376,19 @@ async fn get_usage(State(store): State<SessionStore>) -> Response {
     let now = time::OffsetDateTime::now_utc();
     let usage = match store.account_usage_for("").filter(|u| u.is_fresh(now)) {
         Some(u) => u,
-        None => {
-            match crate::session::account_usage::fetch_account_usage(&reqwest::Client::new(), "")
-                .await
-            {
-                Ok(u) => {
-                    store.set_account_usage("", u.clone());
-                    u
-                }
-                Err(err) => {
-                    return (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        format!("account usage unavailable: {err:#}"),
-                    )
-                        .into_response();
-                }
+        None => match crate::session::account_usage::fetch_account_usage(&store, "").await {
+            Ok(u) => {
+                store.set_account_usage("", u.clone());
+                u
             }
-        }
+            Err(err) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!("account usage unavailable: {err:#}"),
+                )
+                    .into_response();
+            }
+        },
     };
     Json(json!({
         "five_hour_pct": usage.five_hour_pct,

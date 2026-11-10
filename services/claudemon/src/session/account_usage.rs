@@ -7,9 +7,13 @@
 //! only appears on warning-threshold events). So a pure-stream fleet never
 //! learns how much of a window it has used.
 //!
-//! This module fills the gap from the account side: it fetches the same OAuth
-//! usage endpoint Claude Code's own `/usage` screen reads, using the CLI's
-//! stored credentials. The reading is *account*-scoped (the windows are shared
+//! This module fills the gap from the account side: it asks the user's own
+//! `claude` CLI, over the stream-json control protocol, for the same reading
+//! its `/usage` screen shows (a `get_usage` control request — see
+//! [`fetch_account_usage`]). The daemon never opens the CLI's credential store
+//! and never talks to Anthropic itself: the unmodified CLI holds the login,
+//! refreshes it, and makes the request. The reading is *account*-scoped (the
+//! windows are shared
 //! by every session on the account) — but "the account" is per CLAUDE config
 //! root: a profile spawn with its own `CLAUDE_CONFIG_DIR` (workspacer's
 //! second-account profiles) is a different login with different windows. So
@@ -20,11 +24,10 @@
 //! copy here used to stamp the default account's gauges onto every session,
 //! overwriting a second account's own wire-reported windows.
 //!
-//! Cost: zero tokens. This is an account-metadata query, not an inference
-//! call. Failure is always soft — no credentials, an expired token, or a
-//! non-200 just means the gauges stay wire-fed.
+//! Cost: zero tokens. The probe process is never sent a user message, so no
+//! inference call is made. Failure is always soft — no plan login, a CLI too
+//! old to answer, or being offline just means the gauges stay wire-fed.
 
-use anyhow::{Context, Result};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -72,8 +75,9 @@ impl AccountUsage {
     }
 }
 
-/// Parse the `/api/oauth/usage` response body. Shape (captured live,
-/// 2026-07-15):
+/// Parse the plan windows: the `rate_limits` object of the CLI's `get_usage`
+/// reply (the CLI passes the usage body through under that key). Shape
+/// (captured live, 2026-07-15):
 ///
 /// ```json
 /// { "five_hour": { "utilization": 19.0, "resets_at": null, ... },
@@ -102,7 +106,17 @@ pub fn parse_usage_response(v: &Value) -> AccountUsage {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let (monthly_pct, monthly_resets_at) = if extra_enabled {
-        window("extra_usage")
+        // Spent credits over the monthly limit when both are reported (the
+        // exact ratio), else the reply's own rounded `utilization`.
+        let amount = |key: &str| extra.and_then(|e| e.get(key)).and_then(Value::as_f64);
+        let exact = match (amount("used_credits"), amount("monthly_limit")) {
+            (Some(used), Some(limit)) if used >= 0.0 && limit > 0.0 => {
+                Some((used / limit * 100.0).clamp(0.0, 100.0))
+            }
+            _ => None,
+        };
+        let (reported, resets_at) = window("extra_usage");
+        (exact.or(reported), resets_at)
     } else {
         (None, None)
     };
@@ -344,18 +358,15 @@ pub fn attribute_transcript(path: &str, roots: &[String]) -> RootAttribution {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UsageFailure {
-    /// Credentials exist, but their OAuth token has expired. The daemon
-    /// deliberately does NOT refresh it — rotation is the CLI's job and racing
-    /// it can invalidate the CLI's own stored token — so this persists until
-    /// that account's CLI runs again. Measured live on 2026-08-28: the `work`
-    /// profile's token expired 2026-08-20 and has stayed expired since.
+    /// The CLI said this account's login was rejected or has expired and it
+    /// could not renew it. Fixed by signing in again with that account's CLI.
     NeedsReauth,
-    /// No readable credentials at all: an API-key / Bedrock setup, a config
-    /// root that was never logged in, or (macOS, named roots only) a login
-    /// that lives in the Keychain under a service entry we cannot name.
+    /// The CLI reports no plan rate limits for this config root: an API-key /
+    /// Bedrock / Vertex setup, or a root that was never signed in.
     NoCredentials,
-    /// The endpoint could not be reached or refused the request — offline,
-    /// timeout, 5xx, or an auth rejection the local expiry check did not catch.
+    /// No reading could be obtained: the CLI is missing, too old to answer
+    /// `get_usage`, did not answer in time, or could not reach the usage
+    /// service (offline, 5xx).
     Unreachable,
 }
 
@@ -392,142 +403,219 @@ impl std::fmt::Display for UsageError {
 
 impl std::error::Error for UsageError {}
 
-/// The CLI's OAuth access token for one config root. `""` (the default root)
-/// reads `~/.claude/.credentials.json` with a macOS-Keychain fallback; a named
-/// root reads `<root>/.credentials.json` only — a second account's login on
-/// macOS may live in the Keychain under an unknown service entry, in which
-/// case this soft-fails and that account's gauges stay wire-fed.
-///
-/// Never refreshes: rotation is the CLI's job (racing it with our own refresh
-/// could invalidate the CLI's stored token). An expired token is an `Err` and
-/// the poll simply retries next tick — the CLI refreshes it on its next turn.
-fn read_access_token(root: &str) -> std::result::Result<String, UsageError> {
-    match read_credentials_json(root) {
-        Ok(creds) => token_from_credentials(&creds),
-        Err(file_err) => {
-            #[cfg(target_os = "macos")]
-            {
-                if root.is_empty() {
-                    if let Ok(out) = std::process::Command::new("security")
-                        .args([
-                            "find-generic-password",
-                            "-s",
-                            "Claude Code-credentials",
-                            "-w",
-                        ])
-                        .output()
-                    {
-                        if out.status.success() {
-                            if let Ok(creds) = serde_json::from_slice::<Value>(
-                                String::from_utf8_lossy(&out.stdout).trim().as_bytes(),
-                            ) {
-                                return token_from_credentials(&creds);
-                            }
-                        }
-                    }
-                }
-            }
-            Err(UsageError::new(
-                UsageFailure::NoCredentials,
-                format!("{file_err:#}"),
-            ))
-        }
-    }
-}
-
-fn read_credentials_json(root: &str) -> Result<Value> {
-    let path = if root.is_empty() {
-        dirs_home()
-            .context("no home directory")?
-            .join(".claude")
-            .join(".credentials.json")
-    } else {
-        std::path::PathBuf::from(root).join(".credentials.json")
-    };
-    let raw =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    serde_json::from_str(&raw).context("parsing credentials json")
-}
-
 fn dirs_home() -> Option<std::path::PathBuf> {
     directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf())
 }
 
-/// Extract + validate the token from the credentials document.
-fn token_from_credentials(creds: &Value) -> std::result::Result<String, UsageError> {
-    let oauth = creds.get("claudeAiOauth").ok_or_else(|| {
-        UsageError::new(
-            UsageFailure::NoCredentials,
-            "no claudeAiOauth in credentials",
-        )
-    })?;
-    // `expiresAt` is epoch milliseconds. A stale token would just 401; skip
-    // the round-trip when we can tell locally — and report it as its own kind,
-    // because "this account needs the CLI to log in again" is a different
-    // thing to tell a user than "we could not reach the endpoint".
-    if let Some(expires_ms) = oauth.get("expiresAt").and_then(Value::as_i64) {
-        if expires_ms <= OffsetDateTime::now_utc().unix_timestamp() * 1000 {
-            return Err(UsageError::new(
-                UsageFailure::NeedsReauth,
-                "oauth token expired (the CLI refreshes it on its next turn; \
-                 the daemon deliberately does not)",
-            ));
-        }
-    }
-    oauth
-        .get("accessToken")
-        .and_then(Value::as_str)
-        .filter(|t| !t.is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            UsageError::new(UsageFailure::NoCredentials, "no accessToken in credentials")
-        })
+/// Whole-probe ceiling: CLI start, the usage request it makes, and the reply.
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long a probe that has answered gets to exit after its stdin closes.
+const PROBE_EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+/// The control `request_id` of the probe's one request.
+const PROBE_REQUEST_ID: &str = "wks-usage-1";
+
+/// An enterprise `managed-mcp.json` already excludes every other MCP config,
+/// and the CLI refuses `--strict-mcp-config` beside it.
+fn managed_mcp_config_present() -> bool {
+    let path = if cfg!(target_os = "macos") {
+        "/Library/Application Support/ClaudeCode/managed-mcp.json"
+    } else if cfg!(windows) {
+        "C:\\Program Files\\ClaudeCode\\managed-mcp.json"
+    } else {
+        "/etc/claude-code/managed-mcp.json"
+    };
+    std::path::Path::new(path).exists()
 }
 
-const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+/// The probe's argv after the binary: the headless stream-json contract with
+/// everything a usage read does not need turned off — no hooks, no tools, no
+/// slash commands, no MCP servers, no transcript.
+fn probe_args(session_id: &str, strict_mcp: bool) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "--print",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+        "--session-id",
+        session_id,
+        "--settings",
+        r#"{"disableAllHooks":true}"#,
+        "--tools",
+        "",
+        "--disable-slash-commands",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    if strict_mcp {
+        args.extend(
+            [
+                "--strict-mcp-config",
+                "--mcp-config",
+                r#"{"mcpServers":{}}"#,
+            ]
+            .map(str::to_owned),
+        );
+    }
+    args
+}
 
-/// One fetch for one config root: credentials → GET → parsed reading.
-pub async fn fetch_account_usage(
-    client: &reqwest::Client,
+/// Run one `claude` process for `root`, send it a single `get_usage` control
+/// request and return the reply's payload (`SDKControlGetUsageResponse` in the
+/// Agent SDK's typings; the SDK's own usage call sends this same request).
+///
+/// No user message is ever written, so the CLI makes no model call. `root`
+/// selects the login the way every spawn does: `CLAUDE_CONFIG_DIR`, or the
+/// daemon's own environment for the default root (`""`).
+async fn probe_cli_usage(
+    bin: &str,
     root: &str,
-) -> std::result::Result<AccountUsage, UsageError> {
-    let token = read_access_token(root)?;
-    let resp = client
-        .get(USAGE_URL)
-        .bearer_auth(token)
-        .header("anthropic-beta", "oauth-2025-04-20")
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
+    session_id: &str,
+) -> std::result::Result<Value, UsageError> {
+    use crate::background_process::BackgroundCommand;
+    use crate::child_env::SanitizeChildEnvironment;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    let unreachable = |detail: String| UsageError::new(UsageFailure::Unreachable, detail);
+    let mut cmd = tokio::process::Command::new(bin);
+    cmd.args(probe_args(session_id, !managed_mcp_config_present()))
+        // A neutral directory: no project settings, `.mcp.json` or CLAUDE.md.
+        .current_dir(std::env::temp_dir())
+        // claude.ai connectors are discovered outside the MCP config files.
+        .env("ENABLE_CLAUDEAI_MCP_SERVERS", "false")
+        .env("CLAUDE_CODE_AUTO_CONNECT_IDE", "0")
+        .env("CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .scrub_host_authority()
+        .no_console_window();
+    if !root.is_empty() {
+        cmd.env("CLAUDE_CONFIG_DIR", root);
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|err| unreachable(format!("could not start `{bin}`: {err}")))?;
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let stdout = child.stdout.take().expect("piped stdout");
+
+    let exchange = async {
+        let request = serde_json::json!({
+            "type": "control_request",
+            "request_id": PROBE_REQUEST_ID,
+            // `skip_behaviors`: only the plan windows are wanted, not the scan
+            // of local transcripts behind the `/usage` screen's breakdown.
+            "request": { "subtype": "get_usage", "skip_behaviors": true },
+        });
+        stdin
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .map_err(|err| unreachable(format!("writing to `{bin}`: {err}")))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|err| unreachable(format!("writing to `{bin}`: {err}")))?;
+        let mut lines = tokio::io::BufReader::new(stdout).lines();
+        loop {
+            let line = lines
+                .next_line()
+                .await
+                .map_err(|err| unreachable(format!("reading from `{bin}`: {err}")))?
+                .ok_or_else(|| {
+                    unreachable(format!("`{bin}` exited without answering get_usage"))
+                })?;
+            let Ok(frame) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if frame["type"] == "control_response"
+                && frame["response"]["request_id"] == PROBE_REQUEST_ID
+            {
+                return control_reply(&frame["response"]);
+            }
+        }
+    };
+    let outcome = match tokio::time::timeout(PROBE_TIMEOUT, exchange).await {
+        Ok(outcome) => outcome,
+        Err(_) => Err(unreachable(format!(
+            "`{bin}` did not answer get_usage within {}s",
+            PROBE_TIMEOUT.as_secs()
+        ))),
+    };
+    // Closed stdin is the CLI's end of input; a probe that lingers is killed.
+    drop(stdin);
+    if tokio::time::timeout(PROBE_EXIT_GRACE, child.wait())
         .await
-        .map_err(|err| {
-            UsageError::new(
-                UsageFailure::Unreachable,
-                format!("usage request failed: {err}"),
-            )
-        })?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        // A 401/403 after our local expiry check passed still means the token
-        // is no good — surface it as reauth, not as a network blip.
-        let kind = if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
-            UsageFailure::NeedsReauth
-        } else {
-            UsageFailure::Unreachable
-        };
+        .is_err()
+    {
+        let _ = child.kill().await;
+    }
+    outcome
+}
+
+/// The payload of a `control_response` body, or its error classified.
+fn control_reply(response: &Value) -> std::result::Result<Value, UsageError> {
+    if response["subtype"] == "success" {
+        return Ok(response["response"].clone());
+    }
+    let error = response["error"].as_str().unwrap_or("unknown error");
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("unsupported control request") {
         return Err(UsageError::new(
-            kind,
-            format!("usage endpoint returned {status}"),
+            UsageFailure::Unreachable,
+            "this Claude Code version cannot report plan usage (no get_usage); update Claude Code",
         ));
     }
-    let body: Value = resp.json().await.map_err(|err| {
-        UsageError::new(
+    let kind = if ["401", "403", "unauthorized", "log in", "login", "expired"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        UsageFailure::NeedsReauth
+    } else {
+        UsageFailure::Unreachable
+    };
+    Err(UsageError::new(kind, format!("get_usage failed: {error}")))
+}
+
+/// Turn a `get_usage` payload into a reading. `rate_limits_available: false`
+/// is the CLI saying plan limits do not apply to this login; a null
+/// `rate_limits` beside `true` is the CLI failing to read them.
+pub fn usage_from_reply(reply: &Value) -> std::result::Result<AccountUsage, UsageError> {
+    if reply["rate_limits_available"] != true {
+        return Err(UsageError::new(
+            UsageFailure::NoCredentials,
+            "no plan rate limits for this login (API key, cloud provider, or not signed in)",
+        ));
+    }
+    match reply.get("rate_limits") {
+        Some(limits) if limits.is_object() => Ok(parse_usage_response(limits)),
+        _ => Err(UsageError::new(
             UsageFailure::Unreachable,
-            format!("parsing usage response: {err}"),
-        )
-    })?;
-    Ok(parse_usage_response(&body))
+            "Claude Code could not read this account's plan usage",
+        )),
+    }
+}
+
+/// One reading for one config root, asked of the user's own `claude` CLI.
+///
+/// The probe is a real headless `claude`, so its session id is marked like a
+/// keep-warm ping's: should a hook fire despite `disableAllHooks` (managed
+/// policy hooks), [`SessionStore::ingest`] drops it and no ghost row appears.
+///
+/// [`SessionStore::ingest`]: super::store::SessionStore::ingest
+pub async fn fetch_account_usage(
+    store: &super::store::SessionStore,
+    root: &str,
+) -> std::result::Result<AccountUsage, UsageError> {
+    let bin = crate::daemon::spawn::resolve_provider_bin("claude");
+    let session_id = uuid::Uuid::new_v4().to_string();
+    store.mark_heartbeat(&session_id);
+    let reply = probe_cli_usage(&bin, root, &session_id).await;
+    store.unmark_heartbeat(&session_id);
+    usage_from_reply(&reply?)
 }
 
 /// Where the desktop records the Claude account profiles the user has set up.
@@ -679,9 +767,8 @@ const LIVE_INTERVAL_SECS: u64 = 60;
 /// an idle daemon is asked for — but 15× less often, which is what keeps the
 /// original "don't hammer the API from an idle daemon" intent intact.
 pub(crate) const IDLE_INTERVAL_SECS: u64 = 15 * 60;
-/// Ceiling on the failure backoff. An expired profile token (the live case on
-/// this machine since 2026-08-20) is not going to fix itself from our side, so
-/// a failing root settles at one attempt an hour rather than one a minute.
+/// Ceiling on the failure backoff. A signed-out profile is not going to fix
+/// itself from our side, so a failing root settles at one attempt an hour rather than one a minute.
 const MAX_BACKOFF_SECS: u64 = 60 * 60;
 /// How often the scheduler wakes to see whether any root is due. Cheap: no
 /// file is read and no request is made unless something is actually due.
@@ -769,7 +856,7 @@ pub fn due_now(
 ///
 /// Every poll outcome is logged at INFO — root label, success or failure kind,
 /// and the instant observed — so poll history is reconstructible from the
-/// daemon log. It is four requests an hour per idle root, so this is not
+/// daemon log. It is four probes an hour per idle root, so this is not
 /// chatty, and its absence was what made "the reading is two hours old" an
 /// unanswerable question.
 ///
@@ -782,7 +869,6 @@ pub fn due_now(
 /// [`SessionStore::set_account_usage`]: super::store::SessionStore::set_account_usage
 pub fn spawn_poller(store: super::store::SessionStore, include_idle_roots: bool) {
     tokio::spawn(async move {
-        let client = reqwest::Client::new();
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(SCHEDULER_TICK_SECS));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // root → booking. A root absent from the map has never been attempted
@@ -804,7 +890,7 @@ pub fn spawn_poller(store: super::store::SessionStore, include_idle_roots: bool)
                     continue;
                 }
                 let label = super::usage_report::label_for_root(&root);
-                let failures = match fetch_account_usage(&client, &root).await {
+                let failures = match fetch_account_usage(&store, &root).await {
                     Ok(usage) => {
                         tracing::info!(
                             root = %label,
@@ -819,8 +905,8 @@ pub fn spawn_poller(store: super::store::SessionStore, include_idle_roots: bool)
                         0
                     }
                     Err(err) => {
-                        // Soft-fail by design — no credentials, an expired
-                        // token, or being offline must never take the daemon
+                        // Soft-fail by design — no plan login, an expired
+                        // login, or being offline must never take the daemon
                         // down — but no longer SILENT: the classified failure
                         // is stored so callers can say which of the three it is.
                         tracing::info!(
@@ -897,18 +983,18 @@ mod tests {
         assert!(!u.is_fresh(OffsetDateTime::now_utc()));
     }
 
-    /// Live smoke test against the real endpoint with the CLI's stored
-    /// credentials — network + account state, so ignored by default:
+    /// Live smoke test against the installed `claude` and its own login —
+    /// network + account state, so ignored by default:
     /// `cargo test -p claudemon live_fetch_smoke -- --ignored`
     #[tokio::test]
-    #[ignore = "network + real Claude credentials"]
+    #[ignore = "network + a real signed-in Claude Code"]
     async fn live_fetch_smoke() {
-        let u = fetch_account_usage(&reqwest::Client::new(), "")
+        let u = fetch_account_usage(&crate::session::SessionStore::new(), "")
             .await
             .expect("fetch should succeed");
         assert!(
             u.five_hour_pct.is_some(),
-            "endpoint always reports a 5h utilization: {u:?}"
+            "a plan login always reports a 5h utilization: {u:?}"
         );
     }
 
@@ -1060,37 +1146,172 @@ mod tests {
         );
     }
 
+    /// The `get_usage` payload as the Agent SDK types it
+    /// (`SDKControlGetUsageResponse`): ISO reset times, credits beside the
+    /// rounded utilization.
     #[test]
-    fn token_validation() {
-        // Valid, unexpired.
-        let ok = json!({ "claudeAiOauth": {
-            "accessToken": "tok", "expiresAt": (OffsetDateTime::now_utc().unix_timestamp() + 3600) * 1000 } });
-        assert_eq!(token_from_credentials(&ok).unwrap(), "tok");
-        // Expired → Err, no request goes out.
-        let expired = json!({ "claudeAiOauth": { "accessToken": "tok", "expiresAt": 1000 } });
-        assert!(token_from_credentials(&expired).is_err());
-        // Missing token → Err.
-        assert!(token_from_credentials(&json!({})).is_err());
+    fn reads_the_cli_usage_reply() {
+        let u = usage_from_reply(&json!({
+            "subscription_type": "max",
+            "rate_limits_available": true,
+            "rate_limits": {
+                "five_hour": { "utilization": 42.0, "resets_at": "2026-11-10T20:00:00Z" },
+                "seven_day": { "utilization": 7.5, "resets_at": null },
+                "seven_day_opus": null,
+                "extra_usage": { "is_enabled": true, "monthly_limit": 2000,
+                                 "used_credits": 500.0, "utilization": 26.0 }
+            },
+            "behaviors": null
+        }))
+        .unwrap();
+        assert_eq!(u.five_hour_pct, Some(42.0));
+        assert_eq!(u.five_hour_resets_at, Some(1_794_340_800));
+        assert_eq!(u.seven_day_pct, Some(7.5));
+        assert_eq!(u.seven_day_resets_at, None);
+        assert_eq!(
+            u.monthly_pct,
+            Some(25.0),
+            "credits over limit, not the rounded figure"
+        );
     }
 
-    /// The three failure kinds are distinguished at the point they are
-    /// created, not guessed at later. An expired token is specifically
-    /// actionable — the user has to let that account's CLI run once — and it
-    /// must never collapse into the same bucket as "offline".
+    /// The failure kinds are distinguished where they are created. "This login
+    /// has no plan limits" must never collapse into the same bucket as "we
+    /// could not ask", and neither may read as 0%.
     #[test]
     fn failures_are_classified_not_merged() {
-        let expired = json!({ "claudeAiOauth": { "accessToken": "tok", "expiresAt": 1000 } });
+        // Captured live from a signed-out CLI 2.1.322.
+        let no_plan = json!({ "subscription_type": null, "rate_limits_available": false,
+                              "rate_limits": null, "behaviors": null });
         assert_eq!(
-            token_from_credentials(&expired).unwrap_err().kind,
-            UsageFailure::NeedsReauth,
-        );
-        assert_eq!(
-            token_from_credentials(&json!({})).unwrap_err().kind,
+            usage_from_reply(&no_plan).unwrap_err().kind,
             UsageFailure::NoCredentials,
         );
-        // A root that has no credentials file at all reads the same way.
-        let missing = read_access_token("/nonexistent-root-for-tests").unwrap_err();
-        assert_eq!(missing.kind, UsageFailure::NoCredentials);
+        let unread = json!({ "rate_limits_available": true, "rate_limits": null });
+        assert_eq!(
+            usage_from_reply(&unread).unwrap_err().kind,
+            UsageFailure::Unreachable,
+        );
+        let reply = |error: &str| {
+            control_reply(&json!({ "subtype": "error", "request_id": "r", "error": error }))
+                .unwrap_err()
+        };
+        // Captured live: an unknown subtype on CLI 2.1.322.
+        let old = reply("Unsupported control request subtype: get_usage");
+        assert_eq!(old.kind, UsageFailure::Unreachable);
+        assert!(old.detail.contains("update Claude Code"), "{}", old.detail);
+        assert_eq!(
+            reply("OAuth token has expired").kind,
+            UsageFailure::NeedsReauth
+        );
+        assert_eq!(reply("fetch failed").kind, UsageFailure::Unreachable);
+    }
+
+    #[test]
+    fn the_probe_turns_off_everything_but_the_question() {
+        let args = probe_args("sid-1", true).join(" ");
+        assert!(args.starts_with("--print --input-format stream-json --output-format stream-json"));
+        assert!(args.contains("--session-id sid-1"));
+        assert!(args.contains("--no-session-persistence"));
+        assert!(args.contains(r#"--settings {"disableAllHooks":true}"#));
+        assert!(args.contains(r#"--strict-mcp-config --mcp-config {"mcpServers":{}}"#));
+        // A managed MCP policy forbids the strict flag.
+        assert!(!probe_args("sid-1", false).join(" ").contains("mcp"));
+    }
+
+    /// A throwaway directory, removed on drop.
+    #[cfg(unix)]
+    struct Scratch(std::path::PathBuf);
+    #[cfg(unix)]
+    impl Scratch {
+        fn new() -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("claudemon-usage-probe-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+    #[cfg(unix)]
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A stand-in `claude` that records its argv, config root and stdin, and
+    /// answers the first line it reads with `answer`.
+    #[cfg(unix)]
+    fn stub_cli(dir: &std::path::Path, answer: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("claude");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{d}/argv.txt'\n\
+             printf '%s' \"$CLAUDE_CONFIG_DIR\" > '{d}/root.txt'\n\
+             echo '{{\"type\":\"system\",\"subtype\":\"noise\"}}'\n\
+             IFS= read -r line\nprintf '%s\\n' \"$line\" > '{d}/stdin.jsonl'\n{answer}\n",
+            d = dir.display(),
+        );
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    /// End to end over a real pipe: one `get_usage` control request goes in,
+    /// no user message does, the root travels as `CLAUDE_CONFIG_DIR`, and the
+    /// reply's payload comes back.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_probe_asks_the_cli_and_never_sends_a_prompt() {
+        let dir = Scratch::new();
+        let bin = stub_cli(
+            dir.path(),
+            r#"echo '{"type":"control_response","response":{"subtype":"success","request_id":"wks-usage-1","response":{"rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":12,"resets_at":null}}}}}'"#,
+        );
+        let reply = probe_cli_usage(&bin, "/profiles/work", "sid-9")
+            .await
+            .unwrap();
+        assert_eq!(usage_from_reply(&reply).unwrap().five_hour_pct, Some(12.0));
+
+        let read = |name: &str| std::fs::read_to_string(dir.path().join(name)).unwrap();
+        assert_eq!(read("root.txt"), "/profiles/work");
+        assert!(read("argv.txt").contains("sid-9"));
+        let sent: Vec<Value> = read("stdin.jsonl")
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(
+            sent,
+            vec![
+                json!({ "type": "control_request", "request_id": "wks-usage-1",
+                         "request": { "subtype": "get_usage", "skip_behaviors": true } })
+            ]
+        );
+    }
+
+    /// A CLI that dies without answering (an unknown flag on an old build) or
+    /// is not installed at all is a soft, classified failure.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_probe_that_cannot_answer_fails_soft() {
+        let dir = Scratch::new();
+        let bin = stub_cli(dir.path(), "exit 1");
+        let err = probe_cli_usage(&bin, "", "sid").await.unwrap_err();
+        assert_eq!(err.kind, UsageFailure::Unreachable);
+        assert!(
+            err.detail.contains("exited without answering"),
+            "{}",
+            err.detail
+        );
+
+        let missing = dir.path().join("no-such-claude");
+        let err = probe_cli_usage(&missing.to_string_lossy(), "", "sid")
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, UsageFailure::Unreachable);
+        assert!(err.detail.contains("could not start"), "{}", err.detail);
     }
 
     /// The cadence that replaces the old live-sessions gate. An idle daemon

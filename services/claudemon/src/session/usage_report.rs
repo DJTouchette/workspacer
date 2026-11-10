@@ -36,7 +36,7 @@
 //!
 //! | provider | windows | spend | needs a live session |
 //! |----------|---------|-------|----------------------|
-//! | claude   | OAuth `/api/oauth/usage`, polled per config root | estimated from transcripts | no |
+//! | claude   | the CLI's `get_usage` reply, polled per config root | estimated from transcripts | no |
 //! | codex    | last `rate_limits` in the newest rollout on disk | not metered — UNAVAILABLE | no |
 //! | copilot  | UNAVAILABLE — no local record, endpoint 403s | GitHub's own recorded charge | no |
 //!
@@ -204,7 +204,8 @@ pub struct FailureReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportSource {
-    /// Anthropic's OAuth usage endpoint, polled by the daemon.
+    /// The plan windows the user's own `claude` CLI reports (`get_usage`),
+    /// polled by the daemon. The wire name predates that and is kept.
     OauthPoll,
     /// A file the provider's own CLI wrote. No network, no live session.
     Disk,
@@ -348,7 +349,7 @@ pub(crate) fn label_for_root(root: &str) -> String {
 
 /// The Anthropic rate-limit window lengths, in minutes.
 ///
-/// `/api/oauth/usage` names its windows (`five_hour`, `seven_day`) and never
+/// The usage reply names its windows (`five_hour`, `seven_day`) and never
 /// states how long they are, so until now every Claude window went out with
 /// `window_minutes: null` and a consumer could read a utilization and a reset
 /// but never how far THROUGH the window that utilization was. That is the one

@@ -408,7 +408,7 @@ pub struct SessionStore {
     /// Sessions with a provider-status publish scheduled (see
     /// [`Self::update_provider_status`]).
     status_publishes: Arc<DashSet<String>>,
-    /// Latest account-level rate-limit reading from the OAuth usage endpoint
+    /// Latest account-level rate-limit reading from the CLI's usage reply
     /// (see `session::account_usage`), keyed by Claude config root (`""` = the
     /// daemon's default). One entry per logged-in account: a profile spawn
     /// with its own `CLAUDE_CONFIG_DIR` is a different login with different

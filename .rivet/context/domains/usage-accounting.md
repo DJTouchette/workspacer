@@ -144,8 +144,12 @@ Do not merge null into the default account. Rows carry source, observation/fresh
 information, windows, spend, token splits, and per-model readings. Provider data
 sources differ:
 
-- **Claude:** account OAuth usage plus transcript-derived estimates. Config-root
-  identity separates configured logins, including idle profiles.
+- **Claude:** the plan windows the user's own `claude` CLI reports, plus
+  transcript-derived estimates. Claudemon runs one headless `claude` per config
+  root and sends it a single `get_usage` control request (never a prompt, so no
+  model call). It does not read the CLI's credential files or call Anthropic
+  itself; the wire source name stays `oauth_poll`. Config-root identity
+  separates configured logins, including idle profiles.
 - **Codex:** disk rollout rate-limit evidence and available disk token records.
   A last-turn reading can exist at boot but already be expired; report spend is
   not a native metered-dollar figure.

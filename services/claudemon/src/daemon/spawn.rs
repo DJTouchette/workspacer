@@ -1327,7 +1327,7 @@ fn bin_names(provider: &str) -> Vec<String> {
 /// child environment for the tier to work. Until they do, a launcher configured
 /// off `PATH` resolves to the bare name here, `list_models` fails, and the Spawn
 /// dialog's model picker soft-fails to free-text entry.
-fn resolve_provider_bin(provider: &str) -> String {
+pub(crate) fn resolve_provider_bin(provider: &str) -> String {
     let env_key = format!("WKS_{}_BIN", provider.to_uppercase());
     if let Some(custom) = std::env::var(env_key)
         .ok()

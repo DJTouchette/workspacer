@@ -15,9 +15,9 @@
  * and a window that starts arriving later shows up with no further work.
  *
  * There are deliberately no absolute quota figures ("$8.40 of $45.00"). The
- * OAuth usage payload claudemon polls does carry some, but the field names come
- * from a checked-in capture and could not be re-verified against the live
- * endpoint, so showing them would risk a confidently wrong number.
+ * usage reply claudemon polls from the CLI does carry some, but the field names
+ * come from a checked-in capture and could not be re-verified against a live
+ * signed-in CLI, so showing them would risk a confidently wrong number.
  *
  * Cost is labelled an estimate everywhere it appears here, because that is what
  * it is: a local rate table applied to token counts. It is not a billed figure
