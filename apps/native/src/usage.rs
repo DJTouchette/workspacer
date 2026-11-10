@@ -9,8 +9,9 @@ use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Window {
-    /// "5h", "Week" or "Month".
-    pub label: &'static str,
+    /// "5h", "Week" or "Month"; a per-model weekly window carries the
+    /// provider's name for the model ("Fable").
+    pub label: String,
     pub pct: f64,
     pub resets_at: Option<i64>,
     /// Hub pacing verdict when known: "on_track", "ahead" or "overspending".
@@ -118,11 +119,36 @@ pub fn accounts(report: &Value, now: i64) -> Vec<Account> {
                         Some("on_track" | "ahead" | "overspending")
                     );
                 windows.push(Window {
-                    label,
+                    label: label.into(),
                     pct,
                     resets_at,
                     pace: known.then(|| pace["state"].as_str().unwrap_or_default().to_owned()),
                     expected_pct: known.then(|| pace["expectedPct"].as_f64()).flatten(),
+                });
+            }
+            // Weekly windows the plan meters per model, after the account's own.
+            for w in account["model_windows"].as_array().into_iter().flatten() {
+                let name = w["name"].as_str().map(str::trim).unwrap_or_default();
+                let resets_at = w["resets_at"].as_i64().filter(|r| *r > 0);
+                if name.is_empty()
+                    || w["is_current"] == false
+                    || resets_at.is_some_and(|r| r <= now)
+                {
+                    continue;
+                }
+                let Some(pct) = resets_at
+                    .and(w["used_percent"]["value"].as_f64())
+                    .filter(|_| w["used_percent"]["state"] == "ok")
+                    .filter(|p| p.is_finite() && (0. ..=100.).contains(p))
+                else {
+                    continue;
+                };
+                windows.push(Window {
+                    label: crate::transcript::head(name, 24),
+                    pct,
+                    resets_at,
+                    pace: None,
+                    expected_pct: None,
                 });
             }
             // The transcript bucket aggregates sessions whose login is not
@@ -215,6 +241,37 @@ pub fn resets_in(resets_at: i64, now: i64) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Per-model weekly windows follow the account's own, named by model; one
+    /// that rolled over or has no reading is left out like any other window.
+    #[test]
+    fn per_model_weekly_windows_follow_the_account_windows() {
+        let now = 1_000_000;
+        let ok = |pct: f64, reset: i64| json!({"used_percent":{"state":"ok","value":pct},"resets_at":reset,"is_current":true});
+        let model = |name: &str, pct: f64, reset: i64| {
+            let mut w = ok(pct, reset);
+            w["name"] = name.into();
+            w
+        };
+        let report = json!({"providers":[{"provider":"claude","accounts":[
+            {"label":"default","is_default":true,"fresh":true,
+             "windows":{"five_hour": ok(42.0, now + 3600), "seven_day": ok(18.0, now + 86_400)},
+             "model_windows":[
+                model("Fable", 61.5, now + 86_400),
+                model("Opus", 9.0, now - 5),
+                {"name":"Sonnet","used_percent":{"state":"unknown","reason":"x"},"resets_at":now + 60}
+             ]}
+        ]}]});
+        let accounts = accounts(&report, now);
+        let labels: Vec<_> = accounts[0]
+            .windows
+            .iter()
+            .map(|w| w.label.as_str())
+            .collect();
+        assert_eq!(labels, ["5h", "Week", "Fable"]);
+        assert_eq!(accounts[0].windows[2].pct, 61.5);
+        assert_eq!(accounts[0].primary().map(|w| w.label.as_str()), Some("5h"));
+    }
 
     #[test]
     fn accounts_keep_only_current_measured_windows() {

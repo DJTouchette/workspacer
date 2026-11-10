@@ -44,17 +44,25 @@ impl ExternalDaemon {
         self.closed.send_replace(true);
     }
     async fn json(&self, path: &str) -> Result<Value> {
+        self.fetch(reqwest::Method::GET, path, Duration::from_secs(10))
+            .await
+    }
+    async fn fetch(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        deadline: Duration,
+    ) -> Result<Value> {
         let mut closed = self.closed.subscribe();
         if *closed.borrow() {
             bail!("external claudemon link is closed");
         }
         let read = async {
-            let mut response = self
-                .http
-                .get(self.base.join(path)?)
-                .send()
-                .await?
-                .error_for_status()?;
+            let mut request = self.http.request(method.clone(), self.base.join(path)?);
+            if method == reqwest::Method::POST {
+                request = request.json(&serde_json::json!({}));
+            }
+            let mut response = request.send().await?.error_for_status()?;
             if !response.status().is_success() {
                 bail!("external claudemon HTTP {}", response.status());
             }
@@ -67,7 +75,16 @@ impl ExternalDaemon {
             }
             Ok(serde_json::from_slice(&body)?)
         };
-        tokio::select! {biased;_=closed.changed()=>bail!("external claudemon link is closed"), result=tokio::time::timeout(Duration::from_secs(10),read)=>result.context("external claudemon read deadline exceeded")?}
+        tokio::select! {biased;_=closed.changed()=>bail!("external claudemon link is closed"), result=tokio::time::timeout(deadline,read)=>result.context("external claudemon read deadline exceeded")?}
+    }
+    /// Ask the daemon to re-read every account now; answers the fresh report.
+    pub async fn usage_refresh(&self) -> Result<Value> {
+        self.fetch(
+            reqwest::Method::POST,
+            "usage/refresh",
+            Duration::from_secs(28),
+        )
+        .await
     }
     pub async fn usage_report(&self) -> Result<Value> {
         self.json("usage/report").await

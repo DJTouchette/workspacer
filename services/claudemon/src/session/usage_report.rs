@@ -126,6 +126,15 @@ pub struct WindowsReport {
     pub monthly: WindowReport,
 }
 
+/// A weekly window the plan meters for one model, beside the account-wide
+/// three. `name` is the provider's own label for the model bucket.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelWindowReport {
+    pub name: String,
+    #[serde(flatten)]
+    pub window: WindowReport,
+}
+
 /// Token counts. Every field is [`Measured`] because providers disagree about
 /// which of them they record at all: Copilot has the full split, Codex has only
 /// a cumulative total, Claude's comes from transcript folding.
@@ -232,6 +241,9 @@ pub struct AccountReport {
     pub fresh: Option<bool>,
     pub failure: Option<FailureReport>,
     pub windows: WindowsReport,
+    /// Per-model weekly windows, when the provider reports any (Claude plans
+    /// that meter a model separately). Empty otherwise; older clients ignore it.
+    pub model_windows: Vec<ModelWindowReport>,
     pub spend: SpendReport,
     pub tokens: TokensReport,
     pub models: Vec<ModelReport>,
@@ -441,6 +453,14 @@ fn claude_report(store: &SessionStore, now: time::OffsetDateTime) -> ProviderRep
                     monthly: WindowReport::missing(Measured::unknown(why.clone())),
                 },
             };
+            let model_windows = reading
+                .iter()
+                .flat_map(|u| &u.model_windows)
+                .map(|m| ModelWindowReport {
+                    name: m.name.clone(),
+                    window: window(Some(m.pct), m.resets_at, Some(ANTHROPIC_SEVEN_DAY_MINUTES)),
+                })
+                .collect();
             AccountReport {
                 account: Some(root.clone()),
                 label: label_for_root(root),
@@ -450,6 +470,7 @@ fn claude_report(store: &SessionStore, now: time::OffsetDateTime) -> ProviderRep
                 fresh: reading.as_ref().map(|u| u.is_fresh(now)),
                 failure,
                 windows,
+                model_windows,
                 spend: SpendReport {
                     cost_usd: Measured::Ok {
                         value: bucket.cost_usd,
@@ -497,6 +518,7 @@ fn claude_report(store: &SessionStore, now: time::OffsetDateTime) -> ProviderRep
                      windows are not polled",
                 )),
             },
+            model_windows: Vec::new(),
             spend: SpendReport {
                 cost_usd: Measured::Ok {
                     value: bucket.cost_usd,
@@ -535,6 +557,7 @@ fn unattributed_claude_account(bucket: ClaudeBucket) -> AccountReport {
             seven_day: WindowReport::missing(Measured::unknown(WHY)),
             monthly: WindowReport::missing(Measured::unknown(WHY)),
         },
+        model_windows: Vec::new(),
         spend: SpendReport {
             cost_usd: Measured::Ok {
                 value: bucket.cost_usd,
@@ -636,6 +659,7 @@ fn codex_report(store: &SessionStore) -> ProviderReport {
                         "Codex publishes no monthly window",
                     )),
                 },
+                model_windows: Vec::new(),
                 spend: SpendReport {
                     cost_usd: Measured::unavailable(NOT_METERED),
                     nano_aiu: Measured::unavailable("Codex does not bill in AIU"),
@@ -808,6 +832,7 @@ fn copilot_report(store: &SessionStore) -> ProviderReport {
             seven_day: unavailable(),
             monthly: unavailable(),
         },
+        model_windows: Vec::new(),
         spend: spend(&u.totals),
         tokens: tokens(&u.totals),
         models: u
@@ -1099,6 +1124,34 @@ mod tests {
             default.windows.monthly.used_percent,
             Measured::Unavailable { .. }
         ));
+    }
+
+    /// A per-model weekly window goes out on the wire flat: its name beside the
+    /// same fields every other window carries, with the weekly length.
+    #[test]
+    fn per_model_weekly_windows_ride_out_beside_the_account_windows() {
+        let store = SessionStore::new();
+        store.set_account_usage(
+            "",
+            account_usage::parse_usage_response(&serde_json::json!({
+                "seven_day": { "utilization": 40.0, "resets_at": 4102444800i64 },
+                "model_scoped": [
+                    { "display_name": "Fable", "utilization": 61.5, "resets_at": 4102444800i64 }
+                ],
+            })),
+        );
+        let wire = serde_json::to_value(build(&store)).unwrap();
+        let default = &wire["providers"][0]["accounts"][0];
+        assert_eq!(
+            default["model_windows"],
+            serde_json::json!([{
+                "name": "Fable",
+                "used_percent": { "state": "ok", "value": 61.5 },
+                "resets_at": 4102444800i64,
+                "window_minutes": 10080,
+                "is_current": true,
+            }])
+        );
     }
 
     /// The Anthropic window LENGTHS ride out with a reading, because a

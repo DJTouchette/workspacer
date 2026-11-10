@@ -150,6 +150,18 @@ sources differ:
   model call). It does not read the CLI's credential files or call Anthropic
   itself; the wire source name stays `oauth_poll`. Config-root identity
   separates configured logins, including idle profiles.
+  The monthly percentage prefers the reply's spend budget (exact minor units,
+  same currency and scale), then spent credits over the monthly limit, then the
+  rounded figure. Per-model weekly windows (`model_scoped`) ride out as
+  `model_windows: [{name, used_percent, resets_at, window_minutes, is_current}]`
+  on the account row; the hub passes them through with no pace.
+- **Refresh on demand:** `POST /usage/refresh` on claudemon re-probes every
+  configured and live Claude root side by side, outside the poller's cadence
+  and failure backoff, and answers the report; calls within ten seconds share
+  one refresh. The hub's `usage.refresh` (no parameters, full tier only) calls
+  it and adopts the answer as the cached report `usage.report` serves. The
+  native Refresh button and opening its usage panel call `usage.refresh`, and
+  fall back to `usage.report` on an older hub or a scoped connection.
 - **Codex:** disk rollout rate-limit evidence and available disk token records.
   A last-turn reading can exist at boot but already be expired; report spend is
   not a native metered-dollar figure.

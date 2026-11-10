@@ -332,6 +332,7 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         .route("/statusline/stream", get(status_line_stream))
         .route("/usage", get(get_usage))
         .route("/usage/report", get(get_usage_report))
+        .route("/usage/refresh", post(post_usage_refresh))
         .route("/heartbeat", post(crate::daemon::heartbeat::handle))
         .route("/heartbeats", get(crate::daemon::heartbeat::list))
         .route("/oneshot", post(crate::daemon::oneshot::handle))
@@ -432,6 +433,17 @@ async fn get_usage_report(State(store): State<SessionStore>) -> Response {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// POST /usage/refresh — re-read every Claude account's plan usage now, then
+/// answer with the same document as `GET /usage/report`. The reads are the
+/// daemon's own fixed probe of the installed `claude` (see
+/// `account_usage::refresh_all`): the caller chooses nothing, and presses
+/// closer than ten seconds apart share one refresh. Codex and Copilot rows are
+/// read from disk when the report is built, so they are current either way.
+async fn post_usage_refresh(State(store): State<SessionStore>) -> Response {
+    crate::session::account_usage::refresh_all(&store).await;
+    get_usage_report(State(store)).await
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -6229,6 +6241,7 @@ mod tests {
         for (method, uri) in [
             ("GET", "/sessions"),
             ("GET", "/usage"),
+            ("POST", "/usage/refresh"),
             ("GET", "/events"),
             ("POST", "/sessions/spawn"),
             ("POST", "/sessions/sess-1/gate"),

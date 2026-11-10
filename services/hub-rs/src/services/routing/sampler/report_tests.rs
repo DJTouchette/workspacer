@@ -204,3 +204,75 @@ async fn view_usage_report_joins_twelve_readers_preserves_uncertainty_and_has_no
     stop.send(()).unwrap();
     server.await.unwrap();
 }
+
+/// `usage.refresh` has the daemon re-read now (a POST, never the cached GET),
+/// adopts the answer for later `usage.report` readers, takes no parameters,
+/// and is not offered to a view-tier caller.
+#[tokio::test]
+async fn usage_refresh_rereads_through_the_daemon_and_feeds_later_reports() {
+    let root = tempfile::tempdir().unwrap();
+    let tokens = root.path().join("tokens.json");
+    let viewer = auth::mint(&tokens, auth::Scope::View, "overview fixture").unwrap();
+    let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+    let observed = requests.clone();
+    let app = axum::Router::new().fallback(move |request: axum::extract::Request| {
+        let observed = observed.clone();
+        async move {
+            let seen = format!("{} {}", request.method(), request.uri().path());
+            let refreshed = seen == "POST /usage/refresh";
+            observed.lock().unwrap().push(seen);
+            axum::Json(json!({"generated_at":chrono::Utc::now().timestamp(),"providers":[{
+                "provider":"claude","accounts":[{"account":"","fresh":true,
+                    "label": if refreshed { "refreshed" } else { "cached" },
+                    "windows":{},
+                    "model_windows":[{"name":"Fable","used_percent":{"state":"ok","value":61.5}}]}]
+            }]}))
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let external = crate::services::external_claudemon::ExternalDaemon::new(&format!(
+        "http://{}",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let sink = Hub::start(Options::default()).unwrap();
+    sink.ready().await.unwrap();
+    let routing = Arc::new(RoutingService::open(root.path().into()).unwrap());
+    let mut options = Options::default();
+    options.control_plane_only = true;
+    options.scoped_tokens = Some(tokens.clone());
+    options.external_claudemon = Some(external.clone());
+    let mut options = install(options, routing, None, sink.handle());
+    options.external_claudemon = None;
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+
+    let view = Client::from_connection(
+        hub.handle()
+            .connect_authenticated(viewer.token, false)
+            .await
+            .unwrap(),
+    );
+    assert!(view.call("usage.refresh", json!({})).await.is_err());
+    assert!(requests.lock().unwrap().is_empty());
+
+    let owner = Client::connect(&hub.handle()).await.unwrap();
+    assert!(
+        owner
+            .call("usage.refresh", json!({"account":"work"}))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no parameters accepted")
+    );
+    let account = |report: &Value| report["providers"][0]["accounts"][0].clone();
+    let fresh = owner.call("usage.refresh", json!({})).await.unwrap();
+    assert_eq!(account(&fresh)["label"], "refreshed");
+    assert_eq!(account(&fresh)["model_windows"][0]["name"], "Fable");
+    // The refreshed observation is what the next reader gets, with no new read.
+    let next = owner.call("usage.report", json!({})).await.unwrap();
+    assert_eq!(account(&next)["label"], "refreshed");
+    assert_eq!(*requests.lock().unwrap(), vec!["POST /usage/refresh"]);
+    server.abort();
+}

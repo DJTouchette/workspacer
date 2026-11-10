@@ -11,6 +11,8 @@ use std::sync::{
 type Fetch = Shared<BoxFuture<'static, std::result::Result<Value, String>>>;
 const CALLER_WAIT: Duration = Duration::from_secs(3);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+/// A refresh waits on one CLI probe per account (20 s ceiling each, run side by side).
+const REFRESH_TIMEOUT: Duration = Duration::from_secs(29);
 struct Flight {
     generation: u64,
     result: Fetch,
@@ -318,6 +320,37 @@ impl UsageSampler {
             futures_util::future::join_all(requests).await;
         });
     }
+    /// Have the daemon re-read every account NOW and adopt its answer as the
+    /// current observation, so the next `usage.report` serves it too. Unlike
+    /// [`Self::report`] this waits for the daemon: a person asked for it.
+    pub async fn refresh(&self) -> Result<Value> {
+        let report = tokio::time::timeout(REFRESH_TIMEOUT, async {
+            if let Some(engine) = &self.engine {
+                engine
+                    .request(Command::Request {
+                        method: "POST".into(),
+                        path: "/usage/refresh".into(),
+                        payload: Some(json!({})),
+                    })
+                    .await
+            } else if let Some(external) = &self.external {
+                external.usage_refresh().await
+            } else {
+                bail!("usage sampler has no daemon")
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("usage refresh deadline exceeded"))??;
+        if !report["providers"].is_array() {
+            bail!("invalid usage report: providers absent");
+        }
+        let mut cache = self.cache.lock().unwrap();
+        // A read that started before this one must not overwrite it when it lands.
+        cache.generation += 1;
+        cache.flight = None;
+        cache.report = Some((Instant::now(), report.clone()));
+        Ok(report)
+    }
     pub async fn report(&self, max_age: Duration) -> Result<Value> {
         let future = {
             let mut cache = self.cache.lock().unwrap();
@@ -417,6 +450,7 @@ pub fn install(
         "routing.select",
         "routing.preview",
         "usage.report",
+        "usage.refresh",
         "routing.preferences.get",
         "routing.preferences.validate",
         "routing.preferences.save",
@@ -435,6 +469,16 @@ pub fn install(
                         service.preferences(&caller, method, params)
                     })
                     .await?;
+                }
+                if method == "usage.refresh" {
+                    if !params.is_null() && params != json!({}) {
+                        bail!("usage.refresh: no parameters accepted");
+                    }
+                    let report = sampler
+                        .refresh()
+                        .await
+                        .context("usage.refresh unavailable")?;
+                    return Ok(service.usage_report(&report, chrono::Utc::now().timestamp()));
                 }
                 if method == "usage.report" {
                     if !params.is_null() && params != json!({}) {

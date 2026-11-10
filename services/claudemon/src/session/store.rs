@@ -5792,6 +5792,7 @@ mod tests {
             monthly_pct: None,
             monthly_resets_at: None,
             out_of_credits: Some(false),
+            model_windows: Vec::new(),
             fetched_at: OffsetDateTime::now_utc(),
         }
     }

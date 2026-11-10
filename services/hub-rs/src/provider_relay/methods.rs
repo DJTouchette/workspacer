@@ -125,6 +125,7 @@ const FULL: &[&str] = &[
     "pr.link",
     "pr.unlink",
     "pr.session",
+    "usage.refresh",
     "notifications.post",
     "analytics.summary",
     "analytics.recent",

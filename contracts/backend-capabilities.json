@@ -202,6 +202,7 @@
     "pr.reply",
     "pr.resolve",
     "pr.session",
+    "usage.refresh",
     "pr.threads",
     "pr.unlink",
     "providers.checkAll",
@@ -326,6 +327,10 @@
     "pr.session": {
       "authority": "sessions.snapshot",
       "reason": "Rust session pull-request read: sessionId is validated as one segment and the hub returns that session's stored link from its own pr-links.json, the same pullRequest value the agent.snapshot feed already carries. No path, network or process access."
+    },
+    "usage.refresh": {
+      "authority": "providers.checkAll",
+      "reason": "Rust usage refresh: no params. Has the hub's own daemon re-read every configured Claude login's plan usage now, by running the installed claude CLI with daemon-chosen argv and one get_usage control request (no prompt, no model call), then returns the same projection as usage.report. Presses within ten seconds share one refresh. No caller path, argv, account or provider value reaches a process; not offered to the view or triage tiers."
     }
   }
 }

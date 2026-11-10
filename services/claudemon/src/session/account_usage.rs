@@ -45,8 +45,20 @@ pub struct AccountUsage {
     pub monthly_pct: Option<f64>,
     pub monthly_resets_at: Option<i64>,
     pub out_of_credits: Option<bool>,
+    /// Weekly windows the plan meters per model, as the CLI lists them
+    /// (`model_scoped`). Empty when the reply names none.
+    pub model_windows: Vec<ModelWindow>,
     /// When the daemon fetched this. Readings age out — see [`Self::is_fresh`].
     pub fetched_at: OffsetDateTime,
+}
+
+/// One per-model weekly window: the server's own label for the model bucket
+/// (e.g. `Fable`) and how much of its week is used.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelWindow {
+    pub name: String,
+    pub pct: f64,
+    pub resets_at: Option<i64>,
 }
 
 /// How long a reading stays authoritative. Past this the poller has stopped or
@@ -105,21 +117,58 @@ pub fn parse_usage_response(v: &Value) -> AccountUsage {
         .and_then(|e| e.get("is_enabled"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let (monthly_pct, monthly_resets_at) = if extra_enabled {
-        // Spent credits over the monthly limit when both are reported (the
-        // exact ratio), else the reply's own rounded `utilization`.
-        let amount = |key: &str| extra.and_then(|e| e.get(key)).and_then(Value::as_f64);
-        let exact = match (amount("used_credits"), amount("monthly_limit")) {
-            (Some(used), Some(limit)) if used >= 0.0 && limit > 0.0 => {
-                Some((used / limit * 100.0).clamp(0.0, 100.0))
-            }
-            _ => None,
-        };
+    let amount = |v: Option<&Value>| v.and_then(Value::as_f64).filter(|n| n.is_finite());
+    let ratio = |used: Option<f64>, limit: Option<f64>| match (used, limit) {
+        (Some(used), Some(limit)) if used >= 0.0 && limit > 0.0 => {
+            Some((used / limit * 100.0).clamp(0.0, 100.0))
+        }
+        _ => None,
+    };
+    // The monthly spend budget, when the reply carries one: exact minor-unit
+    // amounts, comparable only in one currency and scale.
+    let spend = v.get("spend").filter(|s| s["enabled"] == true);
+    let spend_pct = spend.and_then(|s| {
+        let (used, limit) = (&s["used"], &s["limit"]);
+        let currency = |m: &Value| m["currency"].as_str().unwrap_or_default().trim().to_owned();
+        (!currency(used).is_empty()
+            && currency(used) == currency(limit)
+            && used["exponent"].is_u64()
+            && used["exponent"] == limit["exponent"])
+            .then(|| {
+                ratio(
+                    amount(used.get("amount_minor")),
+                    amount(limit.get("amount_minor")),
+                )
+            })
+            .flatten()
+    });
+    let (monthly_pct, monthly_resets_at) = if spend_pct.is_some() || extra_enabled {
+        // Else spent credits over the monthly limit, else the reply's own
+        // rounded `utilization`.
+        let field = |key: &str| amount(extra.and_then(|e| e.get(key)));
         let (reported, resets_at) = window("extra_usage");
-        (exact.or(reported), resets_at)
+        let pct = spend_pct
+            .or_else(|| ratio(field("used_credits"), field("monthly_limit")))
+            .or(reported.filter(|p| extra_enabled && *p >= 0.0));
+        (pct, resets_at)
     } else {
         (None, None)
     };
+    let model_windows = v
+        .get("model_scoped")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|m| {
+            let name = m["display_name"].as_str().map(str::trim)?;
+            let pct = m["utilization"].as_f64().filter(|p| p.is_finite())?;
+            (!name.is_empty()).then(|| ModelWindow {
+                name: name.to_owned(),
+                pct: pct.clamp(0.0, 100.0),
+                resets_at: m.get("resets_at").and_then(parse_resets_at),
+            })
+        })
+        .collect();
     let out_of_credits = extra
         .and_then(|e| e.get("disabled_reason"))
         .and_then(Value::as_str)
@@ -133,6 +182,7 @@ pub fn parse_usage_response(v: &Value) -> AccountUsage {
         monthly_pct,
         monthly_resets_at,
         out_of_credits,
+        model_windows,
         fetched_at: OffsetDateTime::now_utc(),
     }
 }
@@ -611,9 +661,17 @@ pub async fn fetch_account_usage(
     root: &str,
 ) -> std::result::Result<AccountUsage, UsageError> {
     let bin = crate::daemon::spawn::resolve_provider_bin("claude");
+    read_account_usage(store, &bin, root).await
+}
+
+async fn read_account_usage(
+    store: &super::store::SessionStore,
+    bin: &str,
+    root: &str,
+) -> std::result::Result<AccountUsage, UsageError> {
     let session_id = uuid::Uuid::new_v4().to_string();
     store.mark_heartbeat(&session_id);
-    let reply = probe_cli_usage(&bin, root, &session_id).await;
+    let reply = probe_cli_usage(bin, root, &session_id).await;
     store.unmark_heartbeat(&session_id);
     usage_from_reply(&reply?)
 }
@@ -837,6 +895,57 @@ pub fn due_now(
                 b.live = true;
             }
             b.next <= now
+        }
+    }
+}
+
+/// A refresh that finished this recently answers the next one too.
+const REFRESH_COALESCE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Re-read every Claude account NOW: the configured roots plus any with a live
+/// session, probed side by side, each outcome recorded like a poll's. This is
+/// what a person pressing Refresh asks for; the poller's cadence and failure
+/// backoff do not apply, so an account that was signed in again shows up at
+/// once instead of at its next hourly attempt.
+///
+/// Callers are serialized, and one that arrives within [`REFRESH_COALESCE`] of
+/// the last finished refresh gets that result: repeated presses cannot stack
+/// CLI processes.
+pub async fn refresh_all(store: &super::store::SessionStore) {
+    static LAST: std::sync::OnceLock<tokio::sync::Mutex<Option<std::time::Instant>>> =
+        std::sync::OnceLock::new();
+    let mut last = LAST.get_or_init(Default::default).lock().await;
+    if last.is_some_and(|at| at.elapsed() < REFRESH_COALESCE) {
+        return;
+    }
+    let roots = roots_to_poll(&store.live_claude_config_roots(), true);
+    let bin = crate::daemon::spawn::resolve_provider_bin("claude");
+    refresh_roots(store, &bin, &roots).await;
+    *last = Some(std::time::Instant::now());
+}
+
+/// Probe `roots` side by side with `bin` and record every outcome.
+async fn refresh_roots(store: &super::store::SessionStore, bin: &str, roots: &[String]) {
+    let readings = futures::future::join_all(
+        roots
+            .iter()
+            .map(|root| async move { (root, read_account_usage(store, bin, root).await) }),
+    )
+    .await;
+    for (root, reading) in readings {
+        let label = super::usage_report::label_for_root(root);
+        match reading {
+            Ok(usage) => {
+                tracing::info!(root = %label, outcome = "ok", "account usage refresh");
+                store.set_account_usage(root, usage);
+            }
+            Err(err) => {
+                tracing::info!(
+                    root = %label, outcome = "failed", kind = ?err.kind, detail = %err.detail,
+                    "account usage refresh",
+                );
+                store.set_account_usage_error(root, err);
+            }
         }
     }
 }
@@ -1175,6 +1284,47 @@ mod tests {
         );
     }
 
+    /// The spend budget (exact minor units) outranks the credit ratio, shows a
+    /// monthly window even with `extra_usage` off, and is ignored when its two
+    /// amounts are not comparable. Per-model weekly windows are listed as the
+    /// server names them; one with no reading is left out.
+    #[test]
+    fn reads_the_spend_budget_and_per_model_windows() {
+        let money = |amount: u64, currency: &str| json!({ "amount_minor": amount, "currency": currency, "exponent": 2 });
+        let u = parse_usage_response(&json!({
+            "extra_usage": { "is_enabled": false, "monthly_limit": 2000,
+                             "used_credits": 500.0, "utilization": 26.0 },
+            "spend": { "enabled": true, "used": money(1500, "USD"), "limit": money(5000, "USD") },
+            "model_scoped": [
+                { "display_name": "Fable", "utilization": 61.5,
+                  "resets_at": "2026-11-10T20:00:00Z" },
+                { "display_name": "Opus", "utilization": null, "resets_at": null }
+            ]
+        }));
+        assert_eq!(u.monthly_pct, Some(30.0));
+        assert_eq!(
+            u.model_windows,
+            vec![ModelWindow {
+                name: "Fable".into(),
+                pct: 61.5,
+                resets_at: Some(1_794_340_800),
+            }]
+        );
+
+        let mismatched = parse_usage_response(&json!({
+            "extra_usage": { "is_enabled": true, "monthly_limit": 2000,
+                             "used_credits": 500.0, "utilization": 26.0 },
+            "spend": { "enabled": true, "used": money(1500, "USD"), "limit": money(5000, "EUR") }
+        }));
+        assert_eq!(mismatched.monthly_pct, Some(25.0), "falls back to credits");
+        assert!(mismatched.model_windows.is_empty());
+
+        let disabled = parse_usage_response(&json!({
+            "spend": { "enabled": false, "used": money(1, "USD"), "limit": money(2, "USD") }
+        }));
+        assert_eq!(disabled.monthly_pct, None);
+    }
+
     /// The failure kinds are distinguished where they are created. "This login
     /// has no plan limits" must never collapse into the same bucket as "we
     /// could not ask", and neither may read as 0%.
@@ -1289,6 +1439,36 @@ mod tests {
                          "request": { "subtype": "get_usage", "skip_behaviors": true } })
             ]
         );
+    }
+
+    /// A refresh records what each account's CLI said, good or bad, and a good
+    /// reading retires that account's earlier failure.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_refresh_records_every_account_at_once() {
+        let dir = Scratch::new();
+        let bin = stub_cli(
+            dir.path(),
+            r#"echo '{"type":"control_response","response":{"subtype":"success","request_id":"wks-usage-1","response":{"rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":33,"resets_at":null}}}}}'"#,
+        );
+        let store = crate::session::SessionStore::new();
+        store.set_account_usage_error(
+            "/profiles/work",
+            UsageError::for_test(UsageFailure::NeedsReauth, "signed out"),
+        );
+        refresh_roots(&store, &bin, &[String::new(), "/profiles/work".into()]).await;
+        for root in ["", "/profiles/work"] {
+            assert_eq!(
+                store.account_usage_for(root).and_then(|u| u.five_hour_pct),
+                Some(33.0),
+                "{root:?}"
+            );
+            assert!(store.account_usage_error_for(root).is_none(), "{root:?}");
+        }
+
+        let missing = dir.path().join("gone").to_string_lossy().into_owned();
+        refresh_roots(&store, &missing, &[String::new()]).await;
+        assert!(store.account_usage_error_for("").is_some());
     }
 
     /// A CLI that dies without answering (an unknown flag on an old build) or

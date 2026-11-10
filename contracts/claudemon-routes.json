@@ -242,6 +242,11 @@
       "server": "claudemon-api"
     },
     {
+      "method": "POST",
+      "pattern": "/usage/refresh",
+      "server": "claudemon-api"
+    },
+    {
       "method": "GET",
       "pattern": "/usage/report",
       "server": "claudemon-api"

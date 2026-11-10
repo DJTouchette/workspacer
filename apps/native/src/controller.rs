@@ -978,7 +978,7 @@ impl Worker {
                     self.dirty = true;
                 }
             }
-            Command::RefreshUsage => self.fetch_usage(),
+            Command::RefreshUsage => self.fetch_usage(true),
             Command::WatchHosts(watch) => {
                 if watch != self.hosts_watch {
                     self.hosts_watch = watch;
@@ -1061,7 +1061,7 @@ impl Worker {
         // The hub caches its report for 60s; polling at a quarter of that
         // picks up each new report within 15s instead of up to a minute late.
         if self.last_usage.elapsed() >= Duration::from_secs(15) {
-            self.fetch_usage();
+            self.fetch_usage(false);
         }
         // Installs change rarely; this catches one made while the app runs.
         if self.last_installed.elapsed() >= Duration::from_secs(10 * 60) {
@@ -1337,8 +1337,11 @@ impl Worker {
         }));
     }
 
-    fn fetch_usage(&mut self) {
-        if !self.view.connected || self.usage_pending {
+    /// Read account usage. `refresh` is a person asking for it: the hub
+    /// re-reads every account instead of serving its cached report, and the
+    /// request goes out even while a routine poll is in flight.
+    fn fetch_usage(&mut self, refresh: bool) {
+        if !self.view.connected || (self.usage_pending && !refresh) {
             return;
         }
         self.usage_pending = true;
@@ -1346,7 +1349,12 @@ impl Worker {
         let backend = self.backend.clone();
         let epoch = self.epoch;
         self.push_job(Box::pin(async move {
-            Completion::Usage(epoch, backend.usage_report().await)
+            let report = if refresh {
+                backend.usage_refresh().await
+            } else {
+                backend.usage_report().await
+            };
+            Completion::Usage(epoch, report)
         }));
     }
 
@@ -1765,7 +1773,7 @@ impl Worker {
                 self.usage_pending = false;
                 self.installed_pending = false;
                 self.fetch_fleet();
-                self.fetch_usage();
+                self.fetch_usage(false);
                 self.fetch_installed();
                 // Re-read the shared archive on every connect: changes made by
                 // another client while this one was away have no replay.

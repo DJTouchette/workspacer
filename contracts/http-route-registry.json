@@ -609,7 +609,7 @@
         "GET": "daemon-policy"
       },
       "disposition": "loopback-confined",
-      "reason": "account-level rate-limit windows fetched with the user's OAuth credentials. NO bus capability exposes account usage at any tier; the hub's keep-warm path documents this route as deliberately ungated, which makes loopback the whole of its protection"
+      "reason": "account-level rate-limit windows read from the user's own claude CLI (a get_usage control request; the daemon holds no credential). NO bus capability exposes account usage at any tier; the hub's keep-warm path documents this route as deliberately ungated, which makes loopback the whole of its protection"
     },
     {
       "server": "claudemon-api",
@@ -623,6 +623,19 @@
       },
       "disposition": "loopback-confined",
       "reason": "the WHOLE usage picture, and the widest DISCLOSURE on this router: every provider and every configured login in one document — the account key (which IS the profile's absolute configDir path), its label and default flag, 5h/7d/monthly window percentages with reset times, cumulative spend in USD and nano-AIU, the input/cache-read/cache-write/output/reasoning token split, a per-model breakdown, per-account live-session counts, and a failure object that can carry needs_reauth. It answers from the store and from what the provider CLIs left on disk, so a just-booted daemon with no live session serves all of it. THE OTHER TWO PLANES AGREE ABOUT THESE BYTES, and both withhold them from every scoped tier: no bus capability returns account-level usage at any tier (the /usage row's sentence still holds — the usage-at-boot work added no method and no topic), the nearest account-IDENTITY read claude.profiles.list hands back the same configDir strings and is in NEITHER viewMethods nor triageMethods, and the nearest event twin agent.statusline — five_hour_pct and cost_usd for ONE session — is TopicGuardedBy sessions.snapshot and fleet-visibility filtered before publication. So this route grants strictly more than any bus tier and strictly more than its own sibling /usage (the default login's three percentages), and 127.0.0.1 + host_guard + origin_guard are the whole of what stands between an unauthenticated caller and every login's identity, spend and quota headroom on this machine"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/usage/refresh",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_usage_refresh"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "re-reads every configured Claude login's plan usage NOW and answers with the /usage/report document. Each read is the daemon's own fixed probe of the installed claude CLI (one get_usage control request, no prompt, no model call); the caller chooses no binary, argv, account or path, and presses within ten seconds share one refresh. It discloses exactly what /usage/report discloses. Its only bus caller is the hub's own usage.refresh, a later Rust method outside the captured vocabulary (so no twin is named here) and full-tier only: it is in neither the view nor the triage scope"
     },
     {
       "server": "claudemon-api",

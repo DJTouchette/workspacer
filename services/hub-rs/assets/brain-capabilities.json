@@ -205,6 +205,7 @@
     "pr.reply",
     "pr.resolve",
     "pr.session",
+    "usage.refresh",
     "pr.threads",
     "pr.unlink",
     "providers.checkAll",

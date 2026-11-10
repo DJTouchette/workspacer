@@ -314,6 +314,11 @@ pub fn projection(report: &Value, cfg: &Value, now: i64) -> Value {
                 row["windows"][name] = w.clone();
                 row["windows"][name]["pace"] = pace(w, name, a, cfg, now);
             }
+            // Per-model weekly windows pass through as reported; no pace is
+            // computed for them.
+            if a["model_windows"].as_array().is_some_and(|w| !w.is_empty()) {
+                row["model_windows"] = a["model_windows"].clone();
+            }
             accounts.push(row);
         }
         providers.push(json!({"provider":p["provider"],"note":p["note"],"accounts":accounts}));

@@ -245,6 +245,7 @@
     "sessions.mcpStatus": "sessionId only; asks the provider for its MCP server status (names, status, error) and refreshes the snapshot field the agent.snapshot feed already carries",
     "sessions.taskOutput": "sessionId plus taskId select a background task the daemon already lists on that session; offset/maxBytes are bounded integers. Neither id is joined into a path by the hub: claudemon resolves the CLI-named output file from its own task row and refuses symlinks and non-regular files",
     "pr.providers": "no params; reports whether the gh and az CLIs are on the hub's PATH (with that binary path) and signed in, by running their fixed token commands with hub-chosen argv. The token is held only in the hub's memory and never returned; nothing the caller supplies reaches a process",
+    "usage.refresh": "no params; the hub's daemon re-reads every configured Claude login's plan usage by running the installed claude CLI with daemon-chosen argv and one get_usage control request (no prompt), coalesced to one refresh per ten seconds, and returns the usage.report projection. Nothing the caller supplies reaches a process",
     "pr.session": "sessionId only, validated as one segment; returns that session's stored pull request link from the hub's own pr-links.json, the same pullRequest value the agent.snapshot feed already carries. No path, network or process access"
   },
   "parameterDecisions": {

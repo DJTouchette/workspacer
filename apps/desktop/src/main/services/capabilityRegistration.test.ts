@@ -72,6 +72,13 @@ extras(
   ['service.pull_request_call(method,params)'],
 );
 extras(
+  ['usage.refresh'],
+  'services/routing/sampler.rs',
+  false,
+  'Parameterless re-read of plan usage: the hub asks its own daemon to probe the installed claude CLI for every configured login (daemon-chosen argv, one get_usage control request, no prompt) and returns the usage.report projection. Full tier only; nothing the caller sends reaches a process.',
+  ['sampler.refresh()'],
+);
+extras(
   ['federation.resumePeer'],
   'federation.rs',
   true,

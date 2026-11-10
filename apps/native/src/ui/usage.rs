@@ -15,11 +15,13 @@ fn color(window: &UsageWindow, p: Palette) -> u32 {
     }
 }
 
-fn long_label(window: &UsageWindow) -> &'static str {
-    match window.label {
-        "5h" => "5-hour",
-        "Week" => "Weekly",
-        _ => "Monthly",
+fn long_label(window: &UsageWindow) -> String {
+    match window.label.as_str() {
+        "5h" => "5-hour".into(),
+        "Week" => "Weekly".into(),
+        "Month" => "Monthly".into(),
+        // A per-model window is named by its model and is always weekly.
+        model => format!("Weekly · {model}"),
     }
 }
 
@@ -134,7 +136,9 @@ fn usage_card(accounts: &[Account], error: Option<&str>, p: Palette) -> Div {
                                         .flex()
                                         .justify_between()
                                         .text_size(px(scale::OVERLINE))
-                                        .child(div().text_color(rgb(p.muted)).child(w.label))
+                                        .child(
+                                            div().text_color(rgb(p.muted)).child(w.label.clone()),
+                                        )
                                         .child(
                                             div()
                                                 .text_color(rgb(color(w, p)))
@@ -369,7 +373,7 @@ impl Workspace {
                                     .flex_shrink_0()
                                     .text_size(px(scale::OVERLINE))
                                     .text_color(rgb(p.muted))
-                                    .child(w.label),
+                                    .child(w.label.clone()),
                             )
                             .child(div().w(px(56.)).flex_shrink_0().child(meter(w, 4., p)))
                             .child(

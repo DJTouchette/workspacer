@@ -27,10 +27,12 @@ const STATUS_CONCURRENCY: usize = 2;
 /// Whether `command` is a provider-status read/repair (see
 /// [`STATUS_CONCURRENCY`]).
 fn is_status_command(command: &Command) -> bool {
+    // An account usage refresh waits on CLI probes too, so it rides here.
     matches!(command, Command::Request { method, path, .. }
         if method == "POST"
-            && path.starts_with("/sessions/")
-            && (path.ends_with("/mcp-status") || path.ends_with("/mcp-reconnect")))
+            && (path == "/usage/refresh"
+                || (path.starts_with("/sessions/")
+                    && (path.ends_with("/mcp-status") || path.ends_with("/mcp-reconnect")))))
 }
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 

@@ -307,6 +307,20 @@ impl Backend {
         self.hub.call("usage.report", json!({})).await
     }
 
+    /// The same report, after the hub has re-read every account now. A hub
+    /// that predates `usage.refresh`, or a connection not allowed to call it,
+    /// answers with its current report instead.
+    pub async fn usage_refresh(&self) -> Result<Value> {
+        match self
+            .hub
+            .call_with_timeout("usage.refresh", json!({}), Duration::from_secs(35))
+            .await
+        {
+            Ok(report) if report["providers"].is_array() => Ok(report),
+            _ => self.usage_report().await,
+        }
+    }
+
     pub async fn snapshots(&self) -> Result<Value> {
         self.hub.call("sessions.snapshots", json!({})).await
     }

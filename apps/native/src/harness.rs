@@ -592,7 +592,7 @@ impl Fixture {
                     page(&self.seed, self.seed.len() as u64, limit)
                 }
             }
-            "usage.report" => usage_report(),
+            "usage.report" | "usage.refresh" => usage_report(),
             "agents.sendMessage" => {
                 self.send_message(socket, id, &params["text"]).await;
                 json!({"ok": true})
