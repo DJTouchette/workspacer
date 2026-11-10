@@ -1,5 +1,25 @@
 # Native client validation — 2026-09-27
 
+## Session history nests children under their parent (2026-11-10)
+
+In Session history a session another one started is listed right under it,
+stepped in 16px per generation (the sidebar's step, six deep at most) with a
+hairline thread under its parent's title. A lineage sits where its newest
+member puts it and siblings are newest first. A row whose parent is not shown
+with it (another project group, filtered out by search or Hidden, or not
+loaded yet) stays at the top level, so nothing hides behind a missing parent.
+The hub's `sessions.recent` and `sessions.history` rows now carry
+`parentSessionId` from the launch record, else the live row
+(`docs/session-roster.md`); the live fleet fills it for older hubs. `--demo`
+has a two-deep lineage under project-0.
+
+- Real window: `scripts/smoke.py --screen history` under Xvfb with lavapipe,
+  1200 × 900, dark. Rows keep full width; threads and indents line up two
+  levels deep and under the hover fill. Other themes and narrow widths were
+  not captured.
+- Native `--features ui-tests --bin wks-native history` (16) and
+  `--lib history` (18) pass, including the two nesting tests.
+
 ## Delegated work keeps a parent working (2026-11-09)
 
 A session whose own turn ended while other agents still do its work no longer

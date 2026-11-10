@@ -181,12 +181,16 @@ seen, including hidden (archived) ones, which are labelled as such.
   sessions.history { cursor?: string, limit?: number, query?: string, cwd?: string }
     -> { sessions: [HistoryRow], next?: string }
   HistoryRow = the sessions.recent row
-    { sessionId, provider, cwd, mode, transport, archived, updatedAt, startedAt, name, title, model }
+    { sessionId, provider, cwd, mode, transport, archived, updatedAt, startedAt, name, title, model,
+      parentSessionId?: string }  // the session that started it, when the hub knows
     plus { hidden: bool        // in the shared archive (user Hide)
            onSidebar: bool     // in sessionOpen.open
            endedAt?: ms, firstPrompt?: string, userPrompts?: number, toolCalls?: number,
            transcriptCopy: bool }
   ```
+  `parentSessionId` comes from the hub's launch record, else the live row;
+  History stores no lineage, so a row the hub never launched has none. The
+  native client nests history rows under a parent listed in the same group.
   `name` uses the same precedence as `sessions.recent`: launch label, then
   cwd rename, then auto title. `archived` keeps its legacy meaning
   (claudemon's 7-day flag); `hidden` is the user's Hide. With an engine, the

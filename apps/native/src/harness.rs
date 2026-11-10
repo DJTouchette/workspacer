@@ -785,6 +785,16 @@ impl Fixture {
                 "updatedAt": now - (hours * 3_600_000.) as i64,
             })
         }));
+        // A manager's workers nest under it in Session history, two deep.
+        for (child, parent) in [
+            ("hist-01", "hist-06"),
+            ("hist-03", "hist-06"),
+            ("hist-08", "hist-03"),
+        ] {
+            if let Some(row) = rows.iter_mut().find(|row| row["sessionId"] == child) {
+                row["parentSessionId"] = json!(parent);
+            }
+        }
         rows.extend(self.spawned.iter().map(|row| {
             json!({
                 "sessionId": row["sessionId"],

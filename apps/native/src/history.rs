@@ -30,6 +30,66 @@ pub struct Entry {
     /// The folder of the session's nearest non-worktree ancestor, when the
     /// live fleet knows its lineage.
     pub home: Option<String>,
+    /// How many of the row's ancestors are listed above it in its group;
+    /// set by [`nest`].
+    pub depth: usize,
+}
+
+/// Orders one group's rows as lineages: each session directly followed by
+/// the sessions it started, nested one level per generation. A lineage sits
+/// where its most recent activity (any member's) puts it, and siblings are
+/// newest first. A row whose parent is not among `entries` (another group,
+/// filtered out, or not loaded) is listed at the top level, so nothing is
+/// ever hidden behind a parent the list does not show.
+pub fn nest(entries: Vec<Entry>) -> Vec<Entry> {
+    use std::collections::BTreeMap;
+    let ids: BTreeMap<&str, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(ix, e)| (e.session.id.as_str(), ix))
+        .collect();
+    let mut children: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    let mut roots = Vec::new();
+    for (ix, entry) in entries.iter().enumerate() {
+        match ids.get(entry.session.parent_session_id.as_str()).copied() {
+            Some(parent) if parent != ix => children.entry(parent).or_default().push(ix),
+            _ => roots.push(ix),
+        }
+    }
+    // Depth-first from each root; a malformed cycle has no root, so its
+    // members become lineages of their own afterwards.
+    let mut placed = vec![false; entries.len()];
+    let mut lineages: Vec<(i64, Vec<(usize, usize)>)> = Vec::new();
+    for root in roots.into_iter().chain(0..entries.len()) {
+        let mut rows = Vec::new();
+        let mut stack = vec![(root, 0)];
+        while let Some((ix, depth)) = stack.pop() {
+            if std::mem::replace(&mut placed[ix], true) {
+                continue;
+            }
+            rows.push((ix, depth));
+            if let Some(kids) = children.get(&ix) {
+                let mut kids = kids.clone();
+                // Stable, so the hub's order breaks ties; reversed for the stack.
+                kids.sort_by_key(|&k| std::cmp::Reverse(entries[k].updated_at));
+                stack.extend(kids.into_iter().rev().map(|k| (k, depth + 1)));
+            }
+        }
+        if let Some(newest) = rows.iter().map(|&(ix, _)| entries[ix].updated_at).max() {
+            lineages.push((newest, rows));
+        }
+    }
+    lineages.sort_by_key(|(newest, _)| std::cmp::Reverse(*newest));
+    let mut slots: Vec<Option<Entry>> = entries.into_iter().map(Some).collect();
+    lineages
+        .into_iter()
+        .flat_map(|(_, rows)| rows)
+        .filter_map(|(ix, depth)| {
+            let mut entry = slots[ix].take()?;
+            entry.depth = depth;
+            Some(entry)
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,9 +163,7 @@ pub fn group(entries: Vec<Entry>, projects: &[KnownProject], worktree_root: &str
     }
     for group in &mut groups {
         // Stable: the hub's own (newest-first) order breaks ties.
-        group
-            .entries
-            .sort_by_key(|e| std::cmp::Reverse(e.updated_at));
+        group.entries = nest(std::mem::take(&mut group.entries));
     }
     groups.sort_by(|a, b| {
         b.updated_at
@@ -220,10 +278,13 @@ pub fn search_with(
         .into_iter()
         .filter_map(|mut group| {
             let entries = std::mem::take(&mut group.entries);
-            group.entries = entries
-                .into_iter()
-                .filter(|e| matched(e) || matches(e, &group, query))
-                .collect();
+            // Nested again: a match whose parent did not match stands alone.
+            group.entries = nest(
+                entries
+                    .into_iter()
+                    .filter(|e| matched(e) || matches(e, &group, query))
+                    .collect(),
+            );
             (!group.entries.is_empty()).then_some(group)
         })
         .collect()
@@ -259,7 +320,58 @@ mod tests {
             title: format!("Session {id}"),
             updated_at,
             home: None,
+            depth: 0,
         }
+    }
+
+    #[test]
+    fn rows_nest_under_the_parent_listed_with_them() {
+        let child = |id: &str, parent: &str, at: i64| {
+            let mut e = entry(id, "/work/app", at);
+            e.session.parent_session_id = parent.into();
+            e
+        };
+        let rows = vec![
+            entry("solo", "/work/app", 50),
+            entry("boss", "/work/app", 10),
+            child("old", "boss", 20),
+            child("new", "boss", 90),
+            child("grand", "old", 5),
+            child("orphan", "gone", 30),
+            child("self", "self", 1),
+        ];
+        let shape = |entries: &[Entry]| -> Vec<(String, usize)> {
+            entries
+                .iter()
+                .map(|e| (e.session.id.clone(), e.depth))
+                .collect()
+        };
+        let pairs = |list: &[(&str, usize)]| -> Vec<(String, usize)> {
+            list.iter().map(|(id, d)| (id.to_string(), *d)).collect()
+        };
+        let groups = group(rows, &[], "");
+        assert_eq!(groups.len(), 1);
+        // The lineage sits where its newest member puts it; children newest
+        // first; a missing parent or a self-parent leaves a row at the top.
+        assert_eq!(
+            shape(&groups[0].entries),
+            pairs(&[
+                ("boss", 0),
+                ("new", 1),
+                ("old", 1),
+                ("grand", 2),
+                ("solo", 0),
+                ("orphan", 0),
+                ("self", 0),
+            ])
+        );
+        assert_eq!(groups[0].total, 7);
+        // Searching keeps a match visible without its parent.
+        let found = search(groups, "grand");
+        assert_eq!(shape(&found[0].entries), pairs(&[("grand", 0)]));
+        // A cycle still lists every row once.
+        let cycle = nest(vec![child("a", "b", 2), child("b", "a", 1)]);
+        assert_eq!(cycle.len(), 2);
     }
 
     fn registry(paths: &[(&str, Option<&str>)]) -> serde_json::Value {

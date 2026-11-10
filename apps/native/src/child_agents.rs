@@ -541,14 +541,12 @@ fn delegated_within(session: &Session, fleet: &[Session], depth: usize) -> Optio
                     && (child.working()
                         || child.starting()
                         || depth > 0
-                            && delegated_within(child, fleet, depth - 1)
-                                == Some(Delegated::Agents))
+                            && delegated_within(child, fleet, depth - 1) == Some(Delegated::Agents))
             })
     };
     if subagent || session.tasks.iter().any(agent_task) || spawned() {
         Some(Delegated::Agents)
-    } else if session.background_tasks > 0 || crate::background_tasks::running(&session.tasks) > 0
-    {
+    } else if session.background_tasks > 0 || crate::background_tasks::running(&session.tasks) > 0 {
         Some(Delegated::Tasks)
     } else {
         None

@@ -24,6 +24,10 @@ const MORE_ROWS: usize = 25;
 /// Where a row's title (and its group's name) starts: past the fold
 /// chevron and the project mark.
 const ROW_TITLE_X: f32 = 58.;
+/// How far each generation of a nested row steps in (the sidebar's step),
+/// and how many generations step before deeper ones share an indent.
+const NEST_STEP: f32 = 16.;
+const NEST_MAX: usize = 6;
 /// The hover group of one row: its actions show while it is hovered.
 const ROW_GROUP: &str = "history-row";
 
@@ -188,6 +192,9 @@ impl Workspace {
                     if session.runtime_model.is_empty() {
                         session.runtime_model = known.runtime_model.clone();
                     }
+                    if session.parent_session_id.is_empty() {
+                        session.parent_session_id = known.parent_session_id.clone();
+                    }
                     let tree = |cwd: &str| {
                         projects::in_worktree_root(cwd, root)
                             || projects::worktree_repo(cwd, root).is_some()
@@ -204,6 +211,7 @@ impl Workspace {
                     title: self.session_title(&session),
                     updated_at: row["updatedAt"].as_i64().unwrap_or(0),
                     home,
+                    depth: 0,
                     session,
                 })
             })
@@ -887,6 +895,7 @@ impl Workspace {
         // session's state is worth reading.
         let live = connected && !s.stopped();
         let reveal = selected || confirming;
+        let depth = entry.depth.min(NEST_MAX);
         let mut actions: Vec<Stateful<Div>> = Vec::new();
         // A child cleared from the sidebar on this device comes back here;
         // that is not an archive restore.
@@ -938,8 +947,22 @@ impl Workspace {
             .ml(px(ROW_TITLE_X - 36.))
             .mb(px(2.))
             .min_h(px(48.))
-            // The title lines up with its group's name.
-            .pl(px(36.))
+            // The title lines up with its group's name; a session another
+            // one started steps in under it.
+            .pl(px(36. + depth as f32 * NEST_STEP))
+            // One thread per generation, under the first letter of that
+            // ancestor's title, run through the gap between rows so a
+            // lineage reads as one piece.
+            .children((0..depth).map(|level| {
+                div()
+                    .debug_selector(move || format!("recent-thread-{ix}-{level}"))
+                    .absolute()
+                    .left(px(36. + level as f32 * NEST_STEP + 3.))
+                    .top(px(-2.))
+                    .bottom_0()
+                    .w(px(1.))
+                    .bg(rgb(p.border))
+            }))
             .pr(px(6.))
             .py(px(6.))
             .rounded(px(p.control_radius))

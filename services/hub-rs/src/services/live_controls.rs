@@ -138,6 +138,33 @@ impl Controls {
             transport.unwrap_or_else(|| "pty".into()),
         )
     }
+    /// Names each row's parent session (`parentSessionId`) where the hub
+    /// knows the lineage: the launch record it kept, else the live row.
+    /// History itself stores none, so rows without either stay unmarked.
+    fn stamp_parents<'a>(&self, rows: impl Iterator<Item = &'a mut Value>) {
+        let records = self
+            .lifecycle
+            .as_ref()
+            .map(|l| l.records())
+            .unwrap_or_default();
+        let live = self.rows.read().unwrap();
+        for row in rows {
+            let Some(id) = row["sessionId"].as_str() else {
+                continue;
+            };
+            let parent = [
+                records.get(id).map(|r| &r.metadata["parentSessionId"]),
+                live.get(id).map(|r| &r["parentSessionId"]),
+            ]
+            .into_iter()
+            .flatten()
+            .find_map(|v| v.as_str().filter(|p| !p.is_empty() && *p != id))
+            .map(str::to_owned);
+            if let Some(parent) = parent {
+                row["parentSessionId"] = parent.into();
+            }
+        }
+    }
     /// The display name precedence shared by recents and history: launch
     /// label, then the user's cwd rename, then the hub's automatic title.
     fn namer(&self) -> impl Fn(&str, &str) -> String + use<> {
@@ -198,7 +225,9 @@ impl Controls {
                 );
             }
             let name = self.namer();
-            return Ok(recent(&raw, |id, cwd| name(id, cwd)));
+            let mut rows = recent(&raw, |id, cwd| name(id, cwd));
+            self.stamp_parents(rows.as_array_mut().into_iter().flatten());
+            return Ok(rows);
         }
         if method == "sessions.history" {
             let query = history_query(&p)?;
@@ -211,12 +240,13 @@ impl Controls {
                 None => Default::default(),
             };
             let live = self.rows.read().unwrap().clone();
-            let sessions: Vec<Value> = page["sessions"]
+            let mut sessions: Vec<Value> = page["sessions"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter_map(|row| history_row(row, &name, &hidden, &sidebar, &live))
                 .collect();
+            self.stamp_parents(sessions.iter_mut());
             let mut reply = json!({ "sessions": sessions });
             if let Some(next) = page["next"].as_str().filter(|s| !s.is_empty()) {
                 reply["next"] = next.into();
@@ -1029,6 +1059,22 @@ mod tests {
             }
         })
         .await?;
+        // Lineage the hub knows rides on the row; a self-parent never does.
+        let parented = |parent: &str| {
+            if let Some(row) = rows.write().unwrap().get_mut("manual") {
+                row["parentSessionId"] = json!(parent);
+            }
+        };
+        parented("manual");
+        let own = controls.call("sessions.recent", json!({})).await?;
+        assert!(
+            own.as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row.get("parentSessionId").is_none()),
+            "{own}"
+        );
+        parented("boss");
         let history = controls
             .call(
                 "sessions.recent",
@@ -1042,6 +1088,7 @@ mod tests {
             .find(|row| row["sessionId"] == "manual")
             .unwrap();
         assert_eq!(manual["provider"], "claude");
+        assert_eq!(manual["parentSessionId"], "boss");
         assert!(manual.get("costUSD").is_none() && manual.get("billedTokens").is_none());
         let cwd = manual["cwd"].as_str().unwrap();
         std::fs::write(

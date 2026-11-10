@@ -427,3 +427,50 @@ fn history_rows_name_only_where_they_differ_from_their_group() {
     );
     assert_eq!(place("/work/shopping"), "/work/shopping");
 }
+
+/// A session another one started is listed right under it, stepped in and
+/// threaded to it, wherever the hub or the live fleet names the parent.
+#[gpui::test]
+fn history_nests_sessions_under_the_parent_listed_with_them(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _) = history_fixture(cx);
+    let mut rows = recent_rows();
+    for row in rows.as_array_mut().unwrap() {
+        if matches!(row["sessionId"].as_str(), Some("w1" | "s2")) {
+            row["parentSessionId"] = json!("s1");
+        }
+    }
+    request_state(&workspace, &mut visual, Request::Recent, 2, rows);
+    let shape = workspace.read_with(&visual, |this, cx| {
+        this.recent_page(cx).groups[0]
+            .entries
+            .iter()
+            .map(|e| (e.session.id.clone(), e.depth))
+            .collect::<Vec<_>>()
+    });
+    // The lineage keeps the place its newest member (w1) earns it.
+    assert_eq!(
+        shape,
+        [
+            ("s1".to_owned(), 0),
+            ("w1".to_owned(), 1),
+            ("s2".to_owned(), 1)
+        ]
+    );
+    // The child's thread hangs under the first letter of its parent's
+    // title and bridges the gap up to the parent's row.
+    let child = bounds_of(&mut visual, "recent-row-1");
+    let thread = bounds_of(&mut visual, "recent-thread-1-0");
+    assert_eq!(thread.left() - child.left(), px(39.));
+    assert!(thread.top() < child.top() && thread.bottom() == child.bottom());
+    assert!(visual.debug_bounds("recent-thread-0-0").is_none());
+    assert!(visual.debug_bounds("recent-thread-2-0").is_some());
+    // The live fleet's lineage nests the worker under its manager's row
+    // only when that row is listed; here the manager has no history row.
+    assert_eq!(
+        page(&workspace, &visual)[1],
+        (
+            "notes".to_owned(),
+            vec!["n1".to_owned(), "live-child".to_owned()]
+        )
+    );
+}
