@@ -237,6 +237,7 @@ fn filtering_the_sidebar_to_a_project_shows_every_folder_and_its_workers(cx: &mu
 
     // Scratch opens on the whole project, a section per folder.
     effects(&mut commands);
+    click(&mut visual, "nav-menu");
     click(&mut visual, "nav-scratch");
     assert!(effects(&mut commands).iter().any(|c| matches!(
         c,

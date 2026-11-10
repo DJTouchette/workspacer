@@ -806,7 +806,7 @@ impl Workspace {
             })
             .child(self.sidebar_toggle(cx))
             .child(
-                self.icon_button("new-session-rail", "New agent", IconName::Plus, !self.demo)
+                self.new_agent_button("new-session-rail")
                     .debug_selector(|| "new-session-button".into())
                     .when(!self.demo, |d| {
                         d.on_click(
@@ -824,15 +824,6 @@ impl Workspace {
                 .debug_selector(|| "sidebar-search".into())
                 .on_click(cx.listener(|this, _, window, cx| this.open_switcher(window, cx))),
             )
-            .child(
-                self.icon_button("projects-rail", "All projects", IconName::Folder, true)
-                    .when(!self.new_session && self.screen == Screen::Projects, |d| {
-                        d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_screen(Screen::Projects, window, cx)
-                    })),
-            )
             // The rail hides the filter header, so the filtered project is
             // shown here and clicking it shows every session again.
             .when_some(self.rail_filter(), |d, mark| {
@@ -841,15 +832,6 @@ impl Workspace {
                     cx.notify();
                 })))
             })
-            .child(
-                self.icon_button("history-rail", "Session history", IconName::BookOpen, true)
-                    .when(!self.new_session && self.screen == Screen::Recent, |d| {
-                        d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_feature(Screen::Recent, window, cx)
-                    })),
-            )
             .when(!self.ui_bus.notice.is_empty(), |d| {
                 d.child(
                     self.icon_button(
@@ -998,32 +980,15 @@ impl Workspace {
                 )
             })
             .child(
-                self.icon_button("jobs-rail", "Jobs", IconName::Calendar, true)
-                    .when(!self.new_session && self.screen == Screen::Jobs, |d| {
-                        d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_feature(Screen::Jobs, window, cx)
-                    })),
-            )
-            .child(
-                self.icon_button("hosts-rail", "Hosts", IconName::LayoutDashboard, true)
-                    .when(!self.new_session && self.screen == Screen::Hosts, |d| {
-                        d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_feature(Screen::Hosts, window, cx)
-                    })),
-            )
-            .child(
-                self.icon_button("scratch-rail", "Scratch", IconName::FolderClosed, true)
+                self.icon_button("nav-menu-rail", "Workspace", IconName::Menu, true)
                     .relative()
                     .when_some(self.pending_badge(), |d, badge| d.child(badge))
-                    .when(!self.new_session && self.screen == Screen::Scratch, |d| {
+                    .debug_selector(|| "nav-menu".into())
+                    .when(self.on_menu_screen(), |d| {
                         d.bg(rgb(p.selected)).text_color(rgb(p.text))
                     })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_feature(Screen::Scratch, window, cx)
+                    .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+                        this.open_nav_menu(event, cx)
                     })),
             )
             .child(
@@ -1110,38 +1075,6 @@ impl Workspace {
                     .child(brand_mark(18., p))
                     .child(div().flex_1())
                     .child(div().flex().items_center().gap_2().flex_shrink_0().occlude()
-                    .child(
-                        self.icon_button("new-session", "New agent", IconName::Plus, !self.demo)
-                            .debug_selector(|| "new-session-button".into())
-                            .when(!self.demo, |d| {
-                                d.on_click(cx.listener(|this, _, window, cx| {
-                                    this.show_new_session(window, cx)
-                                }))
-                            }),
-                    )
-                    .child(
-                        self.icon_button("nav-projects", "All projects", IconName::Folder, true)
-                            .when(!self.new_session && self.screen == Screen::Projects, |d| {
-                                d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_screen(Screen::Projects, window, cx)
-                            })),
-                    )
-                    .child(
-                        self.icon_button(
-                            "nav-history",
-                            "Session history",
-                            IconName::BookOpen,
-                            true,
-                        )
-                        .when(!self.new_session && self.screen == Screen::Recent, |d| {
-                            d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_feature(Screen::Recent, window, cx)
-                        })),
-                    )
                     .child(self.sidebar_toggle(cx))),
             )
             .child(
@@ -1158,7 +1091,18 @@ impl Workspace {
                                 .size(px(icon_size::LG))
                                 .text_color(rgb(p.muted)),
                         )
-                        .child(Input::new(&self.search).appearance(false)),
+                        .child(div().flex_1().min_w_0().child(Input::new(&self.search).appearance(false)))
+                        // The sidebar's one action, apart from the header's
+                        // destinations so it is not one icon among four.
+                        .child(
+                            self.new_agent_button("new-session")
+                                .debug_selector(|| "new-session-button".into())
+                                .when(!self.demo, |d| {
+                                    d.on_click(cx.listener(|this, _, window, cx| {
+                                        this.show_new_session(window, cx)
+                                    }))
+                                }),
+                        ),
                 ),
             )
             .children(self.render_cleanup_banner(cx))
@@ -1643,108 +1587,111 @@ impl Workspace {
                         },
                     )),
             )
+            // Said only when there is something to say: an update, the
+            // fixture, or a lost/paused connection. A healthy connection is
+            // the norm and takes no room, so the destinations below never move.
+            .when(
+                self.update_available() || self.footer_connection_label().is_some(),
+                |d| {
+                    d.child(
+                        div()
+                            .px_3()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(rgb(p.border))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when_some(self.footer_connection_label(), |d, label| {
+                                d.child(
+                                    div()
+                                        .debug_selector(|| "sidebar-connection-status".into())
+                                        .min_w_0()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .text_size(px(chrome::scale::CAPTION))
+                                        .text_color(rgb(p.muted))
+                                        .when(!self.view.connected, |d| {
+                                            d.child(status_dot(p.warning))
+                                        })
+                                        .child(div().min_w_0().truncate().child(label)),
+                                )
+                            })
+                            .child(div().flex_1())
+                            .when(self.update_available(), |d| {
+                                d.child(
+                                    div()
+                                        .id("update-pill")
+                                        .debug_selector(|| "update-pill".into())
+                                        .flex_shrink_0()
+                                        .px_2()
+                                        .py(px(2.))
+                                        .rounded_full()
+                                        .bg(gpui::Hsla::from(rgb(p.accent)).opacity(0.15))
+                                        .text_size(px(chrome::scale::CAPTION))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(rgb(p.accent))
+                                        .cursor_pointer()
+                                        .hover(move |s| {
+                                            s.bg(gpui::Hsla::from(rgb(p.accent)).opacity(0.25))
+                                        })
+                                        .child("Update")
+                                        .tooltip(|window, cx| {
+                                            Tooltip::new(
+                                                "A newer build is available on your channel",
+                                            )
+                                            .build(window, cx)
+                                        })
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.settings_section =
+                                                super::settings::SettingsSection::About;
+                                            this.show_screen(Screen::Settings, window, cx)
+                                        })),
+                                )
+                            }),
+                    )
+                },
+            )
+            // Two controls: the Workspace menu, which names every destination,
+            // and Settings. Places visited now and then read better as words
+            // in a menu than as a row of icons to memorise.
             .child(
                 div()
                     .px_3()
                     .py_2()
-                    .border_t_1()
+                    // One rule above the footer: the status line's when it shows.
+                    .when(
+                        !(self.update_available() || self.footer_connection_label().is_some()),
+                        |d| d.border_t_1(),
+                    )
                     .border_color(rgb(p.border))
                     .flex()
                     .items_center()
                     .gap_2()
-                    .when(self.update_available(), |d| {
-                        d.child(
-                            div()
-                                .id("update-pill")
-                                .debug_selector(|| "update-pill".into())
-                                .px_2()
-                                .py(px(2.))
-                                .rounded_full()
-                                .bg(gpui::Hsla::from(rgb(p.accent)).opacity(0.15))
-                                .text_size(px(chrome::scale::CAPTION))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(rgb(p.accent))
-                                .cursor_pointer()
-                                .hover(move |s| s.bg(gpui::Hsla::from(rgb(p.accent)).opacity(0.25)))
-                                .child("Update")
-                                .tooltip(|window, cx| {
-                                    Tooltip::new("A newer build is available on your channel").build(window, cx)
-                                })
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.settings_section = super::settings::SettingsSection::About;
-                                    this.show_screen(Screen::Settings, window, cx)
-                                })),
-                        )
-                    })
                     .child(
-                        self.quiet_button("nav-settings", "Settings", IconName::Settings, true)
+                        self.quiet_button("nav-menu", "Workspace", IconName::Menu, true)
+                            .relative()
+                            .when_some(self.pending_badge(), |d, badge| d.child(badge))
+                            .debug_selector(|| "nav-menu".into())
+                            .when(self.on_menu_screen(), |d| {
+                                d.bg(rgb(p.selected)).text_color(rgb(p.text))
+                            })
+                            .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+                                this.open_nav_menu(event, cx)
+                            })),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        self.icon_button("nav-settings", "Settings", IconName::Settings, true)
+                            .debug_selector(|| "nav-settings".into())
                             .when(!self.new_session && self.screen == Screen::Settings, |d| {
                                 d.bg(rgb(p.selected)).text_color(rgb(p.text))
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.show_screen(Screen::Settings, window, cx)
                             })),
-                    )
-                    .child(
-                        self.quiet_button("nav-jobs", "Jobs", IconName::Calendar, true)
-                            .debug_selector(|| "nav-jobs".into())
-                            .when(!self.new_session && self.screen == Screen::Jobs, |d| {
-                                d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_feature(Screen::Jobs, window, cx)
-                            })),
-                    )
-                    // Icon-only, like Scratch, and only while the connection
-                    // is healthy: a lost connection's label needs the room
-                    // (the rail and `g o` still reach Hosts).
-                    .when(self.footer_connection_label().is_none(), |d| {
-                        d.child(
-                            self.icon_button(
-                                "nav-hosts",
-                                "Hosts",
-                                IconName::LayoutDashboard,
-                                true,
-                            )
-                            .debug_selector(|| "nav-hosts".into())
-                            .when(!self.new_session && self.screen == Screen::Hosts, |d| {
-                                d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_feature(Screen::Hosts, window, cx)
-                            })),
-                        )
-                    })
-                    .child(
-                        // Icon-only: the footer row also carries the connection
-                        // status, and a third label pushes it out of the sidebar.
-                        self.icon_button("nav-scratch", "Scratch", IconName::FolderClosed, true)
-                            .relative()
-                            .when_some(self.pending_badge(), |d, badge| d.child(badge))
-                            .debug_selector(|| "nav-scratch".into())
-                            .when(!self.new_session && self.screen == Screen::Scratch, |d| {
-                                d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_feature(Screen::Scratch, window, cx)
-                            })),
-                    )
-                    .child(div().flex_1())
-                    // A healthy connection is the norm and needs no label;
-                    // only a fixture or a lost/paused connection is called out.
-                    .when_some(self.footer_connection_label(), |d, label| {
-                        d.child(
-                            div()
-                                .debug_selector(|| "sidebar-connection-status".into())
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .text_size(px(chrome::scale::OVERLINE))
-                                .text_color(rgb(p.muted))
-                                .child(label)
-                                .when(!self.view.connected, |d| d.child(status_dot(p.warning))),
-                        )
-                    }),
+                    ),
             )
             .child(
                 div()
@@ -1826,7 +1773,152 @@ impl Workspace {
     }
 }
 
+/// Sidebar destinations the bundled icon set has no distinct mark for:
+/// Session history is not the title bar's conversation history (a book),
+/// and Hosts and Scratch are neither a dashboard nor another folder.
+const HISTORY_ICON: &str = "lucide/history.svg";
+const HOSTS_ICON: &str = "lucide/server.svg";
+const SCRATCH_ICON: &str = "lucide/notebook-pen.svg";
+
+fn nav_icon(path: &'static str) -> Icon {
+    Icon::empty().path(path)
+}
+
+/// The Workspace menu's destinations, in the order it lists them: where the
+/// row goes, its selector, label, icon and Normal-mode chord.
+fn nav_destinations() -> [(Screen, &'static str, &'static str, Icon, &'static str); 5] {
+    [
+        (Screen::Projects, "nav-projects", "All projects", IconName::Folder.into(), "g p"),
+        (Screen::Recent, "nav-history", "Session history", nav_icon(HISTORY_ICON), "g h"),
+        (Screen::Jobs, "nav-jobs", "Jobs", IconName::Calendar.into(), "g j"),
+        (Screen::Hosts, "nav-hosts", "Hosts", nav_icon(HOSTS_ICON), "g o"),
+        (Screen::Scratch, "nav-scratch", "Scratch", nav_icon(SCRATCH_ICON), "g n"),
+    ]
+}
+
 impl Workspace {
+    /// Whether the page showing is one the Workspace menu leads to, so its
+    /// button reads as the current place.
+    fn on_menu_screen(&self) -> bool {
+        !self.new_session
+            && nav_destinations()
+                .iter()
+                .any(|(screen, ..)| *screen == self.screen)
+    }
+
+    fn open_nav_menu(&mut self, event: &gpui::ClickEvent, cx: &mut Context<Self>) {
+        self.nav_menu = Some(event.position());
+        cx.notify();
+    }
+
+    /// The open Workspace menu over everything, growing up from where its
+    /// button was pressed, with a backdrop that closes it.
+    pub(super) fn render_nav_menu(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let at = self.nav_menu?;
+        let p = self.palette();
+        let pending = self.pending_total();
+        let hints = self.settings.vim_navigation;
+        let workspace = cx.entity().downgrade();
+        let close = move |_: &gpui::MouseDownEvent, _: &mut Window, cx: &mut App| {
+            let _ = workspace.update(cx, |this, cx| {
+                this.nav_menu = None;
+                cx.notify();
+            });
+        };
+        let menu = div()
+            .id("nav-menu-list")
+            .debug_selector(|| "nav-menu-list".into())
+            .min_w(px(208.))
+            .p_1()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .rounded(px(p.control_radius))
+            .border_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.surface))
+            .shadow(chrome::floating_shadow(p))
+            .occlude()
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .children(nav_destinations().into_iter().map(
+                |(screen, id, label, icon, chord)| {
+                    let current = !self.new_session && self.screen == screen;
+                    chrome::interactive_control(div().id(id), p, true)
+                        .debug_selector(move || id.into())
+                        .px_2()
+                        .py_2()
+                        .rounded(px(p.control_radius))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .cursor_pointer()
+                        .text_size(px(chrome::scale::BODY))
+                        .text_color(rgb(p.text))
+                        .when(current, |d| d.bg(rgb(p.selected)))
+                        .hover(|d| d.bg(rgb(p.selected)))
+                        .child(
+                            Icon::new(icon)
+                                .size(px(icon_size::LG))
+                                .text_color(rgb(p.muted)),
+                        )
+                        .child(div().flex_1().child(label))
+                        .when(screen == Screen::Scratch && pending > 0, |d| {
+                            d.child(
+                                div()
+                                    .px_2()
+                                    .rounded_full()
+                                    .bg(gpui::Hsla::from(rgb(p.warning)).opacity(alpha::TONE_HOVER))
+                                    .text_size(px(chrome::scale::CAPTION))
+                                    .text_color(rgb(p.warning))
+                                    .child(format!("{pending} pending")),
+                            )
+                        })
+                        .when(hints, |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(chrome::scale::CAPTION))
+                                    .text_color(rgb(p.disabled))
+                                    .child(chord),
+                            )
+                        })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.nav_menu = None;
+                            if screen == Screen::Projects {
+                                this.show_screen(screen, window, cx)
+                            } else {
+                                this.open_feature(screen, window, cx)
+                            }
+                        }))
+                },
+            ));
+        let layer = div()
+            .id("nav-menu-backdrop")
+            .absolute()
+            .inset_0()
+            .occlude()
+            .on_mouse_down(gpui::MouseButton::Left, close.clone())
+            .on_mouse_down(gpui::MouseButton::Right, close)
+            .child(
+                gpui::anchored()
+                    .anchor(gpui::Corner::BottomLeft)
+                    .position(gpui::point(at.x - px(16.), at.y - px(20.)))
+                    .snap_to_window_with_margin(px(8.))
+                    .child(menu),
+            );
+        Some(gpui::deferred(layer).with_priority(2).into_any_element())
+    }
+
+    /// New agent, the sidebar's one action: an icon button with a tonal
+    /// fill at rest, so it stands apart from the destinations around it
+    /// without competing with the composer's primary Send.
+    fn new_agent_button(&self, id: &'static str) -> Stateful<Div> {
+        let p = self.palette();
+        let enabled = !self.demo;
+        self.icon_button(id, "New agent", IconName::Plus, enabled)
+            .bg(chrome::tonal(p, alpha::REST))
+            .when(enabled, |d| d.text_color(rgb(p.text)))
+    }
+
     /// The Scratch icon's count of files waiting on the user, across every
     /// project; `None` when nothing is pending (or the hub has not said).
     fn pending_badge(&self) -> Option<Div> {

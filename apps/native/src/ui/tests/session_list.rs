@@ -185,8 +185,8 @@ fn keyboard_session_selection_uses_one_explicit_command(cx: &mut TestAppContext)
         })
     });
     visual.run_until_parked();
-    // Projects, history, toggle, search, then the first session.
-    visual.simulate_keystrokes("tab tab tab tab tab enter");
+    // Toggle, search, then the first session.
+    visual.simulate_keystrokes("tab tab tab enter");
     visual.simulate_event(gpui::KeyUpEvent {
         keystroke: gpui::Keystroke::parse("enter").unwrap(),
     });

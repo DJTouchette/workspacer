@@ -71,7 +71,7 @@ fn app_drawn_caption_drag_surfaces_survive_layouts_and_exclude_controls(cx: &mut
                     let grab = if collapsed {
                         drag.center()
                     } else {
-                        let actions = visual.debug_bounds("new-session-button").unwrap();
+                        let actions = visual.debug_bounds("sidebar-toggle").unwrap();
                         assert!(
                             actions.left() - drag.left() >= px(40.),
                             "at least 40px remains beside the controls at minimum width"

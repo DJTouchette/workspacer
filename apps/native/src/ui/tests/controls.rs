@@ -289,7 +289,8 @@ fn keyboard_controls_skip_disabled_actions_and_keep_their_geometry(cx: &mut Test
     });
     visual.run_until_parked();
     let before = visual.debug_bounds("sidebar-toggle").unwrap();
-    visual.simulate_keystrokes("tab tab tab");
+    // The toggle is the header's only control, so the first stop.
+    visual.simulate_keystrokes("tab");
     visual.run_until_parked();
     assert_eq!(before, visual.debug_bounds("sidebar-toggle").unwrap());
     visual.simulate_keystrokes("enter");

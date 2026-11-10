@@ -163,6 +163,9 @@ bundled_icons!(
     "lucide/megaphone.svg",
     "lucide/snowflake.svg",
     "lucide/git-pull-request.svg",
+    "lucide/history.svg",
+    "lucide/server.svg",
+    "lucide/notebook-pen.svg",
 );
 
 impl gpui::AssetSource for Assets {
@@ -657,6 +660,8 @@ pub struct Workspace {
     smooth_scroll: smooth_scroll::SmoothScroll,
     navigation_selected: Option<String>,
     sidebar_collapsed: bool,
+    /// Where the sidebar's Workspace menu was opened from, while it is open.
+    nav_menu: Option<gpui::Point<gpui::Pixels>>,
     sidebar_drag: Option<(gpui::Pixels, f32)>,
     /// Tall-window layout: its shape tracking, rail flyout and bottom dock.
     layout: portrait::LayoutUi,
@@ -1010,6 +1015,7 @@ impl Workspace {
             smooth_scroll: Default::default(),
             navigation_selected: None,
             sidebar_collapsed: false,
+            nav_menu: None,
             sidebar_drag: None,
             layout: Default::default(),
             has_connected: false,

@@ -309,6 +309,7 @@ fn the_sidebar_opens_scratch_on_the_selected_agents_project(cx: &mut TestAppCont
     });
     visual.run_until_parked();
     effects(&mut commands);
+    click(&mut visual, "nav-menu");
     click(&mut visual, "nav-scratch");
     workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Scratch));
     assert!(effects(&mut commands).iter().any(|c| matches!(

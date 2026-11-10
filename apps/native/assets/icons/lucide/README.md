@@ -13,3 +13,8 @@ directory.
 
 `git-pull-request.svg` (the title bar's pull request button and chip, and the
 Pull request page) comes from the same `icons/` directory.
+
+`history.svg`, `server.svg` and `notebook-pen.svg` (the sidebar Workspace menu's Session
+history, Hosts and Scratch rows, so none of them reads as another
+folder or as the title bar's conversation history) come from `lucide-react`
+0.564's icon nodes.

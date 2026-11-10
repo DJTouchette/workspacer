@@ -59,6 +59,7 @@ fn hosts_page_lists_each_host_and_cancels_queued_work(cx: &mut TestAppContext) {
         })
     });
     visual.run_until_parked();
+    click(&mut visual, "nav-menu");
     click(&mut visual, "nav-hosts");
     let sent = effects(&mut commands);
     assert!(sent.iter().any(|c| matches!(c, Command::WatchHosts(true))));
@@ -354,6 +355,7 @@ fn hosts_projects_link_matrix_accepts_chooses_and_unlinks(cx: &mut TestAppContex
         })
     });
     visual.run_until_parked();
+    click(&mut visual, "nav-menu");
     click(&mut visual, "nav-hosts");
     assert!(
         effects(&mut commands)

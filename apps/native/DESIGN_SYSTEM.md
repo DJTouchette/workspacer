@@ -104,6 +104,24 @@ GPUI's helpers are the scale: `gap_1`/`p_1` = 4 px, `_2` = 8, `_3` = 12, `_4` = 
 All interactive controls go through `chrome::interactive_control`, which reserves the
 2 px focus ring (keyboard-only) so focus never shifts layout.
 
+### Sidebar controls
+
+The sidebar keeps few controls in view, and the collapsed rail keeps the same ones in
+the same order:
+
+| Place | Holds | Controls |
+|---|---|---|
+| Header | Window chrome only | Collapse |
+| Search row | The sidebar's one action, tonal so it stands apart | New agent |
+| Status line | Shown only when there is something to say | Connection label · Update |
+| Footer | The Workspace menu and Settings | Workspace · Settings |
+
+Every destination (All projects, Session history, Jobs, Hosts, Scratch) is a labelled
+row in the **Workspace** menu, not an icon of its own: places visited now and then read
+better as words than as a row of icons to memorise. A new destination is a new row in
+`nav_destinations()`; a new status joins the status line. The menu button carries the
+Scratch pending count and reads as selected while one of its pages is open.
+
 ## 7. Custom themes
 
 **Settings → Custom themes** forks the theme in use into an editable copy:
