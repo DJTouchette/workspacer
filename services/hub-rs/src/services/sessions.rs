@@ -1824,6 +1824,7 @@ mod task_query_tests {
 /// claudemon `/conversation` query for `sinceSeq` / `limit`. `limit` asks for
 /// the newest N items; the reply's `window_first_seq` says whether older
 /// retained items remain.
+/// `beforeSeq` pages back: the `limit` items older than that sequence.
 /// `resultChars` clips each tool result and command output in the reply, for
 /// a client that would only discard the rest.
 fn conversation_query(params: &Value) -> String {
@@ -1835,6 +1836,9 @@ fn conversation_query(params: &Value) -> String {
             .as_u64()
             .filter(|limit| *limit > 0)
             .map(|limit| format!("limit={limit}")),
+        params["beforeSeq"]
+            .as_u64()
+            .map(|before| format!("before={before}")),
         params["resultChars"]
             .as_u64()
             .filter(|chars| *chars > 0)
@@ -1870,5 +1874,9 @@ mod conversation_query_tests {
             "?limit=200&result_chars=4000"
         );
         assert_eq!(conversation_query(&json!({"resultChars":0})), "");
+        assert_eq!(
+            conversation_query(&json!({"beforeSeq":41,"limit":200,"resultChars":4000})),
+            "?limit=200&before=41&result_chars=4000"
+        );
     }
 }

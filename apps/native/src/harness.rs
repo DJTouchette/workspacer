@@ -584,12 +584,13 @@ impl Fixture {
             }
             "sessions.conversation" => {
                 let limit = params["limit"].as_u64().map(|l| l as usize);
+                let before = params["beforeSeq"].as_u64();
                 if id == self.active_id {
-                    page(&self.items, self.seq, limit)
+                    page(&self.items, self.seq, limit, before)
                 } else if let Some((items, seq)) = self.history.get(id) {
-                    page(items, *seq, limit)
+                    page(items, *seq, limit, before)
                 } else {
-                    page(&self.seed, self.seed.len() as u64, limit)
+                    page(&self.seed, self.seed.len() as u64, limit, before)
                 }
             }
             "usage.report" | "usage.refresh" => usage_report(),
@@ -1079,18 +1080,26 @@ fn usage_report() -> Value {
     ]})
 }
 
-/// A claudemon-shaped conversation read: the newest `limit` items and the
-/// first returned item's sequence (one sequence per fixture item).
-fn page(items: &[Value], seq: u64, limit: Option<usize>) -> Value {
-    let start = limit.map_or(0, |limit| items.len().saturating_sub(limit));
+/// A claudemon-shaped conversation read: the newest `limit` items (those
+/// older than sequence `before`, when given, which is echoed) and the first
+/// returned item's sequence (one sequence per fixture item).
+fn page(items: &[Value], seq: u64, limit: Option<usize>, before: Option<u64>) -> Value {
+    // Item `i` carries sequence `seq + 1 - len + i`.
+    let base = (seq + 1).saturating_sub(items.len() as u64);
+    let end = before.map_or(items.len(), |before| {
+        (before.saturating_sub(base) as usize).min(items.len())
+    });
+    let start = limit.map_or(0, |limit| end.saturating_sub(limit));
     let window_first_seq = if start == 0 {
         1
     } else {
-        (seq + 1)
-            .saturating_sub((items.len() - start) as u64)
-            .max(2)
+        (base + start as u64).max(2)
     };
-    json!({"seq":seq,"first_seq":1,"window_first_seq":window_first_seq,"items":&items[start..]})
+    let mut reply = json!({"seq":seq,"first_seq":1,"window_first_seq":window_first_seq,"items":&items[start..end]});
+    if let Some(before) = before {
+        reply["before"] = json!(before);
+    }
+    reply
 }
 
 pub fn event(topic: &str, data: Value) -> Message {
@@ -1486,6 +1495,7 @@ pub async fn bench_switch(cycles: usize, parent_items: usize, child_items: usize
                             &parent,
                             parent.len() as u64,
                             params["limit"].as_u64().map(|l| l as usize),
+                            params["beforeSeq"].as_u64(),
                         ),
                         "sessions.subagentConversation" => {
                             let agent = params["agentId"].as_str().unwrap_or_default();

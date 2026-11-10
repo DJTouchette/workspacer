@@ -525,14 +525,25 @@ export const proposals = () => (jobs || []).filter((j) => j && String(j.proposed
 // call. `sinceSeq` anchors follow-ups; a backwards seq means the daemon
 // rebuilt its log and we resync from zero.
 //
-// The first read is a page, as native's (`limit`: the newest CONV_PAGE
-// items), so a long session opens without shipping its whole log. Older items
-// remain while the reply's `window_first_seq` exceeds `first_seq`; loadOlder
-// re-reads with a larger window. A daemon without paging answers in full and
-// never reports a window, so it never offers older items.
+// A chat opens on a small page (`limit`: the newest CONV_FIRST items), so a
+// long session paints without shipping its log. Older items remain while the
+// reply's `window_first_seq` exceeds `first_seq`; loadOlder asks for the page
+// before it (`beforeSeq`), each item once, and the first older page is fetched
+// behind the first paint so scrolling up is already there.
+//
+// The items themselves are kept (`st.items`), and a page that lands in front
+// is folded together with them from scratch. A tool call on one page and its
+// result on the next, or a streamed reply that straddles the seam, then fold
+// exactly as they would have in one read.
+//
+// A daemon without `beforeSeq` answers such a read with its newest page and
+// no `before` echo: from then on that chat pages by re-reading a larger
+// window. One without paging at all answers in full and never reports a
+// window, so it never offers older items.
 const conv = new Map();
 const CONV_REFRESH_MS = 1000;
-const CONV_PAGE = 200;
+const CONV_FIRST = 80;   // the page a chat opens on
+const CONV_PAGE = 200;   // each older page
 const CONV_MAX = 3000;   // past this the phone stops paging; History owns the rest
 const MAX_TURNS = 1500;
 const MAX_RESULT = 4000;
@@ -540,7 +551,8 @@ export function convOf(id) {
   let st = conv.get(id);
   if (!st) {
     st = { seq: 0, turns: [], tools: new Map(), at: 0, loaded: false, inflight: false, timer: null, error: '',
-      limit: CONV_PAGE, hasOlder: false, loadingOlder: false, reload: false };
+      items: [], windowFirst: 0, cursor: true, older: false, fetchingOlder: false, prefetched: false,
+      limit: CONV_FIRST, hasOlder: false, loadingOlder: false, reload: false };
     conv.set(id, st);
   }
   return st;
@@ -567,56 +579,101 @@ function scheduleConv(id) {
   const wait = Math.max(0, st.at + CONV_REFRESH_MS - Date.now());
   st.timer = setTimeout(() => { st.timer = null; fetchConv(id); }, wait);
 }
+function resetConv(st) {
+  st.seq = 0; st.turns = []; st.tools = new Map(); st.items = []; st.windowFirst = 0;
+  st.limit = CONV_FIRST; st.hasOlder = false; st.older = false; st.prefetched = false;
+}
+/** Fold every held item from scratch (a page landed in front, or the window
+ *  was re-read), keeping answered-question anchors on their turns. */
+function refold(id, st, s) {
+  const fresh = { seq: 0, turns: [], tools: new Map(), plan: st.plan };
+  applyItems(fresh, st.items, s);
+  shiftResolved(id, prependedTurns(st.turns, fresh.turns));
+  st.turns = fresh.turns; st.tools = fresh.tools; st.plan = fresh.plan;
+}
 async function fetchConv(id) {
   const s = sessions.get(id);
   if (!s) return;
   const st = convOf(id);
   if (st.inflight) return;
-  if (s.conversation && s.conversation.length) { st.loaded = true; st.loadingOlder = false; return; }
-  if (hubDown(s)) { st.loadingOlder = false; return; }
+  if (s.conversation && s.conversation.length) { st.loaded = true; st.loadingOlder = false; st.older = false; return; }
+  if (hubDown(s)) { st.loadingOlder = false; st.older = false; return; }
   st.inflight = true;
   let didChange = false;
-  // A windowed read (first load, or a larger window for older items) replaces
-  // the turns; a follow-up appends what came after the cursor.
-  const full = st.seq === 0 || st.reload;
-  st.reload = false;
+  // Three reads: the page before the held window (`older`), a windowed read
+  // that replaces it (first load, or a larger window on a daemon without a
+  // cursor), and a follow-up that appends what came after the cursor.
+  const older = st.older && st.seq > 0 && !st.reload;
+  const full = !older && (st.seq === 0 || st.reload);
+  const before = st.windowFirst;
+  st.older = false;
+  st.fetchingOlder = older;
+  if (full) st.reload = false;
   try {
     // resultChars: the daemon clips each tool result to what is kept here, so
     // a page is not the weight of every file an agent read. An older daemon
     // ignores it and the slice in applyItems still applies.
     const params = { sessionId: id, resultChars: MAX_RESULT };
-    if (full) params.limit = st.limit; else params.sinceSeq = st.seq;
+    if (older) { params.beforeSeq = before; params.limit = CONV_PAGE; }
+    else if (full) params.limit = st.limit;
+    else params.sinceSeq = st.seq;
     const r = await call(qualify(id, 'sessions.conversation'), params);
     st.at = Date.now();
     const seq = r && typeof r.seq === 'number' ? r.seq : 0;
     const items = r && Array.isArray(r.items) ? r.items : [];
-    if (!full && seq < st.seq) {
-      st.seq = 0; st.turns = []; st.tools = new Map(); st.limit = CONV_PAGE; st.hasOlder = false; st.inflight = false;
+    const windowFirst = r && typeof r.window_first_seq === 'number' ? r.window_first_seq : 0;
+    const first = Math.max(1, r && typeof r.first_seq === 'number' ? r.first_seq : 1);
+    if (seq < st.seq) {
+      // The daemon rebuilt its log: nothing held describes it. Start over.
+      resetConv(st); st.inflight = false;
       return fetchConv(id);
     }
-    if (full) {
-      const fresh = { seq: 0, turns: [], tools: new Map(), plan: st.plan };
-      applyItems(fresh, items, s);
-      shiftResolved(id, prependedTurns(st.turns, fresh.turns));
-      st.turns = fresh.turns; st.tools = fresh.tools; st.plan = fresh.plan;
-      const windowFirst = r && typeof r.window_first_seq === 'number' ? r.window_first_seq : 0;
-      const first = Math.max(1, r && typeof r.first_seq === 'number' ? r.first_seq : 1);
-      st.hasOlder = windowFirst > first && st.limit < CONV_MAX && st.turns.length < MAX_TURNS;
+    if (older && !(r && r.before === before)) {
+      // No echo: this daemon ignored the cursor and sent its newest page.
+      // Page this chat the old way, by re-reading a larger window.
+      st.cursor = false;
+      st.limit = Math.min(CONV_MAX, st.items.length + CONV_PAGE);
+      st.reload = true;
+    } else if (older) {
+      if (before === st.windowFirst && items.length) {
+        st.items = items.concat(st.items);
+        st.windowFirst = windowFirst || st.windowFirst;
+        refold(id, st, s);
+        didChange = true;
+      }
+      st.hasOlder = items.length > 0 && st.windowFirst > first && st.items.length < CONV_MAX && st.turns.length < MAX_TURNS;
+    } else if (full) {
+      st.items = items;
+      st.windowFirst = windowFirst;
+      refold(id, st, s);
+      st.hasOlder = windowFirst > first && st.turns.length < MAX_TURNS &&
+        (st.cursor ? st.items.length < CONV_MAX : st.limit < CONV_MAX);
+      st.seq = seq;
       didChange = true;
     } else {
       // Only a real advance counts: an empty log answers {seq:0} forever.
       didChange = items.length > 0 || (st.seq === 0 && seq > 0) || !st.loaded;
-      if (items.length) applyItems(st, items, s);
+      if (items.length) {
+        applyItems(st, items, s);
+        for (const it of items) st.items.push(it);
+        // Bound the held items like the turns: past this, paging is over.
+        if (st.items.length > CONV_MAX + CONV_PAGE) {
+          st.items.splice(0, st.items.length - CONV_MAX);
+          st.windowFirst = 0; st.hasOlder = false;
+        }
+      }
       if (st.turns.length >= MAX_TURNS) st.hasOlder = false;
+      st.seq = seq;
     }
-    st.seq = seq;
     st.loaded = true;
     st.error = '';
   } catch (e) { st.at = Date.now(); st.error = errText(e); didChange = didChange || st.loadingOlder; }
-  if (full) st.loadingOlder = false;
-  st.inflight = false;
+  if (older || full) st.loadingOlder = st.reload;
+  st.inflight = false; st.fetchingOlder = false;
   if (didChange) changed(id);
-  if (st.reload && watching === id) fetchConv(id);
+  // The page above the one a chat opened on, fetched once behind the paint.
+  if (full && st.hasOlder && !st.prefetched) { st.prefetched = true; if (st.cursor) st.older = true; }
+  if ((st.reload || st.older) && watching === id) fetchConv(id);
   else scheduleConv(id);
 }
 /** Ask for the next older page of `id`'s conversation. False when there is
@@ -625,8 +682,10 @@ export function loadOlder(id) {
   const st = conv.get(id);
   if (!st || !st.hasOlder || st.loadingOlder) return false;
   st.loadingOlder = true;
-  st.limit = Math.min(CONV_MAX, st.limit + CONV_PAGE);
-  st.reload = true;
+  // The page fetched behind the first paint is already on its way: wait for it.
+  if (st.older || st.fetchingOlder) { changed(id); return true; }
+  if (st.cursor && st.windowFirst) st.older = true;
+  else { st.limit = Math.min(CONV_MAX, st.limit + CONV_PAGE); st.reload = true; }
   clearTimeout(st.timer); st.timer = null;
   if (!st.inflight) fetchConv(id);
   changed(id);

@@ -617,28 +617,37 @@ impl ConversationStore {
 
     /// The newest `limit` items (after `since`, when given), plus the sequence
     /// of the first returned item so a client can tell whether older retained
-    /// items remain and page back by asking for a larger window. Only the
-    /// returned items are cloned. `None` limit returns every matching item.
+    /// items remain. Only the returned items are cloned. `None` limit returns
+    /// every matching item.
     /// `since` filters by each item's last update sequence: coalesced assistant
     /// text advances its sequence without adding an item, so array positions
     /// cannot be used as cursors.
+    /// `before` ends the window just short of that sequence: a client pages
+    /// back by passing the `window_first_seq` it holds, and gets the `limit`
+    /// items that precede it, each exactly once. (Only the newest item is
+    /// ever coalesced, so the sequence of a window's first item is stable.)
     pub fn snapshot_window(
         &self,
         session_id: &str,
         since: Option<u64>,
+        before: Option<u64>,
         limit: Option<usize>,
     ) -> Option<ConversationWindow> {
         self.logs.get(session_id).map(|l| {
+            let end = before.map_or(l.items.len(), |before| {
+                l.item_seqs.partition_point(|seq| *seq < before)
+            });
             let start = since.map_or(0, |since| l.item_seqs.partition_point(|seq| *seq <= since));
             let start = match limit {
-                Some(limit) => start.max(l.items.len().saturating_sub(limit)),
+                Some(limit) => start.max(end.saturating_sub(limit)),
                 None => start,
-            };
+            }
+            .min(end);
             ConversationWindow {
                 seq: l.seq,
                 first_seq: l.first_seq(),
-                window_first_seq: l.item_seqs.get(start).copied(),
-                items: l.items[start..].to_vec(),
+                window_first_seq: (start < end).then(|| l.item_seqs[start]),
+                items: l.items[start..end].to_vec(),
             }
         })
     }
@@ -3189,7 +3198,7 @@ pub(crate) mod tests {
                 })
                 .collect::<Vec<_>>()
         };
-        let all = conv.snapshot_window("s1", None, None).unwrap();
+        let all = conv.snapshot_window("s1", None, None, None).unwrap();
         assert_eq!(
             (all.seq, all.first_seq, all.window_first_seq),
             (10, 1, Some(1))
@@ -3197,24 +3206,26 @@ pub(crate) mod tests {
         assert_eq!(all.items.len(), 10);
         // The newest page, with the first returned sequence past the log's
         // first: older retained items exist.
-        let page = conv.snapshot_window("s1", None, Some(3)).unwrap();
+        let page = conv.snapshot_window("s1", None, None, Some(3)).unwrap();
         assert_eq!(text(&page), ["m7", "m8", "m9"]);
         assert_eq!(
             (page.seq, page.first_seq, page.window_first_seq),
             (10, 1, Some(8))
         );
         // A limit past the log is the whole log.
-        let wide = conv.snapshot_window("s1", None, Some(50)).unwrap();
+        let wide = conv.snapshot_window("s1", None, None, Some(50)).unwrap();
         assert_eq!(wide.window_first_seq, Some(1));
         // `since` and `limit` compose: the newest of the items after since.
-        let tail = conv.snapshot_window("s1", Some(5), Some(2)).unwrap();
+        let tail = conv.snapshot_window("s1", Some(5), None, Some(2)).unwrap();
         assert_eq!(text(&tail), ["m8", "m9"]);
-        let tail = conv.snapshot_window("s1", Some(8), Some(5)).unwrap();
+        let tail = conv.snapshot_window("s1", Some(8), None, Some(5)).unwrap();
         assert_eq!(text(&tail), ["m8", "m9"], "m8 is sequence 9");
-        let caught_up = conv.snapshot_window("s1", Some(10), None).unwrap();
+        let caught_up = conv.snapshot_window("s1", Some(10), None, None).unwrap();
         assert!(caught_up.items.is_empty());
         assert_eq!(caught_up.window_first_seq, None);
-        assert!(conv.snapshot_window("missing", None, Some(3)).is_none());
+        assert!(conv
+            .snapshot_window("missing", None, None, Some(3))
+            .is_none());
     }
 
     #[test]

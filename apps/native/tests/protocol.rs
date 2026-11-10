@@ -242,8 +242,15 @@ fn page(seq: u64, first: u64, count: u64) -> Value {
     json!({"seq":seq,"first_seq":1,"window_first_seq":first,"items":items})
 }
 
+/// A `beforeSeq` reply: the page, with the cursor echoed.
+fn older_page(seq: u64, first: u64, count: u64, before: u64) -> Value {
+    let mut value = page(seq, first, count);
+    value["before"] = json!(before);
+    value
+}
+
 #[tokio::test]
-async fn conversations_open_on_the_newest_page_and_page_back_on_request() {
+async fn conversations_open_on_the_newest_page_and_page_back_by_cursor() {
     use wks_native::controller::CONVERSATION_PAGE;
     let page_size = CONVERSATION_PAGE as u64;
     let mut hub = Hub::new().await;
@@ -254,36 +261,95 @@ async fn conversations_open_on_the_newest_page_and_page_back_on_request() {
         .await;
     let read = hub.frame("call", Some("sessions.conversation")).await;
     assert_eq!(read.value["params"]["limit"], CONVERSATION_PAGE);
+    assert!(read.value["params"]["beforeSeq"].is_null());
     // 500 retained items; the newest page starts at 301.
     read.result(page(500, 500 - page_size + 1, page_size)).await;
     let opened = view(&controller, |v| !v.loading && !v.transcript.rows.is_empty()).await;
     assert!(opened.transcript.has_older);
     assert_eq!(opened.transcript.rows.len(), CONVERSATION_PAGE);
     controller.command(Command::LoadOlder).unwrap();
+    // The page before the window held, not the window again.
     let older = hub.frame("call", Some("sessions.conversation")).await;
-    assert_eq!(older.value["params"]["limit"], 2 * CONVERSATION_PAGE);
+    assert_eq!(older.value["params"]["beforeSeq"], 301);
+    assert_eq!(older.value["params"]["limit"], CONVERSATION_PAGE);
     view(&controller, |v| v.loading_older).await;
-    older
-        .result(page(500, 500 - 2 * page_size + 1, 2 * page_size))
-        .await;
+    older.result(older_page(500, 101, page_size, 301)).await;
     let widened = view(&controller, |v| {
         !v.loading_older && v.transcript.rows.len() > CONVERSATION_PAGE
     })
     .await;
     assert!(widened.transcript.has_older);
+    assert_eq!(widened.transcript.rows.len(), 2 * CONVERSATION_PAGE);
+    assert_eq!(widened.transcript.rows.front().unwrap().text, "message 101");
     // Rows already on screen keep their keys, so the reader's anchor holds.
     let newest = opened.transcript.rows.back().unwrap().key;
     assert_eq!(widened.transcript.rows.back().unwrap().key, newest);
     controller.command(Command::LoadOlder).unwrap();
     let rest = hub.frame("call", Some("sessions.conversation")).await;
-    assert_eq!(rest.value["params"]["limit"], 3 * CONVERSATION_PAGE);
-    rest.result(page(500, 1, 500)).await;
+    assert_eq!(rest.value["params"]["beforeSeq"], 101);
+    assert_eq!(rest.value["params"]["limit"], CONVERSATION_PAGE);
+    rest.result(older_page(500, 1, 100, 101)).await;
     let all = view(&controller, |v| {
         !v.loading_older && v.transcript.rows.len() == 500
     })
     .await;
     assert!(!all.transcript.has_older, "the whole log is loaded");
     assert!(!all.transcript.omitted);
+    let texts: Vec<String> = all.transcript.rows.iter().map(|r| r.text.clone()).collect();
+    let expected: Vec<String> = (1..=500).map(|n| format!("message {n}")).collect();
+    assert_eq!(
+        texts, expected,
+        "every item once, in order, across both seams"
+    );
+}
+
+#[tokio::test]
+async fn a_hub_without_the_cursor_pages_by_rereading_a_larger_window() {
+    use wks_native::controller::CONVERSATION_PAGE;
+    let page_size = CONVERSATION_PAGE as u64;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([session("a")]))
+        .await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(page(500, 500 - page_size + 1, page_size))
+        .await;
+    let opened = view(&controller, |v| !v.loading && !v.transcript.rows.is_empty()).await;
+    controller.command(Command::LoadOlder).unwrap();
+    // It ignores `beforeSeq`: the newest page again, and no echo.
+    let ignored = hub.frame("call", Some("sessions.conversation")).await;
+    assert_eq!(ignored.value["params"]["beforeSeq"], 301);
+    ignored
+        .result(page(500, 500 - page_size + 1, page_size))
+        .await;
+    // So the client asks the old way, without leaving the reader waiting.
+    let wider = hub.frame("call", Some("sessions.conversation")).await;
+    assert!(wider.value["params"]["beforeSeq"].is_null());
+    assert_eq!(wider.value["params"]["limit"], 2 * CONVERSATION_PAGE);
+    wider
+        .result(page(500, 500 - 2 * page_size + 1, 2 * page_size))
+        .await;
+    let widened = view(&controller, |v| {
+        !v.loading_older && v.transcript.rows.len() == 2 * CONVERSATION_PAGE
+    })
+    .await;
+    assert!(widened.transcript.has_older);
+    let newest = opened.transcript.rows.back().unwrap().key;
+    assert_eq!(widened.transcript.rows.back().unwrap().key, newest);
+    // And does not try the cursor on this hub again.
+    controller.command(Command::LoadOlder).unwrap();
+    let rest = hub.frame("call", Some("sessions.conversation")).await;
+    assert!(rest.value["params"]["beforeSeq"].is_null());
+    assert_eq!(rest.value["params"]["limit"], 3 * CONVERSATION_PAGE);
+    rest.result(page(500, 1, 500)).await;
+    let all = view(&controller, |v| {
+        !v.loading_older && v.transcript.rows.len() == 500
+    })
+    .await;
+    assert!(!all.transcript.has_older);
 }
 
 #[tokio::test]

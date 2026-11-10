@@ -167,8 +167,18 @@ test.describe('/m-next', () => {
     // One page from the hub, and only a window of it in the DOM.
     const reads = () =>
       hub.callsTo('sessions.conversation').filter((c) => c.params.sessionId === 'ended');
-    // The daemon is asked to clip tool results to what the phone keeps.
-    expect(reads()[0].params).toEqual({ sessionId: 'ended', limit: 200, resultChars: 4000 });
+    // A small first page, with tool results clipped to what the phone keeps.
+    expect(reads()[0].params).toEqual({ sessionId: 'ended', limit: 80, resultChars: 4000 });
+    // The page above it is fetched behind the paint, by cursor: the items
+    // older than the window held, not the window again.
+    await expect
+      .poll(() => reads().find((c) => c.params.beforeSeq)?.params)
+      .toEqual({
+        sessionId: 'ended',
+        beforeSeq: 441,
+        limit: 200,
+        resultChars: 4000,
+      });
     expect(await page.locator('.thread > .you').count()).toBeLessThan(60);
     const scroller = page.locator('.transcript');
     const fromBottom = () =>
@@ -214,11 +224,58 @@ test.describe('/m-next', () => {
         timeout: 500,
       });
     }).toPass({ timeout: 20_000 });
+    // Each page starts where the last one ended: nothing is fetched twice.
     expect(
       reads()
         .filter((c) => c.params.limit)
-        .map((c) => c.params.limit),
-    ).toEqual([200, 400, 600]);
+        .map((c) => [c.params.beforeSeq ?? null, c.params.limit]),
+    ).toEqual([
+      [null, 80],
+      [441, 200],
+      [241, 200],
+      [41, 200],
+    ]);
+    await expect(page.locator('.thread > .earlier')).toHaveCount(0);
+    // Every round is there once, in order, across the three seams.
+    const questions = await page.locator('.you .tx').allTextContents();
+    const numbers = questions.map((t) => Number(/Question (\d+) of/.exec(t)?.[1]));
+    expect(numbers.length).toBeGreaterThan(40);
+    expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
+    expect(new Set(numbers).size).toBe(numbers.length);
+  });
+
+  test('pages a long chat by re-reading a wider window on a daemon without a cursor', async ({
+    page,
+  }) => {
+    hub.paging.cursor = false;
+    await open(page);
+    await row(page, 'Fix the VAT export').click();
+    await expect(page.locator('.prose', { hasText: 'Answer 260.' })).toBeVisible();
+    const scroller = page.locator('.transcript');
+    await expect(async () => {
+      await scroller.evaluate((el) => (el.scrollTop = 0));
+      await expect(
+        page.locator('.you .tx', { hasText: 'Question 1 of the long run' }),
+      ).toBeAttached({
+        timeout: 500,
+      });
+    }).toPass({ timeout: 20_000 });
+    // The unanswered cursor read is tried once; after it the window widens.
+    const limits = hub
+      .callsTo('sessions.conversation')
+      .filter((c) => c.params.sessionId === 'ended' && c.params.limit)
+      .map((c) => [c.params.beforeSeq ?? null, c.params.limit]);
+    expect(limits).toEqual([
+      [null, 80],
+      [441, 200],
+      [null, 280],
+      [null, 480],
+      [null, 680],
+    ]);
+    const numbers = (await page.locator('.you .tx').allTextContents()).map((t) =>
+      Number(/Question (\d+) of/.exec(t)?.[1]),
+    );
+    expect(new Set(numbers).size).toBe(numbers.length);
     await expect(page.locator('.thread > .earlier')).toHaveCount(0);
   });
 

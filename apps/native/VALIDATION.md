@@ -866,6 +866,23 @@ repairs re-read the same window. The first chat row triggers the next page as
 it renders (the list overdraws 250px). On a 4,000-item fixture the first read
 dropped from 599 KB to 30 KB.
 
+### Cursor paging (2026-11-10)
+
+`Command::LoadOlder` no longer re-reads the wider window. It asks for the page
+before the one held (`beforeSeq` = the window's `window_first_seq`, `limit`
+200; claudemon `/conversation?before=N`, echoed as `before`) and
+`Transcript::prepend_page` folds that page together with the held items
+(`Transcript::raw`, kept only while older pages remain and the row budget has
+not trimmed) through the same `snapshot_for_transport` path, so row keys, a
+tool call split from its result by the seam and the live `seq` all hold. A hub
+without the cursor answers with no echo; the controller then pages by window
+size as before and stops trying. `conversation_limit` still grows a page per
+load, so reconciling reads cover what is on screen. Proof: `model::tests::
+an_older_page_folds_across_the_seam_and_keeps_the_live_cursor`, and in
+`tests/protocol.rs` `conversations_open_on_the_newest_page_and_page_back_by_cursor`
+and `a_hub_without_the_cursor_pages_by_rereading_a_larger_window`. Lib 297 and
+protocol 59 passed; `projects_hub` passes serialized.
+
 Usage: `Backend::usage_report` polls `usage.report` on connect and every 60s,
 keeping the last reading on failure; `usage::accounts` twins desktop
 `usagePacingRows` filtering; the sidebar renders one row per account.

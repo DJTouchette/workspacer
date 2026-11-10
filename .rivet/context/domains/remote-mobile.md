@@ -175,16 +175,29 @@ and the client reads aged-out kept rows by id with `sessions.snapshot`. A
 missing file is an empty set. Without the method, stopped sessions show as
 Ended and are still resumable by sending.
 
-Chat loading and scrolling (native parity): the first `sessions.conversation`
-read is a page (`limit` 200, native's `CONVERSATION_PAGE`); follow-ups poll
-`sinceSeq`. Every read sends `resultChars` 4000: claudemon clips each tool
-result and command output in the reply (the log stays whole) to what the
-client keeps anyway, so a page does not weigh what the agent's file reads did.
-Tool inputs are not clipped (diffs render from them). An older daemon ignores
-the param and the client-side slice still applies. `loadOlder` re-reads with a window 200 larger while the reply's
-`window_first_seq` exceeds `first_seq` (capped at 3000 items / 1500 turns, past
-which History owns the rest), shifting answered-question trace anchors by the
-turns it prepended. The view renders a window of the newest 60 transcript
+Chat loading and scrolling: the first `sessions.conversation` read is a small
+page (`limit` 80; native opens on 200); follow-ups poll `sinceSeq`. Every read
+sends `resultChars` 4000: claudemon clips each tool result and command output
+in the reply (the log stays whole) to what the client keeps anyway, so a page
+does not weigh what the agent's file reads did. Tool inputs are not clipped
+(diffs render from them). An older daemon ignores the param and the
+client-side slice still applies.
+
+Older pages come by cursor, in both this client and native: `beforeSeq` set to
+the held window's `window_first_seq` returns the `limit` (200) items before
+it, each once, and the reply echoes it as `before`. The echo is the feature
+test: a hub or daemon without the cursor ignores the param, answers with its
+newest page and no echo, and the client then pages that chat the old way, by
+re-reading a window 200 larger. Both clients keep the raw items of the held
+window (`st.items` here, `Transcript::raw` in native) and fold a landed page
+together with them from scratch, so a tool call on one page still takes its
+result from the next and streamed text across the seam is one message; do not
+"optimise" this into folding the page alone and splicing rows. The live cursor
+(`seq`) is never taken from an older-page reply, whose `seq` describes the
+log. Here the first older page is fetched behind the first paint. Paging stops
+while the reply's `window_first_seq` no longer exceeds `first_seq` (capped at
+3000 items / 1500 turns, past which History owns the rest); answered-question
+trace anchors shift by the turns prepended. The view renders a window of the newest 60 transcript
 blocks and backfills 40 at a time from memory, then a page from the hub, as
 you near the top. It holds the first visible block in place when blocks land
 above it (`overflow-anchor: none` so Chrome does not correct twice), and waits

@@ -341,6 +341,18 @@ impl Backend {
         self.hub.call("sessions.conversation", params).await
     }
 
+    /// The `limit` items just older than sequence `before` (the first item of
+    /// the window held). A hub or daemon that knows the cursor echoes it as
+    /// `before`; one that does not answers with its newest page.
+    pub async fn conversation_before(&self, id: &str, before: u64, limit: usize) -> Result<Value> {
+        self.hub
+            .call(
+                "sessions.conversation",
+                json!({"sessionId":id,"beforeSeq":before,"limit":limit}),
+            )
+            .await
+    }
+
     pub async fn models(&self, key: &CatalogKey) -> Result<Value> {
         let (method, params) = if key.provider == "claude" {
             ("claude.listModels", json!({}))

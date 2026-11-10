@@ -112,6 +112,13 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
     }
     if method == "sessions.conversation"
         && params
+            .get("beforeSeq")
+            .is_some_and(|value| !value.is_null() && value.as_u64().is_none())
+    {
+        bail!("beforeSeq must be a non-negative integer");
+    }
+    if method == "sessions.conversation"
+        && params
             .get("resultChars")
             .is_some_and(|value| !value.is_null() && value.as_u64().is_none())
     {

@@ -2006,8 +2006,14 @@ struct ConversationQuery {
     /// Return only the newest `limit` items (after `since`). The response's
     /// `window_first_seq` is the first returned item's sequence; a client sees
     /// older retained items while it exceeds `first_seq`, and pages back by
-    /// asking again with a larger limit.
+    /// asking again with `before` set to it (or, on a daemon without `before`,
+    /// with a larger limit).
     limit: Option<usize>,
+    /// Page back: return only items older than this sequence (the
+    /// `window_first_seq` the client holds), newest `limit` of them. The reply
+    /// echoes it as `before`, which is how a client tells this daemon from an
+    /// older one that ignored the parameter and answered with the newest page.
+    before: Option<u64>,
     /// Clip each tool result and command output to this many characters. A
     /// client that shows a few thousand characters of a result (a phone) asks
     /// for exactly that, instead of downloading whole file reads and command
@@ -2128,7 +2134,8 @@ async fn get_conversation(
         }
         return Json(source.summary_source(&id)).into_response();
     }
-    let Some(mut window) = source.snapshot_window(&id, q.since, q.limit.filter(|limit| *limit > 0))
+    let Some(mut window) =
+        source.snapshot_window(&id, q.since, q.before, q.limit.filter(|limit| *limit > 0))
     else {
         return Json(json!({ "session_id": id, "seq": 0, "first_seq": 0, "items": [] }))
             .into_response();
@@ -2149,14 +2156,17 @@ async fn get_conversation(
     }
     // `first_seq` rides along so a client can place the window without
     // reconstructing it from the item count — which coalescing makes wrong.
-    Json(json!({
+    let mut reply = json!({
         "session_id": id,
         "seq": window.seq,
         "first_seq": window.first_seq,
         "window_first_seq": window.window_first_seq,
         "items": window.items,
-    }))
-    .into_response()
+    });
+    if let Some(before) = q.before {
+        reply["before"] = json!(before);
+    }
+    Json(reply).into_response()
 }
 
 /// Parsed conversation for one provider-owned child agent. Codex children use
@@ -3820,6 +3830,56 @@ mod tests {
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["items"][1]["content"], "héllo wörld");
         assert_eq!(v["items"][2]["output"], "0123456789");
+    }
+
+    #[tokio::test]
+    async fn get_conversation_before_pages_back_without_overlap() {
+        let state = test_state();
+        for i in 0..7 {
+            state.conv.push(
+                "cursor",
+                vec![ConversationItem::UserMessage {
+                    text: format!("m{i}"),
+                    uuid: None,
+                    timestamp: None,
+                }],
+            );
+        }
+        let texts = |v: &Value| -> Vec<String> {
+            v["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["text"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        let read = |query: &'static str| {
+            let state = state.clone();
+            async move {
+                let (_, body) =
+                    request(state, get(&format!("/sessions/cursor/conversation{query}"))).await;
+                serde_json::from_slice::<Value>(&body).unwrap()
+            }
+        };
+        let newest = read("?limit=3").await;
+        assert_eq!(texts(&newest), ["m4", "m5", "m6"]);
+        assert_eq!(newest["window_first_seq"], 5);
+        assert!(newest.get("before").is_none(), "only a cursor read echoes");
+        // The page before the held window: no item twice, none skipped.
+        let older = read("?before=5&limit=3").await;
+        assert_eq!(texts(&older), ["m1", "m2", "m3"]);
+        assert_eq!(older["window_first_seq"], 2);
+        assert_eq!(older["before"], 5);
+        assert_eq!(older["seq"], 7, "seq is still the log's newest");
+        let oldest = read("?before=2&limit=3").await;
+        assert_eq!(texts(&oldest), ["m0"]);
+        assert_eq!(oldest["window_first_seq"], 1);
+        assert_eq!(oldest["first_seq"], 1);
+        // Nothing precedes the first retained item.
+        let none = read("?before=1&limit=3").await;
+        assert!(texts(&none).is_empty());
+        assert!(none["window_first_seq"].is_null());
+        assert_eq!(none["before"], 1);
     }
 
     #[tokio::test]

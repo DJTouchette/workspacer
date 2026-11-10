@@ -681,6 +681,8 @@ impl Controller {
 }
 
 enum Completion {
+    /// (epoch, selection, the `beforeSeq` asked for, the page).
+    Older(u64, u64, u64, Result<Value>),
     Request(u64, u64, crate::features::Request, Result<Value>),
     Models(u64, u64, Result<Vec<crate::launch::ModelChoice>>),
     Spawn(u64, NewSession, Option<HandoffSpawn>, Result<Value>),
@@ -760,6 +762,11 @@ struct Worker {
     fleet_pending: bool,
     fleet_overlay: BTreeMap<String, Value>,
     conversation_pending: bool,
+    /// The (epoch, selection) an older-page read is in flight for.
+    older_read: Option<(u64, u64)>,
+    /// False once a hub answered a `beforeSeq` read without the echo: it has
+    /// no cursor, so older pages come from re-reading a larger window.
+    cursor_paging: bool,
     /// Items requested for the selected conversation (newest first).
     conversation_limit: usize,
     buffered: Vec<Delta>,
@@ -830,6 +837,8 @@ impl Worker {
             fleet_pending: false,
             fleet_overlay: BTreeMap::new(),
             conversation_pending: false,
+            older_read: None,
+            cursor_paging: true,
             conversation_limit: CONVERSATION_PAGE,
             buffered: Vec::new(),
             buffered_bytes: 0,
@@ -992,10 +1001,26 @@ impl Worker {
             Command::Terminal(command) => self.terminal(command).await,
             Command::ViewChild(target) => self.view_child(target).await,
             Command::LoadOlder => {
-                if self.view.transcript.has_older && !self.conversation_pending {
-                    self.conversation_limit += CONVERSATION_PAGE;
+                if self.view.transcript.has_older
+                    && !self.conversation_pending
+                    && !self.older_pending()
+                {
                     self.view.loading_older = true;
-                    self.fetch_conversation();
+                    // Ask for the page before the window held; without a
+                    // cursor (an older hub, or a window no longer held whole)
+                    // re-read a larger window instead.
+                    match self
+                        .view
+                        .transcript
+                        .page_cursor()
+                        .filter(|_| self.cursor_paging)
+                    {
+                        Some(before) => self.fetch_older(before),
+                        None => {
+                            self.conversation_limit += CONVERSATION_PAGE;
+                            self.fetch_conversation();
+                        }
+                    }
                     self.dirty = true;
                 }
             }
@@ -1512,6 +1537,37 @@ impl Worker {
                 .map(|(_, h)| h),
         };
         held.filter(|h| h.epoch == epoch)
+    }
+
+    fn older_pending(&self) -> bool {
+        self.older_read == Some((self.epoch, self.selection))
+    }
+
+    /// Read the page just older than the window held. Live deltas keep
+    /// applying meanwhile: the page lands in front and moves no cursor.
+    fn fetch_older(&mut self, before: u64) {
+        if !self.view.connected || self.view.child.is_some() {
+            self.view.loading_older = false;
+            return;
+        }
+        let Some(id) = self.view.selected.clone() else {
+            self.view.loading_older = false;
+            return;
+        };
+        let backend = self.backend.clone();
+        let epoch = self.epoch;
+        let selection = self.selection;
+        self.older_read = Some((epoch, selection));
+        self.push_job(Box::pin(async move {
+            Completion::Older(
+                epoch,
+                selection,
+                before,
+                backend
+                    .conversation_before(&id, before, CONVERSATION_PAGE)
+                    .await,
+            )
+        }));
     }
 
     fn fetch_conversation(&mut self) {
@@ -2709,6 +2765,42 @@ impl Worker {
                             "Sessions unavailable: hub returned an invalid session list".into()
                     }
                     Err(e) => self.view.notice = format!("Sessions unavailable: {e}"),
+                }
+            }
+            Completion::Older(epoch, selection, before, result)
+                if epoch == self.epoch && selection == self.selection =>
+            {
+                self.older_read = None;
+                self.dirty = true;
+                // A full read began meanwhile: it owns the transcript, and
+                // clears `loading_older` itself when it lands.
+                if self.conversation_pending {
+                    return;
+                }
+                self.view.loading_older = false;
+                let Ok(value) = result else {
+                    return;
+                };
+                if value["before"].as_u64() != Some(before) {
+                    // No echo: this hub ignored the cursor and sent its
+                    // newest page. Page the old way from here on.
+                    self.cursor_paging = false;
+                    self.conversation_limit += CONVERSATION_PAGE;
+                    self.view.loading_older = true;
+                    self.fetch_conversation();
+                    return;
+                }
+                let window_first_seq = value["window_first_seq"].as_u64();
+                if let Ok(page) = serde_json::from_value::<ConversationSnapshot>(value) {
+                    let streaming = self.streaming();
+                    if self
+                        .view
+                        .transcript
+                        .prepend_page(page, before, window_first_seq, streaming)
+                    {
+                        // Reconciling reads re-read the window by size.
+                        self.conversation_limit += CONVERSATION_PAGE;
+                    }
                 }
             }
             Completion::Conversation(epoch, selection, result)

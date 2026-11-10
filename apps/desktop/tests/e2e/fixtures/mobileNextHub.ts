@@ -42,6 +42,8 @@ export interface NextHub {
   callsTo(method: string): CallRecord[];
   snapshots: Map<string, any>;
   pushSnapshot(snap: any): void;
+  /** `cursor: false` plays a daemon without `beforeSeq` (reset restores it). */
+  paging: { cursor: boolean };
   /** Pristine fixture rows, an empty call log and no archived sessions. */
   reset(): Promise<void>;
   stop(): Promise<void>;
@@ -120,6 +122,7 @@ export async function startNextHub(): Promise<NextHub> {
 
   const snapshots = new Map<string, any>();
   const calls: CallRecord[] = [];
+  const paging = { cursor: true };
   let logLines = 0;
   let config = structuredClone(CONFIG);
   const seed = () => {
@@ -208,18 +211,23 @@ export async function startNextHub(): Promise<NextHub> {
       case 'sessions.conversation': {
         // As claudemon: `limit` keeps the newest N items after `since`, and
         // `window_first_seq` (the first returned item's seq) exceeding
-        // `first_seq` says older ones remain.
+        // `first_seq` says older ones remain. `beforeSeq` ends the window
+        // just short of that seq and is echoed as `before`; a daemon without
+        // it (`cursorPaging` off) ignores the param and echoes nothing.
         const items = CONVERSATIONS[p.sessionId] ?? [];
         const since = typeof p.sinceSeq === 'number' ? p.sinceSeq : 0;
-        const start =
-          typeof p.limit === 'number' && p.limit > 0
-            ? Math.max(since, items.length - p.limit)
-            : since;
+        const cursor = paging.cursor && typeof p.beforeSeq === 'number';
+        const end = cursor ? Math.max(0, Math.min(items.length, p.beforeSeq - 1)) : items.length;
+        const start = Math.min(
+          end,
+          typeof p.limit === 'number' && p.limit > 0 ? Math.max(since, end - p.limit) : since,
+        );
         return reply(f.id, {
           seq: items.length,
           first_seq: items.length ? 1 : 0,
-          window_first_seq: start < items.length ? start + 1 : null,
-          items: items.slice(start),
+          window_first_seq: start < end ? start + 1 : null,
+          items: items.slice(start, end),
+          ...(cursor ? { before: p.beforeSeq } : {}),
         });
       }
       case 'sessions.subagentConversation':
@@ -378,8 +386,10 @@ export async function startNextHub(): Promise<NextHub> {
       snapshots.set(snap.sessionId, snap);
       publish(snap);
     },
+    paging,
     async reset() {
       seed();
+      paging.cursor = true;
       // The archive is hub-owned state: restore every fixture row through it.
       for (const id of snapshots.keys())
         await callHub('sessionArchive.set', { sessionId: id, archived: false });

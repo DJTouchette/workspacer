@@ -1151,6 +1151,11 @@ pub struct Transcript {
     pub has_older: bool,
     /// The client's row/byte budget dropped rows from the front.
     trimmed: bool,
+    /// The items the rows were folded from, and the daemon's sequence for the
+    /// first of them: held only while older pages can still be fetched, so one
+    /// lands by folding it together with these (see [`Self::prepend_page`]).
+    raw: Vec<Item>,
+    window_first_seq: Option<u64>,
     pub revision: u64,
     next_key: u64,
     history: bool,
@@ -1177,6 +1182,8 @@ impl Transcript {
         self.omitted = snapshot.first_seq > 1;
         self.trimmed = false;
         self.has_older = false;
+        self.raw = Vec::new();
+        self.window_first_seq = None;
         for item in snapshot.items {
             self.push(item, streaming);
         }
@@ -1224,8 +1231,74 @@ impl Transcript {
         streaming: bool,
     ) {
         let first_seq = snapshot.first_seq.max(1);
+        let window_first_seq = window_first_seq.filter(|w| *w > first_seq);
+        // Only a window with older items behind it is worth holding.
+        let raw = window_first_seq.map(|_| snapshot.items.clone());
         self.snapshot_for_transport(snapshot, streaming);
-        self.has_older = !self.trimmed && window_first_seq.is_some_and(|w| w > first_seq);
+        self.hold_window(raw, window_first_seq);
+    }
+
+    fn hold_window(&mut self, raw: Option<Vec<Item>>, window_first_seq: Option<u64>) {
+        self.has_older = !self.trimmed && window_first_seq.is_some();
+        if self.has_older {
+            self.raw = raw.unwrap_or_default();
+            self.window_first_seq = window_first_seq;
+        } else {
+            self.raw = Vec::new();
+            self.window_first_seq = None;
+        }
+    }
+
+    /// The sequence to page back from (`beforeSeq`): the first item of the
+    /// held window. `None` when there is nothing older, or the window is no
+    /// longer held whole; the caller then re-reads a larger window instead.
+    pub fn page_cursor(&self) -> Option<u64> {
+        self.window_first_seq
+            .filter(|_| self.has_older && !self.trimmed && !self.raw.is_empty())
+    }
+
+    /// The page of items just older than the held window (a `beforeSeq`
+    /// read) lands in front of it. The page and the held items are folded
+    /// together from scratch, exactly as one wider read would be: a tool call
+    /// on one side of the seam still takes its result from the other, and
+    /// rows already on screen keep their keys. The live cursor (`seq`) is
+    /// untouched; the page's own `seq` describes the log, not what this
+    /// transcript has applied. False when the page no longer joins the
+    /// window (it was re-read or trimmed while the page was in flight).
+    pub fn prepend_page(
+        &mut self,
+        page: ConversationSnapshot,
+        before: u64,
+        window_first_seq: Option<u64>,
+        streaming: bool,
+    ) -> bool {
+        if self.page_cursor() != Some(before) {
+            return false;
+        }
+        let Some(page_first) = window_first_seq.filter(|_| !page.items.is_empty()) else {
+            // Nothing precedes the window after all.
+            self.hold_window(None, None);
+            self.revision += 1;
+            return true;
+        };
+        let seq = self.seq;
+        let first_seq = page.first_seq.max(1);
+        let mut items = page.items;
+        items.append(&mut self.raw);
+        let raw = items.clone();
+        self.snapshot_for_transport(
+            ConversationSnapshot {
+                seq: seq.unwrap_or(page.seq),
+                first_seq: page.first_seq,
+                items,
+            },
+            streaming,
+        );
+        self.seq = seq;
+        // The page starts at `page_first`, so that is where the rows start.
+        self.omitted = page_first > 1 || self.trimmed;
+        self.hold_window(Some(raw), Some(page_first).filter(|w| *w > first_seq));
+        true
     }
 
     pub fn delta(&mut self, delta: Delta, streaming: bool) -> Fold {
@@ -1257,8 +1330,18 @@ impl Transcript {
         if first > seq {
             return Fold::Gap;
         }
+        let holding = self.window_first_seq.is_some();
         for item in delta.items.into_iter().skip((seq - first) as usize) {
+            if holding {
+                self.raw.push(item.clone());
+            }
             self.push(item, streaming);
+        }
+        // Rows fell off the front: the held window is no longer whole, and a
+        // long-lived live session must not hold its items forever.
+        if holding && self.trimmed {
+            self.raw = Vec::new();
+            self.window_first_seq = None;
         }
         self.seq = Some(delta.seq);
         self.revision += 1;
@@ -1789,6 +1872,126 @@ mod tests {
             true,
         );
         assert_eq!(transcript.rows.len(), 5, "two fresh sends remain distinct");
+    }
+
+    /// An older page lands by cursor: folded with the held window, so a tool
+    /// call on the page takes its result from the window, live deltas keep
+    /// their cursor, and rows on screen keep their keys.
+    #[test]
+    fn an_older_page_folds_across_the_seam_and_keeps_the_live_cursor() {
+        let items =
+            |value: serde_json::Value| -> Vec<Item> { serde_json::from_value(value).unwrap() };
+        let mut transcript = Transcript::default();
+        // The log holds 6 items; the window is its newest two (seq 5..6): a
+        // result whose call is on the page before, and the reply after it.
+        transcript.snapshot_page(
+            ConversationSnapshot {
+                seq: 6,
+                first_seq: 1,
+                items: items(serde_json::json!([
+                    {"kind":"tool_result","tool_use_id":"t1","content":"3 files"},
+                    {"kind":"assistant_text","text":"Three files changed."}
+                ])),
+            },
+            Some(5),
+            false,
+        );
+        assert!(transcript.has_older);
+        assert_eq!(transcript.page_cursor(), Some(5));
+        assert!(
+            transcript.rows.iter().all(|r| r.tool.is_none()),
+            "the call is not in the window, so there is no tool row yet"
+        );
+        let reply_key = transcript.rows.back().unwrap().key;
+        // A live delta arrives before the page does.
+        assert_eq!(
+            transcript.delta(
+                Delta {
+                    seq: 7,
+                    items: vec![Item {
+                        kind: "user_message".into(),
+                        text: "Thanks".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                false
+            ),
+            Fold::Changed
+        );
+        // A page for some other window is refused and changes nothing.
+        let before = transcript.rows.len();
+        assert!(!transcript.prepend_page(
+            ConversationSnapshot {
+                seq: 7,
+                first_seq: 1,
+                items: items(serde_json::json!([{"kind":"user_message","text":"stale"}])),
+            },
+            4,
+            Some(3),
+            false,
+        ));
+        assert_eq!(transcript.rows.len(), before);
+        // The page before seq 5: items 3..4 (the question and the tool call).
+        assert!(transcript.prepend_page(
+            ConversationSnapshot {
+                seq: 9,
+                first_seq: 1,
+                items: items(serde_json::json!([
+                    {"kind":"user_message","text":"What changed?"},
+                    {"kind":"tool_use","id":"t1","name":"Bash","input":{"command":"git status"}}
+                ])),
+            },
+            5,
+            Some(3),
+            false,
+        ));
+        let texts: Vec<&str> = transcript.rows.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(texts.first(), Some(&"What changed?"));
+        assert_eq!(texts.last(), Some(&"Thanks"));
+        let tool = transcript
+            .rows
+            .iter()
+            .find_map(|r| r.tool.as_ref())
+            .expect("the call arrived with the page");
+        assert!(tool.complete, "and took its result from the window held");
+        assert_eq!(tool.output, "3 files");
+        assert_eq!(
+            transcript
+                .rows
+                .iter()
+                .find(|r| r.text == "Three files changed.")
+                .unwrap()
+                .key,
+            reply_key,
+            "rows already on screen keep their keys"
+        );
+        // The page's own seq (9) is the log's, not what was applied here.
+        assert_eq!(transcript.seq, Some(7));
+        assert_eq!(transcript.delta(delta(8, "next"), false), Fold::Changed);
+        assert!(transcript.has_older && transcript.omitted);
+        assert_eq!(transcript.page_cursor(), Some(3));
+        // The last page reaches the first retained item: nothing is older.
+        assert!(transcript.prepend_page(
+            ConversationSnapshot {
+                seq: 9,
+                first_seq: 1,
+                items: items(serde_json::json!([
+                    {"kind":"user_message","text":"first"},
+                    {"kind":"assistant_text","text":"second"}
+                ])),
+            },
+            3,
+            Some(1),
+            false,
+        ));
+        assert!(!transcript.has_older && !transcript.omitted);
+        assert_eq!(transcript.page_cursor(), None);
+        assert_eq!(transcript.rows.front().unwrap().text, "first");
+        assert_eq!(
+            transcript.bytes,
+            transcript.rows.iter().map(|r| r.bytes()).sum::<usize>()
+        );
     }
 
     fn assistant(text: &str) -> Item {
