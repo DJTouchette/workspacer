@@ -167,7 +167,8 @@ test.describe('/m-next', () => {
     // One page from the hub, and only a window of it in the DOM.
     const reads = () =>
       hub.callsTo('sessions.conversation').filter((c) => c.params.sessionId === 'ended');
-    expect(reads()[0].params).toEqual({ sessionId: 'ended', limit: 200 });
+    // The daemon is asked to clip tool results to what the phone keeps.
+    expect(reads()[0].params).toEqual({ sessionId: 'ended', limit: 200, resultChars: 4000 });
     expect(await page.locator('.thread > .you').count()).toBeLessThan(60);
     const scroller = page.locator('.transcript');
     const fromBottom = () =>

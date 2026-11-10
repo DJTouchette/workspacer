@@ -2008,6 +2008,18 @@ struct ConversationQuery {
     /// older retained items while it exceeds `first_seq`, and pages back by
     /// asking again with a larger limit.
     limit: Option<usize>,
+    /// Clip each tool result and command output to this many characters. A
+    /// client that shows a few thousand characters of a result (a phone) asks
+    /// for exactly that, instead of downloading whole file reads and command
+    /// logs it then throws away. Absent or 0 sends them whole.
+    result_chars: Option<usize>,
+}
+
+/// Cut `text` to at most `chars` characters, on a character boundary.
+fn clip_chars(text: &mut String, chars: usize) {
+    if let Some((at, _)) = text.char_indices().nth(chars) {
+        text.truncate(at);
+    }
 }
 
 /// The store holding `id`'s conversation, replaying it when the live log is
@@ -2116,11 +2128,25 @@ async fn get_conversation(
         }
         return Json(source.summary_source(&id)).into_response();
     }
-    let Some(window) = source.snapshot_window(&id, q.since, q.limit.filter(|limit| *limit > 0))
+    let Some(mut window) = source.snapshot_window(&id, q.since, q.limit.filter(|limit| *limit > 0))
     else {
         return Json(json!({ "session_id": id, "seq": 0, "first_seq": 0, "items": [] }))
             .into_response();
     };
+    // Only the returned copy is cut; the log keeps every result whole.
+    if let Some(chars) = q.result_chars.filter(|chars| *chars > 0) {
+        for item in &mut window.items {
+            match item {
+                crate::session::conversation::ConversationItem::ToolResult { content, .. } => {
+                    clip_chars(content, chars)
+                }
+                crate::session::conversation::ConversationItem::CommandOutput {
+                    output, ..
+                } => clip_chars(output, chars),
+                _ => {}
+            }
+        }
+    }
     // `first_seq` rides along so a client can place the window without
     // reconstructing it from the item count — which coalescing makes wrong.
     Json(json!({
@@ -3754,6 +3780,46 @@ mod tests {
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["items"].as_array().unwrap().len(), 6);
         assert_eq!(v["window_first_seq"], 1);
+    }
+
+    #[tokio::test]
+    async fn get_conversation_result_chars_clips_results_in_the_reply_only() {
+        let state = test_state();
+        state.conv.push(
+            "clipped",
+            vec![
+                ConversationItem::AssistantText {
+                    text: "a long answer stays whole".into(),
+                    timestamp: None,
+                },
+                ConversationItem::ToolResult {
+                    tool_use_id: "t1".into(),
+                    // Multi-byte, so a byte cut would land inside a character.
+                    content: "héllo wörld".into(),
+                    is_error: false,
+                    timestamp: None,
+                },
+                ConversationItem::CommandOutput {
+                    output: "0123456789".into(),
+                    is_error: false,
+                    timestamp: None,
+                },
+            ],
+        );
+        let (_, body) = request(
+            state.clone(),
+            get("/sessions/clipped/conversation?result_chars=4"),
+        )
+        .await;
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["items"][0]["text"], "a long answer stays whole");
+        assert_eq!(v["items"][1]["content"], "héll");
+        assert_eq!(v["items"][2]["output"], "0123");
+        // The log itself is untouched, and 0 means whole, like omitting it.
+        let (_, body) = request(state, get("/sessions/clipped/conversation?result_chars=0")).await;
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["items"][1]["content"], "héllo wörld");
+        assert_eq!(v["items"][2]["output"], "0123456789");
     }
 
     #[tokio::test]

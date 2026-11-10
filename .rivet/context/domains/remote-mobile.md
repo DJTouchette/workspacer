@@ -177,7 +177,11 @@ Ended and are still resumable by sending.
 
 Chat loading and scrolling (native parity): the first `sessions.conversation`
 read is a page (`limit` 200, native's `CONVERSATION_PAGE`); follow-ups poll
-`sinceSeq`. `loadOlder` re-reads with a window 200 larger while the reply's
+`sinceSeq`. Every read sends `resultChars` 4000: claudemon clips each tool
+result and command output in the reply (the log stays whole) to what the
+client keeps anyway, so a page does not weigh what the agent's file reads did.
+Tool inputs are not clipped (diffs render from them). An older daemon ignores
+the param and the client-side slice still applies. `loadOlder` re-reads with a window 200 larger while the reply's
 `window_first_seq` exceeds `first_seq` (capped at 3000 items / 1500 turns, past
 which History owns the rest), shifting answered-question trace anchors by the
 turns it prepended. The view renders a window of the newest 60 transcript

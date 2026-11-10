@@ -581,7 +581,10 @@ async function fetchConv(id) {
   const full = st.seq === 0 || st.reload;
   st.reload = false;
   try {
-    const params = { sessionId: id };
+    // resultChars: the daemon clips each tool result to what is kept here, so
+    // a page is not the weight of every file an agent read. An older daemon
+    // ignores it and the slice in applyItems still applies.
+    const params = { sessionId: id, resultChars: MAX_RESULT };
     if (full) params.limit = st.limit; else params.sinceSeq = st.seq;
     const r = await call(qualify(id, 'sessions.conversation'), params);
     st.at = Date.now();

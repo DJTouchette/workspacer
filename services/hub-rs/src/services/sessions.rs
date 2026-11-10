@@ -1824,6 +1824,8 @@ mod task_query_tests {
 /// claudemon `/conversation` query for `sinceSeq` / `limit`. `limit` asks for
 /// the newest N items; the reply's `window_first_seq` says whether older
 /// retained items remain.
+/// `resultChars` clips each tool result and command output in the reply, for
+/// a client that would only discard the rest.
 fn conversation_query(params: &Value) -> String {
     let query: Vec<String> = [
         params["sinceSeq"]
@@ -1833,6 +1835,10 @@ fn conversation_query(params: &Value) -> String {
             .as_u64()
             .filter(|limit| *limit > 0)
             .map(|limit| format!("limit={limit}")),
+        params["resultChars"]
+            .as_u64()
+            .filter(|chars| *chars > 0)
+            .map(|chars| format!("result_chars={chars}")),
     ]
     .into_iter()
     .flatten()
@@ -1859,5 +1865,10 @@ mod conversation_query_tests {
             "?since=4&limit=200"
         );
         assert_eq!(conversation_query(&json!({"limit":0})), "");
+        assert_eq!(
+            conversation_query(&json!({"limit":200,"resultChars":4000})),
+            "?limit=200&result_chars=4000"
+        );
+        assert_eq!(conversation_query(&json!({"resultChars":0})), "");
     }
 }
