@@ -17,8 +17,12 @@ has a two-deep lineage under project-0.
   1200 × 900, dark. Rows keep full width; threads and indents line up two
   levels deep and under the hover fill. Other themes and narrow widths were
   not captured.
-- Native `--features ui-tests --bin wks-native history` (16) and
-  `--lib history` (18) pass, including the two nesting tests.
+- Native `cargo test --locked --no-fail-fast --features ui-tests --
+  --test-threads=1` passes (290 library, 351 UI), including the two nesting
+  tests. Hub `cargo test --lib live_controls`: 21 pass, the lineage
+  assertions among them; the one failure is
+  `summary::an_unwritable_brief_falls_back_instead_of_failing`, which fails
+  on a clean tree too when the container runs as root.
 
 ## Delegated work keeps a parent working (2026-11-09)
 
