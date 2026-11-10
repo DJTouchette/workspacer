@@ -167,6 +167,7 @@ check-hub-rust-assets:
 	python3 scripts/test-gen-mobile-tokens.py
 	node scripts/check-mobile-next-assets.mjs
 	node scripts/test-mobile-next-fleet.mjs
+	node --no-warnings scripts/test-mobile-next-bus.mjs
 
 # Read-only comparison; explicit export is available through hub-reference.py.
 hub-vocabulary:

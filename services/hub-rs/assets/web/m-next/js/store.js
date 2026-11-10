@@ -63,13 +63,18 @@ export function upsert(snap) {
 export let seeded = false;
 export async function seed() {
   try {
+    // The peer fleets and the sidebar set do not depend on the local roster:
+    // ask for all three at once (a reconnect then costs the slowest read, not
+    // their sum over a phone link) and apply them in the order they are owed.
+    const peersRead = readPeers();
+    const openRead = readOpen();
     const list = await call('sessions.snapshots', {});
     const seen = new Set();
     for (const s of list || []) {
       if (s && s.sessionId) { seen.add(s.sessionId); sessionHub.delete(s.sessionId); fold(s); }
     }
-    await seedPeers(seen);
-    await seedKept(seen);
+    applyPeers(await peersRead, seen);
+    await seedKept(seen, openRead);
     // The providers' lists ARE the visible fleet — drop what they no longer
     // show. A down peer answered nothing: its rows are tombstones to keep.
     for (const id of [...sessions.keys()]) {
@@ -83,10 +88,21 @@ export async function seed() {
     changed();
   } catch { /* the hub line shows offline */ }
 }
-async function seedPeers(seen) {
-  let list = [];
-  try { list = (await call('federation.peers', {})) || []; } catch { peers = []; return; }
-  peers = list.filter((p) => p && p.name);
+/** The peer list and each connected peer's fleet. Reads only (never rejects):
+ *  null when the list could not be read, null rows for a peer that did not
+ *  answer. */
+async function readPeers() {
+  let list;
+  try { list = (await call('federation.peers', {})) || []; } catch { return null; }
+  const named = list.filter((p) => p && p.name);
+  const rows = await Promise.all(named.map((p) => (p.connected
+    ? call(`hub:${p.name}/sessions.snapshots`, {}).then((r) => r || [], () => null)
+    : null)));
+  return { named, rows };
+}
+function applyPeers(read, seen) {
+  if (!read) { peers = []; return; }
+  peers = read.named;
   const names = new Set();
   for (const p of peers) {
     names.add(p.name);
@@ -95,21 +111,22 @@ async function seedPeers(seen) {
   }
   // An UNLINKED hub is gone, not offline: its tombstones go with the link.
   for (const h of [...offlineHubs.keys()]) if (!names.has(h)) offlineHubs.delete(h);
-  await Promise.all(peers.filter((p) => p.connected).map(async (p) => {
-    try {
-      const rows = (await call(`hub:${p.name}/sessions.snapshots`, {})) || [];
-      for (const row of rows) {
-        if (!row || !row.sessionId) continue;
-        row.hub = p.name;
-        seen.add(row.sessionId);
-        sessionHub.set(row.sessionId, p.name);
-        fold(row);
-      }
-    } catch {
+  peers.forEach((p, i) => {
+    if (!p.connected) return;
+    const rows = read.rows[i];
+    if (!rows) {
       // A blip on a nominally-connected link must not wipe the peer's rows.
       for (const [id, h] of sessionHub) if (h === p.name) seen.add(id);
+      return;
     }
-  }));
+    for (const row of rows) {
+      if (!row || !row.sessionId) continue;
+      row.hub = p.name;
+      seen.add(row.sessionId);
+      sessionHub.set(row.sessionId, p.name);
+      fold(row);
+    }
+  });
 }
 /** A peer's link came back: replace its fleet wholesale. */
 async function reseedPeer(name) {
@@ -158,15 +175,19 @@ function applyOpen(doc, force) {
   keptSupported = true;
   return true;
 }
-async function seedKept(seen) {
-  if (can('sessionOpen.get')) {
-    const seq = ++openReadSeq;
-    openEventSinceRead = false;
-    try {
-      const doc = await call('sessionOpen.get', {});
-      if (seq === openReadSeq) applyOpen(doc, !openEventSinceRead);
-      if (openDoc) return;
-    } catch { /* fall back to the legacy kept set below */ }
+/** The sidebar set read, started early; null where the hub has no such method
+ *  or the read failed (the legacy kept set answers instead). */
+function readOpen() {
+  if (!can('sessionOpen.get')) return null;
+  const seq = ++openReadSeq;
+  openEventSinceRead = false;
+  return call('sessionOpen.get', {}).then((doc) => ({ seq, doc }), () => null);
+}
+async function seedKept(seen, openRead) {
+  const read = await openRead;
+  if (read) {
+    if (read.seq === openReadSeq) applyOpen(read.doc, !openEventSinceRead);
+    if (openDoc) return;
   }
   openDoc = null;
   ended.clear();

@@ -137,11 +137,32 @@ Generated, drift-checked in `make check-hub-rust-assets`:
   and checks relative imports. Run it with `--write` after adding a file.
 - `scripts/test-mobile-next-fleet.mjs` runs `js/fleet.js` against
   `contracts/fleet-message-cases.json`.
+- `scripts/test-mobile-next-bus.mjs` runs `js/bus.js` against scripted sockets
+  and a mocked clock (handshake race, resume probe, zombie swap, backoff).
 
-The data layer (bus/store/push) is a faithful port of `/m`'s: token in
-`localStorage.hubToken` (shared with `/m`), hello-scope gating, handshake
-watchdogs and wake, machine-stop pause/Wake, federation `hub:<peer>/` routing,
-sparse folds, peer tombstones, archive ordering, conversation polling. Push uses
+The data layer (bus/store/push) is a port of `/m`'s: token in
+`localStorage.hubToken` (shared with `/m`), hello-scope gating, machine-stop
+pause/Wake, federation `hub:<peer>/` routing, sparse folds, peer tombstones,
+archive ordering, conversation polling. The reconnect is NOT `/m`'s (which
+still kills and redials on a watchdog); it is built for reopening the app:
+- Handshakes are raced, not abandoned: while none has opened, another is
+  dialled beside it (at +1.5s, +3s; each gets 20s) and the first to open wins.
+  Losers are left to open and close themselves, because closing a CONNECTING
+  socket logs a console error (which fails the e2e suite).
+- On foreground (`visibilitychange`/`focus`/`pageshow`/`online`) a socket
+  quiet for 4s+ is probed with a repeat `subscribe` (the hub answers
+  `subscribed`; idempotent, needs no method scope) while a spare handshake is
+  dialled. A reply within 2.5s keeps the socket; otherwise the spare replaces
+  it. `bus.connected` stays true meanwhile, so there is no "Reconnecting…"
+  flash on a healthy reopen. A hub that does not acknowledge subscribes just
+  gets the reconnect.
+- In the foreground the 25s reconcile doubles as the heartbeat (30s of silence
+  triggers the same probe), as does a call that times out with no frame since
+  it was sent. The hub sends no pings of its own.
+- Calls pending on a socket that is dropped or replaced reject `offline` at
+  once instead of at their 15s timeout (that used to pin a chat's poll).
+- `seed` issues the local roster, `federation.peers` (+ peer rosters) and
+  `sessionOpen.get` together and applies them in the old order. Push uses
 its own worker (`/m-next/sw.js`, scope `/m-next/`), so a phone that enables
 notifications in both clients holds two subscriptions. Push prefs are shared
 with `/m` (`pushPrefs`).
@@ -167,7 +188,10 @@ for a fling to settle before moving content, since that stops iOS momentum.
 `ui.patchBlocks` diffs blocks by their markup, so a live update replaces only
 changed elements; never reset a chat scroller to the top on route (that once
 landed reopened chats at their first message). The shell service worker is
-cache-first: a new hub's client opens on the launch after its worker installs.
+cache-first. `push.js` calls `registration.update()` whenever the socket opens
+(a browser only checks on navigation, which a resumed PWA may not make for
+days); the worker installs only if the whole shell precached, and `main.js`
+reloads into it the next time the page is hidden with no draft in progress.
 
 Tests: `apps/desktop/tests/e2e/mobileNext.test.ts` with
 `fixtures/mobileNextHub.ts` (real hub + fake provider shaped like the Rust

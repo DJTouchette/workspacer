@@ -102,3 +102,19 @@ export function onOpenAgent(fn) {
 }
 
 onBus('open', () => { if (pushOk && Notification.permission === 'granted') ensurePush(true); });
+
+// ── shell updates ─────────────────────────────────────────────────────────
+// The shell is cache-first, and a browser only looks for a new worker on a
+// navigation — which an installed app that is resumed, not relaunched, may not
+// make for days. A socket opening is when the hub may have changed (it just
+// restarted, or the phone just came back): ask then. A new worker precaches
+// the new shell, takes over, and `onShellUpdate` hears about it.
+onBus('open', () => { if (swReg) swReg.update().catch(() => { /* offline, or no worker */ }); });
+
+/** Call `fn` when a NEW shell has replaced the one this page booted from
+ *  (not on the first install, which replaces nothing). */
+export function onShellUpdate(fn) {
+  if (!('serviceWorker' in navigator)) return;
+  const replaced = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (replaced) fn(); });
+}

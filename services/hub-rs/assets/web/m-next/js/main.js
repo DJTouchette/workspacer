@@ -6,9 +6,9 @@
 //   #/s/<id>              Chat            #/history      Session history
 //   #/s/<id>/a/<agent>    Subagent view   #/projects  #/jobs  #/settings  #/briefs
 import { bus, connect, on as onBus } from './bus.js';
-import { onChange, changed } from './store.js';
+import { onChange, changed, drafts } from './store.js';
 import { apply as applyTheme } from './theme.js';
-import { registerSW, onOpenAgent } from './push.js';
+import { registerSW, onOpenAgent, onShellUpdate } from './push.js';
 import { closeSheet } from './ui.js';
 import * as sessionsView from './views/sessions.js';
 import * as chatView from './views/chat.js';
@@ -160,6 +160,20 @@ const remeasure = () => { applyViewport(); setTimeout(applyViewport, 350); setTi
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') remeasure(); });
 addEventListener('pageshow', remeasure);
 applyViewport();
+
+// A new shell is installed: load it at a moment nobody is looking, so the
+// next time the app is opened it is simply the new client. Never over
+// something half-written.
+let shellStale = false;
+function reloadIfUnseen() {
+  if (!shellStale || document.visibilityState !== 'hidden') return;
+  for (const text of drafts.values()) if (text && text.trim()) return;
+  const el = document.activeElement;
+  if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.value) return;
+  location.reload();
+}
+onShellUpdate(() => { shellStale = true; reloadIfUnseen(); });
+document.addEventListener('visibilitychange', reloadIfUnseen);
 
 registerSW();
 route();

@@ -1,6 +1,6 @@
-// The hub bus connection: token, socket, calls, reconnect, watchdogs, wake
-// and the machine-stop pause. Ported from /m (mobile.html "transport" and
-// "connection") with its behaviour intact — only the rendering moved out.
+// The hub bus connection: token, socket, calls, reconnect, wake and the
+// machine-stop pause. The protocol and the machine-power half are /m's
+// (mobile.html "transport" and "connection"); the reconnect is this client's.
 //
 // Nothing here renders. Views subscribe with `on(type, fn)`:
 //   'state'        connected flipped (bus.connected)
@@ -60,35 +60,81 @@ bus.machinePaused = localStorage.getItem(machinePauseKey) === '1';
 bus.machineWakeURL = safeWakeURL(localStorage.getItem(machineWakeKey));
 
 // ── socket ────────────────────────────────────────────────────────────────
+// Reopening the app on a phone is the case this is shaped around. The socket
+// the page went to sleep with may be fine or may be a zombie, and a fresh
+// handshake over a tailnet that is still waking can stall for seconds. So:
+//   - a quiet socket is PROBED (one frame, one round trip) while a spare
+//     handshake is dialled beside it; whichever answers first is the socket.
+//   - a handshake that has not opened is not abandoned for a newer one: more
+//     are started beside it and the first to open wins.
+//   - calls on a socket that is gone fail now, not at their 15s timeout.
 let ws = null, callSeq = 0, backoff = 500, reconnectTimer = null, reconcileTimer = null;
-let watchdog = null, lastActivity = 0, attempt = 0, lastInteractionSent = 0;
+let lastActivity = 0, lastInteractionSent = 0, lastDialAt = 0, raceTimer = null, probeTimer = null;
 const pending = new Map();
+/** Handshakes in flight: socket -> the timer that gives up on it. */
+const dialing = new Map();
+/** No frame for this long while visible: the socket needs proving. */
 const STALE_MS = 30000;
-/** How long to let a handshake run, by consecutive failed attempt. A real
- *  blip reconnects in milliseconds; a cold tailnet leg needs room to finish. */
-const HANDSHAKE_BUDGETS_MS = [4500, 9000, 20000];
+/** Back in the foreground: a socket this recently heard from is taken as live. */
+const FRESH_MS = 4000;
+/** A live hub acknowledges a subscribe in one round trip. */
+const PROBE_MS = 2500;
+/** A cold tailnet leg can need this long to finish one handshake. */
+const HANDSHAKE_MS = 20000;
+/** While none has opened, start another this long after the previous one. */
+const RACE_MS = [1500, 3000];
+const MAX_DIALS = 4;
 const TOPICS = ['agent.snapshot', 'workflow.*', 'hub.peer.*', 'node.state_changed', 'sessionArchive.changed', 'sessionOpen.changed'];
+const isOpen = (sock) => !!sock && sock.readyState === WebSocket.OPEN;
 
 export function call(method, params, timeoutMs) {
   return new Promise((resolve, reject) => {
-    if (bus.machinePaused || !ws || ws.readyState !== WebSocket.OPEN) return reject(new Error('offline'));
-    const id = 'c' + (++callSeq);
-    pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ op: 'call', id, method, params: params || {} }));
+    if (bus.machinePaused || !isOpen(ws)) return reject(new Error('offline'));
+    const id = 'c' + (++callSeq), sock = ws, sentAt = Date.now();
+    pending.set(id, { resolve, reject, sock });
+    sock.send(JSON.stringify({ op: 'call', id, method, params: params || {} }));
     setTimeout(() => {
-      if (pending.has(id)) { pending.delete(id); reject(new Error('timeout')); }
+      if (!pending.has(id)) return;
+      pending.delete(id);
+      reject(new Error('timeout'));
+      // Not one frame since this was sent: doubt the socket, not the method.
+      if (ws === sock && lastActivity < sentAt) verify();
     }, timeoutMs || 15000);
   });
+}
+/** Replies to these can no longer arrive: say so now. */
+function failPending(sock) {
+  for (const [id, c] of pending) {
+    if (c.sock === sock) { pending.delete(id); c.reject(new Error('offline')); }
+  }
 }
 
 function killSocket(sock) {
   if (!sock) return;
-  try { sock.onopen = sock.onmessage = sock.onerror = sock.onclose = null; sock.close(); } catch { /* gone */ }
+  sock.onmessage = sock.onerror = sock.onclose = null;
+  // Closing a socket mid-handshake is reported as a failed connection; let it
+  // open and close cleanly instead.
+  if (sock.readyState === WebSocket.CONNECTING) { sock.onopen = () => { try { sock.close(); } catch { /* gone */ } }; return; }
+  sock.onopen = null;
+  try { sock.close(); } catch { /* gone */ }
 }
 function setConnected(on) {
   if (bus.connected === on) return;
   bus.connected = on;
   emit('state', on);
+}
+function stopDialing() {
+  for (const [sock, timer] of dialing) { clearTimeout(timer); killSocket(sock); }
+  dialing.clear();
+  clearTimeout(raceTimer); raceTimer = null;
+}
+function dropSocket() {
+  clearTimeout(probeTimer); probeTimer = null;
+  const old = ws;
+  ws = null;
+  killSocket(old);
+  if (old) failPending(old);
+  setConnected(false);
 }
 
 export function setToken(token) {
@@ -97,93 +143,151 @@ export function setToken(token) {
   connect();
 }
 
+/** Start over: drop the socket and every handshake, then dial. */
 export function connect() {
   if (bus.machinePaused) return;
   if (!bus.token) { setConnected(false); emit('state', false); return; }
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  clearTimeout(watchdog);
-  setConnected(false);
+  stopDialing();
+  dropSocket();
+  backoff = 500;
+  startDial();
+}
+
+function dial() {
+  if (dialing.size >= MAX_DIALS) return false;
   let sock;
-  try { sock = new WebSocket(`${busURL}?token=${encodeURIComponent(bus.token)}`); } catch { return scheduleReconnect(); }
-  ws = sock;
-  // Phones hand us sockets whose handshake hangs (the host or the tailnet
-  // leg was asleep): abandon early, with a budget that grows per attempt.
-  const budget = HANDSHAKE_BUDGETS_MS[Math.min(attempt, HANDSHAKE_BUDGETS_MS.length - 1)];
-  attempt++;
-  watchdog = setTimeout(() => {
-    if (sock.readyState !== WebSocket.OPEN) { killSocket(sock); if (ws === sock) ws = null; scheduleReconnect(); }
-  }, budget);
-  sock.onopen = () => {
-    clearTimeout(watchdog);
-    backoff = 500; attempt = 0; lastActivity = Date.now();
-    setConnected(true);
-    reportInteraction(true);
-    sock.send(JSON.stringify({ op: 'subscribe', topics: TOPICS }));
-    emit('open');
-    // Reconcile every 25s so missed events self-heal; doubles as the
-    // heartbeat wake() checks.
-    clearInterval(reconcileTimer);
-    reconcileTimer = setInterval(() => {
-      if (document.visibilityState === 'visible' && ws && ws.readyState === WebSocket.OPEN) emit('reconcile');
-    }, 25000);
-  };
-  sock.onmessage = (ev) => {
-    lastActivity = Date.now();
-    let f;
-    try { f = JSON.parse(ev.data); } catch { return; }
-    if (f.op === 'hello') {
-      bus.scope = { name: f.scope || '', methods: Array.isArray(f.methods) ? f.methods : [], fullAccess: f.spawnFullAccess === true };
-      emit('hello', bus.scope);
-      discoverMachine();
-    } else if (f.op === 'result') {
-      const c = pending.get(f.id);
-      if (c) { pending.delete(f.id); c.resolve(f.result); }
-    } else if (f.op === 'error' && f.id) {
-      const c = pending.get(f.id);
-      if (c) { pending.delete(f.id); c.reject(new Error(f.error || 'error')); }
-    } else if (f.op === 'event' && f.event) {
-      emit('event', f.event);
-    }
-  };
-  sock.onclose = (ev) => {
-    if (ev.code === 4001) { pauseForMachineStop(); return; }
-    clearTimeout(watchdog);
-    if (ws === sock) ws = null;
-    setConnected(false);
-    if (ev.code === 1008 || ev.code === 4401) {
-      bus.token = '';
-      localStorage.removeItem('hubToken');
-      bus.scope = { name: '', methods: [], fullAccess: false };
-      emit('unauthorized');
-      return;
-    }
-    scheduleReconnect();
-  };
+  try { sock = new WebSocket(`${busURL}?token=${encodeURIComponent(bus.token)}`); } catch { return false; }
+  lastDialAt = Date.now();
+  dialing.set(sock, setTimeout(() => lost(sock), HANDSHAKE_MS));
+  sock.onopen = () => adopt(sock);
+  sock.onmessage = (ev) => { if (ws === sock) received(ev); };
+  sock.onclose = (ev) => closed(sock, ev);
   sock.onerror = () => { try { sock.close(); } catch { /* gone */ } };
+  return true;
+}
+/** Dial, and keep adding handshakes beside a slow one until one opens. */
+function startDial() {
+  if (bus.machinePaused || !bus.token || dialing.size) return;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (!dial()) return scheduleReconnect();
+  let n = 0;
+  const more = () => {
+    raceTimer = n < RACE_MS.length ? setTimeout(() => { if (dialing.size) { dial(); more(); } }, RACE_MS[n++]) : null;
+  };
+  clearTimeout(raceTimer);
+  more();
+}
+/** A handshake failed or ran out of time. */
+function lost(sock) {
+  clearTimeout(dialing.get(sock));
+  dialing.delete(sock);
+  killSocket(sock);
+  if (dialing.size) return;
+  clearTimeout(raceTimer); raceTimer = null;
+  if (!ws) scheduleReconnect();
+}
+/** The first handshake to open is the socket; the rest are let go. */
+function adopt(sock) {
+  clearTimeout(dialing.get(sock));
+  dialing.delete(sock);
+  stopDialing();
+  clearTimeout(probeTimer); probeTimer = null;
+  const old = ws;
+  ws = sock;
+  if (old) { killSocket(old); failPending(old); }
+  backoff = 500; lastActivity = Date.now();
+  setConnected(true);
+  reportInteraction(true);
+  sock.send(JSON.stringify({ op: 'subscribe', topics: TOPICS }));
+  emit('open');
+  // Reconcile every 25s so missed events self-heal. Its replies are also the
+  // heartbeat: a visible page that heard nothing since the last one has a
+  // socket worth proving.
+  clearInterval(reconcileTimer);
+  reconcileTimer = setInterval(() => {
+    if (document.visibilityState !== 'visible' || !isOpen(ws)) return;
+    if (Date.now() - lastActivity > STALE_MS) verify();
+    emit('reconcile');
+  }, 25000);
+}
+function received(ev) {
+  lastActivity = Date.now();
+  // Any frame proves the socket: the spare handshakes are not needed.
+  if (probeTimer) { clearTimeout(probeTimer); probeTimer = null; stopDialing(); }
+  let f;
+  try { f = JSON.parse(ev.data); } catch { return; }
+  if (f.op === 'hello') {
+    bus.scope = { name: f.scope || '', methods: Array.isArray(f.methods) ? f.methods : [], fullAccess: f.spawnFullAccess === true };
+    emit('hello', bus.scope);
+    discoverMachine();
+  } else if (f.op === 'result') {
+    const c = pending.get(f.id);
+    if (c) { pending.delete(f.id); c.resolve(f.result); }
+  } else if (f.op === 'error' && f.id) {
+    const c = pending.get(f.id);
+    if (c) { pending.delete(f.id); c.reject(new Error(f.error || 'error')); }
+  } else if (f.op === 'event' && f.event) {
+    emit('event', f.event);
+  }
+}
+function closed(sock, ev) {
+  if (ev.code === 4001) { pauseForMachineStop(); return; }
+  if (ev.code === 1008 || ev.code === 4401) {
+    stopDialing();
+    dropSocket();
+    bus.token = '';
+    localStorage.removeItem('hubToken');
+    bus.scope = { name: '', methods: [], fullAccess: false };
+    emit('unauthorized');
+    return;
+  }
+  if (dialing.has(sock)) return lost(sock);
+  if (ws !== sock) return;
+  dropSocket();
+  if (!dialing.size) scheduleReconnect();
 }
 
 function scheduleReconnect() {
-  if (bus.machinePaused || reconnectTimer) return;
-  reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, backoff);
+  if (bus.machinePaused || reconnectTimer || dialing.size) return;
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; startDial(); }, backoff);
   backoff = Math.min(backoff * 2, 5000);
 }
 
 /** Retry now rather than waiting out the backoff (a tap on "Reconnecting"). */
-export function reconnectNow() {
-  backoff = 500; attempt = 0;
-  killSocket(ws); ws = null;
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  connect();
+export function reconnectNow() { connect(); }
+
+/** Is the socket still there? Ask it (a subscribe is acknowledged, and asking
+ *  again changes nothing) and dial a spare beside it, so a zombie costs no
+ *  more than the handshake that replaces it and a live one costs a round trip. */
+function verify() {
+  if (bus.machinePaused || !bus.token || probeTimer) return;
+  if (!isOpen(ws)) { dropSocket(); startDial(); return; }
+  const sock = ws;
+  try { sock.send(JSON.stringify({ op: 'subscribe', topics: TOPICS })); } catch { /* the timer decides */ }
+  startDial();
+  probeTimer = setTimeout(() => {
+    probeTimer = null;
+    if (ws !== sock) return;
+    dropSocket();
+    if (!dialing.size) startDial();
+  }, PROBE_MS);
 }
 
-// Mobile browsers suspend a backgrounded tab's socket, often without a close;
-// reconnect on every sign we are foreground again unless provably live.
+// Mobile browsers suspend a backgrounded tab's socket, often without a close.
+// On every sign we are foreground again: prove a quiet socket, or hurry a
+// reconnect along rather than waiting out its backoff.
 function wake() {
   if (bus.machinePaused || !bus.token || document.visibilityState === 'hidden') return;
-  const live = ws && ws.readyState === WebSocket.OPEN && Date.now() - lastActivity < STALE_MS;
-  if (live) return;
-  backoff = 500; attempt = 0; clearTimeout(watchdog);
-  killSocket(ws); ws = null; connect();
+  if (isOpen(ws)) {
+    if (Date.now() - lastActivity >= FRESH_MS) verify();
+    return;
+  }
+  if (ws) dropSocket();
+  backoff = 500;
+  // Handshakes begun before the page slept may never finish: add a fresh one
+  // beside them (these events arrive in bursts, so not one per event).
+  if (!dialing.size) startDial();
+  else if (Date.now() - lastDialAt > 1000) dial();
 }
 document.addEventListener('visibilitychange', wake);
 window.addEventListener('online', wake);
@@ -192,7 +296,7 @@ window.addEventListener('pageshow', wake);
 
 /** Tell an idle-aware hub a person is here (at most every 30s). */
 function reportInteraction(force = false) {
-  if (bus.machinePaused || !bus.connected || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (bus.machinePaused || !bus.connected || !isOpen(ws)) return;
   if (!force && Date.now() - lastInteractionSent < 30000) return;
   lastInteractionSent = Date.now();
   ws.send(JSON.stringify({ op: 'activity' }));
@@ -221,10 +325,13 @@ function pauseForMachineStop() {
   bus.machinePaused = true;
   localStorage.setItem(machinePauseKey, '1');
   clearTimeout(reconnectTimer); reconnectTimer = null;
-  clearTimeout(watchdog); clearInterval(reconcileTimer);
-  killSocket(ws); ws = null; setConnected(false);
-  for (const c of pending.values()) c.reject(new Error('Machine disconnected after stop request'));
+  clearInterval(reconcileTimer);
+  stopDialing();
+  // Reject with the reason before dropSocket's generic 'offline' can.
+  const waiting = [...pending.values()];
   pending.clear();
+  for (const c of waiting) c.reject(new Error('Machine disconnected after stop request'));
+  dropSocket();
   emit('paused');
 }
 
@@ -246,7 +353,7 @@ export async function wakeMachine() {
   bus.machinePaused = false;
   localStorage.removeItem(machinePauseKey);
   emit('paused');
-  backoff = 500; attempt = 0; connect();
+  connect();
 }
 
 /** The idle summary machine.power reports, as one readable block. */
