@@ -194,3 +194,18 @@ Chat quoting adds one hook:
   the selected text and the release position when a drag ends with text
   selected, and `None` when a press clears it. The native chat offers its
   Quote action from it. A selection dropped by a reparse is not reported.
+
+Inputs no longer mark themselves dirty on every paint:
+
+- `input/element.rs`, `TextElement::paint`: upstream ended each paint with
+  `cx.notify()` (and a second one inside `update_scroll_offset`). A notify
+  during paint schedules no frame; it marks the input, and every view it is
+  drawn inside, dirty for whichever frame comes next. A cached view containing
+  an input was therefore never reused, so nothing above an input could be
+  kept across frames. The paint now notifies only when it settled something
+  the next frame must show (bounds, cursor, selection, scroll size or scroll
+  offset changed). `input/state.rs` gains `clamp_scroll_offset`, the same
+  clamp as `update_scroll_offset` without the notify, returning whether the
+  offset moved. Native relies on this for the docked terminal: the rest of
+  the window is a cached view while a shell prints (`MainView` in
+  `apps/native/src/ui.rs`).

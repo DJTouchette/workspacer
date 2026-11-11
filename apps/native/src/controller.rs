@@ -580,6 +580,68 @@ mod republish_tests {
         worker.event(data("pty.bytes.shell", json!("aGk="))).await;
         assert!(!worker.dirty && !worker.fleet_dirty, "terminal output");
     }
+
+    /// Typing settles one input call per key; a delivered key, a resize and
+    /// a keepalive leave the view alone, and a failed delivery still shows.
+    #[tokio::test]
+    async fn delivered_terminal_input_does_not_republish() {
+        let mut worker = worker();
+        worker.shells.insert(
+            "a".into(),
+            Shell {
+                id: Some("shell".into()),
+                cwd: "/work".into(),
+                wanted: true,
+                attached: true,
+                generation: 1,
+                input: Vec::new(),
+                input_busy: true,
+                size: (100, 24),
+                resize_pending: false,
+                resize_busy: true,
+                last_keepalive: Instant::now(),
+            },
+        );
+        let epoch = worker.epoch;
+        for step in [
+            ShellStep::Input(Ok(json!({"ok":true}))),
+            ShellStep::Resized,
+            ShellStep::Keepalive(Ok(json!({"ok":true}))),
+        ] {
+            worker
+                .complete(Completion::Terminal(epoch, "a".into(), 1, step))
+                .await;
+            assert!(!worker.dirty && !worker.fleet_dirty);
+        }
+        assert!(!worker.shells["a"].input_busy && !worker.shells["a"].resize_busy);
+
+        worker
+            .complete(Completion::Terminal(
+                epoch,
+                "a".into(),
+                1,
+                ShellStep::Input(Err(anyhow!("closed"))),
+            ))
+            .await;
+        assert!(worker.dirty, "a failed delivery is shown");
+        assert!(
+            worker.view.terminals["a"]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("Input was not delivered"))
+        );
+        worker.dirty = false;
+        // The next delivered key clears that error, which is a change.
+        worker
+            .complete(Completion::Terminal(
+                epoch,
+                "a".into(),
+                1,
+                ShellStep::Input(Ok(json!({"ok":true}))),
+            ))
+            .await;
+        assert!(worker.dirty && worker.view.terminals["a"].error.is_none());
+    }
 }
 
 #[cfg(test)]
@@ -2856,8 +2918,19 @@ impl Worker {
                 }
             }
             Completion::Terminal(epoch, agent, generation, step) => {
+                // One of these settles per key typed, per resize and per
+                // keepalive. They change the view only through
+                // `set_terminal`, which marks it; republishing for each
+                // would rebuild the whole window on every keystroke.
+                let routine = matches!(
+                    step,
+                    ShellStep::Input(Ok(_)) | ShellStep::Resized | ShellStep::Keepalive(_)
+                );
                 if epoch == self.epoch {
                     self.terminal_done(agent, generation, step).await;
+                }
+                if routine {
+                    return;
                 }
             }
             Completion::Action(number, session, action, result) => {

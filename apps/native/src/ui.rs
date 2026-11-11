@@ -641,6 +641,9 @@ pub struct Workspace {
     explorer: explorer::Explorer,
     review: review::ReviewUi,
     terminal: terminal::TerminalUi,
+    /// Everything but the docked terminal, as a view of its own; see
+    /// [`MainView`].
+    main: Entity<MainView>,
     remote: remote::RemoteUi,
     chat: transcript::ChatUi,
     links: link_menu::LinkUi,
@@ -988,7 +991,15 @@ impl Workspace {
         }));
         window.focus(&focus);
         let queue = queue::QueueUi::new(window, cx);
+        // Any change to the workspace redraws its main view.
+        let this = cx.entity().downgrade();
+        let main = cx.new(|_| MainView(this));
+        let redraw = main.downgrade();
+        focus_watch.push(cx.observe_self(move |_, cx| {
+            let _ = redraw.update(cx, |_, cx| cx.notify());
+        }));
         Self {
+            main,
             extras,
             tools,
             pr,
@@ -1955,8 +1966,27 @@ impl Workspace {
     }
 }
 
-impl Render for Workspace {
+/// The window's content apart from the docked terminal: sidebar, the open
+/// screen and docked panels.
+///
+/// GPUI redraws a view's ancestors with it, and the workspace is the root, so
+/// a terminal drawn inside this content would rebuild, lay out and repaint
+/// all of it for every character a shell prints. As a view of its own the
+/// content can be reused while only the terminal changes: the workspace
+/// draws the terminal beside it, over the place the panel keeps for it
+/// (see `Workspace::render_terminal_overlay`).
+pub(crate) struct MainView(gpui::WeakEntity<Workspace>);
+
+impl Render for MainView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.0
+            .update(cx, |workspace, cx| workspace.render_main(window, cx))
+            .unwrap_or_else(|_| div().into_any_element())
+    }
+}
+
+impl Workspace {
+    fn render_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let _timer = wks_native::perf::RENDER.time();
         motion::reduce_loops(self.settings.reduce_motion);
         self.loop_ticker
@@ -2012,10 +2042,15 @@ impl Render for Workspace {
         .into_iter()
         .flatten();
         let flyout = self.render_rail_flyout(window, cx);
-        let shell = self.shell(window, cx).child(sidebar).children(flyout);
+        let main = div()
+            .relative()
+            .size_full()
+            .flex()
+            .child(sidebar)
+            .children(flyout);
         if portrait {
             // Panels dock below the conversation, which keeps the width.
-            shell.child(
+            main.child(
                 div()
                     .flex_1()
                     .min_w_0()
@@ -2026,8 +2061,36 @@ impl Render for Workspace {
                     .children(docked),
             )
         } else {
-            shell.child(content).children(docked)
+            main.child(content).children(docked)
         }
+        .into_any_element()
+    }
+}
+
+impl Render for Workspace {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let terminal = self.render_terminal_overlay(window, cx);
+        let main = gpui::AnyView::from(self.main.clone());
+        // Reused only while the docked terminal is what redraws, and nothing
+        // else drawn here (the modal viewer) is a view whose changes the
+        // content may show. Otherwise it is rebuilt with every redraw of the
+        // workspace, as it always was.
+        let main = if terminal.is_some() && !self.viewer_modal(window) {
+            main.cached(gpui::StyleRefinement::default().size_full())
+        } else {
+            main
+        };
+        self.shell(window, cx)
+            .child(chrome::measure(
+                cx.entity().downgrade(),
+                |this: &mut Self, bounds, _| {
+                    let moved = this.terminal.origin != bounds.origin;
+                    this.terminal.origin = bounds.origin;
+                    moved
+                },
+            ))
+            .child(main)
+            .children(terminal)
     }
 }
 

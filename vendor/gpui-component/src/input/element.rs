@@ -1473,16 +1473,38 @@ impl Element for TextElement {
         }
 
         self.state.update(cx, |state, cx| {
+            // Workspacer patch: upstream ended every paint with `cx.notify()`
+            // (twice, counting `update_scroll_offset`). A notify during paint
+            // schedules no frame; it only marks this input, and every view
+            // around it, dirty for whichever frame comes next, so no cached
+            // view containing an input was ever reused. Ask for that redraw
+            // only when this paint settled something the next one must show.
+            let before = (
+                state.last_bounds,
+                state.last_cursor,
+                state.last_selected_range,
+                state.scroll_size,
+                state.deferred_scroll_offset,
+            );
             state.last_layout = Some(prepaint.last_layout.clone());
             state.last_bounds = Some(bounds);
             state.last_cursor = Some(state.cursor());
             state.set_input_bounds(input_bounds, cx);
             state.last_selected_range = Some(selected_range);
             state.scroll_size = prepaint.scroll_size;
-            state.update_scroll_offset(Some(prepaint.cursor_scroll_offset), cx);
+            let scrolled = state.clamp_scroll_offset(Some(prepaint.cursor_scroll_offset));
             state.deferred_scroll_offset = None;
+            let after = (
+                state.last_bounds,
+                state.last_cursor,
+                state.last_selected_range,
+                state.scroll_size,
+                state.deferred_scroll_offset,
+            );
 
-            cx.notify();
+            if scrolled || before != after {
+                cx.notify();
+            }
         });
 
         if let Some(hitbox) = prepaint.hover_definition_hitbox.as_ref() {

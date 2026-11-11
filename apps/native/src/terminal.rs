@@ -532,6 +532,96 @@ impl Emulator {
     }
 }
 
+impl Emulator {
+    /// The visible grid for a painter that places glyphs on cells: per row,
+    /// the runs of cells in one style, each with the characters to draw and
+    /// the column each belongs to.
+    ///
+    /// Nothing here is a string to shape: a terminal draws one glyph per
+    /// cell at a fixed pitch, so the painter can look each character up
+    /// once and place it, where shaping a row as text costs the same again
+    /// for every key typed into it. Blank cells carry no glyph; runs with
+    /// nothing to draw (unstyled blanks) are left out.
+    pub fn spans(&self) -> Vec<Vec<Span>> {
+        let screen = self.parser.screen();
+        let (rows, cols) = screen.size();
+        (0..rows)
+            .map(|row| {
+                let mut spans: Vec<Span> = Vec::new();
+                for col in 0..cols {
+                    let Some(cell) = screen.cell(row, col) else {
+                        continue;
+                    };
+                    if cell.is_wide_continuation() {
+                        continue;
+                    }
+                    let style = Style {
+                        fg: cell.fgcolor(),
+                        bg: cell.bgcolor(),
+                        bold: cell.bold(),
+                        italic: cell.italic(),
+                        underline: cell.underline(),
+                        inverse: cell.inverse(),
+                    };
+                    let width = if cell.is_wide() { 2 } else { 1 };
+                    if !spans
+                        .last()
+                        .is_some_and(|last| last.style == style && last.col + last.cells == col)
+                    {
+                        spans.push(Span {
+                            col,
+                            cells: 0,
+                            style,
+                            glyphs: Vec::new(),
+                        });
+                    }
+                    let span = spans.last_mut().unwrap();
+                    span.cells += width;
+                    let contents = cell.contents();
+                    let mut chars = contents.chars();
+                    match (chars.next(), chars.next()) {
+                        (None, _) | (Some(' '), None) => {}
+                        (Some(c), None) => span.glyphs.push((col, Glyph::Char(c))),
+                        _ => span.glyphs.push((col, Glyph::Cluster(contents))),
+                    }
+                }
+                spans.retain(Span::draws);
+                spans
+            })
+            .collect()
+    }
+}
+
+/// A run of cells in one style: see [`Emulator::spans`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Span {
+    /// First column covered.
+    pub col: u16,
+    /// Columns covered (a wide character takes two).
+    pub cells: u16,
+    pub style: Style,
+    /// What to draw, with the column of each; blank cells have none.
+    pub glyphs: Vec<(u16, Glyph)>,
+}
+
+impl Span {
+    /// Blank cells still show a background, an inverse block or an underline.
+    fn draws(&self) -> bool {
+        !self.glyphs.is_empty()
+            || self.style.bg != vt100::Color::Default
+            || self.style.inverse
+            || self.style.underline
+    }
+}
+
+/// What one cell shows: a character, or a base character with its
+/// combining marks.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Glyph {
+    Char(char),
+    Cluster(String),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Style {
     pub fg: vt100::Color,
@@ -690,6 +780,58 @@ mod tests {
         term.scroll_by(-100);
         assert_eq!(term.scroll, 0);
         assert!(term.text().contains("line9"));
+    }
+
+    #[test]
+    fn spans_place_each_character_on_its_cell() {
+        let mut term = Emulator::new(2, 24);
+        term.process(b"\x1b[32m$\x1b[0m echo hi  \x1b[41m  \x1b[0m");
+        let rows = term.spans();
+        let chars = |span: &Span| -> Vec<(u16, char)> {
+            span.glyphs
+                .iter()
+                .map(|(col, glyph)| match glyph {
+                    Glyph::Char(c) => (*col, *c),
+                    Glyph::Cluster(_) => panic!("plain text"),
+                })
+                .collect()
+        };
+        // The prompt, the typed text (blanks carry no glyph) and the
+        // coloured blanks; the unstyled blanks out to the edge are dropped.
+        assert_eq!(rows[0].len(), 3);
+        assert_eq!((rows[0][0].col, rows[0][0].cells), (0, 1));
+        assert_eq!(rows[0][0].style.fg, vt100::Color::Idx(2));
+        assert_eq!(chars(&rows[0][0]), [(0, '$')]);
+        assert_eq!((rows[0][1].col, rows[0][1].cells), (1, 10));
+        assert_eq!(
+            chars(&rows[0][1]),
+            [(2, 'e'), (3, 'c'), (4, 'h'), (5, 'o'), (7, 'h'), (8, 'i')]
+        );
+        assert_eq!((rows[0][2].col, rows[0][2].cells), (11, 2));
+        assert!(rows[0][2].glyphs.is_empty() && rows[0][2].style.bg == vt100::Color::Idx(1));
+        assert!(rows[1].is_empty(), "an empty row paints nothing");
+
+        // A wide character takes two cells; the next one follows it.
+        let mut wide = Emulator::new(1, 12);
+        wide.process("ab\u{4e16}cd".as_bytes());
+        // (The run carries on through the unstyled blanks after the text.)
+        let span = &wide.spans()[0][0];
+        assert_eq!((span.col, span.cells), (0, 12));
+        assert_eq!(
+            chars(span),
+            [(0, 'a'), (1, 'b'), (2, '\u{4e16}'), (4, 'c'), (5, 'd')]
+        );
+
+        // Combining marks stay with their base character in one cell.
+        let mut marks = Emulator::new(1, 12);
+        marks.process("e\u{301}x".as_bytes());
+        assert_eq!(
+            marks.spans()[0][0].glyphs,
+            [
+                (0, Glyph::Cluster("e\u{301}".into())),
+                (1, Glyph::Char('x'))
+            ]
+        );
     }
 
     #[test]

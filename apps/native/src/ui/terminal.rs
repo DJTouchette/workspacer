@@ -4,10 +4,8 @@
 //! reopening the agent's terminal attaches to the same shell and replays its
 //! screen. See `wks_native::terminal`.
 use super::*;
-use gpui::{
-    AnyElement, FontStyle, FontWeight, Keystroke, Pixels, StyledText, TextRun, UnderlineStyle,
-};
-use std::collections::BTreeMap;
+use gpui::{AnyElement, FontStyle, FontWeight, Keystroke, Pixels, TextRun, UnderlineStyle};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use wks_native::terminal::{self as term, Emulator, Status};
 
 /// Panel height as a share of the window, normal and enlarged.
@@ -29,6 +27,11 @@ pub(super) struct TerminalUi {
     adopted: bool,
     /// A terminal in its own window, and the agent it belongs to.
     popout: Option<(gpui::WindowHandle<gpui_component::Root>, String)>,
+    /// Where the panel keeps room for the grid, in window coordinates, as
+    /// last painted; the workspace draws the terminal over it.
+    slot: Option<gpui::Bounds<Pixels>>,
+    /// The workspace's own top-left corner in the window.
+    pub origin: gpui::Point<Pixels>,
 }
 
 pub(super) struct TerminalView {
@@ -47,6 +50,7 @@ pub(super) struct TerminalView {
     /// Redraws on focus and blur: the panel embeds this view cached, so it
     /// only redraws when notified, and the border and cursor follow focus.
     focus_watch: Option<[gpui::Subscription; 2]>,
+    glyphs: Rc<RefCell<GlyphCache>>,
 }
 
 impl TerminalView {
@@ -62,6 +66,7 @@ impl TerminalView {
             sent: (0, 0),
             error: None,
             focus_watch: None,
+            glyphs: Default::default(),
         }
     }
 
@@ -82,7 +87,8 @@ impl TerminalView {
             return;
         }
         // Typing returns to the live screen.
-        if self.emulator.scroll > 0 {
+        let scrolled = self.emulator.scroll > 0;
+        if scrolled {
             self.emulator.scroll_by(-(self.emulator.scroll as isize));
         }
         let result = self
@@ -91,8 +97,13 @@ impl TerminalView {
                 agent: self.agent.clone(),
                 bytes,
             }));
-        self.error = result.err().map(|e| e.to_string());
-        cx.notify();
+        let error = result.err().map(|e| e.to_string());
+        // The key itself draws nothing; its echo arrives as output. Redraw
+        // only for what this changed here.
+        if scrolled || error != self.error {
+            self.error = error;
+            cx.notify();
+        }
     }
 
     /// A key while the terminal has focus. `false` leaves it to the app
@@ -273,70 +284,48 @@ impl Render for TerminalView {
             ]);
         }
         let focused = self.focus.is_focused(window);
-        let screen_rows = self.emulator.rows();
         let (cursor_row, cursor_col) = self.emulator.screen().cursor_position();
         let show_cursor = !self.emulator.screen().hide_cursor() && self.emulator.scroll == 0;
-        let rows = screen_rows.into_iter().map(|runs| {
-            let mut text = String::new();
-            let mut styled = Vec::with_capacity(runs.len());
-            for run in runs {
-                let (fg, bg) = if run.style.inverse {
-                    (
-                        self.color(run.style.bg, p, false)
-                            .unwrap_or(rgb(p.code_block).into()),
-                        Some(
-                            self.color(run.style.fg, p, true)
-                                .unwrap_or(rgb(p.text).into()),
-                        ),
-                    )
-                } else {
-                    (
-                        self.color(run.style.fg, p, true)
-                            .unwrap_or(rgb(p.text).into()),
-                        self.color(run.style.bg, p, false),
-                    )
-                };
-                let mut font = font.clone();
-                if run.style.bold {
-                    font.weight = FontWeight::BOLD;
-                }
-                if run.style.italic {
-                    font.style = FontStyle::Italic;
-                }
-                text.push_str(&run.text);
-                styled.push(TextRun {
-                    len: run.text.len(),
-                    font,
-                    color: fg,
-                    background_color: bg,
-                    underline: run.style.underline.then(|| UnderlineStyle {
-                        thickness: px(1.),
-                        color: Some(fg),
-                        wavy: false,
-                    }),
-                    strikethrough: None,
-                });
+        // Resolve colours now; the canvas only places and paints.
+        let default_bg: gpui::Hsla = rgb(p.code_block).into();
+        let default_fg: gpui::Hsla = rgb(p.text).into();
+        let runs: Vec<Vec<CellRun>> = self
+            .emulator
+            .spans()
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|span| {
+                        let style = span.style;
+                        let (fg, bg) = if style.inverse {
+                            (
+                                self.color(style.bg, p, false).unwrap_or(default_bg),
+                                Some(self.color(style.fg, p, true).unwrap_or(default_fg)),
+                            )
+                        } else {
+                            (
+                                self.color(style.fg, p, true).unwrap_or(default_fg),
+                                self.color(style.bg, p, false),
+                            )
+                        };
+                        CellRun { span, fg, bg }
+                    })
+                    .collect()
+            })
+            .collect();
+        // Glyphs are looked up for this font at this size.
+        {
+            let mut glyphs = self.glyphs.borrow_mut();
+            if glyphs.family != family || glyphs.size != size {
+                glyphs.family = family.clone();
+                glyphs.size = size;
+                glyphs.cells.clear();
             }
-            div()
-                .h(line)
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .child(StyledText::new(text).with_runs(styled))
-        });
+        }
+        let glyphs = self.glyphs.clone();
+        let cursor = show_cursor.then_some((cursor_row, cursor_col));
+        let accent: gpui::Hsla = rgb(p.accent).into();
         let view = cx.entity().downgrade();
-        let cell = self.cell;
-        let cursor = show_cursor.then(|| {
-            div()
-                .absolute()
-                .left(cell.0 * cursor_col as f32)
-                .top(cell.1 * cursor_row as f32)
-                .w(cell.0)
-                .h(cell.1)
-                .when(focused, |d| {
-                    d.bg(gpui::Hsla::from(rgb(p.accent)).opacity(0.55))
-                })
-                .when(!focused, |d| d.border_1().border_color(rgb(p.accent)))
-        });
         div()
             .id("terminal-view")
             .debug_selector(|| "terminal-view".into())
@@ -361,6 +350,9 @@ impl Render for TerminalView {
                 cx.stop_propagation();
             }))
             .child(
+                // The grid is painted directly, a glyph per cell, not laid
+                // out as rows of text: nothing is shaped, measured or
+                // wrapped again when a key is typed.
                 gpui::canvas(
                     move |bounds, window, cx| {
                         let font_id = window.text_system().resolve_font(&measure);
@@ -373,16 +365,197 @@ impl Render for TerminalView {
                         cx.defer(move |cx| {
                             let _ = view.update(cx, |this, cx| this.fit(bounds, cell, cx));
                         });
+                        cell
                     },
-                    |_, _, _, _| {},
+                    move |bounds, cell: (Pixels, Pixels), window, cx| {
+                        let grid = Grid {
+                            origin: bounds.origin,
+                            cell,
+                            size,
+                            font,
+                        };
+                        grid.paint(&runs, &mut glyphs.borrow_mut(), window, cx);
+                        if let Some((row, col)) = cursor {
+                            let area = gpui::Bounds::new(
+                                grid.at(row as usize, col),
+                                gpui::size(cell.0, cell.1),
+                            );
+                            window.paint_quad(if focused {
+                                gpui::fill(area, accent.opacity(0.55))
+                            } else {
+                                gpui::outline(area, accent, gpui::BorderStyle::Solid)
+                            });
+                        }
+                    },
                 )
                 .absolute()
                 .top_0()
                 .left_0()
                 .size_full(),
             )
-            .children(rows)
-            .children(cursor)
+    }
+}
+
+/// One [`term::Span`] with its colours resolved.
+struct CellRun {
+    span: term::Span,
+    fg: gpui::Hsla,
+    bg: Option<gpui::Hsla>,
+}
+
+/// How each character is drawn, found once per font and size and kept for
+/// the terminal's life: shaping is by far the most expensive step of
+/// drawing text, and a terminal draws the same few characters over and over.
+#[derive(Default)]
+pub(super) struct GlyphCache {
+    family: gpui::SharedString,
+    size: Pixels,
+    cells: HashMap<(term::Glyph, bool, bool), Rc<CellGlyphs>>,
+}
+
+/// The shaped form of one cell's text.
+struct CellGlyphs {
+    /// Baseline below the cell's top, were the line exactly as tall as its
+    /// font; the painter centres that in the cell.
+    ascent: Pixels,
+    descent: Pixels,
+    glyphs: Vec<(gpui::FontId, gpui::GlyphId, gpui::Point<Pixels>, bool)>,
+}
+
+/// More distinct characters than this and the cache starts over (a binary
+/// dumped to the screen must not grow it without bound).
+const MAX_CACHED_GLYPHS: usize = 8192;
+
+impl GlyphCache {
+    fn get(
+        &mut self,
+        glyph: &term::Glyph,
+        style: term::Style,
+        font: &gpui::Font,
+        size: Pixels,
+        window: &Window,
+    ) -> Rc<CellGlyphs> {
+        let key = (glyph.clone(), style.bold, style.italic);
+        if let Some(found) = self.cells.get(&key) {
+            return found.clone();
+        }
+        let mut font = font.clone();
+        if style.bold {
+            font.weight = FontWeight::BOLD;
+        }
+        if style.italic {
+            font.style = FontStyle::Italic;
+        }
+        let mut buffer = [0; 4];
+        let text: &str = match glyph {
+            term::Glyph::Char(c) => c.encode_utf8(&mut buffer),
+            term::Glyph::Cluster(text) => text,
+        };
+        let layout = window.text_system().layout_line(
+            text,
+            size,
+            &[TextRun {
+                len: text.len(),
+                font,
+                color: gpui::Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }],
+            None,
+        );
+        let shaped = Rc::new(CellGlyphs {
+            ascent: layout.ascent,
+            descent: layout.descent,
+            glyphs: layout
+                .runs
+                .iter()
+                .flat_map(|run| {
+                    run.glyphs
+                        .iter()
+                        .map(|g| (run.font_id, g.id, g.position, g.is_emoji))
+                })
+                .collect(),
+        });
+        if self.cells.len() >= MAX_CACHED_GLYPHS {
+            self.cells.clear();
+        }
+        self.cells.insert(key, shaped.clone());
+        shaped
+    }
+}
+
+/// Where the grid is and what it is drawn with.
+struct Grid {
+    origin: gpui::Point<Pixels>,
+    /// Cell width and line height.
+    cell: (Pixels, Pixels),
+    size: Pixels,
+    font: gpui::Font,
+}
+
+impl Grid {
+    /// The top-left corner of a cell.
+    fn at(&self, row: usize, col: u16) -> gpui::Point<Pixels> {
+        gpui::point(
+            self.origin.x + self.cell.0 * col as f32,
+            self.origin.y + self.cell.1 * row as f32,
+        )
+    }
+
+    /// Cell backgrounds, then each character on its cell, then underlines.
+    fn paint(
+        &self,
+        rows: &[Vec<CellRun>],
+        glyphs: &mut GlyphCache,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for (row, runs) in rows.iter().enumerate() {
+            for run in runs {
+                if let Some(bg) = run.bg {
+                    window.paint_quad(gpui::fill(
+                        gpui::Bounds::new(
+                            self.at(row, run.span.col),
+                            gpui::size(self.cell.0 * run.span.cells as f32, self.cell.1),
+                        ),
+                        bg,
+                    ));
+                }
+            }
+            for run in runs {
+                for (col, glyph) in &run.span.glyphs {
+                    let shaped = glyphs.get(glyph, run.span.style, &self.font, self.size, window);
+                    // As GPUI places a line of text: the font's own height
+                    // centred in the line.
+                    let baseline =
+                        (self.cell.1 - shaped.ascent - shaped.descent) / 2. + shaped.ascent;
+                    let cell = self.at(row, *col);
+                    for (font, id, position, emoji) in &shaped.glyphs {
+                        let origin =
+                            gpui::point(cell.x + position.x, cell.y + baseline + position.y);
+                        let _ = if *emoji {
+                            window.paint_emoji(origin, *font, *id, self.size)
+                        } else {
+                            window.paint_glyph(origin, *font, *id, self.size, run.fg)
+                        };
+                    }
+                }
+                if run.span.style.underline {
+                    let cell = self.at(row, run.span.col);
+                    window.paint_underline(
+                        gpui::point(cell.x, cell.y + self.cell.1 - px(3.)),
+                        self.cell.0 * run.span.cells as f32,
+                        &UnderlineStyle {
+                            thickness: px(1.),
+                            color: Some(run.fg),
+                            wavy: false,
+                        },
+                    );
+                }
+            }
+        }
+        let _ = cx;
     }
 }
 
@@ -637,6 +810,45 @@ impl Workspace {
         }
     }
 
+    /// The terminal the docked panel shows a live grid for: the panel is on
+    /// screen and its agent has a shell (or one that failed, whose last
+    /// screen stays readable).
+    fn docked_terminal_view(&self) -> Option<Entity<TerminalView>> {
+        if !self.terminal.open || self.new_session || self.screen != Screen::Conversation {
+            return None;
+        }
+        let agent = self.terminal.agent.as_ref()?;
+        let state = self.view.terminals.get(agent)?;
+        (state.running() || state.status == Status::Failed)
+            .then(|| self.terminal.views.get(agent).cloned())
+            .flatten()
+    }
+
+    /// The docked terminal's grid, drawn by the workspace over the room the
+    /// panel keeps for it (`TerminalUi::slot`, from the panel's last paint).
+    /// Cached: redrawing the workspace reuses the grid unless the terminal
+    /// itself changed (output, size, focus, palette).
+    pub(super) fn render_terminal_overlay(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let view = self.docked_terminal_view()?;
+        let slot = self.terminal.slot?;
+        Some(
+            div()
+                .absolute()
+                .left(slot.origin.x - self.terminal.origin.x)
+                .top(slot.origin.y - self.terminal.origin.y)
+                .w(slot.size.width)
+                .h(slot.size.height)
+                .child(
+                    gpui::AnyView::from(view).cached(gpui::StyleRefinement::default().size_full()),
+                )
+                .into_any_element(),
+        )
+    }
+
     /// The docked terminal under the conversation, when open.
     pub(super) fn render_terminal_panel(
         &mut self,
@@ -803,21 +1015,26 @@ impl Workspace {
                 .debug_selector(|| "terminal-close".into())
                 .on_click(cx.listener(|this, _, window, cx| this.hide_terminal(window, cx))),
             );
-        let body: AnyElement = match (view, has_shell || state.as_ref().is_some_and(|t| t.status == Status::Failed)) {
-            (Some(view), true) => div()
+        let body: AnyElement = match self.docked_terminal_view() {
+            // Room for the grid only: the workspace draws the terminal
+            // itself over this place, outside the content this panel is
+            // part of, so shell output does not redraw that content.
+            Some(_) => div()
                 .flex_1()
                 .min_h_0()
                 .px_2()
                 .py_1()
                 .bg(rgb(p.code_block))
-                // Cached: a Workspace redraw reuses the grid unless the
-                // terminal itself changed (output, size, focus, palette).
-                .child(
-                    gpui::AnyView::from(view)
-                        .cached(gpui::StyleRefinement::default().size_full()),
-                )
+                .child(div().relative().size_full().child(chrome::measure(
+                    cx.entity().downgrade(),
+                    |this: &mut Self, bounds, _| {
+                        let moved = this.terminal.slot != Some(bounds);
+                        this.terminal.slot = Some(bounds);
+                        moved
+                    },
+                )))
                 .into_any_element(),
-            _ => div()
+            None => div()
                 .flex_1()
                 .min_h_0()
                 .flex()

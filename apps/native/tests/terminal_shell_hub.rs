@@ -196,3 +196,115 @@ async fn default_shell_is_saved_on_the_hub_and_starts_the_next_terminal() {
     host.shutdown().await.unwrap();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Key-to-echo latency through the real hub and a real shell: the time from
+/// handing the controller one key to its echo reaching the window's feed.
+/// No window is involved, so this is the transport's share of typing lag.
+/// Opt in with `WKS_NATIVE_BENCH_ECHO=keys` and `--nocapture`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bench_terminal_echo_latency() {
+    let Some(keys) = std::env::var("WKS_NATIVE_BENCH_ECHO")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!(
+        "wks-native-echo-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut options = RustOptions::isolated(root.clone()).unwrap();
+    options.home_dir = root.join("home");
+    std::fs::create_dir(&options.home_dir).unwrap();
+    options.usage_poll_on_boot = Some(false);
+    let project = root.join("project");
+    std::fs::create_dir(&project).unwrap();
+    let host = NativeHost::start(Mode::Rust(options)).unwrap();
+    tokio::time::timeout(Duration::from_secs(30), host.ready())
+        .await
+        .unwrap()
+        .unwrap();
+    let controller = host.controller();
+    until(&controller, "connected", |v| v.connected).await;
+    let agent = "echo-agent".to_owned();
+    controller
+        .command(Command::Terminal(terminal::Command::Open {
+            agent: agent.clone(),
+            cwd: project.to_string_lossy().into_owned(),
+            cols: 100,
+            rows: 30,
+        }))
+        .unwrap();
+    let view = until(&controller, "live terminal", |v| {
+        v.terminals
+            .get(&agent)
+            .is_some_and(|t| matches!(t.status, Status::Live | Status::Failed))
+    })
+    .await;
+    assert_eq!(view.terminals[&agent].status, Status::Live);
+    let shell = view.terminals[&agent].shell.clone().unwrap();
+    let feed = view.terminal_feed.clone();
+    // Let the prompt settle, then discard it.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let _ = feed.take(&shell);
+    for (name, gap) in [
+        ("spaced 120ms", 120u64),
+        ("typing 30ms", 30),
+        ("burst 5ms", 5),
+    ] {
+        let mut samples = Vec::with_capacity(keys);
+        // Every republish makes the window rebuild its whole view; typing
+        // should cause none.
+        let mut views = controller.views.clone();
+        views.borrow_and_update();
+        let mut republished = 0;
+        for n in 0..keys {
+            let started = std::time::Instant::now();
+            controller
+                .command(Command::Terminal(terminal::Command::Input {
+                    agent: agent.clone(),
+                    bytes: vec![b'a' + (n % 26) as u8],
+                }))
+                .unwrap();
+            let echoed = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if feed.take(&shell).is_some_and(|c| !c.bytes.is_empty()) {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_micros(200)).await;
+                }
+            })
+            .await;
+            assert!(echoed.is_ok(), "no echo for key {n}");
+            samples.push(started.elapsed().as_secs_f64() * 1000.);
+            tokio::time::sleep(Duration::from_millis(gap)).await;
+            if views.has_changed().unwrap() {
+                views.borrow_and_update();
+                republished += 1;
+            }
+        }
+        samples.sort_by(f64::total_cmp);
+        let at = |p: usize| samples[(samples.len() - 1) * p / 100];
+        println!(
+            "bench_terminal_echo_latency {name}: p50 {:.2}ms p95 {:.2}ms max {:.2}ms ({keys} keys, {republished} view republishes)",
+            at(50),
+            at(95),
+            at(100)
+        );
+        // Start the next round on an empty line.
+        controller
+            .command(Command::Terminal(terminal::Command::Input {
+                agent: agent.clone(),
+                bytes: vec![0x15],
+            }))
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = feed.take(&shell);
+    }
+    host.shutdown().await.unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+}

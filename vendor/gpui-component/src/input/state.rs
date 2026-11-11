@@ -1338,7 +1338,16 @@ impl InputState {
         offset: Option<Point<Pixels>>,
         cx: &mut Context<Self>,
     ) {
-        let mut offset = offset.unwrap_or(self.scroll_handle.offset());
+        self.clamp_scroll_offset(offset);
+        cx.notify();
+    }
+
+    /// Workspacer patch: [`Self::update_scroll_offset`] without the redraw
+    /// request, for the element's paint to settle the offset it just drew.
+    /// Returns whether the offset moved.
+    pub(super) fn clamp_scroll_offset(&mut self, offset: Option<Point<Pixels>>) -> bool {
+        let before = self.scroll_handle.offset();
+        let mut offset = offset.unwrap_or(before);
 
         let safe_y_range =
             (-self.scroll_size.height + self.input_bounds.size.height).min(px(0.0))..px(0.);
@@ -1352,7 +1361,7 @@ impl InputState {
         };
         offset.x = offset.x.clamp(safe_x_range.start, safe_x_range.end);
         self.scroll_handle.set_offset(offset);
-        cx.notify();
+        offset != before
     }
 
     /// Scroll to make the given offset visible.
