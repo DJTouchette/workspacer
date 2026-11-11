@@ -245,7 +245,7 @@ impl Workspace {
             .px_4()
             .flex()
             .flex_col()
-            .children(hosts.map(|picker| row("Run on", 46., true, picker.into_any_element())))
+            .children(hosts.map(|picker| row("Run on", HOST_TILE, true, picker.into_any_element())))
             .child(match self.launch_peer() {
                 Some(peer) => row(
                     "Project",
@@ -1345,6 +1345,8 @@ const SIDE_LABEL_WIDTH: f32 = 900.;
 const SETUP_WIDTH: f32 = 560.;
 /// A provider tile's height; the Agent row's label centres on it.
 const PROVIDER_TILE: f32 = 46.;
+/// A host choice's height: its name over what it is running.
+const HOST_TILE: f32 = 50.;
 /// The chosen project's summary: a title, its path and its status.
 const PROJECT_SUMMARY: f32 = 56.;
 /// A caption line, which a peer's folder list starts with.

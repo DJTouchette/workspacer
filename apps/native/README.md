@@ -141,6 +141,12 @@ visible as chips beside it, and the footer reads back what will launch.
 [Gruvbox at 720 × 480](docs/ui-new-agent-minimum-gruvbox.png) ·
 [the previous card stack](docs/ui-new-agent-before-dark.png)
 
+With other hosts on the hub, **Run on** is the sheet's first row:
+[this machine](docs/ui-new-agent-hosts.png) ·
+[a peer and its folders](docs/ui-new-agent-hosts-peer.png) ·
+[wide](docs/ui-new-agent-hosts-wide.png). These use the `--catalog` fixture:
+`native-harness serve --catalog` then `smoke.py --bus … --new-session`.
+
 Custom model accepts an exact ID or alias. **Start agent** opens the real agent
 conversation. **Settings → Agents** saves separate default access modes for
 Claude and Codex, initially Ask to approve. Claude also offers Accept
