@@ -1042,3 +1042,65 @@ fn custom_theme_editor_repaints_live_and_falls_back_to_built_ins(cx: &mut TestAp
     visual.run_until_parked();
     assert!(visual.debug_bounds("design-system").is_some());
 }
+
+#[gpui::test]
+fn match_system_keeps_a_theme_for_light_and_one_for_dark(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let dark = Workspace::system_is_dark(window);
+            this.settings.match_system = true;
+            this.settings.system_light = Appearance::CatppuccinLatte;
+            this.settings.system_dark = Appearance::Nord;
+            this.follow_system(window, cx);
+            let (worn, other) = if dark {
+                (Appearance::Nord, Appearance::CatppuccinLatte)
+            } else {
+                (Appearance::CatppuccinLatte, Appearance::Nord)
+            };
+            assert_eq!(this.appearance, worn, "the system's setting picks");
+
+            // A pick is the theme for the setting the system has now.
+            this.choose_theme(Appearance::Gruvbox, window, cx);
+            let (now, kept) = if dark {
+                (this.settings.system_dark, this.settings.system_light)
+            } else {
+                (this.settings.system_light, this.settings.system_dark)
+            };
+            assert_eq!((now, kept), (Appearance::Gruvbox, other));
+            this.follow_system(window, cx);
+            assert_eq!(this.appearance, Appearance::Gruvbox);
+
+            // Off: the system no longer changes what is worn, or the pair.
+            this.settings.match_system = false;
+            this.choose_theme(Appearance::Dark, window, cx);
+            this.follow_system(window, cx);
+            assert_eq!(this.appearance, Appearance::Dark);
+            assert_eq!(
+                if dark {
+                    this.settings.system_dark
+                } else {
+                    this.settings.system_light
+                },
+                Appearance::Gruvbox
+            );
+        })
+    });
+}
+
+#[test]
+fn settings_written_before_match_system_load_with_it_off() {
+    let old: wks_native::navigation::Settings =
+        serde_json::from_str(r#"{"text_size":16,"reduce_motion":true}"#).unwrap();
+    assert!(!old.match_system);
+    assert_eq!(old.system_light, Appearance::Light);
+    assert_eq!(old.system_dark, Appearance::Dark);
+    let saved = serde_json::to_value(wks_native::navigation::Settings {
+        match_system: true,
+        system_dark: Appearance::TokyoNight,
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(saved["system_dark"], "tokyo-night");
+    assert_eq!(saved["system_light"], "light");
+}

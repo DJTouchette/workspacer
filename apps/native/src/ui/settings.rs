@@ -237,6 +237,19 @@ impl Workspace {
                     }))
                     .children(self.custom_theme_tiles(cx)),
             )
+            .when(self.settings.match_system, |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "theme-system-pair".into())
+                        .text_size(px(scale::META))
+                        .text_color(rgb(p.muted))
+                        .child(format!(
+                            "System light: {} · System dark: {}",
+                            self.settings.system_light.label(),
+                            self.settings.system_dark.label()
+                        )),
+                )
+            })
             .when(!self.theme_error.is_empty(), |d| {
                 d.child(
                     div()
@@ -253,6 +266,33 @@ impl Workspace {
             "palette color colour dark light nord mode omarchy tokyo night catppuccin mocha latte gruvbox everforest",
             Layout::Block,
             themes,
+        ));
+        entries.push(Entry::new(
+            S::Appearance,
+            "match-system",
+            "Match system",
+            "Follow the system's light or dark setting. The theme you pick while the system is light is kept for light, and the one you pick while it is dark for dark. Choosing one of your own themes turns this off.",
+            "system automatic auto follow os light dark mode appearance day night sunset scheme",
+            Layout::Row,
+            Switch::new("settings-match-system")
+                .checked(self.settings.match_system)
+                .tooltip("Match system")
+                .on_click(cx.listener(|this, checked, window, cx| {
+                    this.settings.match_system = *checked;
+                    if *checked {
+                        // Start from what is worn now, for the setting the
+                        // system has now.
+                        let worn = this.appearance;
+                        if Self::system_is_dark(window) {
+                            this.settings.system_dark = worn;
+                        } else {
+                            this.settings.system_light = worn;
+                        }
+                    }
+                    this.save_settings(cx);
+                    this.follow_system(window, cx);
+                    cx.notify();
+                })),
         ));
 
         let custom_tiles = div()

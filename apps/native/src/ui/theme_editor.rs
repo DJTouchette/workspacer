@@ -188,6 +188,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A custom theme is one look for both settings: wearing it stops
+        // following the system.
+        if self.settings.match_system {
+            self.settings.match_system = false;
+            self.save_settings(cx);
+        }
         self.custom_themes.active = Some(id);
         self.theme_error.clear();
         self.apply_custom_theme(window, cx);

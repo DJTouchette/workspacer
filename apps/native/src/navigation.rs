@@ -94,6 +94,11 @@ pub struct Settings {
     /// Wide windows float the session's tools at the chat's right edge
     /// instead of revealing them in the title capsule.
     pub tool_rail: bool,
+    /// Follow the system's light or dark setting: `system_light` while it is
+    /// light and `system_dark` while it is dark.
+    pub match_system: bool,
+    pub system_light: crate::appearance::Appearance,
+    pub system_dark: crate::appearance::Appearance,
     /// Client-local session organization, scoped by hub identity.
     pub names: BTreeMap<String, BTreeMap<String, String>>,
     pub archived: BTreeMap<String, Vec<String>>,
@@ -131,6 +136,9 @@ impl Default for Settings {
             review_panel: true,
             reduce_motion: false,
             tool_rail: true,
+            match_system: false,
+            system_light: crate::appearance::Appearance::Light,
+            system_dark: crate::appearance::Appearance::Dark,
             names: BTreeMap::new(),
             archived: BTreeMap::new(),
             cleared_children: BTreeMap::new(),

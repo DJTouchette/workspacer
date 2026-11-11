@@ -962,6 +962,9 @@ impl Workspace {
             this.mark_viewed_seen(window, cx);
             cx.notify()
         }));
+        focus_watch.push(
+            cx.observe_window_appearance(window, |this, window, cx| this.follow_system(window, cx)),
+        );
         // A key aimed at something the file viewer covers (focus pulled
         // behind it) is dropped before any binding or text input sees it.
         let (this, handle) = (cx.entity().downgrade(), window.window_handle());
@@ -1134,12 +1137,50 @@ impl Workspace {
             .unwrap_or_else(|| self.appearance.palette())
     }
 
+    /// Whether the system asks for a dark appearance right now.
+    fn system_is_dark(window: &Window) -> bool {
+        matches!(
+            window.appearance(),
+            gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
+        )
+    }
+
+    /// With Match system on, wear the theme kept for the system's current
+    /// light or dark setting. Runs at startup and whenever the system
+    /// changes its setting.
+    pub fn follow_system(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.settings.match_system {
+            return;
+        }
+        let wanted = if Self::system_is_dark(window) {
+            self.settings.system_dark
+        } else {
+            self.settings.system_light
+        };
+        if self.custom_themes.active.is_some() || self.appearance != wanted {
+            self.choose_theme(wanted, window, cx);
+        }
+    }
+
     fn choose_theme(
         &mut self,
         appearance: Appearance,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // While matching the system, a pick is the theme for the setting
+        // the system has now; the other one is kept.
+        if self.settings.match_system {
+            let slot = if Self::system_is_dark(window) {
+                &mut self.settings.system_dark
+            } else {
+                &mut self.settings.system_light
+            };
+            if *slot != appearance {
+                *slot = appearance;
+                self.save_settings(cx);
+            }
+        }
         self.set_appearance(appearance, window, cx);
         if self.custom_themes.active.take().is_some() {
             self.save_custom_themes();
