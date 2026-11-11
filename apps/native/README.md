@@ -110,20 +110,37 @@ make run-native     # build and launch the release GUI against an existing hub
 make test-native    # native UI/protocol and embedded-engine lifecycle tests
 ```
 
-Use **New session** (`Ctrl/Cmd+N`). The form starts from a **project**: the
-open conversation's folder (or the filtered project) is preselected; otherwise
-the chooser opens with its search focused. It lists the hub's pinned and recent
-projects, this device's older bookmarks and folders your sessions run in; type
-to filter by name or path, use `↑`/`↓` and `Enter`, or paste an absolute folder
-path. **Choose folder…** opens the system dialog for a local hub and browses the
-hub's own filesystem for a remote one (or when the dialog is unavailable). The
-chosen project shows its folder and what the hub reports about it: branch and
-uncommitted changes, a plain folder, or a folder that does not exist. **Change**
-reopens the chooser; `Esc` keeps the current choice. The star pins a project.
-Then choose Claude or Codex, a model and its **effort** (side by side), and an
-optional task. **Options** holds access mode, context window and an optional
-session name; non-default choices stay visible as chips beside it, and the
-footer reads back what will launch.
+Use **New session** (`Ctrl/Cmd+N`). The form leads with the **task**, drawn like
+the chat composer it becomes and focused when a project is already chosen; it is
+optional, and an empty one starts the agent idle. One setup sheet follows, a
+labelled row per decision: **Project**, **Agent**, **Model** and **Options**
+(plus **Run on** when the hub offers other hosts). It sits beneath the task, or
+beside it from 1280 px of window width; row labels move above their controls
+below 900 px.
+
+The open conversation's folder (or the filtered project) is preselected;
+otherwise the Project row opens its chooser with the search focused. It lists
+the hub's pinned and recent projects, this device's older bookmarks and folders
+your sessions run in; type to filter by name or path, use `↑`/`↓` and `Enter`,
+or paste an absolute folder path. **Choose folder…** opens the system dialog for
+a local hub and browses the hub's own filesystem for a remote one (or when the
+dialog is unavailable). The chosen project shows its folder and what the hub
+reports about it: branch and uncommitted changes, a plain folder, or a folder
+that does not exist. **Change** reopens the chooser; `Esc` keeps the current
+choice. The star pins a project.
+Then choose Claude or Codex, a model and its **effort** (one line, with the
+model list's reload beside them; the catalog's state is only spelled out while
+loading or when something is wrong). **Customize** on the Options row opens
+access mode, context window and an optional session name; the choices stay
+visible as chips beside it, and the footer reads back what will launch.
+
+![New Agent, dark](docs/ui-new-agent-dark.png)
+
+[Options open](docs/ui-new-agent-options.png) · [Project chooser](docs/ui-new-agent-chooser.png) ·
+[Wide, task beside setup](docs/ui-new-agent-wide.png) · [Light, Codex](docs/ui-new-agent-light.png) ·
+[Gruvbox at 720 × 480](docs/ui-new-agent-minimum-gruvbox.png) ·
+[the previous card stack](docs/ui-new-agent-before-dark.png)
+
 Custom model accepts an exact ID or alias. **Start agent** opens the real agent
 conversation. **Settings → Agents** saves separate default access modes for
 Claude and Codex, initially Ask to approve. Claude also offers Accept

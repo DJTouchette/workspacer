@@ -1661,7 +1661,7 @@ impl Workspace {
             )
     }
 
-    /// The Project card: summary when chosen, the chooser otherwise, and the
+    /// The Project row: summary when chosen, the chooser otherwise, and the
     /// result of the user's last pin/forget.
     pub(super) fn render_project_section(&self, busy: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
@@ -1669,7 +1669,6 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_3()
-            .child(section_label("Project", p))
             .child(
                 if self.projects.picker_open || self.projects.cwd.is_empty() {
                     self.render_project_picker(busy, cx).into_any_element()

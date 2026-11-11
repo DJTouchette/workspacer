@@ -342,6 +342,70 @@ fn launch_footer_is_an_inset_panel_aligned_with_the_form(cx: &mut TestAppContext
     assert!(commands.try_recv().is_err());
 }
 
+/// The task leads the form and one setup sheet follows it: beneath on an
+/// ordinary window, beside it (equally tall) on a wide one, and always
+/// inside the window.
+#[gpui::test]
+fn task_leads_and_the_setup_sheet_follows_or_sits_beside_it(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            this.update_view(Arc::new(state("a")), window, cx);
+            this.show_new_session(window, cx);
+            this.select_project("/work/api", window, cx);
+        });
+    });
+    for (width, height, beside) in [
+        (720., 480., false),
+        (1000., 700., false),
+        (1400., 900., true),
+    ] {
+        visual.simulate_resize(size(px(width), px(height)));
+        visual.run_until_parked();
+        let task = visual.debug_bounds("launch-task").unwrap();
+        let sheet = visual.debug_bounds("launch-setup-sheet").unwrap();
+        let content = visual.debug_bounds("launch-content").unwrap();
+        let prompt = visual.debug_bounds("launch-prompt").unwrap();
+        let size = format!("{width}x{height}");
+        assert!(
+            task.left() == content.left() && sheet.right() == content.right(),
+            "{size}"
+        );
+        assert!(sheet.right() <= px(width), "{size}: {sheet:?}");
+        assert!(
+            prompt.top() > task.top() && prompt.bottom() < task.bottom(),
+            "{size}: {prompt:?} outside {task:?}"
+        );
+        if beside {
+            assert!(sheet.left() > task.right(), "{size}");
+            assert_eq!(
+                (task.top(), task.bottom()),
+                (sheet.top(), sheet.bottom()),
+                "{size}"
+            );
+        } else {
+            assert!(sheet.top() > task.bottom(), "{size}");
+            assert_eq!(
+                (task.left(), task.right()),
+                (sheet.left(), sheet.right()),
+                "{size}"
+            );
+        }
+    }
+    // Every row of the sheet is present without opening Options.
+    for selector in [
+        "launch-project-summary",
+        "launch-provider-claude",
+        "launch-model-picker",
+        "launch-effort-picker",
+        "launch-customize",
+        "launch-chip-0",
+    ] {
+        assert!(visual.debug_bounds(selector).is_some(), "{selector}");
+    }
+}
+
 #[gpui::test]
 fn new_session_form_creates_once_and_keeps_failed_input(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
