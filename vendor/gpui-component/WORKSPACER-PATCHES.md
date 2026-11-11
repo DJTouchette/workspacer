@@ -209,3 +209,19 @@ Inputs no longer mark themselves dirty on every paint:
   offset moved. Native relies on this for the docked terminal: the rest of
   the window is a cached view while a shell prints (`MainView` in
   `apps/native/src/ui.rs`).
+
+Pictures the application has loaded are drawn inline:
+
+- `TextViewStyle::images` (`text/style.rs`): a map from an image's source,
+  exactly as the document writes it, to a decoded `gpui::Image`. With
+  `on_link_click` set the component still loads nothing itself (see above);
+  an image whose source is in the map is drawn in place of its label
+  (`node.rs`, scaled down to the column, never up) and keeps sending its click
+  to the application. A different map (by pointer) makes the style unequal,
+  so the document is drawn again when the pictures arrive. The native file
+  viewer fills it from the session's machine (`wks_native::document::images`,
+  `Request::DocumentImages`); web addresses are never fetched.
+- `TextViewHandle::block_count` (`text/text_view.rs`): how many blocks the
+  scrollable list holds. The list is sized by the first render after a parse,
+  so a scroll requested between the two would be dropped; the viewer waits
+  for it before scrolling to a heading another document linked to.

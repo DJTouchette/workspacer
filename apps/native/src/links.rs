@@ -148,6 +148,17 @@ pub fn classify_in_document(document: &str, raw: &str) -> DocumentLink {
     }
 }
 
+/// The heading a link to another document asks for (`guide.md#setup`), as
+/// the slug the viewer scrolls to; `None` for no fragment or a line fragment.
+pub fn heading_fragment(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_matches(['<', '>']).trim();
+    let (_, fragment) = trimmed.split_once('#')?;
+    match same_document(fragment) {
+        DocumentLink::Heading(slug) if !slug.is_empty() => Some(slug),
+        _ => None,
+    }
+}
+
 fn same_document(fragment: &str) -> DocumentLink {
     match fragment_location(fragment) {
         Some((line, column)) => DocumentLink::Line(line, column),

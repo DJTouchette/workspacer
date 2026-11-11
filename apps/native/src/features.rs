@@ -169,6 +169,12 @@ pub enum Request {
     Previews {
         paths: Vec<String>,
     },
+    /// The pictures a previewed Markdown document shows, read on the
+    /// session's machine by `fs.readImage` (bounded in number and size) and
+    /// returned by path as PNGs no wider than the reading column needs.
+    DocumentImages {
+        paths: Vec<String>,
+    },
     CardDiff {
         session: String,
         path: String,
@@ -603,6 +609,7 @@ impl Request {
             Self::SaveFile { .. } => "file-save",
             Self::ListDir { .. } => "file-tree",
             Self::Previews { .. } => "previews",
+            Self::DocumentImages { .. } => "document-images",
             Self::CardDiff { .. } => "card-diff",
             Self::TurnChanges { .. } => "turn-changes",
             Self::Recent => "recent",
@@ -772,6 +779,23 @@ impl Request {
                     );
                 }
                 Ok(Value::Object(previews))
+            }
+            Self::DocumentImages { paths } => {
+                let mut pictures = serde_json::Map::new();
+                for path in paths.iter().take(crate::document::MAX_IMAGES) {
+                    let picture = backend.call("fs.readImage", json!({"path":path})).await;
+                    let picture = match picture {
+                        Ok(value) => tokio::task::spawn_blocking(move || document_picture(value))
+                            .await
+                            .unwrap_or_else(|e| Err(e.into())),
+                        Err(error) => Err(error),
+                    };
+                    pictures.insert(
+                        path.clone(),
+                        picture.unwrap_or_else(|e| json!({"error":e.to_string()})),
+                    );
+                }
+                Ok(Value::Object(pictures))
             }
             Self::CardDiff { session, path } => {
                 backend
@@ -1558,6 +1582,27 @@ fn project_icon(value: &Value) -> Result<Value> {
     let mut png = std::io::Cursor::new(Vec::new());
     image.write_to(&mut png, image::ImageFormat::Png)?;
     Ok(json!({"png":base64::engine::general_purpose::STANDARD.encode(png.into_inner())}))
+}
+
+/// A document's picture as a PNG at most [`crate::document::MAX_IMAGE_WIDTH`]
+/// wide (and four times that tall), never enlarged.
+fn document_picture(value: Value) -> Result<Value> {
+    let image = decode_preview(&value)?;
+    let (wide, tall) = (
+        crate::document::MAX_IMAGE_WIDTH,
+        crate::document::MAX_IMAGE_WIDTH * 4,
+    );
+    let image = if image.width() > wide || image.height() > tall {
+        image.thumbnail(wide, tall)
+    } else {
+        image
+    };
+    let (width, height) = (image.width(), image.height());
+    let mut png = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut png, image::ImageFormat::Png)?;
+    Ok(
+        json!({"width":width,"height":height,"png":base64::engine::general_purpose::STANDARD.encode(png.into_inner())}),
+    )
 }
 
 fn thumbnail(value: Value) -> Result<Value> {

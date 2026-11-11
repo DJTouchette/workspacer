@@ -7,6 +7,7 @@ pub mod child_agents;
 pub mod codex_extras;
 pub mod controller;
 pub mod diff;
+pub mod document;
 pub mod elicitation;
 pub mod features;
 pub mod handoff;

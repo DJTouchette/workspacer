@@ -114,6 +114,8 @@ impl Workspace {
             highlight_theme: cx.theme().highlight_theme.clone(),
             is_dark: self.appearance.is_dark(),
             inline_code_family: super::typography::inline_code_family(&cx.theme().mono_font_family),
+            // Set by the file viewer, which reads a document's pictures.
+            images: None,
             code_block: div()
                 .rounded(px(p.control_radius))
                 .bg(rgb(p.code_block))

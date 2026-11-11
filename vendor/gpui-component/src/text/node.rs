@@ -765,6 +765,39 @@ impl Paragraph {
                         title if title.is_empty() => image.url.to_string(),
                         title => title,
                     };
+                    // A picture the application loaded itself is drawn in
+                    // place; its click still goes to the application.
+                    if let Some(picture) = node_cx
+                        .style
+                        .images
+                        .as_ref()
+                        .and_then(|images| images.get(image.url.to_string().as_str()))
+                        .cloned()
+                    {
+                        child_nodes.push(
+                            img(picture)
+                                .id(ix)
+                                .object_fit(ObjectFit::ScaleDown)
+                                .max_w(relative(1.))
+                                .when_some(image.width, |this, width| this.w(width))
+                                .cursor_pointer()
+                                .tooltip(move |window, cx| {
+                                    Tooltip::new(tooltip.clone()).build(window, cx)
+                                })
+                                .on_click(move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    on_link_click(&url, window, cx);
+                                })
+                                .into_any_element(),
+                        );
+                        text.clear();
+                        links.clear();
+                        highlights.clear();
+                        code_ranges.clear();
+                        offset = 0;
+                        ix += 1;
+                        continue;
+                    }
                     child_nodes.push(
                         h_flex()
                             .id(ix)

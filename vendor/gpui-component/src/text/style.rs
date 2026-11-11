@@ -90,6 +90,12 @@ pub struct TextViewStyle {
     /// line at one size, so a smaller-looking inline code font is a family
     /// whose glyphs are drawn smaller (Workspacer patch).
     pub inline_code_family: Option<SharedString>,
+    /// Pictures the application has already loaded, by the source written in
+    /// the document. With `on_link_click` set images are not loaded by this
+    /// component (see `node.rs`); one whose source is here is drawn inline
+    /// instead of as a label, and still sends its click to the application
+    /// (Workspacer patch).
+    pub images: Option<Arc<std::collections::HashMap<String, Arc<gpui::Image>>>>,
 }
 
 impl PartialEq for TextViewStyle {
@@ -102,6 +108,12 @@ impl PartialEq for TextViewStyle {
             && self.inline_code_family == other.inline_code_family
             // Identity is excluded like `on_link_click`; turning it on or off reparses.
             && self.linkify.is_some() == other.linkify.is_some()
+            // A new set of pictures redraws the document with them.
+            && match (&self.images, &other.images) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            }
     }
 }
 
@@ -121,6 +133,7 @@ impl Default for TextViewStyle {
             code_block: StyleRefinement::default(),
             is_dark: false,
             inline_code_family: None,
+            images: None,
         }
     }
 }

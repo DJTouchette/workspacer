@@ -119,6 +119,27 @@ pub(super) struct PreviewPane {
     _editor_watch: Option<Subscription>,
     /// The next redraw for a loading spinner on screen.
     loop_ticker: motion::Ticker,
+    /// The document as the renderer takes it (front matter and footnotes
+    /// rewritten; see `wks_native::document`), with the text it was made from.
+    rendered: (SharedString, SharedString),
+    /// A link asked for a heading of another document: its path and slug,
+    /// scrolled to once that document has been parsed.
+    pending_heading: Option<(String, String)>,
+    pictures: Pictures,
+}
+
+/// The shown document's own image files, drawn inline once read from the
+/// session's machine.
+#[derive(Default)]
+struct Pictures {
+    /// Each picture's source as the document writes it, and the absolute
+    /// path it means.
+    wanted: Vec<(String, String)>,
+    /// Those read so far, by source as written. Replaced whole when it
+    /// changes: the renderer redraws for a new set, not a changed one.
+    loaded: Option<Arc<HashMap<String, Arc<gpui::Image>>>>,
+    /// The request whose answer is already in `loaded`.
+    seen: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -209,6 +230,9 @@ impl PreviewPane {
             explorer: ExplorerState::default(),
             _editor_watch: None,
             loop_ticker: Default::default(),
+            rendered: Default::default(),
+            pending_heading: None,
+            pictures: Pictures::default(),
         };
         pane.load(state, window, cx);
         pane
@@ -338,6 +362,14 @@ impl PreviewPane {
         if self.presentation == Presentation::Window && self.title_ready {
             window.set_window_title(&popout_title(target.name()));
         }
+        // A heading was wanted in some other file than the one that came.
+        if self
+            .pending_heading
+            .as_ref()
+            .is_some_and(|(path, _)| *path != target.path)
+        {
+            self.pending_heading = None;
+        }
         match target.kind {
             FileKind::Text => {
                 let contents = state.value["contents"].as_str().unwrap_or("").to_owned();
@@ -362,6 +394,24 @@ impl PreviewPane {
                 };
                 self.contents = contents.clone().into();
                 self.base = self.contents.clone();
+                if self.renderable {
+                    self.pictures.wanted = wks_native::document::images(&target.path, &contents);
+                    if !self.pictures.wanted.is_empty() {
+                        let paths = self
+                            .pictures
+                            .wanted
+                            .iter()
+                            .map(|(_, p)| p.clone())
+                            .collect();
+                        let workspace = self.workspace.clone();
+                        // Deferred: the workspace is delivering this file.
+                        cx.defer(move |cx| {
+                            let _ = workspace.update(cx, |ws, cx| {
+                                ws.request(Request::DocumentImages { paths }, cx)
+                            });
+                        });
+                    }
+                }
                 let language = target.language();
                 let editor = cx.new(|cx| {
                     InputState::new(window, cx)
@@ -413,8 +463,79 @@ impl PreviewPane {
         self.image = None;
         self.document = None;
         self.contents = SharedString::default();
+        self.rendered = Default::default();
+        self.pictures = Pictures::default();
         self.renderable = false;
         self.mode = Mode::Source;
+    }
+
+    /// Pictures the shown document asked for have been read.
+    pub(super) fn receive_pictures(&mut self, state: &RequestState, cx: &mut Context<Self>) {
+        let Request::DocumentImages { paths } = &state.request else {
+            return;
+        };
+        if state.loading
+            || state.number <= self.pictures.seen
+            || self.pictures.wanted.is_empty()
+            || !self
+                .pictures
+                .wanted
+                .iter()
+                .map(|(_, path)| path)
+                .eq(paths.iter())
+        {
+            return;
+        }
+        self.pictures.seen = state.number;
+        let loaded: HashMap<String, Arc<gpui::Image>> = self
+            .pictures
+            .wanted
+            .iter()
+            .filter_map(|(written, path)| {
+                let png = state.value[path.as_str()]["png"].as_str()?;
+                let bytes = base64::engine::general_purpose::STANDARD.decode(png).ok()?;
+                Some((
+                    written.clone(),
+                    Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes)),
+                ))
+            })
+            .collect();
+        if !loaded.is_empty() {
+            self.pictures.loaded = Some(Arc::new(loaded));
+            cx.notify();
+        }
+    }
+
+    /// Scroll to the heading a link into this document asked for, once the
+    /// document has been parsed.
+    fn settle_pending_heading(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((path, _)) = &self.pending_heading else {
+            return;
+        };
+        if self.state.loading || self.state.number != self.shown {
+            return;
+        }
+        if self.target().is_none_or(|t| t.path != *path) {
+            // Still showing the document the link was in.
+            return;
+        }
+        if self.mode != Mode::Preview {
+            // It opened as source (too large to render): no headings.
+            self.pending_heading = None;
+            return;
+        }
+        let Some(document) = self.document.clone().filter(|d| d.parsed(cx)) else {
+            return;
+        };
+        if document.block_count(cx) == 0 {
+            // Parsed, but its list is sized by the render that follows this
+            // one; a scroll now would be dropped. Look again next frame.
+            cx.on_next_frame(window, |_, _, cx| cx.notify());
+            return;
+        }
+        if let Some((_, slug)) = self.pending_heading.take() {
+            self.scroll_to_heading(&slug, cx);
+        }
     }
 
     /// The request this pane was waiting for will never arrive here.
@@ -511,6 +632,11 @@ impl PreviewPane {
                 self.notice = Some("Commit and issue links open from the chat.".into())
             }
             DocumentLink::Other(Link::File(next)) => {
+                // `other.md#heading`: scroll there once that file is shown.
+                self.pending_heading = (next.line.is_none() && next.markdown())
+                    .then(|| links::heading_fragment(raw))
+                    .flatten()
+                    .map(|slug| (next.path.clone(), slug));
                 self.open_guarded(next, Navigation::Forward, window, cx);
             }
         }
@@ -847,6 +973,17 @@ impl PreviewPane {
             return;
         }
         let headings = document.headings(cx);
+        if slug == wks_native::document::FOOTNOTES_ANCHOR {
+            // The list the preview appends; the last heading of that name.
+            if let Some((block, ..)) = headings
+                .iter()
+                .rev()
+                .find(|(_, _, text)| text == wks_native::document::FOOTNOTES_HEADING)
+            {
+                document.scroll_to_block(*block, cx);
+            }
+            return;
+        }
         let slugs = links::heading_slugs(headings.iter().map(|(_, _, text)| text.as_str()));
         match slugs.iter().position(|s| s == slug) {
             Some(i) => document.scroll_to_block(headings[i].0, cx),
@@ -985,9 +1122,16 @@ impl PreviewPane {
                 .into_any_element();
         }
         if let Some(style) = style {
+            if self.rendered.0 != self.contents {
+                let rendered = match wks_native::document::render_source(&self.contents) {
+                    std::borrow::Cow::Borrowed(_) => self.contents.clone(),
+                    std::borrow::Cow::Owned(text) => text.into(),
+                };
+                self.rendered = (self.contents.clone(), rendered);
+            }
             let view = TextView::markdown(
                 SharedString::from(format!("file-preview-markdown-{}", self.shown)),
-                self.contents.clone(),
+                self.rendered.1.clone(),
                 window,
                 cx,
             )
@@ -1147,6 +1291,7 @@ impl Render for PreviewPane {
         if self.presentation == Presentation::Window {
             self.width = window.viewport_size().width;
         }
+        self.settle_pending_heading(window, cx);
         // Built in Source mode too: the document's keyed state (parse,
         // scroll position) then survives a round trip through the source.
         let previewing = self.previewable()
@@ -1164,7 +1309,9 @@ impl Render for PreviewPane {
                 let on_link: Arc<LinkClickFn> = Arc::new(move |url, window, cx| {
                     let _ = pane.update(cx, |pane, cx| pane.follow_link(url, window, cx));
                 });
-                ws.markdown_style(on_link, true, cx)
+                let mut style = ws.markdown_style(on_link, true, cx);
+                style.images = self.pictures.loaded.clone();
+                style
             });
             let place = if window_pane {
                 ws.icon_button(
@@ -2075,6 +2222,11 @@ impl Workspace {
                 None => pane.update(cx, |pane, cx| pane.save_result(&save, window, cx)),
             }
         }
+        if let (Some((pane, _)), Some(pictures)) = (&showing, next.requests.get("document-images"))
+        {
+            let pictures = pictures.clone();
+            pane.update(cx, |pane, cx| pane.receive_pictures(&pictures, cx));
+        }
         let Some((pane, popout)) = showing else {
             if let Some(state) = incoming {
                 let presentation = if self.dock(window).is_some() {
@@ -2620,6 +2772,18 @@ impl PreviewPane {
     }
     pub(super) fn editor(&self) -> Option<&Entity<InputState>> {
         self.editor.as_ref()
+    }
+    pub(super) fn rendered_for_test(&self) -> String {
+        self.rendered.1.to_string()
+    }
+    pub(super) fn notice_for_test(&self) -> Option<String> {
+        self.notice.as_ref().map(|n| n.to_string())
+    }
+    pub(super) fn pending_heading_for_test(&self) -> Option<&(String, String)> {
+        self.pending_heading.as_ref()
+    }
+    pub(super) fn pictures_for_test(&self) -> usize {
+        self.pictures.loaded.as_ref().map_or(0, |p| p.len())
     }
     pub(super) fn document(&self) -> Option<&TextViewHandle> {
         self.document.as_ref()

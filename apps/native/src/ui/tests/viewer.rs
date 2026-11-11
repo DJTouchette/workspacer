@@ -73,7 +73,7 @@ fn file_viewer_contains_keys_over_a_nonempty_draft(cx: &mut TestAppContext) {
             )
         });
         assert!(
-            commands.try_recv().is_err(),
+            next_command(commands).is_none(),
             "{keys} reached the workspace under the viewer"
         );
     };
@@ -186,7 +186,7 @@ fn file_viewer_contains_keys_over_a_nonempty_draft(cx: &mut TestAppContext) {
     let Command::Act {
         session,
         action: Action::Send(text),
-    } = commands.try_recv().expect("send works after closing")
+    } = next_command(&mut commands).expect("send works after closing")
     else {
         panic!("wrong action");
     };
@@ -207,10 +207,21 @@ const GUIDE: &str = "[Library source](../src/lib.rs:3)\n\n# Guide\n\n\
         Filler 13.\n\nFiller 14.\n\nFiller 15.\n\nFiller 16.\n\nFiller 17.\n\nFiller 18.\n\n\
         Filler 19.\n\nFiller 20.\n\nFiller 21.\n\nFiller 22.\n\nFiller 23.\n\nFiller 24.\n";
 
+/// The next command the window issued, past the reads a rendered document
+/// makes for its own pictures (which no key or click asked for).
+fn next_command(commands: &mut tokio::sync::mpsc::Receiver<Command>) -> Option<Command> {
+    loop {
+        match commands.try_recv().ok()? {
+            Command::Request(wks_native::features::Request::DocumentImages { .. }) => continue,
+            command => return Some(command),
+        }
+    }
+}
+
 fn preview_request(
     commands: &mut tokio::sync::mpsc::Receiver<Command>,
 ) -> Option<(String, wks_native::links::FileTarget)> {
-    match commands.try_recv().ok()? {
+    match next_command(commands)? {
         Command::Request(wks_native::features::Request::FilePreview { session, target }) => {
             Some((session, target))
         }
@@ -351,20 +362,23 @@ fn markdown_files_render_with_a_source_toggle_and_document_links(cx: &mut TestAp
     assert_eq!(top(&mut visual), 0);
     follow(&mut visual, "Guide.MD#usage-1");
     assert_eq!(top(&mut visual), usage_again);
-    assert!(commands.try_recv().is_err(), "anchors stay in the document");
+    assert!(
+        next_command(&mut commands).is_none(),
+        "anchors stay in the document"
+    );
     follow(&mut visual, "#not-here");
     visual.update(|_, cx| assert!(pane.read(cx).notice().unwrap().contains("No heading")));
     // Unsafe schemes are refused visibly inside the viewer.
     follow(&mut visual, "javascript:alert(1)");
     visual.update(|_, cx| assert!(pane.read(cx).notice().unwrap().contains("javascript")));
     assert!(visual.debug_bounds("file-viewer-notice").is_some());
-    assert!(cx.opened_url().is_none() && commands.try_recv().is_err());
+    assert!(cx.opened_url().is_none() && next_command(&mut commands).is_none());
     follow(&mut visual, "https://example.com/docs");
     assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
     // A line of this same document opens its source there.
     follow(&mut visual, "Guide.MD:5");
     assert!(
-        commands.try_recv().is_err(),
+        next_command(&mut commands).is_none(),
         "same-file lines do not re-read"
     );
     visual.update(|window, cx| {
@@ -415,7 +429,7 @@ fn markdown_files_render_with_a_source_toggle_and_document_links(cx: &mut TestAp
     visual.simulate_click(segment.center(), gpui::Modifiers::default());
     visual.run_until_parked();
     visual.update(|_, cx| assert_eq!(pane.read(cx).mode(), file_viewer::Mode::Preview));
-    assert!(commands.try_recv().is_err());
+    assert!(next_command(&mut commands).is_none());
     // Following a file link records Back; the next file arrives in place.
     follow(&mut visual, "../src/lib.rs:3");
     let (_, lib) = preview_request(&mut commands).unwrap();
@@ -514,7 +528,7 @@ fn one_ctrl_f_from_the_preview_opens_source_search(cx: &mut TestAppContext) {
         assert_eq!(this.composer.read(cx).value().as_ref(), "KEEP_DRAFT");
     });
     // Nothing typed into the viewer reached the hub.
-    assert!(commands.try_recv().is_err());
+    assert!(next_command(&mut commands).is_none());
 }
 
 #[gpui::test]
@@ -717,8 +731,8 @@ fn docked_viewer_keeps_the_chat_usable_and_routes_keys_by_focus(cx: &mut TestApp
     visual.simulate_keystrokes("ctrl-enter");
     visual.run_until_parked();
     assert!(matches!(
-        commands.try_recv(),
-        Ok(Command::Act { action: Action::Send(text), .. }) if text == "DOCKED_DRAFT"
+        next_command(&mut commands),
+        Some(Command::Act { action: Action::Send(text), .. }) if text == "DOCKED_DRAFT"
     ));
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
@@ -757,7 +771,10 @@ fn docked_viewer_keeps_the_chat_usable_and_routes_keys_by_focus(cx: &mut TestApp
     ] {
         visual.simulate_keystrokes(keys);
         visual.run_until_parked();
-        assert!(commands.try_recv().is_err(), "{keys} reached the workspace");
+        assert!(
+            next_command(&mut commands).is_none(),
+            "{keys} reached the workspace"
+        );
         workspace.read_with(&visual, |this, cx| {
             assert_eq!(
                 this.composer.read(cx).value().as_ref(),
@@ -951,7 +968,10 @@ fn viewer_pops_out_into_its_own_window_and_docks_back(cx: &mut TestAppContext) {
     for keys in ["ctrl-enter", "ctrl-n", "escape", "x"] {
         window.simulate_keystrokes(keys);
         window.run_until_parked();
-        assert!(commands.try_recv().is_err(), "{keys} reached the workspace");
+        assert!(
+            next_command(&mut commands).is_none(),
+            "{keys} reached the workspace"
+        );
     }
     assert_eq!(
         cx.windows().len(),
@@ -970,8 +990,8 @@ fn viewer_pops_out_into_its_own_window_and_docks_back(cx: &mut TestAppContext) {
     visual.simulate_keystrokes("ctrl-enter");
     visual.run_until_parked();
     assert!(matches!(
-        commands.try_recv(),
-        Ok(Command::Act { action: Action::Send(text), .. }) if text == "POPOUT_DRAFT"
+        next_command(&mut commands),
+        Some(Command::Act { action: Action::Send(text), .. }) if text == "POPOUT_DRAFT"
     ));
     // New links land in the popped-out window; switching sessions keeps it.
     preview_state(
@@ -2106,4 +2126,209 @@ fn unsaved_edits_move_with_the_editor_into_its_own_window(cx: &mut TestAppContex
     let pane = pane_of(&workspace, &visual);
     assert_eq!(editor_text(&pane, &visual), "Xone\n");
     assert!(pane.read_with(&visual, |p, _| p.dirty()));
+}
+
+/// Wait for the rendered document's background parse.
+fn parsed(pane: &Entity<file_viewer::PreviewPane>, visual: &mut VisualTestContext) {
+    for _ in 0..200 {
+        settle(visual);
+        if visual.update(|_, cx| pane.read(cx).document().is_some_and(|d| d.parsed(cx))) {
+            return;
+        }
+    }
+    panic!("the document was never parsed");
+}
+
+#[gpui::test]
+fn previews_render_front_matter_and_footnotes_and_follow_headings_across_files(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(state("a")), window, cx)
+        })
+    });
+    let guide = "---\ntitle: Guide\n---\n# Guide\n\nRead the note[^n] and [setup](setup.md#install).\n\n[^n]: The note.\n";
+    preview_state(
+        &workspace,
+        &mut visual,
+        "a",
+        file_target("/repo/docs/guide.md"),
+        1,
+        false,
+        None,
+        serde_json::json!({"contents": guide, "size": guide.len()}),
+    );
+    let pane = pane_of(&workspace, &visual);
+    parsed(&pane, &mut visual);
+    // The renderer is given front matter as a yaml block and numbered
+    // footnotes; the source the editor holds is the file as written.
+    pane.read_with(&visual, |pane, cx| {
+        let rendered = pane.rendered_for_test();
+        assert!(
+            rendered.starts_with("```yaml\ntitle: Guide\n```\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("note[\\[1\\]](#wks-footnotes)"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.ends_with("###### Footnotes\n\n1. The note.\n"),
+            "{rendered}"
+        );
+        assert_eq!(pane.editor().unwrap().read(cx).value().as_ref(), guide);
+        let headings: Vec<String> = pane
+            .document()
+            .unwrap()
+            .headings(cx)
+            .into_iter()
+            .map(|(_, _, text)| text)
+            .collect();
+        assert_eq!(headings, ["Guide", "Footnotes"]);
+    });
+    let follow = |visual: &mut VisualTestContext, raw: &'static str| {
+        visual.update(|window, cx| pane.update(cx, |pane, cx| pane.follow_link(raw, window, cx)));
+        visual.run_until_parked();
+    };
+    // A footnote reference scrolls within the document; nothing is read.
+    let _ = effects(&mut commands);
+    follow(&mut visual, "#wks-footnotes");
+    assert!(preview_request(&mut commands).is_none());
+    pane.read_with(&visual, |pane, _| assert!(pane.notice_for_test().is_none()));
+
+    // A heading of another document: the file is read, then scrolled to
+    // that heading once it has been parsed.
+    follow(&mut visual, "setup.md#install");
+    let (_, target) = preview_request(&mut commands).expect("the other document is read");
+    assert_eq!(
+        (target.path.as_str(), target.line),
+        ("/repo/docs/setup.md", None)
+    );
+    // Enough after the heading that it can reach the top of the view.
+    let filler = "Filler.\n\n".repeat(80);
+    let setup = format!("# Setup\n\n{filler}\n## Install\n\nRun it.\n\n{filler}{filler}");
+    preview_state(
+        &workspace,
+        &mut visual,
+        "a",
+        file_target("/repo/docs/setup.md"),
+        2,
+        false,
+        None,
+        serde_json::json!({"contents": setup, "size": setup.len()}),
+    );
+    parsed(&pane, &mut visual);
+    settle(&mut visual);
+    let install = visual.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert!(
+            pane.pending_heading_for_test().is_none(),
+            "scrolled once parsed"
+        );
+        assert!(pane.notice_for_test().is_none());
+        let document = pane.document().unwrap();
+        let block = document
+            .headings(cx)
+            .into_iter()
+            .find(|(_, _, text)| text == "Install")
+            .unwrap()
+            .0;
+        (document.scroll_top(cx).0, block)
+    });
+    assert_eq!(install.0, install.1, "the Install heading is at the top");
+
+    // A heading the other document does not have says so.
+    follow(&mut visual, "guide.md#nowhere");
+    let _ = preview_request(&mut commands).expect("read again");
+    preview_state(
+        &workspace,
+        &mut visual,
+        "a",
+        file_target("/repo/docs/guide.md"),
+        3,
+        false,
+        None,
+        serde_json::json!({"contents": guide, "size": guide.len()}),
+    );
+    parsed(&pane, &mut visual);
+    settle(&mut visual);
+    pane.read_with(&visual, |pane, _| {
+        assert_eq!(
+            pane.notice_for_test().as_deref(),
+            Some("No heading “#nowhere” in this document.")
+        );
+    });
+}
+
+#[gpui::test]
+fn a_documents_own_pictures_are_read_from_the_session_and_drawn_inline(cx: &mut TestAppContext) {
+    use wks_native::features::{Request, RequestState};
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(state("a")), window, cx)
+        })
+    });
+    let text = "# Flow\n\n![Diagram](img/flow.png)\n\n![Remote](https://example.com/x.png)\n";
+    preview_state(
+        &workspace,
+        &mut visual,
+        "a",
+        file_target("/repo/docs/flow.md"),
+        1,
+        false,
+        None,
+        serde_json::json!({"contents": text, "size": text.len()}),
+    );
+    // Only the document's own file is asked for; the web address is not.
+    let asked: Vec<Vec<String>> = effects(&mut commands)
+        .into_iter()
+        .filter_map(|c| match c {
+            Command::Request(Request::DocumentImages { paths }) => Some(paths),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, [vec!["/repo/docs/img/flow.png".to_owned()]]);
+    let pane = pane_of(&workspace, &visual);
+    pane.read_with(&visual, |pane, _| assert_eq!(pane.pictures_for_test(), 0));
+
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(4, 3)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let encoded = {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(png.into_inner())
+    };
+    let deliver = |visual: &mut VisualTestContext, paths: Vec<String>, number: u64| {
+        let encoded = encoded.clone();
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                let value = serde_json::json!({
+                    "/repo/docs/img/flow.png": {"png": encoded, "width": 4, "height": 3}
+                });
+                view.requests.insert(
+                    "document-images",
+                    RequestState {
+                        request: Request::DocumentImages { paths },
+                        number,
+                        loading: false,
+                        error: None,
+                        value: Arc::new(value),
+                    },
+                );
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+    };
+    // An answer for some other document's pictures is not this one's.
+    deliver(&mut visual, vec!["/elsewhere/a.png".into()], 5);
+    pane.read_with(&visual, |pane, _| assert_eq!(pane.pictures_for_test(), 0));
+    deliver(&mut visual, vec!["/repo/docs/img/flow.png".into()], 6);
+    pane.read_with(&visual, |pane, _| assert_eq!(pane.pictures_for_test(), 1));
+    parsed(&pane, &mut visual);
 }

@@ -21,6 +21,9 @@ async fn send(socket: &mut Socket, message: Message) -> Result<(), Closed> {
 
 /// What a file reads as until the editor saves over it.
 const FIXTURE_SOURCE: &str = "fn main() {\n    restore_workspace();\n    start();\n}\n";
+/// What every Markdown file reads as: front matter, a footnote, a picture
+/// of the document's own, and a heading link into another document.
+const FIXTURE_DOCUMENT: &str = "---\ntitle: Workspace guide\nstatus: draft\n---\n# Workspace guide\n\nSessions restore where you left them[^restore]. See [the checks](guide.md#checks) for what runs before a release.\n\n![Layout of the workspace](img/layout.png)\n\n## Sessions\n\nEach session keeps its own conversation, terminal and changes.\n\n## Checks\n\n- Unit tests\n- A real-window smoke run[^smoke]\n\n[^restore]: Including the scroll position of the conversation.\n[^smoke]: Under a virtual display, so it needs no screen.\n";
 
 pub async fn serve(listener: TcpListener, sessions: usize, turns: usize) -> Result<()> {
     serve_with_transcript(listener, sessions, turns, false).await
@@ -620,10 +623,13 @@ impl Fixture {
     }
 
     fn contents(&self, path: &str) -> String {
-        self.written
-            .get(path)
-            .cloned()
-            .unwrap_or_else(|| FIXTURE_SOURCE.into())
+        self.written.get(path).cloned().unwrap_or_else(|| {
+            if crate::links::markdown(path) {
+                FIXTURE_DOCUMENT.into()
+            } else {
+                FIXTURE_SOURCE.into()
+            }
+        })
     }
 
     fn save_config(&mut self, params: &Value) -> Value {

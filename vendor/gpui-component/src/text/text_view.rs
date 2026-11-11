@@ -80,6 +80,13 @@ impl TextViewHandle {
         matches!(self.0.read(cx).parsed_result, Some(Ok(_)))
     }
 
+    /// How many blocks the `scrollable` list currently holds. It is sized to
+    /// the parsed content by the first render after a parse, so a scroll
+    /// requested before then would be dropped (Workspacer patch).
+    pub fn block_count(&self, cx: &App) -> usize {
+        self.0.read(cx).list_state.item_count()
+    }
+
     /// `(block index, level, plain text)` of every top-level heading. In
     /// `scrollable` mode a block index is its list item.
     pub fn headings(&self, cx: &App) -> Vec<(usize, u8, String)> {
