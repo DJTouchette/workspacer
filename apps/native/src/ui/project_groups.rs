@@ -1,7 +1,7 @@
 //! Projects as named groups of folders (`docs/features/projects.md`): the
 //! Projects page's project cards and editor, the sidebar filter for a whole
-//! project, and the pending-scratch counts shown beside projects. The model
-//! and the membership rules live in `wks_native::project_groups`.
+//! project. The model and the membership rules live in
+//! `wks_native::project_groups`.
 //!
 //! A group filter is held in `project_filter` as `group:<id>`, so every
 //! screen that already follows the sidebar's project keeps working; the
@@ -53,38 +53,20 @@ impl Workspace {
             .is_none_or(|s| !s.loading && s.error.is_none())
     }
 
-    /// Projects and pending scratch counts, read with the folder registry on
-    /// every (re)connection and visit to Projects.
+    /// Projects, read with the folder registry on every (re)connection and
+    /// visit to Projects.
     pub(super) fn load_project_groups(&mut self, cx: &mut Context<Self>) {
         if self.demo || !self.view.connected {
             return;
         }
-        for (key, request) in [
-            ("project-groups", Request::ProjectGroups),
-            ("scratch-pending", Request::ScratchPending),
-        ] {
-            if !self.view.requests.get(key).is_some_and(|s| s.loading) {
-                self.request(request, cx);
-            }
-        }
-    }
-
-    /// `(scratch root, pending)` for every scratch holding pending files.
-    pub(super) fn pending_roots(&self) -> Vec<(String, usize)> {
-        self.view
+        if !self
+            .view
             .requests
-            .get("scratch-pending")
-            .filter(|s| s.error.is_none())
-            .map(|s| project_groups::pending_roots(&s.value))
-            .unwrap_or_default()
-    }
-
-    pub(super) fn pending_total(&self) -> usize {
-        self.pending_roots().iter().map(|(_, n)| n).sum()
-    }
-
-    pub(super) fn pending_in(&self, folders: &[String]) -> usize {
-        project_groups::pending_in(&self.pending_roots(), folders)
+            .get("project-groups")
+            .is_some_and(|s| s.loading)
+        {
+            self.request(Request::ProjectGroups, cx);
+        }
     }
 
     /// The group the sidebar is filtered to, if the filter is a project.
@@ -399,7 +381,7 @@ impl Workspace {
                                     .min_w_0()
                                     .text_size(px(chrome::scale::META))
                                     .text_color(rgb(p.muted))
-                                    .child("No projects yet. Group an app's api, web and infra folders into one project to filter, launch and read scratch across them."),
+                                    .child("No projects yet. Group an app's api, web and infra folders into one project to filter and launch across them."),
                             ),
                     )
                 },
@@ -431,7 +413,6 @@ impl Workspace {
     ) -> Div {
         let p = self.palette();
         let (all, live) = sessions.unwrap_or_default();
-        let pending = self.pending_in(&group.folders);
         let folders = group.folders.len();
         let mut meta = format!("{folders} folder{}", if folders == 1 { "" } else { "s" });
         if all > 0 {
@@ -440,7 +421,6 @@ impl Workspace {
         let open = group.id.clone();
         let spawn = group.folders.first().cloned();
         let edit = group.clone();
-        let scratch = group.id.clone();
         let can_spawn = self.view.connected && !self.demo && spawn.is_some();
         // A fill like the folder cards below, not another bordered box.
         div()
@@ -473,57 +453,14 @@ impl Workspace {
                             .flex_col()
                             .gap_1()
                             .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(px(chrome::scale::BODY))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(group.name.clone()),
-                                    )
-                                    .when(pending > 0, |d| {
-                                        d.child(
-                                            div()
-                                                .id(("project-group-pending", ix))
-                                                .debug_selector(move || {
-                                                    format!("project-group-pending-{ix}")
-                                                })
-                                                .flex_shrink_0()
-                                                .px(px(6.))
-                                                .rounded_full()
-                                                .bg(gpui::Hsla::from(rgb(p.warning)).opacity(0.15))
-                                                .text_size(px(chrome::scale::CAPTION))
-                                                .text_color(rgb(p.warning))
-                                                .cursor_pointer()
-                                                .hover(move |s| {
-                                                    s.bg(gpui::Hsla::from(rgb(p.warning))
-                                                        .opacity(0.28))
-                                                })
-                                                .tooltip(|window, cx| {
-                                                    gpui_component::tooltip::Tooltip::new(
-                                                        "Open this project's scratch",
-                                                    )
-                                                    .build(window, cx)
-                                                })
-                                                .child(format!("{pending} pending"))
-                                                .on_click(cx.listener(
-                                                    move |this, _, window, cx| {
-                                                        cx.stop_propagation();
-                                                        this.extras.scratch_preset =
-                                                            Some(group_filter(&scratch));
-                                                        this.open_feature(
-                                                            Screen::Scratch,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    },
-                                                )),
-                                        )
-                                    }),
+                                div().flex().items_center().gap_2().child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_size(px(chrome::scale::BODY))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(group.name.clone()),
+                                ),
                             )
                             .child(
                                 // Running work in the busy colour, as on the

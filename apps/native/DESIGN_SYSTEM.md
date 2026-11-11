@@ -116,11 +116,11 @@ the same order:
 | Status line | Shown only when there is something to say | Connection label · Update |
 | Footer | The Workspace menu and Settings | Workspace · Settings |
 
-Every destination (All projects, Session history, Jobs, Hosts, Scratch) is a labelled
+Every destination (All projects, Session history, Jobs, Hosts) is a labelled
 row in the **Workspace** menu, not an icon of its own: places visited now and then read
 better as words than as a row of icons to memorise. A new destination is a new row in
-`nav_destinations()`; a new status joins the status line. The menu button carries the
-Scratch pending count and reads as selected while one of its pages is open.
+`nav_destinations()`; a new status joins the status line. The menu button reads
+as selected while one of its pages is open.
 
 ## 7. Custom themes
 

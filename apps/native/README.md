@@ -1051,7 +1051,7 @@ space. Without a selected session, the welcome state takes the full content area
 New-session fields and long approval details remain scrollable.
 
 Every non-chat screen (Settings, Projects, New Agent, Changes, Session details,
-Agent setup, Change model, Session history, Jobs, Scratch) is built from the same pieces in
+Agent setup, Change model, Session history, Jobs) is built from the same pieces in
 `src/ui/chrome.rs`: `page_view` (scrolling body, caption-safe top inset and a
 window drag strip where the app draws its own caption), `page_header` (back
 action, overline, title and description, trailing actions on the title row),
@@ -1065,7 +1065,7 @@ Current fixture captures (Linux/X11, software Vulkan; synthetic sessions):
 ![Dark conversation](docs/ui-dark.png)
 
 [Light conversation](docs/ui-light.png) · [Nord at 720 × 480](docs/ui-nord.png) ·
-[Welcome state](docs/ui-empty.png) · [Scratch, a file open](docs/ui-scratch.png)
+[Welcome state](docs/ui-empty.png)
 
 The visual pass was checked in all three themes, including the minimum window
 size and the creation form. All 36 native tests passed, including 13 GPUI tests.
@@ -1084,9 +1084,9 @@ python3 scripts/smoke.py --binary target/debug/wks-native --bus ws://127.0.0.1:7
 python3 scripts/smoke.py --binary target/debug/wks-native --screen projects --no-input --output projects.png
 python3 scripts/smoke.py --binary target/debug/wks-native --screen settings --theme light --no-input --output settings.png
 # Against an isolated embedded Rust backend (real hub services). HOME isolates
-# home-derived state such as ~/.workspacer/scratch; let the backend create its
-# directory on a first run before editing its config/config.yaml.
-HOME=/tmp/demo-home python3 scripts/smoke.py --binary target/debug/wks-native --rust-local-dir /tmp/demo-backend --screen scratch --no-input --output scratch.png
+# home-derived state; let the backend create its directory on a first run
+# before editing its config/config.yaml.
+HOME=/tmp/demo-home python3 scripts/smoke.py --binary target/debug/wks-native --rust-local-dir /tmp/demo-backend --screen jobs --no-input --output jobs.png
 # --no-input captures the current view without sending a fixture message.
 ```
 
@@ -1241,10 +1241,8 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/ui/jobs.rs` | Jobs screen: review, approve, pause, run and remove (agents author jobs) |
 | `src/hosts.rs` | Host work queue model (`docs/host-work-queue.md`): `host.resources`, `queue.list`/`targets`/`config` replies and `host.resources`/`queue.changed` events folded into a live overlay; unknown metrics render as "—", never 0; older hubs read as unsupported |
 | `src/ui/hosts.rs` | Hosts screen (`g o`, sidebar): a card per host (this hub, then peers) with pressure meters, memory/disk, slots, gate and reasons, and its queue with Cancel on queued items; the owner's Limits editor; the New Agent host picker's targets |
-| `src/project_groups.rs` | Projects as named groups of folders (`projectGroups.list`): membership by longest folder (worktrees and workers resolve to their repository's project), editor drafts, pending-scratch totals |
+| `src/project_groups.rs` | Projects as named groups of folders (`projectGroups.list`): membership by longest folder (worktrees and workers resolve to their repository's project), editor drafts |
 | `src/ui/project_groups.rs` | Project cards and editor on Projects, the `group:<id>` sidebar filter and its helpers, pending counts |
-| `src/scratch.rs` | A project's `scratch.list` rows (pending first), filters, and the `scratch.mark` patches the Scratch page sends |
-| `src/ui/scratch.rs` | Scratch screen (`g n`, sidebar inbox): read a project's personal files kept outside git, mark them pending/done/archived, keep, edit purpose and note; never runs or writes a file |
 | `src/ui/tests.rs`, `src/ui/tests/` | Workspace UI tests, one file per area, with shared fixtures |
 | `src/ui/navigation.rs` | Projects view, shared navigation and focus handling |
 | `src/links.rs` | Chat link classification, path/line resolution, preview bounds and errors |

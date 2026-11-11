@@ -33,7 +33,6 @@ mod project_registry;
 mod pull_requests;
 mod question_sets;
 mod quoting;
-mod scratch_store;
 mod scrolling;
 mod session_cleanup;
 mod session_controls;
@@ -87,7 +86,6 @@ fn project_read(command: &Command) -> bool {
             | Command::Request(
                 Request::Projects
                     | Request::ProjectGroups
-                    | Request::ScratchPending
                     | Request::InspectProject { .. }
                     | Request::BrowseFolders { .. }
             )

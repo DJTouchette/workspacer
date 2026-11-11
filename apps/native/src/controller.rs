@@ -841,9 +841,6 @@ struct Worker {
     dirty: bool,
     fleet_dirty: bool,
     action_number: u64,
-    /// The Scratch page or pending badges have read: `scratch.changed` is
-    /// subscribed.
-    scratch_watch: bool,
     /// Projects have been read: `projectGroups.changed` is subscribed.
     groups_watch: bool,
     /// The Hosts view is open: `host.*` and `queue.*` are subscribed.
@@ -910,7 +907,6 @@ impl Worker {
             dirty: false,
             fleet_dirty: false,
             action_number: 0,
-            scratch_watch: false,
             groups_watch: false,
             hosts_watch: false,
             catalog_number: 0,
@@ -1015,21 +1011,15 @@ impl Worker {
                 self.dirty = true;
             }
             Command::Request(request) => {
-                // The Scratch page refreshes when an agent saves or marks a
-                // file; the topic is only watched once the page has opened.
-                // Pending badges read scratch.pending at connection, so the
-                // topic is watched from then on too.
+                // Project changes made elsewhere are watched once projects
+                // have been read.
                 use crate::features::Request as R;
-                let scratch = !self.scratch_watch
-                    && matches!(request, R::ScratchList { .. } | R::ScratchPending)
-                    && self.view.may_call("scratch.list");
                 let groups = !self.groups_watch
                     && matches!(request, R::ProjectGroups)
                     && self.view.may_call("projectGroups.list");
                 self.request(request);
-                self.scratch_watch |= scratch;
                 self.groups_watch |= groups;
-                if scratch || groups {
+                if groups {
                     self.subscribe().await;
                 }
             }
@@ -1239,7 +1229,6 @@ impl Worker {
                 | "host-action"
                 | "link-action"
                 | "queue-submit"
-                | "scratch-mark"
                 | "project-group-save"
                 | "project-group-remove"
                 | "task-stop"
@@ -1967,8 +1956,6 @@ impl Worker {
                     self.queue_ui_request(&topic, &data);
                 } else if topic == "sessionArchive.changed" {
                     self.apply_archive(&data);
-                } else if topic == "scratch.changed" {
-                    self.scratch_changed(&data);
                 } else if topic == "projectGroups.changed" {
                     if self.view.requests.contains_key("project-groups") {
                         self.request(crate::features::Request::ProjectGroups);
@@ -3106,40 +3093,6 @@ impl Worker {
         )
     }
 
-    /// `scratch.changed {key}`: re-read the open Scratch page (and the file
-    /// shown in it) when the change is to the project it shows. A list still
-    /// loading answers with the change already in it.
-    fn scratch_changed(&mut self, data: &Value) {
-        let Some(key) = data["key"].as_str() else {
-            return;
-        };
-        if self.view.requests.contains_key("scratch-pending") {
-            self.request(crate::features::Request::ScratchPending);
-        }
-        let Some(list) = self.view.requests.get("scratch") else {
-            return;
-        };
-        let shown = list.value["lists"].as_array().is_some_and(|lists| {
-            lists
-                .iter()
-                .any(|l| l["project"]["key"].as_str() == Some(key))
-        });
-        if list.loading || !shown {
-            return;
-        }
-        let list = list.request.clone();
-        let read = self
-            .view
-            .requests
-            .get("scratch-read")
-            .filter(|s| !s.loading)
-            .map(|s| s.request.clone());
-        self.request(list);
-        if let Some(read) = read {
-            self.request(read);
-        }
-    }
-
     /// Selected conversation, UI commands, and every shell being streamed.
     async fn subscribe(&mut self) {
         let mut topics = BTreeSet::from([
@@ -3149,9 +3102,6 @@ impl Worker {
             "sessionSeen.changed".into(),
         ]);
         topics.extend(crate::ui_requests::TOPICS.iter().map(|s| s.to_string()));
-        if self.scratch_watch {
-            topics.insert("scratch.changed".into());
-        }
         if self.groups_watch {
             topics.insert("projectGroups.changed".into());
         }

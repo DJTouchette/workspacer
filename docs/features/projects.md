@@ -2,7 +2,7 @@
 
 A **project** is a named, first-class thing that holds one or more folders —
 an "Acme" project can be the `api`, `web` and `infra` repositories together.
-Sessions, scratch and the native Projects screen are organised by project.
+Sessions and the native Projects screen are organised by project.
 
 ## Additive, beside the per-folder registry
 
@@ -57,7 +57,7 @@ a config directory — including the Electron `--hub-only` control plane.
 |---|---|---|
 | `projectGroups.list` | `{}` | `{revision, groups:[{id,name,folders,color,icon,createdAt,updatedAt}]}` sorted by name |
 | `projectGroups.save` | `{id?, name, folders, color?, icon?, revision?}` | the saved group plus `revision`. No `id` creates one (`p_` + 10 hex). `revision`, when given, must equal the current one or the save is refused as a conflict. |
-| `projectGroups.remove` | `{id, revision?}` | `{removed: true, revision}`; the group's folders, settings and scratch are untouched |
+| `projectGroups.remove` | `{id, revision?}` | `{removed: true, revision}`; the group's folders and settings are untouched |
 
 Validation: `name` 1–80 characters after trimming, no control characters;
 `folders` 1–32 absolute paths, normalised like `project_key` (forward slashes,
@@ -67,37 +67,23 @@ Unknown or case-variant keys are refused.
 
 Mutations publish `projectGroups.changed {revision}`.
 
-### Scratch pending counts
-
-| Method | Params | Result |
-|---|---|---|
-| `scratch.pending` | `{}` | `{projects:[{key, root, pending}]}` for every scratch with a pending file — read from each `index.json` only, no file walks |
-
-`scratch.changed` additionally carries `pending` (that project's pending count
-after the change), so clients can update a badge without a re-read.
-
 ## Native
 
 - **Projects screen**: a PROJECTS section of cards — mark, name, each folder
-  by name and path, running/total sessions, and a "N pending" badge that opens
-  Scratch on the project; New agent starts in its first folder; Edit opens the
+  by name and path and running/total sessions; New agent starts in its first
+  folder; Edit opens the
   editor (name, icon, colour, folders by path or one-click suggestions from
   known folders in no other project). A refused save keeps the draft and says
   why (a stale revision reads "changed elsewhere"); Delete asks twice and
   leaves the folders listed. Below, FOLDERS lists every folder the hub knows,
-  each tagged with its project and pending count; pinning applies to folders
+  each tagged with its project; pinning applies to folders
   ("Pin folder").
 - **Sidebar**: clicking a project filters the sidebar to it (`project_filter`
   holds `group:<id>`): every session in any of its folders, worktree workers
-  included. The filter header shows the project's mark, name and pending
-  count; the collapsed rail shows the filtered project's mark, which clears
-  the filter. The Scratch icon (FolderClosed) carries the total pending count.
-- **Scratch page**: opens on the project you are in and lists a multi-folder
-  project's scratch a section per folder (`ScratchList {cwds}` →
-  `{lists:[…]}`; a mark re-lists them all).
-- Reads: `projectGroups.list` and `scratch.pending` are read with the folder
-  registry on every (re)connection; `projectGroups.changed` and
-  `scratch.changed` re-read them.
+  included. The filter header shows the project's mark and name; the
+  collapsed rail shows the filtered project's mark, which clears the filter.
+- Reads: `projectGroups.list` is read with the folder registry on every
+  (re)connection; `projectGroups.changed` re-reads it.
 
 Code: `apps/native/src/project_groups.rs` (model), `src/ui/project_groups.rs`
 (cards, editor, filter helpers); tests in `src/ui/tests/project_groups.rs` and

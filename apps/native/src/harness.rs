@@ -123,7 +123,7 @@ pub struct Options {
     /// The first session's approval is a finished plan (`ExitPlanMode`) and
     /// its account's 5-hour window is spent, for dock-card captures.
     pub plan_and_limit: bool,
-    /// Believable Projects, project groups, Scratch, Jobs and History data
+    /// Believable Projects, project groups, Jobs and History data
     /// under fixture paths (`/home/dev/...`), with the live sessions running
     /// in those folders. Off: the fixture is unchanged.
     pub catalog: bool,

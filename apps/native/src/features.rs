@@ -359,30 +359,6 @@ pub enum Request {
     /// A launch through the work queue (`queue.submit` params). Never
     /// superseded: the hub may already have enqueued it.
     QueueSubmit(Value),
-    /// A project's scratch files (`scratch.list`, once per folder): personal
-    /// files kept outside git, shared by every worktree
-    /// (docs/features/scratch.md). Answers `{lists: [<scratch.list>…]}` in
-    /// `cwds` order.
-    ScratchList {
-        cwds: Vec<String>,
-    },
-    /// One scratch file's text (`scratch.read`), shown read-only.
-    ScratchRead {
-        cwd: String,
-        path: String,
-    },
-    /// One metadata write (`scratch.mark`: status, keep, purpose, note) to a
-    /// file in `cwd`'s scratch, answered with the refreshed lists of every
-    /// folder in `relist`. Never superseded.
-    ScratchMark {
-        cwd: String,
-        path: String,
-        patch: Value,
-        relist: Vec<String>,
-    },
-    /// Pending scratch counts for every project (`scratch.pending`): the
-    /// badges beside projects and on the Scratch icon.
-    ScratchPending,
     /// Projects as named groups of folders (`projectGroups.list`;
     /// docs/features/projects.md).
     ProjectGroups,
@@ -392,8 +368,8 @@ pub enum Request {
     SaveProjectGroup {
         params: Value,
     },
-    /// Delete a project (`projectGroups.remove`); its folders, their settings
-    /// and scratch are untouched. Answered with the refreshed list.
+    /// Delete a project (`projectGroups.remove`); its folders and their
+    /// settings are untouched. Answered with the refreshed list.
     RemoveProjectGroup {
         id: String,
         revision: u64,
@@ -653,10 +629,6 @@ impl Request {
             Self::ProjectLinks => "project-links",
             Self::LinkAction(_) => "link-action",
             Self::QueueSubmit(_) => "queue-submit",
-            Self::ScratchList { .. } => "scratch",
-            Self::ScratchRead { .. } => "scratch-read",
-            Self::ScratchMark { .. } => "scratch-mark",
-            Self::ScratchPending => "scratch-pending",
             Self::ProjectGroups => "project-groups",
             Self::SaveProjectGroup { .. } => "project-group-save",
             Self::RemoveProjectGroup { .. } => "project-group-remove",
@@ -701,10 +673,6 @@ impl Request {
             Self::HistoryPage { .. } => Some("sessions.history"),
             Self::ForgetSession { .. } => Some("sessions.forget"),
             Self::EndSession { .. } => Some("claude.signal"),
-            Self::ScratchList { .. } => Some("scratch.list"),
-            Self::ScratchRead { .. } => Some("scratch.read"),
-            Self::ScratchMark { .. } => Some("scratch.mark"),
-            Self::ScratchPending => Some("scratch.pending"),
             Self::ProjectGroups => Some("projectGroups.list"),
             Self::SaveProjectGroup { .. } => Some("projectGroups.save"),
             Self::RemoveProjectGroup { .. } => Some("projectGroups.remove"),
@@ -843,26 +811,6 @@ impl Request {
                     .call("sessions.forget", json!({"sessionId": session}))
                     .await
             }
-            Self::ScratchList { cwds } => scratch_lists(backend, cwds).await,
-            Self::ScratchRead { cwd, path } => {
-                backend
-                    .call("scratch.read", json!({"cwd":cwd,"path":path}))
-                    .await
-            }
-            Self::ScratchMark {
-                cwd,
-                path,
-                patch,
-                relist,
-            } => {
-                let mut params = patch.clone();
-                ensure!(params.is_object(), "A scratch change must be an object.");
-                params["cwd"] = json!(cwd);
-                params["path"] = json!(path);
-                backend.call("scratch.mark", params).await?;
-                scratch_lists(backend, relist).await
-            }
-            Self::ScratchPending => backend.call("scratch.pending", json!({})).await,
             Self::ProjectGroups => backend.call("projectGroups.list", json!({})).await,
             Self::SaveProjectGroup { params } => {
                 let saved = backend.call("projectGroups.save", params.clone()).await?;
@@ -1661,18 +1609,6 @@ pub struct RequestState {
     pub loading: bool,
     pub value: Arc<Value>,
     pub error: Option<String>,
-}
-
-/// One `scratch.list` per folder, in order, as `{lists: [...]}`. A folder
-/// the hub refuses fails the whole read: a project page that silently drops
-/// one folder's pending SQL would be worse than an error.
-async fn scratch_lists(backend: &Backend, cwds: &[String]) -> Result<Value> {
-    ensure!(!cwds.is_empty(), "Choose a project to list its scratch.");
-    let mut lists = Vec::new();
-    for cwd in cwds.iter().take(crate::project_groups::MAX_FOLDERS) {
-        lists.push(backend.call("scratch.list", json!({"cwd":cwd})).await?);
-    }
-    Ok(json!({"lists": lists}))
 }
 
 /// Rows one `sessions.history` read asks for.

@@ -2271,14 +2271,8 @@ async fn run(
             options = crate::services::install_config(options, directory, handle.clone())?;
         }
     }
-    // Scratch is hub-owned on every host, including the Electron `--hub-only`
-    // control plane (where library.* is served by desktop instead): its
-    // directory is derived from claudemon's spawn-time WORKSPACER_SCRATCH.
-    if let Some(home) = options.home_dir.clone() {
-        options = crate::services::scratch::install(options, home, handle.clone());
-    }
-    // Project groups are hub-owned for the same reason: desktop never writes
-    // project-groups.json, so the `--hub-only` control plane serves them too.
+    // Project groups are hub-owned on every host, including the Electron
+    // `--hub-only` control plane: desktop never writes project-groups.json.
     if let Some(directory) = options.config_dir.clone() {
         options = crate::services::project_groups::install(options, directory, handle.clone());
     }

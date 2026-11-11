@@ -62,11 +62,6 @@
     "routing.preferences.validate",
     "routing.preview",
     "routing.select",
-    "scratch.list",
-    "scratch.mark",
-    "scratch.pending",
-    "scratch.read",
-    "scratch.save",
     "sessionArchive.get",
     "sessionArchive.set",
     "sessionArchive.setMany",
@@ -205,7 +200,6 @@
     "pr.reply",
     "pr.resolve",
     "pr.session",
-    "usage.refresh",
     "pr.threads",
     "pr.unlink",
     "providers.checkAll",
@@ -241,7 +235,8 @@
     "terminals.create",
     "terminals.open",
     "ui.asset",
-    "ui.fonts"
+    "ui.fonts",
+    "usage.refresh"
   ],
   "catalog": [
     "brain.info",

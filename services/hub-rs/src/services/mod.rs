@@ -49,7 +49,6 @@ pub mod remote_admin;
 pub mod remote_dispatch;
 pub mod roster;
 pub mod routing;
-pub mod scratch;
 pub mod search;
 pub mod session_archive;
 pub mod session_facade;

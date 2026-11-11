@@ -12,8 +12,6 @@ pub(super) enum Screen {
     Jobs,
     /// Every host's resources and work queue (this hub and its peers).
     Hosts,
-    /// A project's scratch files: read and mark, never run.
-    Scratch,
     Changes,
     History,
     Session,
@@ -550,9 +548,6 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &ShowHosts, window, cx| {
                 this.open_feature(Screen::Hosts, window, cx)
             }))
-            .on_action(cx.listener(|this, _: &ShowScratch, window, cx| {
-                this.open_feature(Screen::Scratch, window, cx)
-            }))
             .on_action(cx.listener(|this, _: &ShowConversation, window, cx| {
                 this.show_screen(Screen::Conversation, window, cx)
             }))
@@ -986,7 +981,6 @@ impl Workspace {
                     .any(|f| wks_native::projects::same_dir(f, &project.path))
             })
             .map(|g| g.name.clone());
-        let pending = self.pending_in(std::slice::from_ref(&project.path));
         let pill = |color: u32, alpha: f32| {
             div()
                 .flex_shrink_0()
@@ -1024,13 +1018,6 @@ impl Workspace {
                                 .text_color(rgb(p.muted))
                                 .debug_selector(move || format!("project-in-group-{ix}"))
                                 .child(format!("in {name}")),
-                        )
-                    })
-                    .when(pending > 0, |d| {
-                        d.child(
-                            pill(p.warning, 0.15)
-                                .text_color(rgb(p.warning))
-                                .child(format!("{pending} pending")),
                         )
                     })
                     .when(on_device, |d| {

@@ -112,7 +112,7 @@ impl ProjectGroups {
         Ok((result, store.revision))
     }
 
-    /// Remove one group. Its folders, their settings and their scratch are
+    /// Remove one group. Its folders and their settings are
     /// untouched: they simply become one-folder projects again.
     pub fn remove(&self, params: &Value) -> Result<(Value, u64)> {
         keys(params, &["id", "revision"])?;

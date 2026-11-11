@@ -286,30 +286,6 @@ impl Draft {
     }
 }
 
-/// A `scratch.pending` reply as `(scratch root, pending count)` pairs.
-pub fn pending_roots(value: &Value) -> Vec<(String, usize)> {
-    value["projects"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|row| {
-            let root = row["root"].as_str().filter(|r| !r.is_empty())?;
-            let pending = row["pending"].as_u64().unwrap_or(0) as usize;
-            (pending > 0).then(|| (project_key(root), pending))
-        })
-        .collect()
-}
-
-/// Pending scratch files under any of `folders`: a scratch belongs to a
-/// repository's main checkout, which a folder names, contains or sits in.
-pub fn pending_in(pending: &[(String, usize)], folders: &[String]) -> usize {
-    pending
-        .iter()
-        .filter(|(root, _)| folders.iter().any(|f| within(root, f) || within(f, root)))
-        .map(|(_, n)| n)
-        .sum()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,24 +392,5 @@ mod tests {
         assert!(draft.params(3).is_err());
         let group = parse(&listed()).unwrap().groups[0].clone();
         assert_eq!(Draft::of(&group).color, "#5b8def");
-    }
-
-    #[test]
-    fn pending_counts_add_up_per_folder_set() {
-        let pending = pending_roots(&json!({"projects":[
-            {"key":"a","root":"/w/acme-api","pending":2},
-            {"key":"b","root":"/w/acme-web/","pending":1},
-            {"key":"c","root":"/w/other","pending":5},
-            {"key":"d","root":"/w/none","pending":0}
-        ]}));
-        assert_eq!(pending.len(), 3);
-        let acme = ["/w/acme-api".to_owned(), "/w/acme-web".to_owned()];
-        assert_eq!(pending_in(&pending, &acme), 3);
-        assert_eq!(
-            pending_in(&pending, &["/w/acme-api/src".to_owned()]),
-            2,
-            "a subfolder sees its repository's scratch"
-        );
-        assert_eq!(pending_in(&pending, &["/nowhere".to_owned()]), 0);
     }
 }

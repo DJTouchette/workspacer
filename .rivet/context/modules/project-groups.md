@@ -1,9 +1,8 @@
 ---
 title: Project groups
-tags: [projects, groups, hub, config, revision, scratch]
+tags: [projects, groups, hub, config, revision]
 related_paths:
   - "services/hub-rs/src/services/project_groups.rs"
-  - "services/hub-rs/src/services/scratch.rs"
   - "services/hub-rs/src/runtime.rs"
   - "services/hub-rs/tests/project_groups.rs"
   - "docs/features/projects.md"
@@ -46,16 +45,7 @@ untouched and still owns label/icon/colour/pin/worktree settings per folder.
 - **A damaged file is never overwritten.** Missing file = `{version:1,
   revision:0, groups:{}}`; invalid JSON, a version other than 1, a missing
   revision or a group without name/folders is an error on every method.
-- **Installed outside the `control_plane_only` gate** (runtime.rs, beside
-  scratch) whenever `config_dir` is set, because Electron runs the hub
+- **Installed outside the `control_plane_only` gate** (runtime.rs) whenever `config_dir` is set, because Electron runs the hub
   `--hub-only` and desktop never writes this file.
 - `projectGroups.changed {revision}` is guarded by `projectGroups.list` and has
   no provider publisher; `projectGroups.list` is quiescence-passive.
-
-## Scratch pending counts
-
-`scratch.pending {}` reads `index.json` + `project.json` of each directory under
-`claudemon::scratch::base(home)` (1,000 dirs max, symlinks and damaged indexes
-skipped, never walks `files/`) and returns `{projects:[{key,root,pending}],
-truncated}` for pending > 0, sorted by key. `scratch.changed` now carries
-`{key, pending}`, computed from the index the mutation just wrote.

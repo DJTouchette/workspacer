@@ -95,16 +95,6 @@ pub(super) struct Extras {
     pub job_failed_only: bool,
     /// The run open in the history, by (job id, start time).
     pub job_run_open: Option<(String, i64)>,
-    /// What the Scratch page shows: a folder (the hub resolves a worktree to
-    /// its main checkout) or a project as `group:<id>`. Fixed while open.
-    pub scratch_project: Option<String>,
-    /// A project a badge asked Scratch to open on, used once.
-    pub scratch_preset: Option<String>,
-    pub scratch_filter: wks_native::scratch::Filter,
-    /// The scratch file open in the list, by (folder, relative path).
-    pub scratch_open: Option<(String, String)>,
-    pub scratch_purpose: Entity<InputState>,
-    pub scratch_note: Entity<InputState>,
     /// The project editor's draft (folders live here; the text fields in
     /// the inputs below until Save).
     pub group_draft: Option<wks_native::project_groups::Draft>,
@@ -297,8 +287,6 @@ impl Extras {
             job_runs_tab: false,
             job_failed_only: false,
             job_run_open: None,
-            scratch_project: None,
-            scratch_preset: None,
             group_draft: None,
             group_confirm_delete: false,
             group_error: String::new(),
@@ -308,15 +296,6 @@ impl Extras {
             group_color: cx.new(|cx| InputState::new(window, cx).placeholder("#5b8def")),
             group_folder: cx
                 .new(|cx| InputState::new(window, cx).placeholder("/path/to/another/repository")),
-            scratch_filter: Default::default(),
-            scratch_open: None,
-            scratch_purpose: cx
-                .new(|cx| InputState::new(window, cx).placeholder("What this file is for")),
-            scratch_note: cx.new(|cx| {
-                InputState::new(window, cx)
-                    .auto_grow(1, 4)
-                    .placeholder("e.g. ran on prod 2026-11-01, 4,210 rows")
-            }),
             confirm_end: None,
             resume: None,
             local_paths: false,
@@ -531,7 +510,6 @@ impl Workspace {
                 self.request(Request::JobRuns, cx);
             }
             Screen::Hosts => self.open_hosts(cx),
-            Screen::Scratch => self.open_scratch(cx),
             Screen::Changes => {
                 if let Some(s) = self.selected_session() {
                     self.request(Request::Changes { cwd: s.cwd.clone() }, cx);
@@ -785,7 +763,6 @@ impl Workspace {
             ),
             Screen::Jobs => ("Jobs", Some(super::jobs::JOBS_DESCRIPTION.into())),
             Screen::Hosts => ("Hosts", Some(super::hosts::HOSTS_DESCRIPTION.into())),
-            Screen::Scratch => ("Scratch", Some(super::scratch::SCRATCH_DESCRIPTION.into())),
             Screen::History => ("Conversation history", Some(HISTORY_DESCRIPTION.into())),
             // The session itself is the hero; its facts follow underneath.
             Screen::Session => (session_name.as_deref().unwrap_or("Session details"), None),
@@ -842,18 +819,6 @@ impl Workspace {
                 })
                 .into_any_element(),
             ),
-            Screen::Scratch => Some(
-                self.quiet_button(
-                    "scratch-refresh",
-                    "Refresh",
-                    IconName::Redo,
-                    self.view.connected,
-                )
-                .when(self.view.connected, |d| {
-                    d.on_click(cx.listener(|this, _, _, cx| this.refresh_scratch(cx)))
-                })
-                .into_any_element(),
-            ),
             Screen::Setup => {
                 let can_check = self.view.connected
                     && !self.view.requests.get("setup").is_some_and(|s| s.loading);
@@ -884,7 +849,6 @@ impl Workspace {
         let body = match self.screen {
             Screen::Jobs => self.render_jobs(cx),
             Screen::Hosts => self.render_hosts(cx),
-            Screen::Scratch => self.render_scratch(window, cx),
             Screen::History => self.render_history(window, cx),
             Screen::Session => self.render_session(window.viewport_size().width < px(900.), cx),
             Screen::Setup => self.render_setup(cx),

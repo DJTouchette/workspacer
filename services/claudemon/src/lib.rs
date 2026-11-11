@@ -18,7 +18,6 @@ pub mod execution;
 pub mod protocol;
 pub mod provider_group;
 pub mod providers;
-pub mod scratch;
 pub mod session;
 pub mod store;
 /// Test-only scratch paths (see the module docs): one pruned directory for

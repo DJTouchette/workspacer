@@ -1,6 +1,6 @@
 //! Projects as named groups of folders (docs/features/projects.md): the
-//! Projects page's cards and editor, the sidebar filter for a whole project,
-//! and pending-scratch badges.
+//! Projects page's cards and editor, and the sidebar filter for a whole
+//! project.
 use super::*;
 use wks_native::features::Request;
 
@@ -50,33 +50,17 @@ fn open_projects(
     let sent = effects(commands);
     assert!(
         sent.iter()
-            .any(|c| matches!(c, Command::Request(Request::ProjectGroups)))
-            && sent
-                .iter()
-                .any(|c| matches!(c, Command::Request(Request::ScratchPending))),
-        "Projects reads the groups and the pending counts with the registry"
+            .any(|c| matches!(c, Command::Request(Request::ProjectGroups))),
+        "Projects reads the groups with the registry"
     );
     request_state(workspace, visual, Request::ProjectGroups, 1, groups(1));
-    request_state(
-        workspace,
-        visual,
-        Request::ScratchPending,
-        2,
-        serde_json::json!({"projects":[
-            {"key":"a","root":"/w/acme-api","pending":2},
-            {"key":"o","root":"/w/other","pending":1}
-        ]}),
-    );
 }
 
 #[gpui::test]
-fn projects_page_shows_projects_with_sessions_and_pending_and_tags_their_folders(
-    cx: &mut TestAppContext,
-) {
+fn projects_page_shows_projects_with_sessions_and_tags_their_folders(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     open_projects(&workspace, &mut visual, &mut commands);
     assert!(visual.debug_bounds("project-group-0").is_some());
-    assert!(visual.debug_bounds("project-group-pending-0").is_some());
     workspace.read_with(&visual, |this, _| {
         let groups = this.project_groups();
         assert_eq!(groups.revision, 1);
@@ -90,10 +74,7 @@ fn projects_page_shows_projects_with_sessions_and_pending_and_tags_their_folders
         assert_eq!(of(1).as_deref(), Some("Acme"));
         assert_eq!(of(2).as_deref(), Some("Acme"));
         assert_eq!(of(3), None);
-        assert_eq!(this.pending_total(), 3);
-        assert_eq!(this.pending_in(&groups.groups[0].folders), 2);
     });
-    assert!(visual.debug_bounds("scratch-pending-badge").is_some());
 }
 
 #[gpui::test]
@@ -233,16 +214,6 @@ fn filtering_the_sidebar_to_a_project_shows_every_folder_and_its_workers(cx: &mu
         assert_eq!(this.filter_folder().as_deref(), Some("/w/acme-api"));
     });
     assert!(visual.debug_bounds("sidebar-project-filter").is_some());
-    assert!(visual.debug_bounds("sidebar-filter-pending").is_some());
-
-    // Scratch opens on the whole project, a section per folder.
-    effects(&mut commands);
-    click(&mut visual, "nav-menu");
-    click(&mut visual, "nav-scratch");
-    assert!(effects(&mut commands).iter().any(|c| matches!(
-        c,
-        Command::Request(Request::ScratchList { cwds }) if *cwds == ["/w/acme-api", "/w/acme-web"]
-    )));
 }
 
 #[gpui::test]

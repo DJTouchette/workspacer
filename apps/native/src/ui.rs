@@ -37,7 +37,6 @@ mod quotes;
 mod recent;
 mod remote;
 mod review;
-mod scratch;
 mod scroll;
 mod session_tools;
 mod settings;
@@ -166,7 +165,6 @@ bundled_icons!(
     "lucide/git-pull-request.svg",
     "lucide/history.svg",
     "lucide/server.svg",
-    "lucide/notebook-pen.svg",
     "lucide/text-quote.svg",
 );
 
@@ -450,7 +448,6 @@ actions!(
         ShowModel,
         ShowJobs,
         ShowHosts,
-        ShowScratch,
         Search,
         OpenProject,
         FirstItem,
@@ -525,7 +522,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("g m", ShowModel, Some("VimNormal")),
         KeyBinding::new("g j", ShowJobs, Some("VimNormal")),
         KeyBinding::new("g o", ShowHosts, Some("VimNormal")),
-        KeyBinding::new("g n", ShowScratch, Some("VimNormal")),
         KeyBinding::new("h", ShowProjects, Some("VimNormal")),
         KeyBinding::new("l", OpenProject, Some("VimNormal")),
         KeyBinding::new("enter", OpenProject, Some("VimNormal")),
@@ -2061,7 +2057,6 @@ impl Workspace {
                 Screen::Recent
                 | Screen::Jobs
                 | Screen::Hosts
-                | Screen::Scratch
                 | Screen::History
                 | Screen::Session
                 | Screen::Setup

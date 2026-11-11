@@ -1,29 +1,22 @@
 //! `native-harness serve --catalog`: believable data for the feature pages
-//! (Projects, project groups, Scratch, Jobs, Hosts, History) so they can be looked
+//! (Projects, project groups, Jobs, Hosts, History) so they can be looked
 //! at without a real hub. Every path is an obvious fixture path under
 //! `/home/dev`; nothing here touches the disk or starts anything.
 //!
 //! Replies mirror the Rust hub's JSON (`services/hub-rs`: `project_groups.rs`,
-//! `scratch.rs`, `jobs.rs`, `live_controls.rs` for `sessions.history`), and
-//! writes (`projectGroups.save/remove`, `scratch.mark`, `jobs.upsert/remove/
-//! run`, `sessions.forget`) land in memory for the connection's lifetime.
-use serde_json::{Map, Value, json};
+//! `jobs.rs`, `live_controls.rs` for `sessions.history`), and writes
+//! (`projectGroups.save/remove`, `jobs.upsert/remove/run`,
+//! `sessions.forget`) land in memory for the connection's lifetime.
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::project_groups::within;
-use crate::projects::{self, WorktreeRepo, same_dir};
+use crate::projects::{self, same_dir};
 
 pub const WORKSPACER: &str = "/home/dev/src/workspacer";
 pub const NATIVE: &str = "/home/dev/src/workspacer/apps/native";
 pub const HUB: &str = "/home/dev/src/hub-rs";
 pub const INFRA: &str = "/home/dev/src/infra";
 pub const NOTES: &str = "/home/dev/notes";
-const SCRATCH_BASE: &str = "/home/dev/.workspacer/scratch";
-const TREES: &str = "/home/dev/.workspacer/worktrees";
-
-/// The repositories scratch resolves to (a subfolder or worktree files under
-/// its repository's main checkout, as the hub's `project_root` does).
-const SCRATCH_ROOTS: [&str; 4] = [WORKSPACER, HUB, INFRA, NOTES];
 
 const MINUTE: i64 = 60_000;
 const HOUR: i64 = 60 * MINUTE;
@@ -99,176 +92,6 @@ pub fn projects(now: i64) -> Value {
         INFRA: {"label": "Infra", "lastOpened": now - 6 * DAY, "color": "#9b6bd6"},
     })
 }
-
-/// One fixture scratch file: its repository, the hub's list row and its text.
-struct ScratchFile {
-    root: &'static str,
-    item: Value,
-    content: &'static str,
-}
-
-/// A seeded scratch file: `(root, path, hours ago, purpose, status, keep,
-/// sensitive, note, session, content)`; no purpose = written straight into
-/// the directory by an agent (`indexed:false`).
-type Seed = (
-    &'static str,
-    &'static str,
-    i64,
-    Option<&'static str>,
-    Option<&'static str>,
-    bool,
-    bool,
-    Option<&'static str>,
-    Option<&'static str>,
-    &'static str,
-);
-
-const SCRATCH: [Seed; 12] = [
-    (
-        WORKSPACER,
-        "prod/backfill-session-titles.sql",
-        3,
-        Some("Backfill auto titles for sessions created before 0.9"),
-        Some("pending"),
-        true,
-        true,
-        None,
-        Some("hist-04"),
-        "-- Run by hand against the hub's session store (prod). Safe to re-run.\nBEGIN;\nCREATE TABLE IF NOT EXISTS sessions_titles_backup AS\n  SELECT session_id, title FROM sessions;\nUPDATE sessions\n   SET title = substr(first_prompt, 1, 60)\n WHERE (title IS NULL OR title = '')\n   AND first_prompt IS NOT NULL\n   AND started_at < '2026-10-01';\nCOMMIT;\n",
-    ),
-    (
-        WORKSPACER,
-        "repro/sidebar-flicker.sh",
-        6,
-        Some("Repro for the sidebar flicker on reconnect"),
-        Some("draft"),
-        true,
-        false,
-        Some("Restart the hub between runs or the cache hides it."),
-        None,
-        "#!/usr/bin/env bash\n# Drop and restore the bus connection every 2s while the sidebar is open.\nset -euo pipefail\nfor i in $(seq 1 20); do\n  sudo iptables -A OUTPUT -p tcp --dport 7895 -j DROP\n  sleep 2\n  sudo iptables -D OUTPUT -p tcp --dport 7895 -j DROP\n  sleep 2\n  echo \"cycle $i\"\ndone\n",
-    ),
-    (
-        WORKSPACER,
-        "notes/native-ui-pass.md",
-        1,
-        None,
-        None,
-        false,
-        false,
-        None,
-        None,
-        "# Native UI pass\n\n- [x] Project cards: running/total counts\n- [ ] History: date headers wrap at narrow widths\n- [ ] Jobs: failed run detail is cut at one line\n- [ ] Scratch: pending badge contrast on Light\n",
-    ),
-    (
-        WORKSPACER,
-        "bench/switch-results.json",
-        50,
-        Some("Parent/child switch timings for the PR"),
-        Some("done"),
-        false,
-        false,
-        Some("Numbers went into the PR description."),
-        None,
-        "{\n  \"cycles\": 20,\n  \"parent_to_new_child\": {\"shown_p50_ms\": 38.2, \"shown_p95_ms\": 51.0},\n  \"child_to_parent\": {\"shown_p50_ms\": 34.9, \"shown_p95_ms\": 47.3}\n}\n",
-    ),
-    (
-        WORKSPACER,
-        "old/migrate-config.py",
-        300,
-        Some("One-off config.yaml migration"),
-        Some("archived"),
-        false,
-        false,
-        None,
-        None,
-        "import yaml, pathlib\n\npath = pathlib.Path.home() / '.workspacer' / 'config.yaml'\nconfig = yaml.safe_load(path.read_text())\nconfig.setdefault('projects', {})\nfor fav in config.get('directories', {}).get('favourites', []):\n    config['projects'].setdefault(fav, {})['favourite'] = True\npath.write_text(yaml.safe_dump(config))\n",
-    ),
-    (
-        HUB,
-        "load/bus-fanout.ts",
-        20,
-        Some("Load test the bus fan-out before the release"),
-        Some("pending"),
-        true,
-        false,
-        Some("Staging only. Prod has the rate limiter off."),
-        Some("hist-02"),
-        "import WebSocket from 'ws';\n\nconst url = process.env.BUS ?? 'ws://127.0.0.1:7895/bus';\nconst clients = Array.from({ length: 200 }, () => new WebSocket(url));\nfor (const ws of clients) {\n  ws.on('open', () => ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot'] })));\n}\n",
-    ),
-    (
-        HUB,
-        "sql/jobs-history-cleanup.sql",
-        75,
-        Some("Trim job history older than 90 days"),
-        Some("draft"),
-        false,
-        false,
-        None,
-        None,
-        "DELETE FROM job_runs WHERE started_at < strftime('%s','now','-90 days') * 1000;\nVACUUM;\n",
-    ),
-    (
-        HUB,
-        "curl/federation-handshake.sh",
-        120,
-        Some("Manual federation handshake check"),
-        Some("done"),
-        false,
-        false,
-        Some("Handshake fixed in #482."),
-        None,
-        "curl -fsS -H \"Authorization: Bearer $PEER_TOKEN\" https://peer.internal:7895/federation/hello | jq .\n",
-    ),
-    (
-        INFRA,
-        "deploy/rotate-fly-token.sh",
-        30,
-        Some("Rotate the Fly.io deploy token by hand"),
-        Some("pending"),
-        true,
-        true,
-        None,
-        Some("hist-08"),
-        "#!/usr/bin/env bash\nset -euo pipefail\nfly tokens create deploy --app wks-hub --expiry 720h > /tmp/fly-token\ngh secret set FLY_API_TOKEN < /tmp/fly-token\nshred -u /tmp/fly-token\n",
-    ),
-    (
-        INFRA,
-        "terraform/plan-2026-10-30.txt",
-        72,
-        None,
-        None,
-        false,
-        false,
-        None,
-        None,
-        "Terraform will perform the following actions:\n\n  # fly_machine.hub will be updated in-place\n  ~ resource \"fly_machine\" \"hub\" {\n      ~ image = \"registry.fly.io/wks-hub:0.8.4\" -> \"registry.fly.io/wks-hub:0.9.0\"\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n",
-    ),
-    (
-        NOTES,
-        "drafts/release-0.9.md",
-        52,
-        Some("Release notes for 0.9"),
-        Some("draft"),
-        true,
-        false,
-        None,
-        Some("hist-10"),
-        "# 0.9\n\n## Highlights\n\n- Projects can group several folders.\n- Scratch: pending files show on every project card.\n- Jobs: proposals wait for your approval.\n",
-    ),
-    (
-        NOTES,
-        "todo/review-replies.md",
-        9,
-        Some("Review replies to post by hand"),
-        Some("pending"),
-        false,
-        false,
-        None,
-        None,
-        "- #512: agree on the cursor format; will rename `before` to `cursor`.\n- #515: the empty state copy is intentional, see the design note.\n",
-    ),
-];
 
 /// Ended sessions in History: `(id, provider, model, title, folder, hours
 /// ago, prompts, tool calls, hidden, first prompt)`.
@@ -386,13 +209,13 @@ const PAST: [Past; 25] = [
         "hist-09",
         "codex",
         "gpt-5.6-sol",
-        "Scratch store index repair",
+        "Queue store index repair",
         HUB,
         48.,
         6,
         44,
         false,
-        "A damaged scratch index.json hides every file. Make it recover.",
+        "A damaged queue.json hides every queued item. Make it recover.",
     ),
     (
         "hist-10",
@@ -599,7 +422,6 @@ pub struct Catalog {
     now: i64,
     groups: Vec<Value>,
     revision: u64,
-    scratch: Vec<ScratchFile>,
     jobs: Vec<Value>,
     /// Newest first, as the hub keeps them.
     runs: Vec<Value>,
@@ -625,35 +447,6 @@ impl Catalog {
             json!({"id": id, "name": name, "folders": folders, "color": color, "icon": icon,
                 "createdAt": rfc3339(now - 9 * DAY), "updatedAt": rfc3339(now - 2 * DAY)})
         };
-        let scratch = SCRATCH
-            .iter()
-            .map(
-                |&(root, path, hours, purpose, status, keep, sensitive, note, session, content)| {
-                    let modified = now - hours * HOUR;
-                    let indexed = purpose.is_some();
-                    let stamp = |ms: i64| indexed.then(|| rfc3339(ms));
-                    ScratchFile {
-                        root,
-                        item: json!({
-                            "path": path,
-                            "size": content.len(),
-                            "modifiedAt": rfc3339(modified),
-                            "indexed": indexed,
-                            "purpose": purpose,
-                            "sessionId": session,
-                            "keep": keep,
-                            "sensitive": sensitive,
-                            "status": status,
-                            "statusAt": status.and(stamp(modified)),
-                            "note": note,
-                            "createdAt": stamp(modified - 2 * HOUR),
-                            "updatedAt": stamp(modified),
-                        }),
-                        content,
-                    }
-                },
-            )
-            .collect();
         let history = PAST
             .iter()
             .enumerate()
@@ -700,7 +493,6 @@ impl Catalog {
                 group("p_3b9f0e64a1", "Ops", &[INFRA], "#9b6bd6", "🚀"),
             ],
             revision: 3,
-            scratch,
             jobs: seed_jobs(now),
             runs: seed_runs(now),
             next_run: BTreeMap::new(),
@@ -728,10 +520,6 @@ impl Catalog {
             "projectGroups.list" => Ok(self.list_groups()),
             "projectGroups.save" => self.save_group(params),
             "projectGroups.remove" => self.remove_group(params),
-            "scratch.pending" => Ok(self.scratch_pending()),
-            "scratch.list" => self.scratch_list(params),
-            "scratch.read" => self.scratch_read(params),
-            "scratch.mark" => self.scratch_mark(params),
             "jobs.list" => Ok(self.jobs_list()),
             "jobs.history" => Ok(self.jobs_history(params)),
             "jobs.upsert" => self.jobs_upsert(params),
@@ -1180,114 +968,6 @@ impl Catalog {
         }
         self.revision += 1;
         Ok(json!({"removed": true, "revision": self.revision}))
-    }
-
-    // ---- scratch ----------------------------------------------------------
-
-    fn scratch_pending(&self) -> Value {
-        let mut rows: Vec<Value> = SCRATCH_ROOTS
-            .iter()
-            .filter_map(|root| {
-                let pending = self
-                    .scratch
-                    .iter()
-                    .filter(|f| f.root == *root && f.item["status"] == "pending")
-                    .count();
-                (pending > 0)
-                    .then(|| json!({"key": scratch_key(root), "root": root, "pending": pending}))
-            })
-            .collect();
-        rows.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
-        json!({"projects": rows, "truncated": false})
-    }
-
-    fn scratch_list(&self, params: &Value) -> Result<Value, String> {
-        let cwd = scratch_cwd(params)?;
-        let Some(root) = scratch_root(cwd) else {
-            // A folder with no scratch yet: the hub answers an empty listing.
-            return Ok(json!({
-                "project": describe(&projects::project_key(cwd), false),
-                "items": [],
-                "truncated": false,
-            }));
-        };
-        let mut items: Vec<Value> = self
-            .scratch
-            .iter()
-            .filter(|f| f.root == root)
-            .map(|f| f.item.clone())
-            .collect();
-        items.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
-        Ok(json!({"project": describe(root, true), "items": items, "truncated": false}))
-    }
-
-    fn scratch_file(&mut self, params: &Value) -> Result<&mut ScratchFile, String> {
-        let cwd = scratch_cwd(params)?;
-        let path = text(params, "path");
-        if path.is_empty() {
-            return Err("path is required: a path relative to the project's scratch".into());
-        }
-        let root = scratch_root(cwd);
-        self.scratch
-            .iter_mut()
-            .find(|f| Some(f.root) == root && f.item["path"] == path)
-            .ok_or_else(|| format!("{path} is not a file in this project's scratch"))
-    }
-
-    fn scratch_read(&mut self, params: &Value) -> Result<Value, String> {
-        let file = self.scratch_file(params)?;
-        let mut result = file.item.clone();
-        result["content"] = json!(file.content);
-        Ok(result)
-    }
-
-    fn scratch_mark(&mut self, params: &Value) -> Result<Value, String> {
-        let purpose = params["purpose"].as_str().map(str::trim);
-        if purpose == Some("") {
-            return Err("purpose cannot be cleared; give a one-line purpose".into());
-        }
-        let status = params["status"].as_str();
-        if let Some(status) = status
-            && !["draft", "pending", "done", "archived"].contains(&status)
-        {
-            return Err("status must be one of draft, pending, done, archived".into());
-        }
-        let note = params["note"].as_str().map(str::trim);
-        let (keep, sensitive) = (params["keep"].as_bool(), params["sensitive"].as_bool());
-        if purpose.is_none()
-            && status.is_none()
-            && note.is_none()
-            && keep.is_none()
-            && sensitive.is_none()
-        {
-            return Err("nothing to mark: pass purpose, keep, sensitive, status or note".into());
-        }
-        let stamp = rfc3339(wall_now());
-        let item = &mut self.scratch_file(params)?.item;
-        if let Some(purpose) = purpose {
-            item["purpose"] = json!(purpose);
-        }
-        if let Some(keep) = keep {
-            item["keep"] = json!(keep);
-        }
-        if let Some(sensitive) = sensitive {
-            item["sensitive"] = json!(sensitive);
-        }
-        if let Some(status) = status {
-            if item["status"] != status {
-                item["statusAt"] = json!(stamp);
-            }
-            item["status"] = json!(status);
-        }
-        if let Some(note) = note {
-            item["note"] = json!(note);
-        }
-        if item["indexed"] != true {
-            item["indexed"] = json!(true);
-            item["createdAt"] = json!(stamp);
-        }
-        item["updatedAt"] = json!(stamp);
-        Ok(item.clone())
     }
 
     // ---- jobs -------------------------------------------------------------
@@ -1805,64 +1485,6 @@ fn seed_runs(now: i64) -> Vec<Value> {
     runs
 }
 
-fn scratch_cwd(params: &Value) -> Result<&str, String> {
-    Some(text(params, "cwd"))
-        .filter(|cwd| !cwd.is_empty())
-        .ok_or_else(|| "cwd is required: the absolute working directory of the project".into())
-}
-
-/// The repository `cwd` belongs to: the longest scratch root holding it,
-/// with a worktree checkout resolved to its repository first.
-fn scratch_root(cwd: &str) -> Option<&'static str> {
-    let cwd = match projects::worktree_repo(cwd, TREES) {
-        Some(WorktreeRepo::Dir(repo)) => repo,
-        Some(WorktreeRepo::Named { name, .. }) => {
-            return SCRATCH_ROOTS
-                .iter()
-                .find(|root| projects::basename(root) == name)
-                .copied();
-        }
-        None => cwd.to_owned(),
-    };
-    SCRATCH_ROOTS
-        .iter()
-        .filter(|root| within(&cwd, root))
-        .max_by_key(|root| root.len())
-        .copied()
-}
-
-/// claudemon's scratch key: the folder name, then a 64-bit FNV-1a of the
-/// whole root.
-fn scratch_key(root: &str) -> String {
-    let base: String = projects::basename(root)
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '-'
-            }
-        })
-        .take(40)
-        .collect();
-    let hash = root.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-    });
-    format!("{base}-{hash:016x}")
-}
-
-fn describe(root: &str, exists: bool) -> Value {
-    let key = scratch_key(root);
-    let dir = format!("{SCRATCH_BASE}/{key}");
-    let mut project = Map::new();
-    project.insert("root".into(), json!(root));
-    project.insert("key".into(), json!(key));
-    project.insert("files".into(), json!(format!("{dir}/files")));
-    project.insert("dir".into(), json!(dir));
-    project.insert("exists".into(), json!(exists));
-    Value::Object(project)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1993,75 +1615,6 @@ mod tests {
         let groups = crate::project_groups::parse(&list).unwrap();
         assert_eq!(groups.groups.len(), 2);
         assert!(groups.groups.iter().any(|g| g.name == "Workspacer stack"));
-    }
-
-    #[test]
-    fn scratch_lists_reads_and_marks_per_repository() {
-        let mut catalog = Catalog::new(wall_now());
-        let pending = crate::project_groups::pending_roots(
-            &catalog.call("scratch.pending", &json!({}), &[]).unwrap(),
-        );
-        assert_eq!(pending.len(), 4);
-        assert_eq!(
-            crate::project_groups::pending_in(&pending, &[NATIVE.to_owned()]),
-            1
-        );
-        assert_eq!(
-            crate::project_groups::pending_in(&pending, &[WORKSPACER.into(), HUB.into()]),
-            2
-        );
-
-        // A subfolder and a worktree list their repository's scratch.
-        for cwd in [
-            NATIVE,
-            "/home/dev/.workspacer/worktrees/workspacer/sidebar-polish",
-        ] {
-            let value = catalog
-                .call("scratch.list", &json!({"cwd": cwd}), &[])
-                .unwrap();
-            let list = crate::scratch::parse_list(&value).unwrap();
-            assert_eq!(list.root, WORKSPACER);
-            assert_eq!(list.items.len(), 5);
-            assert_eq!(list.pending(), 1);
-            assert!(
-                list.items
-                    .iter()
-                    .any(|i| i.status == crate::scratch::Status::Unrecorded)
-            );
-            assert!(list.key.starts_with("workspacer-") && list.exists);
-        }
-        let empty = catalog
-            .call("scratch.list", &json!({"cwd": "/tmp/x"}), &[])
-            .unwrap();
-        assert!(crate::scratch::parse_list(&empty).unwrap().items.is_empty());
-
-        let read = catalog
-            .call(
-                "scratch.read",
-                &json!({"cwd": HUB, "path": "load/bus-fanout.ts"}),
-                &[],
-            )
-            .unwrap();
-        assert!(matches!(
-            crate::scratch::parse_read(&read),
-            Some(crate::scratch::Content::Text { text, .. }) if text.contains("WebSocket")
-        ));
-        let mark = json!({"cwd": HUB, "path": "load/bus-fanout.ts", "status": "done", "note": "ran on staging"});
-        let marked = catalog.call("scratch.mark", &mark, &[]).unwrap();
-        assert_eq!(
-            (marked["status"].as_str(), marked["note"].as_str()),
-            (Some("done"), Some("ran on staging"))
-        );
-        let pending = crate::project_groups::pending_roots(
-            &catalog.call("scratch.pending", &json!({}), &[]).unwrap(),
-        );
-        assert_eq!(pending.len(), 3);
-        let nothing = catalog.call(
-            "scratch.mark",
-            &json!({"cwd": HUB, "path": "load/bus-fanout.ts"}),
-            &[],
-        );
-        assert_eq!(nothing.unwrap()["ok"], false);
     }
 
     #[test]

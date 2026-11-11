@@ -2075,7 +2075,7 @@ fixture is unchanged. Captures were taken at 1200×800 in Dark and Light,
 Before / after (dark, 1200×800):
 [session](docs/ui-pass-session.png), [model](docs/ui-pass-model.png),
 [setup](docs/ui-pass-setup.png), [history](docs/ui-pass-history.png),
-[projects](docs/ui-pass-projects.png), [scratch](docs/ui-pass-scratch.png),
+[projects](docs/ui-pass-projects.png), scratch (capture removed with the feature),
 [jobs](docs/ui-pass-jobs.png). After only:
 [light](docs/ui-pass-light.png), [narrow](docs/ui-pass-narrow.png).
 

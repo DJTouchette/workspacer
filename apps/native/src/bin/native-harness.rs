@@ -69,7 +69,7 @@ enum Command {
         /// window is spent (plan card and limit card captures).
         #[arg(long)]
         plan_and_limit: bool,
-        /// Serve believable Projects, project groups, Scratch, Jobs and
+        /// Serve believable Projects, project groups, Jobs and
         /// History data (fixture paths under /home/dev); live sessions run in
         /// those project folders.
         #[arg(long)]

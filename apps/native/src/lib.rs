@@ -34,7 +34,6 @@ pub mod queue;
 pub mod quotes;
 pub mod reading;
 pub mod remote;
-pub mod scratch;
 pub mod session_controls;
 pub mod terminal;
 pub mod transcript;

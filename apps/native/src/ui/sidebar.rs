@@ -982,7 +982,6 @@ impl Workspace {
             .child(
                 self.icon_button("nav-menu-rail", "Workspace", IconName::Menu, true)
                     .relative()
-                    .when_some(self.pending_badge(), |d, badge| d.child(badge))
                     .debug_selector(|| "nav-menu".into())
                     .when(self.on_menu_screen(), |d| {
                         d.bg(rgb(p.selected)).text_color(rgb(p.text))
@@ -1151,8 +1150,8 @@ impl Workspace {
                     }),
             )
             .when_some(self.project_filter.clone(), |d, filter| {
-                // The filtered project, as the Projects page draws it: mark,
-                // name and whatever scratch is waiting on the user there.
+                // The filtered project, as the Projects page draws it: mark
+                // and name.
                 let group = self.filter_group();
                 let folders = self.filter_folders();
                 let (known, title) = match &group {
@@ -1165,7 +1164,6 @@ impl Workspace {
                     ),
                 };
                 let mark_path = known.as_ref().map_or(filter.clone(), |k| k.path.clone());
-                let pending = self.pending_in(&folders);
                 let spawn_in = folders.first().cloned();
                 let can_spawn = self.view.connected && !self.demo && spawn_in.is_some();
                 d.child(
@@ -1187,29 +1185,6 @@ impl Workspace {
                                 .text_color(rgb(p.text))
                                 .child(title),
                         )
-                        .when(pending > 0, |d| {
-                            let target = filter.clone();
-                            d.child(
-                                div()
-                                    .id("sidebar-filter-pending")
-                                    .debug_selector(|| "sidebar-filter-pending".into())
-                                    .flex_shrink_0()
-                                    .px_2()
-                                    .rounded_full()
-                                    .bg(gpui::Hsla::from(rgb(p.warning)).opacity(0.15))
-                                    .text_size(px(chrome::scale::CAPTION))
-                                    .text_color(rgb(p.warning))
-                                    .cursor_pointer()
-                                    .child(format!("{pending} pending"))
-                                    .tooltip(|window, cx| {
-                                        Tooltip::new("Scratch files waiting for you to run them").build(window, cx)
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.extras.scratch_preset = Some(target.clone());
-                                        this.open_feature(Screen::Scratch, window, cx)
-                                    })),
-                            )
-                        })
                         .child(
                             self.icon_button(
                                 "new-agent-in-filter",
@@ -1672,8 +1647,7 @@ impl Workspace {
                     .child(
                         self.quiet_button("nav-menu", "Workspace", IconName::Menu, true)
                             .relative()
-                            .when_some(self.pending_badge(), |d, badge| d.child(badge))
-                            .debug_selector(|| "nav-menu".into())
+                                    .debug_selector(|| "nav-menu".into())
                             .when(self.on_menu_screen(), |d| {
                                 d.bg(rgb(p.selected)).text_color(rgb(p.text))
                             })
@@ -1775,10 +1749,9 @@ impl Workspace {
 
 /// Sidebar destinations the bundled icon set has no distinct mark for:
 /// Session history is not the title bar's conversation history (a book),
-/// and Hosts and Scratch are neither a dashboard nor another folder.
+/// and Hosts is neither a dashboard nor another folder.
 const HISTORY_ICON: &str = "lucide/history.svg";
 const HOSTS_ICON: &str = "lucide/server.svg";
-const SCRATCH_ICON: &str = "lucide/notebook-pen.svg";
 
 fn nav_icon(path: &'static str) -> Icon {
     Icon::empty().path(path)
@@ -1786,13 +1759,36 @@ fn nav_icon(path: &'static str) -> Icon {
 
 /// The Workspace menu's destinations, in the order it lists them: where the
 /// row goes, its selector, label, icon and Normal-mode chord.
-fn nav_destinations() -> [(Screen, &'static str, &'static str, Icon, &'static str); 5] {
+fn nav_destinations() -> [(Screen, &'static str, &'static str, Icon, &'static str); 4] {
     [
-        (Screen::Projects, "nav-projects", "All projects", IconName::Folder.into(), "g p"),
-        (Screen::Recent, "nav-history", "Session history", nav_icon(HISTORY_ICON), "g h"),
-        (Screen::Jobs, "nav-jobs", "Jobs", IconName::Calendar.into(), "g j"),
-        (Screen::Hosts, "nav-hosts", "Hosts", nav_icon(HOSTS_ICON), "g o"),
-        (Screen::Scratch, "nav-scratch", "Scratch", nav_icon(SCRATCH_ICON), "g n"),
+        (
+            Screen::Projects,
+            "nav-projects",
+            "All projects",
+            IconName::Folder.into(),
+            "g p",
+        ),
+        (
+            Screen::Recent,
+            "nav-history",
+            "Session history",
+            nav_icon(HISTORY_ICON),
+            "g h",
+        ),
+        (
+            Screen::Jobs,
+            "nav-jobs",
+            "Jobs",
+            IconName::Calendar.into(),
+            "g j",
+        ),
+        (
+            Screen::Hosts,
+            "nav-hosts",
+            "Hosts",
+            nav_icon(HOSTS_ICON),
+            "g o",
+        ),
     ]
 }
 
@@ -1816,7 +1812,6 @@ impl Workspace {
     pub(super) fn render_nav_menu(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let at = self.nav_menu?;
         let p = self.palette();
-        let pending = self.pending_total();
         let hints = self.settings.vim_navigation;
         let workspace = cx.entity().downgrade();
         let close = move |_: &gpui::MouseDownEvent, _: &mut Window, cx: &mut App| {
@@ -1825,72 +1820,62 @@ impl Workspace {
                 cx.notify();
             });
         };
-        let menu = div()
-            .id("nav-menu-list")
-            .debug_selector(|| "nav-menu-list".into())
-            .min_w(px(208.))
-            .p_1()
-            .flex()
-            .flex_col()
-            .gap(px(2.))
-            .rounded(px(p.control_radius))
-            .border_1()
-            .border_color(rgb(p.border))
-            .bg(rgb(p.surface))
-            .shadow(chrome::floating_shadow(p))
-            .occlude()
-            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .children(nav_destinations().into_iter().map(
-                |(screen, id, label, icon, chord)| {
-                    let current = !self.new_session && self.screen == screen;
-                    chrome::interactive_control(div().id(id), p, true)
-                        .debug_selector(move || id.into())
-                        .px_2()
-                        .py_2()
-                        .rounded(px(p.control_radius))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .cursor_pointer()
-                        .text_size(px(chrome::scale::BODY))
-                        .text_color(rgb(p.text))
-                        .when(current, |d| d.bg(rgb(p.selected)))
-                        .hover(|d| d.bg(rgb(p.selected)))
-                        .child(
-                            Icon::new(icon)
-                                .size(px(icon_size::LG))
-                                .text_color(rgb(p.muted)),
-                        )
-                        .child(div().flex_1().child(label))
-                        .when(screen == Screen::Scratch && pending > 0, |d| {
-                            d.child(
-                                div()
-                                    .px_2()
-                                    .rounded_full()
-                                    .bg(gpui::Hsla::from(rgb(p.warning)).opacity(alpha::TONE_HOVER))
-                                    .text_size(px(chrome::scale::CAPTION))
-                                    .text_color(rgb(p.warning))
-                                    .child(format!("{pending} pending")),
+        let menu =
+            div()
+                .id("nav-menu-list")
+                .debug_selector(|| "nav-menu-list".into())
+                .min_w(px(208.))
+                .p_1()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .rounded(px(p.control_radius))
+                .border_1()
+                .border_color(rgb(p.border))
+                .bg(rgb(p.surface))
+                .shadow(chrome::floating_shadow(p))
+                .occlude()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .children(nav_destinations().into_iter().map(
+                    |(screen, id, label, icon, chord)| {
+                        let current = !self.new_session && self.screen == screen;
+                        chrome::interactive_control(div().id(id), p, true)
+                            .debug_selector(move || id.into())
+                            .px_2()
+                            .py_2()
+                            .rounded(px(p.control_radius))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .cursor_pointer()
+                            .text_size(px(chrome::scale::BODY))
+                            .text_color(rgb(p.text))
+                            .when(current, |d| d.bg(rgb(p.selected)))
+                            .hover(|d| d.bg(rgb(p.selected)))
+                            .child(
+                                Icon::new(icon)
+                                    .size(px(icon_size::LG))
+                                    .text_color(rgb(p.muted)),
                             )
-                        })
-                        .when(hints, |d| {
-                            d.child(
-                                div()
-                                    .text_size(px(chrome::scale::CAPTION))
-                                    .text_color(rgb(p.disabled))
-                                    .child(chord),
-                            )
-                        })
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.nav_menu = None;
-                            if screen == Screen::Projects {
-                                this.show_screen(screen, window, cx)
-                            } else {
-                                this.open_feature(screen, window, cx)
-                            }
-                        }))
-                },
-            ));
+                            .child(div().flex_1().child(label))
+                            .when(hints, |d| {
+                                d.child(
+                                    div()
+                                        .text_size(px(chrome::scale::CAPTION))
+                                        .text_color(rgb(p.disabled))
+                                        .child(chord),
+                                )
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.nav_menu = None;
+                                if screen == Screen::Projects {
+                                    this.show_screen(screen, window, cx)
+                                } else {
+                                    this.open_feature(screen, window, cx)
+                                }
+                            }))
+                    },
+                ));
         let layer = div()
             .id("nav-menu-backdrop")
             .absolute()
@@ -1917,36 +1902,6 @@ impl Workspace {
         self.icon_button(id, "New agent", IconName::Plus, enabled)
             .bg(chrome::tonal(p, alpha::REST))
             .when(enabled, |d| d.text_color(rgb(p.text)))
-    }
-
-    /// The Scratch icon's count of files waiting on the user, across every
-    /// project; `None` when nothing is pending (or the hub has not said).
-    fn pending_badge(&self) -> Option<Div> {
-        let total = self.pending_total();
-        (total > 0).then(|| {
-            let p = self.palette();
-            div()
-                .absolute()
-                .top(px(-3.))
-                .right(px(-3.))
-                .min_w(px(14.))
-                .h(px(14.))
-                .px(px(3.))
-                .rounded_full()
-                .bg(rgb(p.warning))
-                .text_color(rgb(p.base))
-                .text_size(px(chrome::scale::OVERLINE))
-                .font_weight(FontWeight::SEMIBOLD)
-                .flex()
-                .items_center()
-                .justify_center()
-                .debug_selector(|| "scratch-pending-badge".into())
-                .child(if total > 99 {
-                    "99+".to_owned()
-                } else {
-                    total.to_string()
-                })
-        })
     }
 
     /// The collapsed rail's view of the sidebar's project filter: the
