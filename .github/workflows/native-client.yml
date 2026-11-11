@@ -85,5 +85,30 @@ jobs:
         with:
           name: native-linux-smoke
           path: apps/native/native-*smoke.png
+      # Not on pull requests: an optimized build is slow, and the archive is
+      # for people to run, not a check. This workflow publishes no release.
+      - name: Package the Linux build
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=$(scripts/package-linux.sh | tail -1)
+          # The archive installs, runs and uninstalls from a clean prefix.
+          work=$(mktemp -d)
+          tar -xzf "$archive" -C "$work"
+          (cd "$work"/workspacer-native-* && PREFIX="$work/prefix" ./install.sh)
+          "$work/prefix/bin/wks-native" --help >/dev/null
+          python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$work/prefix/lib/workspacer-native/build-stamp.json"
+          "$work/prefix/bin/wks-native-uninstall"
+          test ! -e "$work/prefix/lib/workspacer-native"
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        with:
+          name: workspacer-native-linux
+          compression-level: 0
+          path: |
+            apps/native/target/package/workspacer-native-*-linux-*.tar.gz
+            apps/native/target/package/workspacer-native-*-linux-*.tar.gz.sha256
+          if-no-files-found: error
       - name: Measure bounded transcript workload
         run: cargo run --locked --release --no-default-features --bin native-harness -- bench --events 20000

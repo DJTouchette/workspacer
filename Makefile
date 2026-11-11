@@ -19,7 +19,7 @@ HUB_RUST  := services/hub-rs
 .PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
         build-cli test test-desktop test-hub test-tui test-claudemon test-routing-harness \
         claudemon-routes docs-drift package clean dev-native run-native build-native test-native \
-        dev-native-local run-native-local build-native-local bench-native-switch
+        dev-native-local run-native-local build-native-local bench-native-switch package-native-linux
 
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
@@ -78,6 +78,11 @@ build-native:
 
 ## build-native-local: build the native binary and all required local services.
 build-native-local: build-native
+
+## package-native-linux: release build packed as a tar.gz with a per-user
+##             installer (apps/native/target/package/). Linux only.
+package-native-linux:
+	$(NATIVE)/scripts/package-linux.sh
 
 ## test-native: native UI/protocol tests and embedded-engine lifecycle regression.
 test-native:

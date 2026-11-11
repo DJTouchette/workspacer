@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Workspacer Native
+Comment=Native mission control for your coding agents
+Exec=wks-native --local
+Icon=workspacer-native
+Categories=Development;
+Terminal=false
+Keywords=claude;codex;agent;ai;coding;workspace;
+StartupNotify=true
+StartupWMClass=workspacer-native
+Version=1.0
