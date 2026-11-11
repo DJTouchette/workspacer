@@ -63,6 +63,30 @@ relevant PRs or manual dispatch. That validation workflow does not publish a
 release or update the nightly. A successful preview build alone does not establish
 complete migration parity.
 
+## Linux package
+
+```sh
+make package-native-linux     # apps/native/target/package/workspacer-native-<version>-linux-<arch>.tar.gz
+```
+
+`scripts/package-linux.sh` builds the release binary and packs it with a
+checksum beside the archive. Unpacked, it runs in place
+(`lib/workspacer-native/wks-native --local`) or installs for the current user
+with `./install.sh` (into `~/.local`; set `PREFIX` for another place): the
+binary and its `build-stamp.json`, a launcher that starts it with `--local`,
+the icon and the licences. The installer records every file it writes, and
+`wks-native-uninstall` removes exactly those; sessions, settings and logs are
+kept. `--no-build` packs an existing `target/release/wks-native`, and
+`--version` overrides the release version read from
+`apps/desktop/package.json`.
+
+The `native-client` workflow builds, installs, runs and uninstalls the archive
+on pushes to `main` and manual runs, and uploads it as the
+`workspacer-native-linux` artifact. It is not attached to releases, and
+updating is manual: the app says when a newer release exists; unpack the new
+archive and run `./install.sh` again. There is no macOS package (an app bundle
+needs signing and notarization, which are not set up).
+
 ## Run
 
 Use a current stable Rust toolchain. On Debian/Ubuntu, install the native build
@@ -462,10 +486,19 @@ Transcript rendering is described below.
   same file) scroll to the heading, and same-file line links switch to the
   source without re-reading. Documents over 256 KiB open as source with a
   notice, because the renderer's first parse runs on the UI thread.
-  Limitations: images inside documents are labels that open the image viewer,
-  not inline pictures; raw HTML renders through the component's limited HTML
-  subset; footnotes, math, Mermaid and front matter are not specially
-  rendered; a `#heading` on a link to another file opens that file at the top.
+  A link to a heading of another document (`setup.md#install`) opens that
+  document at the heading once it has been parsed, or says the heading is not
+  there. YAML front matter shows as a labelled `yaml` block. Footnotes are
+  numbered in the order they are first used; each reference links to a
+  Footnotes list at the end. The document's own image files (up to 12) are
+  read from the session's machine and drawn inline, scaled to the column;
+  clicking one opens the image viewer. Images at web addresses stay labels:
+  opening a document fetches nothing from the network. The source view,
+  saving and line links always use the file as written
+  ([capture](docs/ui-document-preview.png)).
+  Limitations: math and Mermaid show as their source (there is no typesetter
+  or diagram layout to draw them with); raw HTML renders through the
+  component's limited HTML subset.
 - Sent messages remain visibly provisional — the user's bubble after the
   transcript's last message — until a new authoritative user turn acknowledges
   them. The line under the bubble says how it went: **Sending…**, **Sent · the
@@ -573,8 +606,14 @@ in Settings while keeping the selected theme active for the current run.
 
 The brace-and-cursor mark and work{spacer} wordmark follow `components/Brand.tsx`.
 Controls retain text labels, and native platform monospace fonts render the mark.
-Custom Electron themes, automatic system appearance, and bundled web fonts are
-not supported by this picker yet.
+**Settings → Appearance → Match system** follows the system's light or dark
+setting, at startup and whenever it changes. It keeps one theme for each: the
+theme you pick while the system is light is used for light, and the one you
+pick while it is dark for dark (Light and Dark until you pick). Wearing one of
+your own themes turns it off, since a custom theme is one look for both. On
+Linux the setting comes from the desktop portal's colour scheme. Themes made in
+the Electron app are not imported; make them again under Settings → Custom
+themes.
 
 ## Projects, settings, and keyboard navigation
 
@@ -773,6 +812,10 @@ be expanded, and attachment controls share the composer action row.
   session list. Scrollback keeps 5,000 lines (mouse wheel; full-screen
   programs get arrow keys). Copy takes the visible screen; there is no mouse
   selection or mouse reporting yet. ANSI colours follow the selected theme.
+  Typing costs a redraw of the terminal only: the grid is painted from a
+  per-cell glyph cache (no text is shaped or laid out per key), a delivered
+  key does not republish the app's view, and the rest of the window is reused
+  while only the docked terminal changes (see `MainView` in `src/ui.rs`).
   **Settings → Workspace → Default terminal shell** picks what new agent
   terminals start: the hub's default, or one of the shells installed on the
   hub's host as the hub lists them (`terminals.shells`): PowerShell,
@@ -1245,18 +1288,34 @@ The native equivalents use existing screens:
 | `command.open_pane` with `claude` | Open the new-session form with Claude selected. |
 | `settings`, `sessions` / `recentagents` | Open Settings or Session history. |
 | `review` | Open Changes for the requested project directory. |
-| `agents` / `agentwatch`, `inspector` | Open the conversation/session list or selected-session details. |
+| `agents` / `agentwatch` / `overview`, `inspector` | Open the conversation/session list or selected-session details. |
+| `terminal` | Show the selected agent's own terminal. |
+| `analytics` | Open the usage panel. |
+| `browser` with an `http(s)` URL | Offer the page: **Open in browser** opens it in the system browser. Nothing is opened on receipt, and other schemes are refused. |
+| `facade.openTerminal` | Offer the command: the notice shows it and where it is for, and **Run in terminal** types it into a session's terminal. Nothing runs on receipt. |
 | `command.run_action` | Apply supported session navigation, new-session form, settings, review and inspector actions. Decision and session-control verbs are refused. |
 
 The `new-terminal` / `toggle-terminal` actions show or toggle the selected
-agent's own terminal (no command is run). Native does not open hub terminal
-panes or run `facade.openTerminal` commands, and has no browser pane, plugin
-renderer, guide pane, library, analytics dashboard, board, Ask or context
-pane. Requests for those surfaces show an explicit unsupported notice. The most recent unsupported terminal request retains `cwd`,
-`command`, `label` and `parentSessionId` behind **Copy request**; no hidden shell
-is created and the command is not run. Guide requests offer an explicit link to
-native documentation. These are pre-existing native UI gaps, not substitutes for
-the Rust backend's working terminal or data APIs.
+agent's own terminal (no command is run).
+
+A terminal request is run only by the person, from its notice. **Run in
+terminal** uses the terminal of the session the request names
+(`parentSessionId`) when that session is on this hub, else the selected
+session's; a command for another session waits until that session is selected,
+and a window pinned to a different session refuses it. In the session's own
+folder the command is typed as sent, with Enter only where the request ended a
+line. For another folder it changes to it first and runs the command only if
+that worked (`cd -- '…' && command`); where that cannot be one safe line
+(several lines, or a Windows path, whose shells share no quoting) the text is
+typed and left for the person to run. Control characters other than line ends
+are dropped, so a request cannot put an escape sequence into the shell behind
+the command that was shown. **Copy request** still copies the whole request.
+
+Native has no plugin renderer, guide pane, library, board, Ask or context
+pane, and no in-app browser or editor pane a request can open. Requests for
+those show an explicit unsupported notice; guide requests offer a link to
+this document. These are native UI gaps, not substitutes for the Rust
+backend's working terminal or data APIs.
 
 UI commands retain their existing fire-and-forget bus contract. The native
 client does not publish a fabricated visible-pane acknowledgement. Protocol and

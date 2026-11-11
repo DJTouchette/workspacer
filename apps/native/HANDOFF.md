@@ -70,13 +70,14 @@ for the revert: renderer `tsc`, `npx vitest run` (1936 pass), and
 
 ## Open follow-ups
 
-- Chat paging and account usage shipped (see VALIDATION.md). Paging re-reads a
-  widening window rather than prepending a `before` page; fine up to the 2,000
-  row client budget, but an O(n²) re-read if that budget ever grows a lot.
+- Chat paging and account usage shipped (see VALIDATION.md). Older pages are
+  fetched by cursor (`before=<seq>`, `Command::LoadOlder`); a hub or daemon
+  without the cursor is paged the old way, by re-reading a wider window.
 - Visual check of the above was not done (see VALIDATION.md); run the rich
   harness and look at tables, quotes, the Skill/Agent cards and the merged
   turn card in all three themes.
-- Inline code renders at full size (desktop uses 0.9em); GPUI can't vary size
-  within a line.
+- Inline code is 90% size through the bundled "JetBrains Mono Inline" faces
+  (GPUI can't vary size within a line; see `assets/fonts/README.md`). With
+  another code font chosen in Settings it renders at full size.
 - No Windows/macOS rendering checks or live-provider runs were done for this
   pass; the bundled fonts and SVG marks are compiled in, so they should carry over.

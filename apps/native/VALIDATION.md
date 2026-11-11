@@ -1,5 +1,94 @@
 # Native client validation — 2026-09-27
 
+## Terminal typing, hub requests, Match system, document preview, Linux package (2026-11-11)
+
+**Terminal typing.** Typing in an agent's docked terminal was slow, worst in a
+debug build. Four costs sat on every key, each now gone:
+
+| Cost | Was | Now |
+| --- | --- | --- |
+| A delivered key (`sessions.terminalInput` settling) marked the view dirty | one whole-view republish and window re-sync per key | none (`delivered_terminal_input_does_not_republish`) |
+| The key press redrew the terminal, then its echo did again | 2 terminal draws per key | 1 |
+| Rows were text elements shaped as whole strings | every word of the row reshaped per key | glyphs looked up per cell from a cache kept for the terminal's life; nothing shaped |
+| The workspace root redraws with any view in it | sidebar and conversation rebuilt, laid out and painted per draw | the content is its own view (`MainView`), reused while only the terminal changes |
+
+The last needed a vendored fix: gpui-component inputs called `cx.notify()` at
+the end of every paint, so any view containing an input was dirty again for
+the next frame and could never be reused (`vendor/gpui-component/WORKSPACER-PATCHES.md`).
+
+Measured in a real window: Xvfb, Openbox, lavapipe, `native-harness serve
+--sessions 6 --turns 300 --rich-transcript` (echo-only shell), 1300 × 850,
+300 keys at 33 per second with `xdotool`, figures from `logs/perf.jsonl`.
+"Before" is `c8ef6ab`.
+
+| Build, fixture state | | Window rebuilds | Terminal draws | UI thread |
+| --- | --- | --- | --- | --- |
+| Release, a session animating | before | 360 | 329 | 31% |
+| | after | 76 | 116 | 9% |
+| Release, nothing animating (Reduce motion) | before | 341 | 328 | 32% |
+| | after | 17 | 127 | 6% |
+| Debug, a session animating | before | 167 | 163 | 94% (saturated) |
+| | after | 63 | 76 | 42% |
+
+Two seconds after the last key the old debug build had drawn none of the 300
+characters; the new one had drawn all of them
+([before above, after below](docs/ui-terminal-typing-before-after.png)).
+With frame timing temporarily added to the vendored GPUI draw, a debug frame
+for one echoed character went from about 80 ms of layout and paint (plus
+100–180 ms whenever a word was reshaped) to about 10 ms.
+
+`bench_terminal_echo_latency` (`tests/terminal_shell_hub.rs`, opt in with
+`WKS_NATIVE_BENCH_ECHO=<keys>` and `--nocapture`) drives the real embedded hub
+and a real shell without a window: key to echo is 3 ms p50 (5 ms p95) at 30 ms
+between keys, so the transport was never the delay; view republishes while
+typing went from one per key to 0.
+
+Limits: software Vulkan, so the UI-thread share includes the driver's own
+submit cost and is not a GPU frame time. While a looping animation is on
+screen (a working session's loader) the window still rebuilds every 80 ms for
+it, as before; that is what the remaining rebuilds in the animating rows are.
+No Wayland, Windows or macOS run, and no hardware GPU.
+
+**Hub UI requests.** `facade.openTerminal` is offered, not refused: the notice
+shows the command and **Run in terminal** types it into the terminal of the
+session it names, else the selected one. `terminal`, `overview`, `analytics`
+and `browser` (http/https, offered) panes open their native counterpart. GPUI
+tests: `a_terminal_request_is_offered_and_runs_only_when_the_person_says_so`,
+`a_command_for_another_session_waits_for_that_session_and_changes_folder_first`,
+`pane_requests_open_their_native_counterpart_and_a_page_is_only_offered`;
+model tests in `ui_requests::effect_tests` cover quoting, held multi-line and
+Windows-path requests, and dropped control characters. Not captured in a real
+window, and not run against a live hub sending the request.
+
+**Match system.** `match_system_keeps_a_theme_for_light_and_one_for_dark` and
+`settings_written_before_match_system_load_with_it_off`. The system's change
+notification itself was not exercised: the test platform reports one fixed
+appearance, and no desktop portal runs in this container.
+
+**Document preview.** Front matter, numbered footnotes, the document's own
+pictures inline and heading links across documents:
+`wks_native::document` unit tests, and GPUI tests
+`previews_render_front_matter_and_footnotes_and_follow_headings_across_files`
+and `a_documents_own_pictures_are_read_from_the_session_and_drawn_inline`.
+Real window against the fixture hub, which now serves such a document for any
+`.md` path: [dark, 1300 × 850](docs/ui-document-preview.png). Other themes and
+a real hub's `fs.readImage` were not captured.
+
+**Linux package.** `scripts/package-linux.sh --no-build` packed the release
+binary (34 MB archive); from the unpacked archive `install.sh` into a scratch
+`PREFIX` wrote the binary, stamp, launcher, icon and licences, the installed
+`wks-native --help` ran, and `wks-native-uninstall` left nothing behind. The
+workflow step that repeats this on CI has not run yet. The installed app was
+not launched from a desktop launcher.
+
+**Suite.** `cargo test --locked --no-fail-fast --features ui-tests --
+--test-threads=1`: all pass (307 library, 361 GPUI with 1 ignored, 59 protocol
+and every Rust-hub suite; `hosts_hub` now requires `queue.targets` and project
+links instead of tolerating a hub without them). `cargo clippy --locked
+--all-targets --features ui-tests -- -D warnings`: clean. `cargo fmt --check`
+reports three files this change does not touch (`ui/quotes.rs`, `ui/sidebar.rs`,
+`ui/tests/quoting.rs`) with this toolchain's rustfmt; they were left as they are.
+
 ## Session history nests children under their parent (2026-11-10)
 
 In Session history a session another one started is listed right under it,
