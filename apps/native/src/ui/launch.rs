@@ -71,7 +71,7 @@ pub(super) fn effort_items(levels: &[String], default: Option<&str>) -> Vec<Pick
         id: String::new(),
         label: default
             .map(|d| format!("Default · {}", wks_native::launch::effort_label(d)))
-            .unwrap_or_else(|| "Default".into()),
+            .unwrap_or_else(|| "Default effort".into()),
         kind: "effort-option",
     })
     .chain(levels.iter().map(|id| PickerItem {
@@ -185,8 +185,9 @@ impl Workspace {
         self.model_picker = picker;
     }
 
-    /// The New Agent screen: the task leads, like a composer, and one setup
-    /// sheet beneath it says where the agent runs, who it is and how.
+    /// The New Agent screen: one composer holds the task, who does it and
+    /// Start; where it runs and how sit beneath as quiet pills, and the
+    /// choosers they open appear only when asked for.
     pub(super) fn render_new_session(
         &self,
         window: &Window,
@@ -196,14 +197,9 @@ impl Workspace {
         let busy = self.spawn_pending || self.view.creating || self.extras.queue_sent;
         let can_create = self.view.connected && !busy && !self.demo;
         let resume = self.extras.resume.is_some();
-        let width = window.viewport_size().width;
-        // Task and setup side by side only where both stay readable beside
-        // the sidebar.
-        let split = width >= px(SPLIT_WIDTH);
-        // Row labels sit in a left column until the sheet gets too narrow.
-        let side = width >= px(SIDE_LABEL_WIDTH);
-        // Short windows give the form, not the heading, the height.
-        let short = window.viewport_size().height < px(620.);
+        let viewport = window.viewport_size();
+        // Short windows give the composer, not the heading, the height.
+        let short = viewport.height < px(620.);
         let close = self
             .icon_button(
                 "cancel-create",
@@ -227,90 +223,50 @@ impl Workspace {
                 if resume {
                     "Pick up where you left off"
                 } else {
-                    "Start an agent"
+                    "What should the agent work on?"
                 },
                 None,
                 Some(close.into_any_element()),
                 short,
             )
             .debug_selector(|| "launch-title".into());
-        let task = self.render_launch_task(busy, short, split, window, cx);
-        let row = |label, lead, first, content: gpui::AnyElement| {
-            launch_row(label, lead, side, first, short, content, p)
-        };
+        let peer = self.launch_peer();
+        let choosing =
+            peer.is_none() && (self.projects.picker_open || self.projects.cwd.is_empty());
+        let panel = || chrome::card(p).p_4();
+        let composer = self.render_launch_composer(busy, can_create, short, window, cx);
+        let context = self.render_launch_context(peer.as_deref(), busy, cx);
         let hosts = self.render_host_picker(busy, cx);
-        let has_hosts = hosts.is_some();
-        let setup = chrome::card(p)
-            .debug_selector(|| "launch-setup-sheet".into())
-            .px_4()
-            .flex()
-            .flex_col()
-            .children(hosts.map(|picker| row("Run on", HOST_TILE, true, picker.into_any_element())))
-            .child(match self.launch_peer() {
-                Some(peer) => row(
-                    "Project",
-                    PEER_CAPTION,
-                    !has_hosts,
-                    self.render_peer_folders(&peer, busy, cx).into_any_element(),
-                ),
-                None => row(
-                    "Project",
-                    // The chooser leads with its search field, the summary
-                    // with three lines of text beside the project's mark.
-                    if self.projects.picker_open || self.projects.cwd.is_empty() {
-                        control::HEIGHT
-                    } else {
-                        PROJECT_SUMMARY
-                    },
-                    !has_hosts,
-                    self.render_project_section(busy, cx).into_any_element(),
-                ),
-            })
-            .child(row(
-                "Agent",
-                PROVIDER_TILE,
-                false,
-                self.render_provider_choice(busy, cx).into_any_element(),
-            ))
-            .child(row(
-                "Model",
-                control::HEIGHT,
-                false,
-                self.render_launch_model(busy, cx).into_any_element(),
-            ))
-            .child(row(
-                "Options",
-                control::HEIGHT,
-                false,
-                self.render_launch_disclosure(busy, cx).into_any_element(),
-            ));
+        let folders = peer
+            .as_deref()
+            .map(|peer| panel().child(self.render_peer_folders(peer, busy, cx)));
+        let chooser = choosing.then(|| panel().child(self.render_project_picker(busy, cx)));
+        let details = self
+            .launch_details_open
+            .then(|| self.render_launch_details(busy, cx));
         let gutter = if short { 12. } else { 20. };
         let content = div()
             .debug_selector(|| "launch-content".into())
-            .max_w(px(launch_width(split)))
+            .max_w(px(LAUNCH_WIDTH))
             .mx_auto()
             .py_2()
+            // On a tall window the composer sits a little down the page,
+            // like an empty conversation, not pinned under the title bar.
+            .when(!short, |d| d.pt(viewport.height * 0.05))
             .flex()
             .flex_col()
-            .gap_4()
+            .gap_3()
             .child(header)
-            .map(|d| {
-                if split {
-                    d.child(
-                        // Stretched: the task is as tall as the sheet beside it.
-                        div()
-                            .flex()
-                            .gap_4()
-                            .child(task.flex_1().min_w_0())
-                            .child(setup.w(px(SETUP_WIDTH)).flex_shrink_0()),
-                    )
-                } else {
-                    d.child(task).child(setup)
-                }
-            })
+            .child(composer)
+            .child(context)
+            .children(hosts)
+            .children(folders)
+            .children(chooser)
+            .children(details)
             .when(resume, |d| {
                 d.child(
                     div()
+                        .px_1()
                         .flex()
                         .items_center()
                         .gap_2()
@@ -342,84 +298,53 @@ impl Workspace {
                     })
                     .child(content),
             )
-            .child(
-                // The form's own gutters, so the footer panel lines up with
-                // the cards above it and floats on the page like the composer.
-                div()
-                    .flex_shrink_0()
-                    .px(px(gutter))
-                    .pt_2()
-                    .pb(px(gutter))
-                    // A flex row gives the footer a definite width, so a long
-                    // error wraps instead of widening it.
-                    .flex()
-                    .justify_center()
-                    .child(self.render_launch_footer(busy, can_create, split, short, cx)),
-            )
             .children(chrome::page_drag_strip())
     }
 
+    /// Claude or Codex, as one two-way switch.
     fn render_provider_choice(&self, busy: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
-        div().flex().gap_2().children(
-            [
-                ("claude", "Claude", "Claude Code"),
-                ("codex", "Codex", "OpenAI Codex"),
-            ]
-            .into_iter()
-            .map(|(provider, name, subtitle)| {
-                let selected = self.provider == provider;
-                chrome::interactive_control(div().id(provider), p, !busy)
-                    .debug_selector(move || format!("launch-provider-{provider}"))
-                    .flex_1()
-                    .min_w_0()
-                    .h(px(PROVIDER_TILE))
-                    .px_3()
-                    .rounded(px(p.control_radius))
-                    .bg(rgb(if selected { p.selected } else { p.chat }))
-                    .border_color(rgb(if selected { p.accent } else { p.border }))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .when(!busy, |d| {
-                        d.hover(|s| s.bg(rgb(p.selected))).on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.choose_provider(provider, window, cx);
-                                this.load_models(false, cx);
-                                cx.notify();
-                            },
-                        ))
-                    })
-                    .child(chrome::provider_mark(provider, 28., p))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .text_size(px(chrome::scale::BODY))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(name),
-                            )
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(px(chrome::scale::CAPTION))
-                                    .text_color(rgb(p.muted))
-                                    .child(subtitle),
-                            ),
-                    )
-                    .when(selected, |d| {
-                        d.child(
-                            Icon::new(IconName::Check)
-                                .size(px(icon_size::LG))
-                                .text_color(rgb(p.accent)),
-                        )
-                    })
-            }),
-        )
+        div()
+            .flex_shrink_0()
+            .flex()
+            .gap_1()
+            .p(px(3.))
+            .rounded_full()
+            .bg(rgb(p.base))
+            .border_1()
+            .border_color(rgb(p.border))
+            .children([("claude", "Claude"), ("codex", "Codex")].into_iter().map(
+                |(provider, name)| {
+                    let selected = self.provider == provider;
+                    chrome::interactive_control(div().id(provider), p, !busy)
+                        .debug_selector(move || format!("launch-provider-{provider}"))
+                        .h(px(control::HEIGHT_SM))
+                        .pl(px(8.))
+                        .pr(px(10.))
+                        .rounded_full()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .text_size(px(chrome::scale::META))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(rgb(match (busy, selected) {
+                            (true, _) => p.disabled,
+                            (false, true) => p.text,
+                            (false, false) => p.muted,
+                        }))
+                        .when(selected, |d| d.bg(rgb(p.selected)))
+                        .when(!busy, |d| {
+                            d.hover(move |s| s.text_color(rgb(p.text)))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.choose_provider(provider, window, cx);
+                                    this.load_models(false, cx);
+                                    cx.notify();
+                                }))
+                        })
+                        .child(chrome::provider_glyph(provider, icon_size::LG, p))
+                        .child(name)
+                },
+            ))
     }
 
     /// Non-default options, readable without opening the fold.
@@ -447,25 +372,52 @@ impl Workspace {
         chips
     }
 
-    fn render_launch_disclosure(&self, busy: bool, cx: &mut Context<Self>) -> Div {
+    /// Under the composer: the project (or the peer's folder), then Options
+    /// with the choices it holds as chips, and what the hub says about the
+    /// folder on a line of its own.
+    fn render_launch_context(&self, peer: Option<&str>, busy: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         let open = self.launch_details_open;
+        let project = match peer {
+            Some(peer) => {
+                let folder = &self.extras.launch_host_cwd;
+                div()
+                    .h(px(control::HEIGHT))
+                    .px_3()
+                    .rounded_full()
+                    .bg(chrome::tonal(p, alpha::REST))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(chrome::scale::BODY))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(Icon::new(IconName::Folder).size(px(icon_size::MD)))
+                    .child(if folder.is_empty() {
+                        format!("Pick a folder on {peer}")
+                    } else {
+                        format!("{} on {peer}", wks_native::projects::basename(folder))
+                    })
+                    .into_any_element()
+            }
+            None => self.render_project_summary(busy, cx).into_any_element(),
+        };
         div()
+            .px_1()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_1()
             .child(
                 div()
-                    .min_h(px(control::HEIGHT))
                     .flex()
                     .flex_wrap()
                     .items_center()
                     .gap_2()
+                    .child(project)
                     .child(
-                        // First on the line, so toggling never moves it.
+                        // Before the chips, so toggling never moves it.
                         self.quiet_button(
                             "launch-customize",
-                            "Customize",
+                            "Options",
                             if open {
                                 IconName::ChevronDown
                             } else {
@@ -474,8 +426,8 @@ impl Workspace {
                             !busy,
                         )
                         .debug_selector(|| "launch-customize".into())
-                        .ml(px(-8.))
                         .py_1()
+                        .rounded_full()
                         .when(!busy, |d| {
                             d.on_click(cx.listener(|this, _, window, cx| {
                                 if this.launch_details_open {
@@ -493,102 +445,64 @@ impl Workspace {
                         },
                     )),
             )
-            .when(open, |d| {
-                d.child(
-                    div()
-                        .debug_selector(|| "launch-details".into())
-                        .pb_1()
-                        .flex()
-                        .flex_col()
-                        .gap_4()
-                        .child(self.render_access_options(busy, cx))
-                        .child(self.render_context_choice(busy, cx))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .child(projects::section_label("Session name", p))
-                                .child(Input::new(&self.label).disabled(busy)),
-                        )
-                        .child(
-                            div().flex().flex_wrap().gap_2().child(
-                                self.quiet_button(
-                                    "launch-setup",
-                                    "Agent setup",
-                                    IconName::Settings2,
-                                    !busy,
-                                )
-                                .ml(px(-8.))
-                                .when(!busy, |d| {
-                                    d.on_click(cx.listener(|this, _, window, cx| {
-                                        this.open_feature(Screen::Setup, window, cx)
-                                    }))
-                                }),
-                            ),
-                        ),
-                )
-            })
+            .children(
+                peer.is_none()
+                    .then(|| self.render_project_status())
+                    .flatten(),
+            )
+            .children(self.render_project_notice(cx))
     }
 
-    /// The task, drawn like the chat composer it becomes: the first thing on
-    /// the page and where the caret starts.
-    fn render_launch_task(
-        &self,
-        busy: bool,
-        short: bool,
-        split: bool,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    /// What Options holds: access, context window, a session name.
+    fn render_launch_details(&self, busy: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
-        let focused = gpui::Focusable::focus_handle(self.prompt.read(cx), cx).is_focused(window);
-        let height = match (short, split) {
-            (true, _) => 56.,
-            (false, false) => 112.,
-            (false, true) => 200.,
-        };
-        div()
-            .debug_selector(|| "launch-task".into())
-            .bg(rgb(p.surface))
-            .border_1()
-            .border_color(rgb(if focused && !busy { p.accent } else { p.border }))
-            .rounded(px(p.composer_radius))
-            .shadow(chrome::floating_shadow(p))
-            .px(px(if short { 10. } else { 14. }))
-            .pt(px(if short { 8. } else { 12. }))
-            .pb(px(if short { 8. } else { 10. }))
+        let can_reload = !busy && self.view.connected;
+        chrome::card(p)
+            .debug_selector(|| "launch-details".into())
+            .p_4()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap_4()
+            .child(self.render_access_options(busy, cx))
+            .child(self.render_context_choice(busy, cx))
             .child(
                 div()
-                    .debug_selector(|| "launch-prompt".into())
-                    .flex_1()
-                    .min_h(px(height))
                     .flex()
                     .flex_col()
-                    .child(
-                        Input::new(&self.prompt)
-                            .appearance(false)
-                            .flex_1()
-                            .min_h(px(height))
-                            .disabled(busy),
-                    ),
+                    .gap_2()
+                    .child(projects::section_label("Session name", p))
+                    .child(Input::new(&self.label).disabled(busy)),
             )
             .child(
                 div()
+                    .ml(px(-8.))
                     .flex()
-                    .items_center()
+                    .flex_wrap()
                     .gap_2()
-                    .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(p.muted))
-                    .child(Icon::new(IconName::Info).size(px(icon_size::XS)))
-                    .child(if self.extras.resume.is_some() {
-                        "Optional · sent after the conversation resumes"
-                    } else {
-                        "Optional · leave it empty to start the agent idle"
-                    }),
+                    .child(
+                        self.quiet_button(
+                            "launch-setup",
+                            "Agent setup",
+                            IconName::Settings2,
+                            !busy,
+                        )
+                        .when(!busy, |d| {
+                            d.on_click(cx.listener(|this, _, window, cx| {
+                                this.open_feature(Screen::Setup, window, cx)
+                            }))
+                        }),
+                    )
+                    .child(
+                        self.quiet_button(
+                            "reload-models",
+                            "Reload models",
+                            IconName::Redo,
+                            can_reload,
+                        )
+                        .when(can_reload, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| this.load_models(true, cx)))
+                        }),
+                    ),
             )
     }
 
@@ -651,122 +565,15 @@ impl Workspace {
         }
     }
 
-    /// The setup sheet's Model row: model, effort and reload on one line
-    /// (wrapping when narrow), the exact ID field when Custom is chosen, and
-    /// the catalog's state only when it needs saying.
-    fn render_launch_model(&self, busy: bool, cx: &mut Context<Self>) -> Div {
+    /// What the composer has to say before Start: a short failure, progress,
+    /// or what is still missing. Nothing when the form is simply ready.
+    fn launch_status(&self, busy: bool, detailed: bool) -> Option<(Option<IconName>, u32, String)> {
         let p = self.palette();
-        let (status, status_color, loading, notable) = self.model_catalog_status(cx);
-        let can_reload = !busy && !loading && self.view.connected;
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .debug_selector(|| "launch-model-picker".into())
-                            .flex_1()
-                            .min_w(px(170.))
-                            .child(
-                                Select::new(&self.model_picker)
-                                    .disabled(busy)
-                                    .search_placeholder("Find a model…"),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(projects::section_label("Effort", p))
-                            .child(
-                                div()
-                                    .debug_selector(|| "launch-effort-picker".into())
-                                    .w(px(168.))
-                                    .child(Select::new(&self.effort_picker).disabled(busy)),
-                            )
-                            .child(
-                                self.icon_button(
-                                    "reload-models",
-                                    "Reload the model list",
-                                    IconName::Redo,
-                                    can_reload,
-                                )
-                                .when(can_reload, |d| {
-                                    d.on_click(
-                                        cx.listener(|this, _, _, cx| this.load_models(true, cx)),
-                                    )
-                                }),
-                            ),
-                    ),
-            )
-            .when(self.model_choice == "__custom", |d| {
-                d.child(
-                    div()
-                        .debug_selector(|| "launch-custom-model".into())
-                        .child(Input::new(&self.model).disabled(busy)),
-                )
-            })
-            .when(notable, |d| {
-                d.child(
-                    div()
-                        .debug_selector(|| "launch-model-status".into())
-                        .text_size(px(chrome::scale::CAPTION))
-                        .text_color(rgb(status_color))
-                        .child(status),
-                )
-            })
-    }
-
-    fn render_launch_footer(
-        &self,
-        busy: bool,
-        can_create: bool,
-        split: bool,
-        short: bool,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.palette();
-        let model = if self.model_choice == "__custom" {
-            let custom = self.model.read(cx).value().trim().to_owned();
-            if custom.is_empty() {
-                "Custom model".to_owned()
-            } else {
-                custom
-            }
-        } else {
-            self.catalog_models
-                .iter()
-                .find(|model| model.id == self.model_choice)
-                .map(|model| model.label.clone())
-                .unwrap_or_else(|| {
-                    if self.model_choice.is_empty() {
-                        "Provider default".into()
-                    } else {
-                        self.model_choice.clone()
-                    }
-                })
-        };
         let provider = if self.provider == "codex" {
             "Codex"
         } else {
             "Claude"
         };
-        let model = if self.effort.is_empty() {
-            model
-        } else {
-            format!(
-                "{model} · {} effort",
-                wks_native::launch::effort_label(&self.effort)
-            )
-        };
-        let queued = self.queued_launch();
         let project = match self.launch_peer() {
             Some(peer) => (!self.extras.launch_host_cwd.is_empty()).then(|| {
                 format!(
@@ -775,149 +582,193 @@ impl Workspace {
                 )
             }),
             None => (!self.projects.cwd.is_empty()).then(|| {
-                let title = self
-                    .known_project(&self.projects.cwd)
+                self.known_project(&self.projects.cwd)
                     .map(|p| p.title().to_owned())
                     .unwrap_or_else(|| {
                         wks_native::projects::basename(&self.projects.cwd).to_owned()
-                    });
-                match &queued {
-                    Some(HostChoice::Best) => format!("{title} · best fit"),
-                    Some(_) => format!("{title} · queued here"),
-                    None => title,
-                }
+                    })
             }),
         };
-        // Short validation fits the footer line; a hub/launch error is shown
-        // whole above it, since its wording says what may have happened.
-        let uncertain = wks_native::launch::uncertain_outcome(&self.spawn_error);
-        let detailed = uncertain || self.spawn_error.chars().count() > 72;
-        let (icon, color, status): (Option<IconName>, u32, String) = if !self.spawn_error.is_empty()
-        {
-            (
-                Some(IconName::TriangleAlert),
-                p.warning,
-                if uncertain {
-                    "Outcome unknown".into()
-                } else if detailed {
-                    "Couldn't start the agent".into()
-                } else {
-                    self.spawn_error.clone()
-                },
-            )
+        if !self.spawn_error.is_empty() {
+            // A long or outcome-unknown failure is shown whole in its card.
+            (!detailed).then(|| {
+                (
+                    Some(IconName::TriangleAlert),
+                    p.warning,
+                    self.spawn_error.clone(),
+                )
+            })
         } else if self.extras.queue_sent {
-            (
+            Some((
                 None,
                 p.muted,
                 format!(
                     "Submitting {provider} to the queue · {}…",
-                    project.clone().unwrap_or_default()
+                    project.unwrap_or_default()
                 ),
-            )
+            ))
         } else if busy {
-            (
+            Some((
                 None,
                 p.muted,
-                format!(
-                    "Starting {provider} in {}…",
-                    project.clone().unwrap_or_default()
-                ),
-            )
+                format!("Starting {provider} in {}…", project.unwrap_or_default()),
+            ))
         } else if !self.view.connected {
-            (
+            Some((
                 Some(IconName::TriangleAlert),
                 p.warning,
                 "Waiting for the hub connection…".into(),
-            )
-        } else if let Some(project) = &project {
-            (None, p.muted, format!("{provider} · {model} · {project}"))
+            ))
+        } else if project.is_none() {
+            Some((None, p.muted, "Choose a project to start".into()))
         } else {
-            (None, p.muted, "Choose a project to start".into())
-        };
-        let row = div()
-            .w_full()
+            None
+        }
+    }
+
+    /// The composer: the task, then one line with who does it (provider,
+    /// model, effort) and Start. Anything that needs saying before a start
+    /// (a failure, progress, a missing project) sits between the two.
+    fn render_launch_composer(
+        &self,
+        busy: bool,
+        can_create: bool,
+        short: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.palette();
+        let focused = gpui::Focusable::focus_handle(self.prompt.read(cx), cx).is_focused(window);
+        let height = if short { 52. } else { 104. };
+        let uncertain = wks_native::launch::uncertain_outcome(&self.spawn_error);
+        let detailed = uncertain || self.spawn_error.chars().count() > 72;
+        let queued = self.queued_launch().is_some();
+        let (model_status, model_color, _, model_notable) = self.model_catalog_status(cx);
+        let status = self.launch_status(busy, detailed);
+        let start = self
+            .primary_button(
+                "create-session",
+                if self.extras.queue_sent {
+                    "Submitting…"
+                } else if busy {
+                    "Starting…"
+                } else if queued {
+                    "Queue agent"
+                } else if uncertain {
+                    // Still allowed: the hub keeps no retry block, and
+                    // the user may have checked. The label says so.
+                    "Start anyway"
+                } else if self.extras.resume.is_some() {
+                    "Continue"
+                } else {
+                    "Start agent"
+                },
+                can_create,
+            )
+            .debug_selector(|| "launch-start".into())
+            .flex_shrink_0()
+            .ml_auto()
+            .rounded_full()
             .flex()
             .items_center()
-            .justify_between()
-            .gap_3()
-            .child(
-                div()
-                    .id("launch-status")
-                    .debug_selector(|| "launch-status".into())
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_size(px(chrome::scale::META))
-                    .text_color(rgb(color))
-                    .when_some(icon, |d, icon| {
-                        d.child(Icon::new(icon).size(px(icon_size::MD)).flex_shrink_0())
-                    })
-                    .when(busy, |d| d.child(work::spinner(13.)))
-                    .child(div().min_w_0().truncate().child(status)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .flex_shrink_0()
-                    .child(keycap(
-                        if cfg!(target_os = "macos") {
-                            "⌘ Enter"
-                        } else {
-                            "Ctrl Enter"
-                        },
-                        p,
-                    ))
-                    .child(
-                        self.primary_button(
-                            "create-session",
-                            if self.extras.queue_sent {
-                                "Submitting…"
-                            } else if busy {
-                                "Starting…"
-                            } else if queued.is_some() {
-                                "Queue agent"
-                            } else if uncertain {
-                                // Still allowed: the hub keeps no retry block, and
-                                // the user may have checked. The label says so.
-                                "Start anyway"
-                            } else if self.extras.resume.is_some() {
-                                "Continue"
-                            } else {
-                                "Start agent"
-                            },
-                            can_create,
-                        )
-                        .debug_selector(|| "launch-start".into())
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(Icon::new(IconName::ArrowRight).size(px(icon_size::LG)))
-                        .when(can_create, |d| {
-                            d.on_click(cx.listener(|this, _, window, cx| this.create(window, cx)))
-                        }),
-                    ),
-            );
-        // The shared card surface, raised like the chat composer: the one
-        // action dock on this page, not a separate band at the window edge.
-        chrome::card(p)
-            .debug_selector(|| "launch-footer".into())
+            .gap_2()
+            .child(Icon::new(IconName::ArrowRight).size(px(icon_size::LG)))
+            .when(can_create, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| this.create(window, cx)))
+            });
+        div()
+            .debug_selector(|| "launch-task".into())
+            .bg(rgb(p.surface))
+            .border_1()
+            .border_color(rgb(if focused && !busy { p.accent } else { p.border }))
+            .rounded(px(p.composer_radius))
             .shadow(chrome::floating_shadow(p))
-            .flex_1()
-            .min_w_0()
-            .max_w(px(launch_width(split)))
-            .px(px(if short { 12. } else { 16. }))
-            .py(px(if short { 8. } else { 12. }))
+            .px(px(if short { 10. } else { 12. }))
+            .pt(px(if short { 8. } else { 12. }))
+            .pb(px(if short { 8. } else { 10. }))
             .flex()
             .flex_col()
             .gap_2()
+            .child(
+                div()
+                    .debug_selector(|| "launch-prompt".into())
+                    .min_h(px(height))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Input::new(&self.prompt)
+                            .appearance(false)
+                            .flex_1()
+                            .min_h(px(height))
+                            .disabled(busy),
+                    ),
+            )
             .when(detailed, |d| {
                 d.child(self.render_launch_error(uncertain, short))
             })
-            .child(row)
+            .when(self.model_choice == "__custom", |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "launch-custom-model".into())
+                        .child(Input::new(&self.model).disabled(busy)),
+                )
+            })
+            .when_some(status, |d, (icon, color, text)| {
+                d.child(
+                    div()
+                        .id("launch-status")
+                        .debug_selector(|| "launch-status".into())
+                        .px_1()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_size(px(chrome::scale::META))
+                        .text_color(rgb(color))
+                        .when_some(icon, |d, icon| {
+                            d.child(Icon::new(icon).size(px(icon_size::MD)).flex_shrink_0())
+                        })
+                        .when(busy, |d| d.child(work::spinner(13.)))
+                        .child(div().min_w_0().child(text)),
+                )
+            })
+            .when(model_notable, |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "launch-model-status".into())
+                        .px_1()
+                        .text_size(px(chrome::scale::CAPTION))
+                        .text_color(rgb(model_color))
+                        .child(model_status),
+                )
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(self.render_provider_choice(busy, cx))
+                    .child(
+                        div()
+                            .debug_selector(|| "launch-model-picker".into())
+                            .flex_1()
+                            .min_w(px(MODEL_MENU_MIN))
+                            .max_w(px(MODEL_MENU_MAX))
+                            .child(
+                                Select::new(&self.model_picker)
+                                    .disabled(busy)
+                                    .search_placeholder("Find a model…"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "launch-effort-picker".into())
+                            .w(px(EFFORT_MENU))
+                            .flex_shrink_0()
+                            .child(Select::new(&self.effort_picker).disabled(busy)),
+                    )
+                    .child(start),
+            )
     }
 
     /// A launch failure in full. The recovery step is its own unclipped line;
@@ -985,6 +836,8 @@ impl Workspace {
                             .pr_2()
                             .max_h(px(if short { 52. } else { 96. }))
                             .overflow_y_scroll()
+                            // Its own wheel: the page behind it stays put.
+                            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                             .track_scroll(&self.launch_error_scroll)
                             .vertical_scrollbar(&self.launch_error_scroll)
                             .child(
@@ -1337,53 +1190,14 @@ impl Workspace {
     }
 }
 
-/// Viewport width from which the task and the setup sheet sit side by side.
-const SPLIT_WIDTH: f32 = 1280.;
-/// Viewport width from which a setup row's label sits beside its control.
-const SIDE_LABEL_WIDTH: f32 = 900.;
-/// The setup sheet's width beside the task.
-const SETUP_WIDTH: f32 = 560.;
-/// A provider tile's height; the Agent row's label centres on it.
-const PROVIDER_TILE: f32 = 46.;
-/// A host choice's height: its name over what it is running.
-const HOST_TILE: f32 = 50.;
-/// The chosen project's summary: a title, its path and its status.
-const PROJECT_SUMMARY: f32 = 56.;
-/// A caption line, which a peer's folder list starts with.
-const PEER_CAPTION: f32 = 16.;
-
-/// The form's (and its footer's) widest measure.
-fn launch_width(split: bool) -> f32 {
-    if split { 1040. } else { 720. }
-}
-
-/// One row of the setup sheet, divided from the row above: the label in a
-/// left column, centred on the control's first line (`lead` px tall), or
-/// above the control when the sheet is narrow.
-fn launch_row(
-    label: &'static str,
-    lead: f32,
-    side: bool,
-    first: bool,
-    short: bool,
-    content: gpui::AnyElement,
-    p: Palette,
-) -> Div {
-    let label = projects::section_label(label, p).flex_shrink_0();
-    div()
-        .py(px(if short { 10. } else { 14. }))
-        .when(!first, |d| d.border_t_1().border_color(rgb(p.border)))
-        .flex()
-        .map(|d| {
-            if side {
-                d.gap_3()
-                    .child(label.w(px(68.)).h(px(lead)).flex().items_center())
-            } else {
-                d.flex_col().gap_2().child(label)
-            }
-        })
-        .child(div().flex_1().min_w_0().child(content))
-}
+/// The form's measure: a composer's, not a page of settings.
+const LAUNCH_WIDTH: f32 = 720.;
+/// The model menu inside the composer: never narrower than a model's name
+/// needs, never so wide that it crowds Start.
+const MODEL_MENU_MIN: f32 = 140.;
+const MODEL_MENU_MAX: f32 = 240.;
+/// The effort menu: room for "Default · Medium".
+const EFFORT_MENU: f32 = 150.;
 
 /// `200K`, `1M`.
 pub(super) fn context_label(tokens: u64) -> String {
@@ -1515,54 +1329,48 @@ impl Workspace {
         let targets = self.launch_targets()?;
         let p = self.palette();
         let options = hosts::host_options(&targets);
-        let chips = options.iter().enumerate().map(|(ix, option)| {
+        let pills = options.iter().enumerate().map(|(ix, option)| {
             let selected = self.extras.launch_host == option.choice;
             let enabled = option.enabled && !busy;
             let choice = option.choice.clone();
             chrome::interactive_control(div().id(("launch-host", ix)), p, enabled)
                 .debug_selector(move || format!("launch-host-{ix}"))
-                .px_3()
-                .py(px(6.))
-                .rounded(px(p.control_radius))
-                .bg(rgb(if selected { p.selected } else { p.chat }))
-                .border_color(rgb(if selected { p.accent } else { p.border }))
+                .h(px(control::HEIGHT_SM))
+                .px(px(10.))
+                .rounded_full()
                 .flex()
-                .flex_col()
-                .min_w(px(120.))
-                .when(!option.enabled, |d| d.opacity(0.55))
+                .items_center()
+                .gap_1()
+                .text_size(px(chrome::scale::META))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(rgb(if !enabled {
+                    p.disabled
+                } else if selected {
+                    p.text
+                } else {
+                    p.muted
+                }))
+                .when(selected, |d| d.bg(rgb(p.selected)))
                 .when(enabled, |d| {
-                    d.cursor_pointer()
-                        .hover(|s| s.bg(rgb(p.selected)))
+                    d.hover(move |s| s.text_color(rgb(p.text)))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.choose_launch_host(choice.clone(), cx)
                         }))
                 })
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .text_size(px(chrome::scale::META))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(option.label.clone())
-                        .when(selected, |d| {
-                            d.child(
-                                Icon::new(IconName::Check)
-                                    .size(px(icon_size::SM))
-                                    .text_color(rgb(p.accent)),
-                            )
-                        }),
-                )
-                .when(!option.detail.is_empty(), |d| {
+                .child(option.label.clone())
+                .when(selected, |d| {
                     d.child(
-                        div()
-                            .truncate()
-                            .text_size(px(chrome::scale::CAPTION))
-                            .text_color(rgb(p.muted))
-                            .child(option.detail.clone()),
+                        Icon::new(IconName::Check)
+                            .size(px(icon_size::SM))
+                            .text_color(rgb(p.accent)),
                     )
                 })
         });
+        // The chosen machine's state in words; the others say why not.
+        let detail = options
+            .iter()
+            .find(|o| o.choice == self.extras.launch_host && !o.detail.is_empty())
+            .map(|o| format!("{} · {}", o.label, o.detail));
         let reasons: Vec<String> = options
             .iter()
             .filter(|o| !o.enabled && !o.reasons.is_empty())
@@ -1570,19 +1378,43 @@ impl Workspace {
             .collect();
         let local = self.extras.launch_host == HostChoice::Local;
         let queue = self.extras.launch_queue;
+        let caption = |text: String| {
+            div()
+                .text_size(px(chrome::scale::CAPTION))
+                .text_color(rgb(p.muted))
+                .child(text)
+        };
         Some(
             div()
                 .debug_selector(|| "launch-hosts".into())
+                .px_1()
                 .flex()
                 .flex_col()
-                .gap_2()
+                .gap_1()
                 .child(
                     div()
                         .flex()
                         .flex_wrap()
                         .items_center()
                         .gap_2()
-                        .children(chips)
+                        .child(
+                            div()
+                                .text_size(px(chrome::scale::META))
+                                .text_color(rgb(p.muted))
+                                .child("Run on"),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .gap_1()
+                                .p(px(3.))
+                                .rounded(px(radius::SEGMENTED_GROUP))
+                                .bg(rgb(p.base))
+                                .border_1()
+                                .border_color(rgb(p.border))
+                                .children(pills),
+                        )
                         .child(
                             self.icon_button(
                                 "launch-hosts-refresh",
@@ -1595,56 +1427,62 @@ impl Workspace {
                                     cx.listener(|this, _, _, cx| this.refresh_launch_targets(cx)),
                                 )
                             }),
-                        ),
-                )
-                .children(reasons.into_iter().enumerate().map(|(ix, line)| {
-                    div()
-                        .debug_selector(move || format!("launch-host-reason-{ix}"))
-                        .text_size(px(chrome::scale::CAPTION))
-                        .text_color(rgb(p.muted))
-                        .child(line)
-                }))
-                .when(local, |d| {
-                    d.child(
-                        chrome::interactive_control(div().id("launch-queue"), p, !busy)
-                            .debug_selector(|| "launch-queue".into())
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .text_size(px(chrome::scale::META))
-                            .when(!busy, |d| {
-                                d.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
-                                    this.extras.launch_queue = !this.extras.launch_queue;
-                                    cx.notify();
-                                }))
-                            })
-                            .child(
-                                div()
-                                    .size(px(14.))
-                                    .rounded(px(radius::MARK))
-                                    .border_1()
-                                    .border_color(rgb(if queue { p.accent } else { p.border }))
-                                    .bg(rgb(if queue { p.accent } else { p.chat }))
+                        )
+                        .when(local, |d| {
+                            d.child(
+                                chrome::interactive_control(div().id("launch-queue"), p, !busy)
+                                    .debug_selector(|| "launch-queue".into())
                                     .flex()
                                     .items_center()
-                                    .justify_center()
-                                    .when(queue, |d| {
-                                        d.child(
-                                            Icon::new(IconName::Check)
-                                                .size(px(icon_size::XS))
-                                                .text_color(rgb(p.on_primary)),
-                                        )
-                                    }),
-                            )
-                            .child("Queue if busy")
-                            .child(
-                                div()
-                                    .text_size(px(chrome::scale::CAPTION))
+                                    .gap_2()
+                                    .text_size(px(chrome::scale::META))
                                     .text_color(rgb(p.muted))
-                                    .child("waits for a free slot and an open gate"),
-                            ),
-                    )
-                }),
+                                    .when(!busy, |d| {
+                                        d.cursor_pointer().on_click(cx.listener(
+                                            |this, _, _, cx| {
+                                                this.extras.launch_queue =
+                                                    !this.extras.launch_queue;
+                                                cx.notify();
+                                            },
+                                        ))
+                                    })
+                                    .child(
+                                        div()
+                                            .size(px(14.))
+                                            .rounded(px(radius::MARK))
+                                            .border_1()
+                                            .border_color(rgb(if queue {
+                                                p.accent
+                                            } else {
+                                                p.border
+                                            }))
+                                            .bg(rgb(if queue { p.accent } else { p.chat }))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .when(queue, |d| {
+                                                d.child(
+                                                    Icon::new(IconName::Check)
+                                                        .size(px(icon_size::XS))
+                                                        .text_color(rgb(p.on_primary)),
+                                                )
+                                            }),
+                                    )
+                                    .child("Queue if busy"),
+                            )
+                        }),
+                )
+                .children(detail.map(|text| {
+                    caption(if local && queue {
+                        format!("{text} · waits for a free slot and an open gate")
+                    } else {
+                        text
+                    })
+                    .debug_selector(|| "launch-host-detail".into())
+                }))
+                .children(reasons.into_iter().enumerate().map(|(ix, line)| {
+                    caption(line).debug_selector(move || format!("launch-host-reason-{ix}"))
+                })),
         )
     }
 

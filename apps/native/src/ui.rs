@@ -826,7 +826,7 @@ impl Workspace {
             InputState::new(window, cx)
                 .multi_line(true)
                 .rows(3)
-                .placeholder("What would you like to work on? (optional)")
+                .placeholder("Describe the task, or leave this empty to start idle")
         });
         let project_path = cx
             .new(|cx| InputState::new(window, cx).placeholder("Absolute folder path on this hub"));

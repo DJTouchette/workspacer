@@ -997,28 +997,10 @@ impl Workspace {
         facts
     }
 
-    /// The chosen project at a glance: identity, where it lives on the hub,
-    /// and what the hub says about it.
-    pub(super) fn render_project_summary(
-        &self,
-        busy: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    /// What the hub says about the chosen folder: icon, tone and words.
+    fn project_status(&self) -> (IconName, u32, String) {
         let p = self.palette();
-        let cwd = self.projects.cwd.clone();
-        let project = self.known_project(&cwd);
-        let title = project
-            .as_ref()
-            .map(|p| p.title().to_owned())
-            .unwrap_or_else(|| projects::basename(&cwd).to_owned());
-        let pinned = project.as_ref().is_some_and(|p| p.favourite);
-        let saving = self
-            .view
-            .requests
-            .get("project-save")
-            .is_some_and(|s| s.loading);
-        let can_pin = !busy && !saving && self.view.connected && !self.demo;
-        let (status_icon, status_color, status): (IconName, u32, String) = match self.inspection() {
+        match self.inspection() {
             _ if self.inspecting() => (IconName::LoaderCircle, p.muted, "Checking folder…".into()),
             Some(Ok(Inspection::Repository { branch, changes })) => (
                 IconName::CircleCheck,
@@ -1054,106 +1036,150 @@ impl Workspace {
                 format!("Couldn't check this folder: {error}"),
             ),
             None => (IconName::Folder, p.muted, "On the connected hub".into()),
+        }
+    }
+
+    /// The chosen project as a pill that reopens the chooser, with its pin
+    /// beside it. With no project yet it asks for one.
+    pub(super) fn render_project_summary(
+        &self,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = self.palette();
+        let cwd = self.projects.cwd.clone();
+        let project = self.known_project(&cwd);
+        let title = if cwd.is_empty() {
+            "Choose a project".to_owned()
+        } else {
+            project
+                .as_ref()
+                .map(|p| p.title().to_owned())
+                .unwrap_or_else(|| projects::basename(&cwd).to_owned())
         };
-        let facts = self.project_facts(project.as_ref());
+        let pinned = project.as_ref().is_some_and(|p| p.favourite);
+        let saving = self
+            .view
+            .requests
+            .get("project-save")
+            .is_some_and(|s| s.loading);
+        let can_pin = !busy && !saving && self.view.connected && !self.demo;
         let pin_path = cwd.clone();
         div()
             .id("launch-project-summary")
             .debug_selector(|| "launch-project-summary".into())
             .flex()
             .items_center()
-            .gap_3()
+            .gap_1()
             .min_w_0()
-            .child(self.project_mark(project.as_ref(), &cwd, 40.))
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(chrome::scale::HEADING))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(title),
-                            )
-                            .children(facts.into_iter().map(|fact| {
-                                div()
-                                    .flex_shrink_0()
-                                    .px(px(6.))
-                                    .rounded_full()
-                                    .bg(rgb(p.selected))
-                                    .text_size(px(chrome::scale::OVERLINE))
-                                    .text_color(rgb(p.muted))
-                                    .child(fact)
-                            })),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .truncate()
-                            .font_family(mono_font())
-                            .text_size(px(chrome::scale::CAPTION))
-                            .text_color(rgb(p.muted))
-                            .child(cwd.clone()),
-                    )
-                    .child(
-                        div()
-                            .debug_selector(|| "launch-project-status".into())
-                            .w_full()
-                            .flex()
-                            .items_start()
-                            .gap_1()
-                            .text_size(px(chrome::scale::CAPTION))
-                            .line_height(gpui::relative(1.4))
-                            .text_color(rgb(status_color))
-                            // Wraps: a missing-folder warning carries its
-                            // recovery step, which must not be clipped.
-                            .child(
-                                div()
-                                    .h(px(11. * 1.4))
-                                    .flex()
-                                    .items_center()
-                                    .flex_shrink_0()
-                                    .child(Icon::new(status_icon).size(px(icon_size::XS))),
-                            )
-                            .child(div().flex_1().min_w_0().child(status)),
-                    ),
-            )
-            .child(
-                self.icon_button(
-                    "launch-project-pin",
-                    if pinned { "Unpin folder" } else { "Pin folder" },
-                    IconName::Star,
-                    can_pin,
-                )
-                .debug_selector(|| "launch-project-pin".into())
-                .when(pinned, |d| d.text_color(rgb(p.accent)))
-                .when(can_pin, |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_project_pin(pin_path.clone(), !pinned, cx)
-                    }))
-                }),
-            )
-            .child(
-                self.button("launch-project-change", "Change", !busy)
+                chrome::interactive_control(div().id("launch-project-change"), p, !busy)
                     .debug_selector(|| "launch-project-change".into())
-                    .flex_shrink_0()
+                    .h(px(control::HEIGHT))
+                    .pl(px(6.))
+                    .pr(px(10.))
+                    .min_w_0()
+                    .rounded_full()
+                    .bg(chrome::tonal(p, alpha::REST))
+                    .flex()
+                    .items_center()
+                    .gap_2()
                     .when(!busy, |d| {
-                        d.on_click(
+                        d.hover(|s| s.bg(chrome::tonal(p, alpha::HOVER))).on_click(
                             cx.listener(|this, _, window, cx| this.open_project_picker(window, cx)),
                         )
-                    }),
+                    })
+                    .child(if cwd.is_empty() {
+                        div()
+                            .size(px(20.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(Icon::new(IconName::FolderOpen).size(px(icon_size::LG)))
+                    } else {
+                        self.project_mark(project.as_ref(), &cwd, 20.)
+                    })
+                    .child(
+                        div()
+                            .min_w_0()
+                            .max_w(px(260.))
+                            .truncate()
+                            .text_size(px(chrome::scale::BODY))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(title),
+                    )
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .size(px(icon_size::SM))
+                            .text_color(rgb(p.muted)),
+                    ),
             )
+            .when(!cwd.is_empty(), |d| {
+                d.child(
+                    self.icon_button(
+                        "launch-project-pin",
+                        if pinned { "Unpin folder" } else { "Pin folder" },
+                        IconName::Star,
+                        can_pin,
+                    )
+                    .debug_selector(|| "launch-project-pin".into())
+                    .when(pinned, |d| d.text_color(rgb(p.accent)))
+                    .when(can_pin, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_project_pin(pin_path.clone(), !pinned, cx)
+                        }))
+                    }),
+                )
+            })
+    }
+
+    /// One quiet line under the project pill: what the hub reports about
+    /// the folder, how busy it is, and where it is.
+    pub(super) fn render_project_status(&self) -> Option<Div> {
+        let p = self.palette();
+        let cwd = self.projects.cwd.clone();
+        if cwd.is_empty() {
+            return None;
+        }
+        let (icon, color, status) = self.project_status();
+        let facts = self.project_facts(self.known_project(&cwd).as_ref());
+        Some(
+            div()
+                .debug_selector(|| "launch-project-status".into())
+                .w_full()
+                .flex()
+                .items_start()
+                .gap_1()
+                .text_size(px(chrome::scale::CAPTION))
+                .line_height(gpui::relative(1.4))
+                .text_color(rgb(color))
+                .child(
+                    div()
+                        .h(px(11. * 1.4))
+                        .flex()
+                        .items_center()
+                        .flex_shrink_0()
+                        .child(Icon::new(icon).size(px(icon_size::XS))),
+                )
+                // Wraps: a missing-folder warning carries its recovery
+                // step, which must not be clipped.
+                .child(div().flex_shrink_0().max_w_full().child(status))
+                .children(facts.into_iter().map(|fact| {
+                    div()
+                        .flex_shrink_0()
+                        .text_color(rgb(p.muted))
+                        .child(format!("· {fact}"))
+                }))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .font_family(mono_font())
+                        .text_color(rgb(p.muted))
+                        .child(format!("· {cwd}")),
+                ),
+        )
     }
 
     /// Search, recent/pinned projects, a typed path, and browse.
@@ -1661,51 +1687,35 @@ impl Workspace {
             )
     }
 
-    /// The Project row: summary when chosen, the chooser otherwise, and the
-    /// result of the user's last pin/forget.
-    pub(super) fn render_project_section(&self, busy: bool, cx: &mut Context<Self>) -> Div {
+    /// The result of the user's last pin/forget, when there is one.
+    pub(super) fn render_project_notice(&self, cx: &mut Context<Self>) -> Option<Div> {
         let p = self.palette();
-        div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                if self.projects.picker_open || self.projects.cwd.is_empty() {
-                    self.render_project_picker(busy, cx).into_any_element()
+        (!self.projects.notice.is_empty()).then(|| {
+            div()
+                .debug_selector(|| "launch-project-notice".into())
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_size(px(chrome::scale::CAPTION))
+                .text_color(rgb(if self.projects.fallback.is_some() {
+                    p.warning
                 } else {
-                    self.render_project_summary(busy, cx).into_any_element()
-                },
-            )
-            .when(!self.projects.notice.is_empty(), |d| {
-                d.child(
-                    div()
-                        .debug_selector(|| "launch-project-notice".into())
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_size(px(chrome::scale::CAPTION))
-                        .text_color(rgb(if self.projects.fallback.is_some() {
-                            p.warning
-                        } else {
-                            p.muted
-                        }))
-                        .child(self.projects.notice.clone())
-                        .when(self.projects.fallback.is_some(), |d| {
-                            d.child(
-                                self.quiet_button(
-                                    "keep-on-device",
-                                    "Keep on this device",
-                                    IconName::Check,
-                                    true,
-                                )
-                                .debug_selector(|| "launch-project-keep-device".into())
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.keep_project_on_device(cx)),
-                                ),
-                            )
-                        }),
-                )
-            })
+                    p.muted
+                }))
+                .child(self.projects.notice.clone())
+                .when(self.projects.fallback.is_some(), |d| {
+                    d.child(
+                        self.quiet_button(
+                            "keep-on-device",
+                            "Keep on this device",
+                            IconName::Check,
+                            true,
+                        )
+                        .debug_selector(|| "launch-project-keep-device".into())
+                        .on_click(cx.listener(|this, _, _, cx| this.keep_project_on_device(cx))),
+                    )
+                })
+        })
     }
 }
 

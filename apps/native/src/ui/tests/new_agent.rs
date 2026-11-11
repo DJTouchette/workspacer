@@ -271,68 +271,71 @@ fn uncertain_launch_error_keeps_recovery_and_full_text_reachable(cx: &mut TestAp
     assert!(commands.try_recv().is_err());
 }
 
-/// Bug #22: the New Agent footer is a panel inset by the form's gutters and
-/// aligned with its cards, not a band at the window edge; it stays put while
-/// the form scrolls, in every theme and at the smallest window.
+/// The form is one composer: the task, who does it and Start share a
+/// single surface, in every theme and at the smallest window, with the
+/// project and options as pills beneath it rather than a page of fields.
 #[gpui::test]
-fn launch_footer_is_an_inset_panel_aligned_with_the_form(cx: &mut TestAppContext) {
+fn the_composer_holds_the_task_the_agent_and_start(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
             this.demo = false;
             this.update_view(Arc::new(state("a")), window, cx);
             this.show_new_session(window, cx);
-            this.projects.cwd = "/work/api".into();
+            this.select_project("/work/api", window, cx);
         });
     });
     for (width, height) in [(720., 480.), (1000., 700.), (1400., 900.)] {
         visual.simulate_resize(size(px(width), px(height)));
-        let gutter = px(if height < 620. { 12. } else { 20. });
         for appearance in Appearance::ALL {
             visual.update(|window, cx| {
                 workspace.update(cx, |this, cx| this.set_appearance(appearance, window, cx))
             });
             visual.run_until_parked();
-            let label = appearance.label();
-            let footer = visual.debug_bounds("launch-footer").unwrap();
+            let at = format!("{} {width}x{height}", appearance.label());
+            let composer = visual.debug_bounds("launch-task").unwrap();
             let content = visual.debug_bounds("launch-content").unwrap();
-            let start = visual.debug_bounds("launch-start").unwrap();
-            let status = visual.debug_bounds("launch-status").unwrap();
-            let near = |a: gpui::Pixels, b: gpui::Pixels| (a - b).abs() <= px(1.);
             assert!(
-                near(footer.bottom(), px(height) - gutter),
-                "{label} {width}x{height}: {footer:?} is not inset from the bottom"
+                composer.left() == content.left() && composer.right() == content.right(),
+                "{at}: {composer:?} in {content:?}"
             );
-            assert!(
-                near(footer.left(), content.left()) && near(footer.right(), content.right()),
-                "{label} {width}x{height}: {footer:?} not aligned with {content:?}"
-            );
-            for (name, inner) in [("start", start), ("status", status)] {
+            assert!(composer.bottom() <= px(height), "{at}: {composer:?}");
+            let prompt = visual.debug_bounds("launch-prompt").unwrap();
+            for selector in [
+                "launch-prompt",
+                "launch-provider-claude",
+                "launch-provider-codex",
+                "launch-model-picker",
+                "launch-effort-picker",
+                "launch-start",
+            ] {
+                let inner = visual.debug_bounds(selector).unwrap();
                 assert!(
-                    inner.left() > footer.left()
-                        && inner.right() < footer.right()
-                        && inner.top() > footer.top()
-                        && inner.bottom() < footer.bottom(),
-                    "{label} {width}x{height}: {name} {inner:?} outside {footer:?}"
+                    inner.left() > composer.left()
+                        && inner.right() < composer.right()
+                        && inner.top() > composer.top()
+                        && inner.bottom() < composer.bottom(),
+                    "{at}: {selector} {inner:?} outside {composer:?}"
+                );
+                assert!(
+                    selector == "launch-prompt" || inner.top() >= prompt.bottom(),
+                    "{at}: {selector} overlaps the task"
                 );
             }
-            // Button and status share one centered row.
-            assert!(near(start.center().y, status.center().y), "{label}");
+            // Where it runs and how follow the composer, already in view.
+            for selector in ["launch-project-change", "launch-customize", "launch-chip-0"] {
+                let pill = visual.debug_bounds(selector).unwrap();
+                assert!(
+                    pill.top() >= composer.bottom() && pill.bottom() <= px(height),
+                    "{at}: {selector} {pill:?}"
+                );
+            }
+            // Ready to start: nothing to report, so no status line.
+            assert!(visual.debug_bounds("launch-status").is_none(), "{at}");
         }
     }
-    // Sticky: scrolling the form moves the cards, never the footer.
-    visual.simulate_resize(size(px(720.), px(480.)));
+    visual.simulate_resize(size(px(1000.), px(700.)));
     visual.run_until_parked();
-    let footer = visual.debug_bounds("launch-footer").unwrap();
-    let content = visual.debug_bounds("launch-content").unwrap();
-    visual.simulate_event(gpui::ScrollWheelEvent {
-        position: content.center(),
-        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-200.))),
-        ..Default::default()
-    });
-    visual.run_until_parked();
-    assert!(visual.debug_bounds("launch-content").unwrap().top() < content.top());
-    assert_eq!(visual.debug_bounds("launch-footer").unwrap(), footer);
     let start = visual.debug_bounds("launch-start").unwrap();
     visual.simulate_click(start.center(), gpui::Modifiers::default());
     let Some(Command::Create(request)) = next_effect(&mut commands) else {
@@ -342,68 +345,44 @@ fn launch_footer_is_an_inset_panel_aligned_with_the_form(cx: &mut TestAppContext
     assert!(commands.try_recv().is_err());
 }
 
-/// The task leads the form and one setup sheet follows it: beneath on an
-/// ordinary window, beside it (equally tall) on a wide one, and always
-/// inside the window.
+/// With no project the composer says what is missing and the chooser is
+/// open beneath it; Options opens its panel only when asked.
 #[gpui::test]
-fn task_leads_and_the_setup_sheet_follows_or_sits_beside_it(cx: &mut TestAppContext) {
+fn choosers_open_beneath_the_composer_only_when_needed(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
             this.demo = false;
-            this.update_view(Arc::new(state("a")), window, cx);
+            let mut view = state("a");
+            for session in Arc::make_mut(&mut view.sessions).iter_mut() {
+                session.cwd.clear();
+            }
+            this.update_view(Arc::new(view), window, cx);
+            this.projects.cwd.clear();
             this.show_new_session(window, cx);
-            this.select_project("/work/api", window, cx);
         });
     });
-    for (width, height, beside) in [
-        (720., 480., false),
-        (1000., 700., false),
-        (1400., 900., true),
-    ] {
-        visual.simulate_resize(size(px(width), px(height)));
-        visual.run_until_parked();
-        let task = visual.debug_bounds("launch-task").unwrap();
-        let sheet = visual.debug_bounds("launch-setup-sheet").unwrap();
-        let content = visual.debug_bounds("launch-content").unwrap();
-        let prompt = visual.debug_bounds("launch-prompt").unwrap();
-        let size = format!("{width}x{height}");
-        assert!(
-            task.left() == content.left() && sheet.right() == content.right(),
-            "{size}"
-        );
-        assert!(sheet.right() <= px(width), "{size}: {sheet:?}");
-        assert!(
-            prompt.top() > task.top() && prompt.bottom() < task.bottom(),
-            "{size}: {prompt:?} outside {task:?}"
-        );
-        if beside {
-            assert!(sheet.left() > task.right(), "{size}");
-            assert_eq!(
-                (task.top(), task.bottom()),
-                (sheet.top(), sheet.bottom()),
-                "{size}"
-            );
-        } else {
-            assert!(sheet.top() > task.bottom(), "{size}");
-            assert_eq!(
-                (task.left(), task.right()),
-                (sheet.left(), sheet.right()),
-                "{size}"
-            );
-        }
-    }
-    // Every row of the sheet is present without opening Options.
-    for selector in [
-        "launch-project-summary",
-        "launch-provider-claude",
-        "launch-model-picker",
-        "launch-effort-picker",
-        "launch-customize",
-        "launch-chip-0",
-    ] {
-        assert!(visual.debug_bounds(selector).is_some(), "{selector}");
-    }
+    visual.run_until_parked();
+    let composer = visual.debug_bounds("launch-task").unwrap();
+    let status = visual.debug_bounds("launch-status").unwrap();
+    assert!(status.top() > composer.top() && status.bottom() < composer.bottom());
+    let picker = visual.debug_bounds("launch-project-picker").unwrap();
+    assert!(picker.top() >= composer.bottom());
+    assert!(visual.debug_bounds("launch-project-status").is_none());
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| this.select_project("/work/api", window, cx));
+    });
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("launch-project-picker").is_none());
+    assert!(visual.debug_bounds("launch-status").is_none());
+    assert!(visual.debug_bounds("launch-project-status").is_some());
+    assert!(visual.debug_bounds("launch-details").is_none());
+    let options = visual.debug_bounds("launch-customize").unwrap();
+    visual.simulate_click(options.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    let details = visual.debug_bounds("launch-details").unwrap();
+    assert!(details.top() >= options.bottom());
+    assert_eq!(visual.debug_bounds("launch-customize").unwrap(), options);
 }
 
 #[gpui::test]
