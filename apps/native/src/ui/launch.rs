@@ -1412,7 +1412,7 @@ const PANEL_WIDTH: f32 = 640.;
 /// The project's mark above its name.
 const HERO_MARK: f32 = 56.;
 /// The composer's model menu: room for "Provider default · Sonnet 4.6".
-const MODEL_MENU: f32 = 210.;
+const MODEL_MENU: f32 = 250.;
 
 /// `200K`, `1M`.
 pub(super) fn context_label(tokens: u64) -> String {
