@@ -316,6 +316,7 @@ fn new_agent_is_laid_out_like_a_conversation(cx: &mut TestAppContext) {
             for selector in [
                 "launch-prompt",
                 "launch-customize",
+                "launch-model-picker",
                 "launch-chip-0",
                 "launch-start",
             ] {
@@ -333,7 +334,7 @@ fn new_agent_is_laid_out_like_a_conversation(cx: &mut TestAppContext) {
                 );
             }
             // Ready to start: no settings on the page, nothing to report.
-            for absent in ["launch-details", "launch-model-picker", "launch-status"] {
+            for absent in ["launch-details", "launch-effort-picker", "launch-status"] {
                 assert!(visual.debug_bounds(absent).is_none(), "{at}: {absent}");
             }
         }
@@ -389,8 +390,8 @@ fn the_page_shows_one_chooser_at_a_time(cx: &mut TestAppContext) {
     assert!(details.bottom() <= composer.top());
     for selector in [
         "launch-provider-codex",
-        "launch-model-picker",
         "launch-effort-picker",
+        "launch-access",
     ] {
         let inner = visual.debug_bounds(selector).unwrap();
         assert!(inner.top() >= details.top() && inner.bottom() <= details.bottom());
@@ -743,7 +744,7 @@ fn model_picker_keyboard_selection_and_provider_reset(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn effort_sits_beside_the_model_and_follows_what_the_model_accepts(cx: &mut TestAppContext) {
+fn effort_follows_what_the_composers_model_accepts(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     let catalog = |view: &mut View| {
         view.catalog = wks_native::launch::Catalog {
@@ -777,12 +778,14 @@ fn effort_sits_beside_the_model_and_follows_what_the_model_accepts(cx: &mut Test
         })
     });
     visual.run_until_parked();
-    // In the agent's settings, on the model's row.
+    // The model's menu is in the composer; effort is in the agent's
+    // settings above it.
     let model = visual.debug_bounds("launch-model-picker").unwrap();
     let effort = visual.debug_bounds("launch-effort-picker").unwrap();
-    assert!(visual.debug_bounds("launch-details").is_some());
-    assert_eq!(model.top(), effort.top());
-    assert!(effort.left() > model.right());
+    let composer = visual.debug_bounds("launch-task").unwrap();
+    let details = visual.debug_bounds("launch-details").unwrap();
+    assert!(model.top() > composer.top() && model.bottom() < composer.bottom());
+    assert!(effort.top() > details.top() && effort.bottom() < details.bottom());
     let focus = |picker: fn(&Workspace) -> Entity<SelectState<SearchableVec<PickerItem>>>| {
         let workspace = workspace.clone();
         move |window: &mut Window, cx: &mut App| {

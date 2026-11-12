@@ -1,5 +1,5 @@
 use super::*;
-use gpui_component::{scroll::ScrollableElement, select::SelectItem};
+use gpui_component::{Sizable, scroll::ScrollableElement, select::SelectItem};
 use wks_native::hosts::{self, HostChoice};
 
 #[derive(Clone)]
@@ -102,6 +102,13 @@ impl Workspace {
             .and_then(|m| m.windows.first())
             .copied();
         if self.model_choice == "__custom" {
+            // New Agent keeps the exact-ID field in the agent's settings.
+            if self.new_session {
+                self.launch_details_open = true;
+                if !self.projects.cwd.is_empty() {
+                    self.projects.picker_open = false;
+                }
+            }
             self.model.update(cx, |input, cx| input.focus(window, cx));
         }
         self.reconcile_effort(window, cx);
@@ -548,29 +555,6 @@ impl Workspace {
         chips
     }
 
-    /// The model as the composer names it.
-    fn launch_model_label(&self, cx: &App) -> String {
-        if self.model_choice == "__custom" {
-            let custom = self.model.read(cx).value().trim().to_owned();
-            return if custom.is_empty() {
-                "Custom model".to_owned()
-            } else {
-                custom
-            };
-        }
-        self.catalog_models
-            .iter()
-            .find(|model| model.id == self.model_choice)
-            .map(|model| model.label.clone())
-            .unwrap_or_else(|| {
-                if self.model_choice.is_empty() {
-                    "Default model".into()
-                } else {
-                    self.model_choice.clone()
-                }
-            })
-    }
-
     /// The agent's settings, opened from the composer: who it is, how hard
     /// it thinks, what it may do, and what to call it.
     fn render_launch_details(&self, busy: bool, cx: &mut Context<Self>) -> Div {
@@ -614,17 +598,7 @@ impl Workspace {
                             .flex_wrap()
                             .items_center()
                             .gap_2()
-                            .child(
-                                div()
-                                    .debug_selector(|| "launch-model-picker".into())
-                                    .flex_1()
-                                    .min_w(px(180.))
-                                    .child(
-                                        Select::new(&self.model_picker)
-                                            .disabled(busy)
-                                            .search_placeholder("Find a model…"),
-                                    ),
-                            )
+                            .child(projects::section_label("Effort", p))
                             .child(
                                 div()
                                     .debug_selector(|| "launch-effort-picker".into())
@@ -881,16 +855,14 @@ impl Workspace {
             })
             .child(chrome::provider_glyph(self.provider, icon_size::LG, p))
             .child(provider)
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(rgb(p.muted))
-                    .child(match effort {
-                        Some(effort) => format!("· {} · {effort}", self.launch_model_label(cx)),
-                        None => format!("· {}", self.launch_model_label(cx)),
-                    }),
-            )
+            .when_some(effort, |d, effort| {
+                d.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(rgb(p.muted))
+                        .child(format!("· {effort}")),
+                )
+            })
             .child(
                 Icon::new(if open {
                     IconName::ChevronDown
@@ -936,6 +908,23 @@ impl Workspace {
                             .items_center()
                             .gap_2()
                             .child(agent)
+                            .child(
+                                // The model is the choice made most often,
+                                // so its menu is here, not behind the chip.
+                                div()
+                                    .debug_selector(|| "launch-model-picker".into())
+                                    .w(px(MODEL_MENU))
+                                    .max_w_full()
+                                    .rounded_full()
+                                    .bg(rgb(p.selected))
+                                    .child(
+                                        Select::new(&self.model_picker)
+                                            .small()
+                                            .appearance(false)
+                                            .disabled(busy)
+                                            .search_placeholder("Find a model…"),
+                                    ),
+                            )
                             .children(self.launch_option_chips(cx).into_iter().enumerate().map(
                                 |(ix, (text, color))| {
                                     super::hosts::pill(text, color, p)
@@ -1422,6 +1411,8 @@ impl Workspace {
 const PANEL_WIDTH: f32 = 640.;
 /// The project's mark above its name.
 const HERO_MARK: f32 = 56.;
+/// The composer's model menu: room for "Provider default · Sonnet 4.6".
+const MODEL_MENU: f32 = 210.;
 
 /// `200K`, `1M`.
 pub(super) fn context_label(tokens: u64) -> String {

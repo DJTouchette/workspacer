@@ -122,25 +122,26 @@ started yet, laid out like a live one rather than as a form:
   **Run on** sits beneath as one switch (This machine, each peer, Best fit)
   with **Queue if busy**; choosing a peer lists that machine's folders.
 - **Composer** (bottom): the first message (optional; an empty one starts the
-  agent idle), one chip naming the agent (provider, model, effort) with its
-  non-default options beside it, and **Start agent** where Send will be. The
-  line under it reports a short failure, progress or a missing project, and
-  the keys (`Ctrl/Cmd+Enter` starts, `Esc` goes back).
+  agent idle), a chip naming the agent, the **model** menu, the non-default
+  options as chips, and **Start agent** where Send will be. The line under it
+  reports a short failure, progress or a missing project, and the keys
+  (`Ctrl/Cmd+Enter` starts, `Esc` goes back).
 
 The page answers one question at a time. The agent chip swaps it for the
-agent's settings: Claude or Codex, the model and its **effort** on one line
-(with the model list's reload), access mode, context window, an optional
-session name and Agent setup. The project in the capsule swaps it for the
-chooser, which is also what a draft with no project opens on, search focused.
-It lists the hub's pinned and recent projects, this device's older bookmarks
-and folders your sessions run in; type to filter by name or path, use `↑`/`↓`
-and `Enter`, or paste an absolute folder path. **Choose folder…** opens the
-system dialog for a local hub and browses the hub's own filesystem for a
-remote one (or when the dialog is unavailable). `Esc` keeps the current choice.
+agent's settings: Claude or Codex, **effort** (with the model list's reload),
+access mode, context window, an optional session name and Agent setup;
+choosing **Custom model…** opens them on the exact-ID field. The project in
+the capsule swaps the page for the chooser, which is also what a draft with no
+project opens on, search focused. It lists the hub's pinned and recent
+projects, this device's older bookmarks and folders your sessions run in; type
+to filter by name or path, use `↑`/`↓` and `Enter`, or paste an absolute folder
+path. **Choose folder…** opens the system dialog for a local hub and browses
+the hub's own filesystem for a remote one (or when the dialog is unavailable).
+`Esc` keeps the current choice.
 
 ![New Agent, dark](docs/ui-new-agent-dark.png)
 
-[Agent settings](docs/ui-new-agent-settings.png) · [Project chooser](docs/ui-new-agent-chooser.png) ·
+[Model menu](docs/ui-new-agent-model-menu.png) · [Agent settings](docs/ui-new-agent-settings.png) · [Project chooser](docs/ui-new-agent-chooser.png) ·
 [A peer and its folders](docs/ui-new-agent-peer.png) · [No other hosts](docs/ui-new-agent-single-machine.png) ·
 [Wide](docs/ui-new-agent-wide.png) · [Light, Codex](docs/ui-new-agent-light.png) ·
 [Gruvbox at 720 × 480](docs/ui-new-agent-minimum-gruvbox.png) ·
