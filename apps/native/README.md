@@ -110,38 +110,37 @@ make run-native     # build and launch the release GUI against an existing hub
 make test-native    # native UI/protocol and embedded-engine lifecycle tests
 ```
 
-Use **New session** (`Ctrl/Cmd+N`). The screen is one **composer**, not a form:
-the task on top (optional; an empty one starts the agent idle) and, on the line
-beneath it, who does the work — Claude or Codex, the model, its **effort** — and
-**Start agent**. The caret starts in the task when a project is already chosen.
-Anything worth saying before a start (a failed launch, progress, a missing
-project, a model list that did not load) appears between the task and that
-line; a ready form says nothing.
+Use **New session** (`Ctrl/Cmd+N`). It opens a conversation that has not
+started yet, laid out like a live one rather than as a form:
 
-Under the composer sit quiet pills rather than fields:
+- **Title capsule** (top): the project, then "New agent". The project reopens
+  the chooser.
+- **The page**: where the agent will work — the project's mark and name, its
+  pin, and one line with what the hub reports about the folder (branch and
+  uncommitted changes, a plain folder, or a folder that does not exist), how
+  many agents run there, and its path. When the hub offers other hosts,
+  **Run on** sits beneath as one switch (This machine, each peer, Best fit)
+  with **Queue if busy**; choosing a peer lists that machine's folders.
+- **Composer** (bottom): the first message (optional; an empty one starts the
+  agent idle), one chip naming the agent (provider, model, effort) with its
+  non-default options beside it, and **Start agent** where Send will be. The
+  line under it reports a short failure, progress or a missing project, and
+  the keys (`Ctrl/Cmd+Enter` starts, `Esc` goes back).
 
-- the **project**, which reopens the chooser, its pin, and one line with what
-  the hub reports about the folder (branch and uncommitted changes, a plain
-  folder, or a folder that does not exist), how many agents run there, and its
-  path;
-- **Options**, with the choices it holds as chips (access mode, a non-default
-  context window, a session name). Its panel also has Agent setup and Reload
-  models;
-- **Run on**, when the hub offers other hosts: This machine, each peer and Best
-  fit as one switch, with **Queue if busy** and the chosen machine's state.
-  Choosing a peer lists that machine's folders beneath.
-
-The open conversation's folder (or the filtered project) is preselected;
-otherwise the chooser is open beneath the composer with its search focused. It
-lists the hub's pinned and recent projects, this device's older bookmarks and
-folders your sessions run in; type to filter by name or path, use `↑`/`↓` and
-`Enter`, or paste an absolute folder path. **Choose folder…** opens the system
-dialog for a local hub and browses the hub's own filesystem for a remote one
-(or when the dialog is unavailable). `Esc` keeps the current choice.
+The page answers one question at a time. The agent chip swaps it for the
+agent's settings: Claude or Codex, the model and its **effort** on one line
+(with the model list's reload), access mode, context window, an optional
+session name and Agent setup. The project in the capsule swaps it for the
+chooser, which is also what a draft with no project opens on, search focused.
+It lists the hub's pinned and recent projects, this device's older bookmarks
+and folders your sessions run in; type to filter by name or path, use `↑`/`↓`
+and `Enter`, or paste an absolute folder path. **Choose folder…** opens the
+system dialog for a local hub and browses the hub's own filesystem for a
+remote one (or when the dialog is unavailable). `Esc` keeps the current choice.
 
 ![New Agent, dark](docs/ui-new-agent-dark.png)
 
-[Options open](docs/ui-new-agent-options.png) · [Project chooser](docs/ui-new-agent-chooser.png) ·
+[Agent settings](docs/ui-new-agent-settings.png) · [Project chooser](docs/ui-new-agent-chooser.png) ·
 [A peer and its folders](docs/ui-new-agent-peer.png) · [No other hosts](docs/ui-new-agent-single-machine.png) ·
 [Wide](docs/ui-new-agent-wide.png) · [Light, Codex](docs/ui-new-agent-light.png) ·
 [Gruvbox at 720 × 480](docs/ui-new-agent-minimum-gruvbox.png) ·

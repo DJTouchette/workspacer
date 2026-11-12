@@ -1039,8 +1039,8 @@ impl Workspace {
         }
     }
 
-    /// The chosen project as a pill that reopens the chooser, with its pin
-    /// beside it. With no project yet it asks for one.
+    /// The chosen project in the title capsule; it reopens the chooser.
+    /// With no project yet it asks for one.
     pub(super) fn render_project_summary(
         &self,
         busy: bool,
@@ -1057,37 +1057,29 @@ impl Workspace {
                 .map(|p| p.title().to_owned())
                 .unwrap_or_else(|| projects::basename(&cwd).to_owned())
         };
-        let pinned = project.as_ref().is_some_and(|p| p.favourite);
-        let saving = self
-            .view
-            .requests
-            .get("project-save")
-            .is_some_and(|s| s.loading);
-        let can_pin = !busy && !saving && self.view.connected && !self.demo;
-        let pin_path = cwd.clone();
         div()
             .id("launch-project-summary")
             .debug_selector(|| "launch-project-summary".into())
             .flex()
             .items_center()
-            .gap_1()
             .min_w_0()
             .child(
                 chrome::interactive_control(div().id("launch-project-change"), p, !busy)
                     .debug_selector(|| "launch-project-change".into())
-                    .h(px(control::HEIGHT))
-                    .pl(px(6.))
-                    .pr(px(10.))
+                    .h(px(control::HEIGHT_SM))
+                    .pl(px(4.))
+                    .pr(px(8.))
                     .min_w_0()
                     .rounded_full()
-                    .bg(chrome::tonal(p, alpha::REST))
                     .flex()
                     .items_center()
                     .gap_2()
                     .when(!busy, |d| {
-                        d.hover(|s| s.bg(chrome::tonal(p, alpha::HOVER))).on_click(
-                            cx.listener(|this, _, window, cx| this.open_project_picker(window, cx)),
-                        )
+                        d.hover(|s| s.bg(chrome::tonal(p, alpha::HOVER)))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.launch_details_open = false;
+                                this.open_project_picker(window, cx)
+                            }))
                     })
                     .child(if cwd.is_empty() {
                         div()
@@ -1105,7 +1097,7 @@ impl Workspace {
                             .max_w(px(260.))
                             .truncate()
                             .text_size(px(chrome::scale::BODY))
-                            .font_weight(FontWeight::MEDIUM)
+                            .font_weight(FontWeight::SEMIBOLD)
                             .child(title),
                     )
                     .child(
@@ -1114,27 +1106,47 @@ impl Workspace {
                             .text_color(rgb(p.muted)),
                     ),
             )
-            .when(!cwd.is_empty(), |d| {
-                d.child(
-                    self.icon_button(
-                        "launch-project-pin",
-                        if pinned { "Unpin folder" } else { "Pin folder" },
-                        IconName::Star,
-                        can_pin,
-                    )
-                    .debug_selector(|| "launch-project-pin".into())
-                    .when(pinned, |d| d.text_color(rgb(p.accent)))
-                    .when(can_pin, |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_project_pin(pin_path.clone(), !pinned, cx)
-                        }))
-                    }),
-                )
-            })
     }
 
-    /// One quiet line under the project pill: what the hub reports about
-    /// the folder, how busy it is, and where it is.
+    /// Pin or unpin the chosen project; nothing to pin before one is chosen.
+    pub(super) fn render_project_pin(
+        &self,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
+        let p = self.palette();
+        let cwd = self.projects.cwd.clone();
+        if cwd.is_empty() {
+            return None;
+        }
+        let pinned = self.known_project(&cwd).is_some_and(|p| p.favourite);
+        let saving = self
+            .view
+            .requests
+            .get("project-save")
+            .is_some_and(|s| s.loading);
+        let can_pin = !busy && !saving && self.view.connected && !self.demo;
+        Some(
+            self.icon_button(
+                "launch-project-pin",
+                if pinned { "Unpin folder" } else { "Pin folder" },
+                IconName::Star,
+                can_pin,
+            )
+            .debug_selector(|| "launch-project-pin".into())
+            .when(pinned, |d| d.text_color(rgb(p.accent)))
+            .when(can_pin, |d| {
+                d.on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.set_project_pin(cwd.clone(), !pinned, cx)
+                    }),
+                )
+            }),
+        )
+    }
+
+    /// One quiet line under the project's name: what the hub reports
+    /// about the folder, how busy it is, and where it is.
     pub(super) fn render_project_status(&self) -> Option<Div> {
         let p = self.palette();
         let cwd = self.projects.cwd.clone();
@@ -1146,7 +1158,8 @@ impl Workspace {
         Some(
             div()
                 .debug_selector(|| "launch-project-status".into())
-                .w_full()
+                .max_w_full()
+                .justify_center()
                 .flex()
                 .items_start()
                 .gap_1()
@@ -1172,7 +1185,6 @@ impl Workspace {
                 }))
                 .child(
                     div()
-                        .flex_1()
                         .min_w_0()
                         .truncate()
                         .font_family(mono_font())

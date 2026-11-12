@@ -116,16 +116,17 @@ fn guided_launch_keeps_options_and_start_action_accessible(cx: &mut TestAppConte
     visual.simulate_click(customize.center(), gpui::Modifiers::default());
     visual.run_until_parked();
     assert!(visual.debug_bounds("launch-details").is_some());
+    visual.update(|_, cx| workspace.update(cx, |this, _| this.permission = Permission::Plan));
+    visual.run_until_parked();
+    let provider = visual.debug_bounds("launch-provider-codex").unwrap();
+    visual.simulate_click(provider.center(), gpui::Modifiers::default());
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
             this.label
                 .update(cx, |input, cx| input.set_value("Test repair", window, cx));
-            this.permission = Permission::Plan;
         });
     });
     visual.simulate_click(customize.center(), gpui::Modifiers::default());
-    let provider = visual.debug_bounds("launch-provider-codex").unwrap();
-    visual.simulate_click(provider.center(), gpui::Modifiers::default());
     // The open conversation's folder is preselected; Change swaps it.
     workspace.read_with(&visual, |this, _| {
         assert_eq!(this.projects.cwd, "/work/alpha")
@@ -271,11 +272,12 @@ fn uncertain_launch_error_keeps_recovery_and_full_text_reachable(cx: &mut TestAp
     assert!(commands.try_recv().is_err());
 }
 
-/// The form is one composer: the task, who does it and Start share a
-/// single surface, in every theme and at the smallest window, with the
-/// project and options as pills beneath it rather than a page of fields.
+/// New Agent is a conversation that has not started: the title capsule on
+/// top, where the agent will work in the middle, and the composer (task,
+/// the agent chip, Start) docked at the bottom, in every theme and at the
+/// smallest window.
 #[gpui::test]
-fn the_composer_holds_the_task_the_agent_and_start(cx: &mut TestAppContext) {
+fn new_agent_is_laid_out_like_a_conversation(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
@@ -293,20 +295,28 @@ fn the_composer_holds_the_task_the_agent_and_start(cx: &mut TestAppContext) {
             });
             visual.run_until_parked();
             let at = format!("{} {width}x{height}", appearance.label());
+            let title = visual.debug_bounds("launch-title").unwrap();
+            let hero = visual.debug_bounds("launch-hero").unwrap();
             let composer = visual.debug_bounds("launch-task").unwrap();
-            let content = visual.debug_bounds("launch-content").unwrap();
             assert!(
-                composer.left() == content.left() && composer.right() == content.right(),
-                "{at}: {composer:?} in {content:?}"
+                title.bottom() <= hero.top() && hero.bottom() <= composer.top(),
+                "{at}: {title:?} / {hero:?} / {composer:?}"
             );
-            assert!(composer.bottom() <= px(height), "{at}: {composer:?}");
+            // Docked: the composer rests near the window's bottom edge.
+            assert!(
+                composer.bottom() <= px(height) && composer.bottom() >= px(height - 48.),
+                "{at}: {composer:?}"
+            );
+            let project = visual.debug_bounds("launch-project-change").unwrap();
+            assert!(
+                project.left() >= title.left() && project.right() <= title.right(),
+                "{at}: the project sits in the title capsule"
+            );
             let prompt = visual.debug_bounds("launch-prompt").unwrap();
             for selector in [
                 "launch-prompt",
-                "launch-provider-claude",
-                "launch-provider-codex",
-                "launch-model-picker",
-                "launch-effort-picker",
+                "launch-customize",
+                "launch-chip-0",
                 "launch-start",
             ] {
                 let inner = visual.debug_bounds(selector).unwrap();
@@ -322,20 +332,12 @@ fn the_composer_holds_the_task_the_agent_and_start(cx: &mut TestAppContext) {
                     "{at}: {selector} overlaps the task"
                 );
             }
-            // Where it runs and how follow the composer, already in view.
-            for selector in ["launch-project-change", "launch-customize", "launch-chip-0"] {
-                let pill = visual.debug_bounds(selector).unwrap();
-                assert!(
-                    pill.top() >= composer.bottom() && pill.bottom() <= px(height),
-                    "{at}: {selector} {pill:?}"
-                );
+            // Ready to start: no settings on the page, nothing to report.
+            for absent in ["launch-details", "launch-model-picker", "launch-status"] {
+                assert!(visual.debug_bounds(absent).is_none(), "{at}: {absent}");
             }
-            // Ready to start: nothing to report, so no status line.
-            assert!(visual.debug_bounds("launch-status").is_none(), "{at}");
         }
     }
-    visual.simulate_resize(size(px(1000.), px(700.)));
-    visual.run_until_parked();
     let start = visual.debug_bounds("launch-start").unwrap();
     visual.simulate_click(start.center(), gpui::Modifiers::default());
     let Some(Command::Create(request)) = next_effect(&mut commands) else {
@@ -345,10 +347,11 @@ fn the_composer_holds_the_task_the_agent_and_start(cx: &mut TestAppContext) {
     assert!(commands.try_recv().is_err());
 }
 
-/// With no project the composer says what is missing and the chooser is
-/// open beneath it; Options opens its panel only when asked.
+/// The middle of the page answers one question at a time: which project
+/// (when none is chosen, or on request), or the agent's settings (from the
+/// composer's chip); otherwise it shows where the agent will work.
 #[gpui::test]
-fn choosers_open_beneath_the_composer_only_when_needed(cx: &mut TestAppContext) {
+fn the_page_shows_one_chooser_at_a_time(cx: &mut TestAppContext) {
     let (workspace, mut visual, _commands, _updates) = fixture(cx);
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
@@ -364,25 +367,52 @@ fn choosers_open_beneath_the_composer_only_when_needed(cx: &mut TestAppContext) 
     });
     visual.run_until_parked();
     let composer = visual.debug_bounds("launch-task").unwrap();
-    let status = visual.debug_bounds("launch-status").unwrap();
-    assert!(status.top() > composer.top() && status.bottom() < composer.bottom());
+    // No project: the chooser is the page, and the hint line says why
+    // Start will not do anything yet.
     let picker = visual.debug_bounds("launch-project-picker").unwrap();
-    assert!(picker.top() >= composer.bottom());
-    assert!(visual.debug_bounds("launch-project-status").is_none());
+    assert!(picker.bottom() <= composer.top());
+    assert!(visual.debug_bounds("launch-hero").is_none());
+    assert!(visual.debug_bounds("launch-status").unwrap().top() >= composer.bottom());
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| this.select_project("/work/api", window, cx));
     });
     visual.run_until_parked();
     assert!(visual.debug_bounds("launch-project-picker").is_none());
     assert!(visual.debug_bounds("launch-status").is_none());
+    assert!(visual.debug_bounds("launch-hero").is_some());
     assert!(visual.debug_bounds("launch-project-status").is_some());
-    assert!(visual.debug_bounds("launch-details").is_none());
-    let options = visual.debug_bounds("launch-customize").unwrap();
-    visual.simulate_click(options.center(), gpui::Modifiers::default());
+    // The agent chip swaps the page for the agent's settings and back.
+    let chip = visual.debug_bounds("launch-customize").unwrap();
+    visual.simulate_click(chip.center(), gpui::Modifiers::default());
     visual.run_until_parked();
     let details = visual.debug_bounds("launch-details").unwrap();
-    assert!(details.top() >= options.bottom());
-    assert_eq!(visual.debug_bounds("launch-customize").unwrap(), options);
+    assert!(details.bottom() <= composer.top());
+    for selector in [
+        "launch-provider-codex",
+        "launch-model-picker",
+        "launch-effort-picker",
+    ] {
+        let inner = visual.debug_bounds(selector).unwrap();
+        assert!(inner.top() >= details.top() && inner.bottom() <= details.bottom());
+    }
+    // Asking for the project closes the settings, and the chip closes the
+    // chooser: never both. (State, not bounds: the test window keeps the
+    // last bounds of an element that is no longer drawn.)
+    let open = |visual: &mut gpui::VisualTestContext| {
+        workspace.read_with(visual, |this, _| {
+            (this.launch_details_open, this.projects.picker_open)
+        })
+    };
+    assert_eq!(open(&mut visual), (true, false));
+    let project = visual.debug_bounds("launch-project-change").unwrap();
+    visual.simulate_click(project.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert_eq!(open(&mut visual), (false, true));
+    assert!(visual.debug_bounds("launch-project-picker").is_some());
+    let chip = visual.debug_bounds("launch-customize").unwrap();
+    visual.simulate_click(chip.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert_eq!(open(&mut visual), (true, false));
 }
 
 #[gpui::test]
@@ -506,6 +536,7 @@ fn model_menu_shows_catalog_when_custom_is_selected(cx: &mut TestAppContext) {
             };
             this.update_view(Arc::new(loaded), window, cx);
             this.show_new_session(window, cx);
+            this.launch_details_open = true;
             this.model_choice = "__custom".into();
             this.model_picker.update(cx, |picker, cx| {
                 picker.set_selected_value(&String::from("__custom"), window, cx);
@@ -533,6 +564,7 @@ fn model_menu_shows_catalog_when_custom_is_selected(cx: &mut TestAppContext) {
         workspace.update(cx, |this, cx| {
             this.show_screen(Screen::Conversation, window, cx);
             this.show_new_session(window, cx);
+            this.launch_details_open = true;
             this.model_picker
                 .update(cx, |picker, cx| picker.focus(window, cx));
         });
@@ -603,6 +635,7 @@ fn open_model_dropdown_renders_arriving_catalog(cx: &mut TestAppContext) {
             this.demo = false;
             this.update_view(Arc::new(state("a")), window, cx);
             this.show_new_session(window, cx);
+            this.launch_details_open = true;
             this.model_picker
                 .update(cx, |picker, cx| picker.focus(window, cx));
         });
@@ -736,6 +769,7 @@ fn effort_sits_beside_the_model_and_follows_what_the_model_accepts(cx: &mut Test
             this.settings.default_provider = Provider::Codex;
             this.update_view(Arc::new(state("a")), window, cx);
             this.show_new_session(window, cx);
+            this.launch_details_open = true;
             this.select_project("/work/project", window, cx);
             let mut loaded = state("a");
             catalog(&mut loaded);
@@ -743,10 +777,10 @@ fn effort_sits_beside_the_model_and_follows_what_the_model_accepts(cx: &mut Test
         })
     });
     visual.run_until_parked();
-    // Visible without opening Options, on the model's row.
+    // In the agent's settings, on the model's row.
     let model = visual.debug_bounds("launch-model-picker").unwrap();
     let effort = visual.debug_bounds("launch-effort-picker").unwrap();
-    assert!(visual.debug_bounds("launch-details").is_none());
+    assert!(visual.debug_bounds("launch-details").is_some());
     assert_eq!(model.top(), effort.top());
     assert!(effort.left() > model.right());
     let focus = |picker: fn(&Workspace) -> Entity<SelectState<SearchableVec<PickerItem>>>| {
