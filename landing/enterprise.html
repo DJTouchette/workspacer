@@ -4,17 +4,17 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Workspacer for enterprise · Guided workflow pilots</title>
-<meta name="description" content="Bring Workspacer into your everyday development workflow. Explore configurable Fleet Manager workflows and a scoped, paid setup pilot with the builder." />
+<meta name="description" content="Bring Workspacer into your everyday development workflow: a small native app where one coding agent can hand work to another across providers. Start with a scoped, paid setup pilot with the builder." />
 <link rel="canonical" href="https://www.workspacer.app/enterprise.html" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://www.workspacer.app/enterprise.html" />
 <meta property="og:title" content="Workspacer · Put your agents to work on your everyday backlog" />
-<meta property="og:description" content="Configurable workflows, cross-provider delegation and project briefs. Start with a guided pilot on one repository." />
-<meta property="og:image" content="https://www.workspacer.app/shots/fleet-manager.webp" />
+<meta property="og:description" content="Cross-provider delegation, isolated worktrees, review before anything lands, and project briefs. Start with a guided pilot on one repository." />
+<meta property="og:image" content="https://www.workspacer.app/shots/native-spawn.webp" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Workspacer for enterprise · Guided workflow pilots" />
 <meta name="twitter:description" content="Put your agents to work on your everyday backlog. Discuss a scoped adoption pilot with the builder." />
-<meta name="twitter:image" content="https://www.workspacer.app/shots/fleet-manager.webp" />
+<meta name="twitter:image" content="https://www.workspacer.app/shots/native-spawn.webp" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -177,7 +177,9 @@
   .tour-caption p { font-size: 14px; max-width: 680px; }
   .tour-caption a { align-self: center; color: var(--accent); font-size: 13px; text-underline-offset: 4px; }
   .tour-image { display: block; border-top: 1px solid var(--line); }
-  .tour-image img { width: 100%; height: auto; aspect-ratio: 1600 / 862; }
+  /* No forced aspect-ratio: the captures are two window sizes, and each img
+     carries its own width/height so the panel reserves the right space. */
+  .tour-image img { width: 100%; height: auto; }
   .tour-label { margin-top: 14px; font-size: 12px; color: var(--fg-muted); }
   .enterprise-benefits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 36px; margin-top: 44px; }
   .enterprise-benefits > div { border-top: 1px solid var(--line-strong); padding-top: 20px; }
@@ -298,29 +300,33 @@
   <div class="enterprise-copy">
     <div class="eyebrow">enterprise · guided pilots</div>
     <h1 class="display" id="enterprise-title">Put your agents to work on your <span class="g">everyday backlog</span>.</h1>
-    <p class="sec-sub">For developers and technical leads working in existing codebases. Give Fleet Manager the task. It coordinates the workers, brings back their results, and keeps the project brief current.</p>
+    <p class="sec-sub">For developers and technical leads working in existing codebases. Give one agent the task. It can hand part of it to a second agent on a different provider, in its own worktree, and bring the result back for you to review.</p>
     <div class="enterprise-actions">
       <a class="btn btn-fill" href="#pilot">Explore a guided pilot &rarr;</a>
       <a class="btn btn-line" href="#workflow">See the workflow</a>
     </div>
-    <div class="hero-meta"><span>Windows · macOS · Linux</span><span>Your coding tools &amp; subscriptions</span></div>
+    <div class="hero-meta"><span>Windows · Linux · macOS from source</span><span>Your coding tools &amp; subscriptions</span></div>
   </div>
-  <div class="workflow-sketch" aria-label="Example of the default Fleet Manager workflow">
-    <div class="eyebrow">one task · a coordinated workflow</div>
-    <p class="workflow-ask">“Fix the retry bug and have a fresh agent review the change.”</p>
+  <!-- One ordinary agent handing work to another with the spawn-agent skill
+       (apps/desktop/assets/skills/spawn-agent/SKILL.md). This used to sketch
+       the Fleet Manager's scout / implement / review workflow, which is
+       started from the Electron app; see the note under the benefits. -->
+  <div class="workflow-sketch" aria-label="Example of one agent handing a review to another">
+    <div class="eyebrow">one task · two agents</div>
+    <p class="workflow-ask">“Fix the retry bug, then have Codex review the change.”</p>
     <ol class="workflow-path">
-      <li><span class="step-number" aria-hidden="true">01</span><div><b>Investigate when needed</b><p>A scout checks the unknowns and gives the implementer a focused handoff.</p></div></li>
-      <li><span class="step-number" aria-hidden="true">02</span><div><b>Implement the change</b><p>A worker takes the task on its own branch. Provider and model choices follow your routing preferences.</p></div></li>
-      <li><span class="step-number" aria-hidden="true">03</span><div><b>Get an independent review</b><p>A fresh worker reviews the change. You can open the sessions and inspect the results.</p></div></li>
+      <li><span class="step-number" aria-hidden="true">01</span><div><b>Make the change</b><p>The agent you asked does the work in your project. Commands wait for your approval unless you chose a wider access mode.</p></div></li>
+      <li><span class="step-number" aria-hidden="true">02</span><div><b>Hand off the review</b><p>It starts a fresh agent on the provider you named, gives it one self-contained task, and ends its turn. It does not poll.</p></div></li>
+      <li><span class="step-number" aria-hidden="true">03</span><div><b>Get woken with the result</b><p>The reviewer's findings come back as a message. You can open either session and read the diff yourself.</p></div></li>
     </ol>
-    <p class="workflow-note"><b>Ready for the next session.</b> The manager records the outcome and next steps in the project brief.</p>
+    <p class="workflow-note"><b>Ready for the next session.</b> Agents can record the outcome and next steps in the project brief, a Markdown file in the repository.</p>
   </div>
 </div></section>
 
 <section id="workflow" class="product-tour" aria-labelledby="workflow-title"><div class="wrap">
   <div class="section-heading">
     <div><div class="eyebrow">inside workspacer</div><h2 class="display" id="workflow-title">See the work.<br>Keep the <span class="g">context</span>.</h2></div>
-    <p>Every worker is a session you can open. Every result has somewhere to land. Take a look around an example workspace.</p>
+    <p>Every agent is a session you can open, including the ones another agent started. Every result has somewhere to land. Take a look around the native app.</p>
   </div>
   <div class="tour-shell">
     <div class="tour-tabs" role="tablist" aria-label="Workspacer product tour" hidden>
@@ -329,24 +335,33 @@
       <button class="tour-tab" type="button" role="tab" id="tour-tab-resume" aria-controls="tour-resume" aria-selected="false" tabindex="-1">03 · Resume</button>
     </div>
     <div class="tour-panel" id="tour-delegate">
-      <div class="tour-caption"><div><h3>One conversation. Visible workers.</h3><p>Dispatch through the manager, open any worker, and read the results as they come back.</p></div><a href="shots/fleet-manager.webp" target="_blank" rel="noopener">Open delegation screenshot ↗</a></div>
-      <a class="tour-image" href="shots/fleet-manager.webp" target="_blank" rel="noopener" aria-label="Open full-size Fleet Manager screenshot"><img src="shots/fleet-manager.webp" alt="Example Fleet Manager workspace with nested worker sessions and a structured result in the conversation" width="1600" height="862" loading="lazy" /></a>
+      <div class="tour-caption"><div><h3>One conversation. Visible workers.</h3><p>Ask an agent to bring in another. The child sits under its parent in the sidebar, and its result comes back into the conversation that asked for it.</p></div><a href="shots/native-spawn.webp" target="_blank" rel="noopener">Open delegation screenshot ↗</a></div>
+      <a class="tour-image" href="shots/native-spawn.webp" target="_blank" rel="noopener" aria-label="Open full-size delegation screenshot"><img src="shots/native-spawn.webp" alt="The native app with Codex and Claude sessions nested under the Claude session that started them, and a Spawn agent card marked Dispatched in that session's conversation" width="1280" height="760" loading="lazy" /></a>
     </div>
     <div class="tour-panel" id="tour-review">
-      <div class="tour-caption"><div><h3>Inspect the code that came back.</h3><p>Use the review pane to read the diff, stage changes, and commit when you are ready.</p></div><a href="shots/review-pane.webp" target="_blank" rel="noopener">Open review screenshot ↗</a></div>
-      <a class="tour-image" href="shots/review-pane.webp" target="_blank" rel="noopener" aria-label="Open full-size review pane screenshot"><img src="shots/review-pane.webp" alt="Workspacer review pane showing changed files and a diff beside the agent sidebar" width="1600" height="862" loading="lazy" /></a>
+      <div class="tour-caption"><div><h3>Inspect the code that came back.</h3><p>Use Changes to read the diff, stage files, and commit and push when you are ready.</p></div><a href="shots/native-changes.webp" target="_blank" rel="noopener">Open review screenshot ↗</a></div>
+      <a class="tour-image" href="shots/native-changes.webp" target="_blank" rel="noopener" aria-label="Open full-size review screenshot"><img src="shots/native-changes.webp" alt="The Changes view showing a unified diff beside the list of changed files, with stage, commit and push controls" width="900" height="600" loading="lazy" /></a>
     </div>
     <div class="tour-panel" id="tour-resume">
-      <div class="tour-caption"><div><h3>Come back with the decisions in view.</h3><p>The brief board puts current work, direction and recent outcomes together. The underlying briefs are Markdown in your projects.</p></div><a href="shots/brief-board.webp" target="_blank" rel="noopener">Open project briefs screenshot ↗</a></div>
-      <a class="tour-image" href="shots/brief-board.webp" target="_blank" rel="noopener" aria-label="Open full-size project briefs screenshot"><img src="shots/brief-board.webp" alt="Example brief board with current tasks, project direction, recent decisions and an archive column" width="1600" height="862" loading="lazy" /></a>
+      <div class="tour-caption"><div><h3>Come back to where you left off.</h3><p>History groups every session by project and searches across them. Open one to read it, or resume a stopped Claude Code or Codex session.</p></div><a href="shots/native-history.webp" target="_blank" rel="noopener">Open session history screenshot ↗</a></div>
+      <a class="tour-image" href="shots/native-history.webp" target="_blank" rel="noopener" aria-label="Open full-size session history screenshot"><img src="shots/native-history.webp" alt="Session history grouped by project, with a search field and each session's agent and last activity" width="900" height="600" loading="lazy" /></a>
     </div>
   </div>
-  <p class="tour-label">Product screenshots from an example workspace. Select a view, or open an image at full size.</p>
+  <p class="tour-label">Screenshots of the native app running on fixture sessions, not a real project. Select a view, or open an image at full size.</p>
   <dl class="enterprise-benefits">
-    <div><dt>A workflow that fits the project</dt><dd>Clone the default to change the steps, instructions and dispatch templates. Choose a global workflow or override it for a particular project.</dd></div>
-    <div><dt>Delegate across providers</dt><dd>A manager on Codex can dispatch a Claude Code worker. Set provider and model preferences by role, using the coding tools you already have.</dd></div>
-    <div><dt>Work that carries forward</dt><dd>Project briefs record outcomes, decisions and next steps. The next session has a starting point you can read and edit yourself.</dd></div>
+    <div><dt>Delegate across providers</dt><dd>An agent on Claude Code can hand a task to Codex, or the other way round, with one skill. OpenCode and GitHub Copilot can be brought in as child agents. All of it runs on the coding tools and subscriptions you already have.</dd></div>
+    <div><dt>Changes that stay separate</dt><dd>A child that edits code can work in its own git worktree and branch, so two agents in one repository do not write over each other. You read the diff and decide what lands.</dd></div>
+    <div><dt>Work that carries forward</dt><dd>Agents can record outcomes, decisions and next steps in a project brief. It is Markdown in your repository, so the next session has a starting point you can read and edit yourself.</dd></div>
+    <div><dt>Routine work on a schedule</dt><dd>Ask an agent for a recurring job. What it proposes waits, switched off, until you approve it, and you can pause, run or remove it later.</dd></div>
+    <div><dt>Approvals from your phone</dt><dd>Pair a phone over your own Tailscale network with a read-only, triage or full-control link, and revoke it when you are done.</dd></div>
+    <div><dt>Small and local</dt><dd>One native binary with its hub compiled in, a 34 MB download on Linux. There is no account and no Workspacer server between you and your providers.</dd></div>
   </dl>
+  <!-- The page used to lead with this. It is still real, and still worth
+       saying, but it is operated from the Electron app, so it is stated as
+       that rather than implied of the native app. Sources: services/hub-rs
+       (workflows.rs, workflow_runtime.rs, spawn_plan.rs `manager`) and
+       apps/native, which has no manager launcher or workflow editor. -->
+  <p class="enterprise-scope"><b>Fleet Manager and configured workflows.</b> Workspacer also has a manager agent that dispatches a task through steps you define, by default an optional scout, an implementer, and a fresh independent reviewer, with provider and model preferences set by role. The Rust hub that both apps share runs those steps, but the manager is started and its workflows are edited in the Electron app. That app is deprecated: it still runs and its installers stay on the releases page, while new work goes into the native app, which has no manager launcher or workflow editor. The native app can attach to the same hub to follow that work. <a href="docs.html#fleet-workflows">Read the workflow docs</a></p>
 </div></section>
 
 <section id="pilot" class="pilot-section" aria-labelledby="pilot-title"><div class="wrap">
@@ -401,7 +416,7 @@
       <p class="pilot-contact">Prefer email? <a href="mailto:thetouchstonedev@gmail.com?subject=Workspacer%20pilot%20enquiry">thetouchstonedev@gmail.com</a></p>
     </aside>
   </div>
-  <p class="enterprise-scope"><b>Deployment today.</b> Workspacer is a single-user desktop app for Windows, macOS and Linux; configured Fleet workflows run through the desktop host. Each developer uses their own installation and provider access. Coordination runs locally; your coding tools send prompts and context to their configured model providers. Builds are currently unsigned and in alpha. <a href="docs.html#fleet-workflows">Read the workflow docs</a> · <a href="index.html#status">Current limitations</a></p>
+  <p class="enterprise-scope"><b>Deployment today.</b> Workspacer is a single-user native app. The release build produces a Windows installer; on Linux and macOS it is built from source. Configured Fleet workflows are run from the deprecated Electron app. Each developer uses their own installation and provider access, and nothing here is shared team administration. Coordination runs locally; your coding tools send prompts and context to their configured model providers. Builds are currently unsigned and in alpha. <a href="index.html#get">How to get it</a> · <a href="index.html#status">Current limitations</a></p>
 </div></section>
 </main>
 
