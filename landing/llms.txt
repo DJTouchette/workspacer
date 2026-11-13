@@ -21,7 +21,7 @@
 
 ## Electron app docs
 
-- [Electron app docs](docs-electron.html): the Electron desktop app's documentation, kept as it was. The app ships in this release and is deprecated in the next; new work goes into the native app.
+- [Electron app docs](docs-electron.html): the Electron desktop app's documentation, kept as it was. v0.170.0 is its final release, shipped alongside the native app; the next release deprecates it. New work goes into the native app, which imports the Electron app's settings and sessions on first launch.
 - [Fleet Manager](docs-electron.html#fleet-manager) and [configurable Fleet workflows](docs-electron.html#fleet-workflows): a manager agent that dispatches work through defined steps. The launcher and the workflow editor are in the Electron app only, and the Fleet Manager is not coming to the native app.
 - [Briefs](docs-electron.html#briefs), [the agent pane](docs-electron.html#agent-pane), [pane types](docs-electron.html#panes), [layout and navigation](docs-electron.html#layout-and-navigation).
 - [Optional Headroom routing](docs-electron.html#launch-integrations): per-session Claude/Codex routing through an independently managed proxy, chosen in the Electron app's spawn dialog.

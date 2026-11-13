@@ -201,18 +201,21 @@
 <h2>getting started</h2>
 <p>You need at least one agent CLI installed and signed in on the machine that will run the agents: <strong>Claude Code</strong> or <strong>Codex</strong>. Git is needed for worktrees and the Changes view.</p>
 <h3>get the app</h3>
-<p>The builds are unsigned alpha builds. What exists differs per platform, and this is the state of it:</p>
+<p>The builds are unsigned alpha builds, attached to each <a href="https://github.com/DJTouchette/workspacer/releases">release</a>. There is one per platform:</p>
 <ul>
-<li><strong>Windows.</strong> The release build attaches an installer, <code>Workspacer-Native-Rust-Preview-Setup-&lt;version&gt;-x64.exe</code>. It is unsigned, so SmartScreen warns and lets you through. It installs the app, a standalone <code>workspacer-rust.exe</code>, its own Start menu shortcut and uninstaller, and keeps its data in <code>%LOCALAPPDATA%\Workspacer Native Rust Preview</code>. Uninstalling keeps that data.</li>
-<li><strong>Linux.</strong> The release build attaches an archive, <code>workspacer-native-&lt;version&gt;-linux-x64.tar.gz</code>, with a checksum beside it. Unpack it and run <code>./install.sh</code>, which installs for the current user into <code>~/.local</code> (set <code>PREFIX</code> for another place). <code>wks-native-uninstall</code> removes exactly the files the installer wrote; sessions, settings and logs are kept. From a checkout, <code>make package-native-linux</code> builds the same archive into <code>apps/native/target/package/</code>.</li>
-<li><strong>macOS.</strong> There is no native package, because a signed and notarized bundle is not set up. Build and run from source: <code>make run-native-local</code>, with Xcode's command-line tools and a current stable Rust. Or use the Electron app's Apple Silicon <code>.dmg</code> from the same release; the <a href="docs-electron.html#getting-started">Electron app docs</a> cover installing it.</li>
+<li><strong>Windows.</strong> An installer, <code>Workspacer-Setup-&lt;version&gt;-x64.exe</code>. It is unsigned, so SmartScreen warns and lets you through, and it updates in place from Settings → About. It installs the app, a standalone <code>workspacer-rust.exe</code>, its own Start menu shortcut and uninstaller, and keeps its data in <code>%LOCALAPPDATA%\Workspacer Native Rust Preview</code>. Uninstalling keeps that data.</li>
+<li><strong>macOS.</strong> An Apple Silicon disk image, <code>Workspacer-&lt;version&gt;-macos-arm64.dmg</code>, with a checksum beside it. It is signed ad hoc and not notarized, so macOS quarantines the download: drag the app to Applications, then run <code>xattr -cr /Applications/Workspacer.app</code> once. There is no Intel build. Opened from Finder, the app uses your login shell's <code>PATH</code> to find the agent CLIs and Git.</li>
+<li><strong>Linux.</strong> An x64 archive, <code>workspacer-&lt;version&gt;-linux-x64.tar.gz</code>, with a checksum beside it. Unpack it and run <code>./install.sh</code>, which installs for the current user into <code>~/.local</code> (set <code>PREFIX</code> for another place). <code>wks-native-uninstall</code> removes exactly the files the installer wrote; sessions, settings and logs are kept.</li>
 </ul>
 <p>Building from source on Linux needs a few system libraries first. On Debian or Ubuntu:</p>
 <pre><code>sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev \
   libwayland-dev libssl-dev libasound2-dev libvulkan1 mesa-vulkan-drivers</code></pre>
 <p>Linux also needs a working X11 or Wayland display and a Vulkan driver. Windows needs the MSVC Rust toolchain and the Visual Studio C++ build tools. The <a href="build.html">build &amp; internals</a> page has the rest.</p>
+<h3>coming from the Electron app</h3>
+<p>The first time a fresh native install starts, it imports the Electron app's settings and sessions: <code>config.yaml</code>, profiles, the library, jobs, the hub's state and the session database. It reads a consistent snapshot, so it works while the Electron app is still running, and it leaves the Electron app's own data untouched.</p>
+<p>That happens once, and only into a native install that has no data yet. To import again over existing native data, run <code>wks-native --local --import-electron</code>; it first moves what is there to a backup directory beside it.</p>
 <h3>how it starts</h3>
-<p>The installed shortcut (Windows) and launcher (Linux) start the app with <code>--local</code>, which is what you want on your own machine. The flags, when you run the binary yourself:</p>
+<p>The installed shortcut (Windows), the app opened from Finder or the Dock (macOS) and the launcher (Linux) start the app with <code>--local</code>, which is what you want on your own machine. The flags, when you run the binary yourself:</p>
 <ul>
 <li><code>wks-native --local</code>: the app owns its backend. The hub, the MCP tools and the session engine run inside the app's process, with their state under <strong>Workspacer Native Rust Preview</strong> in the platform's local-data directory.</li>
 <li><code>wks-native</code> with no flags: attach to a hub that is already running on this machine, at <code>ws://127.0.0.1:7895/bus</code>. That is a <code>workspacer serve</code>, or the Electron app's hub.</li>
@@ -226,7 +229,7 @@
 <h3>closing, quitting and updating</h3>
 <p><strong>In local mode the window owns your agents.</strong> Closing the window quits by default, and quitting shuts down the hub, the session engine and the agent processes they started. A stopped Claude or Codex session can be resumed later from <a href="#views">History</a>.</p>
 <p>If you want agents to keep working with the window out of the way, turn on the keep-running preference in <strong>Settings → Workspace</strong> (or pass <code>--keep-running</code>): closing then minimizes instead, and only an explicit Quit stops the backend. When the app is attached to a hub it does not own, closing it stops nothing; that hub and its agents carry on.</p>
-<p>The app checks for a newer build a few seconds after launch and every six hours, and shows an <strong>Update</strong> pill in the sidebar when there is one. Settings → About shows the channel, the installed version and the latest. On Windows, <strong>Install and restart</strong> downloads and verifies the installer for you. On Linux, unpack the new archive and run <code>./install.sh</code> again.</p>
+<p>The app checks for a newer build a few seconds after launch and every six hours, and shows an <strong>Update</strong> pill in the sidebar when there is one. Settings → About shows the channel, the installed version and the latest. On Windows, <strong>Install and restart</strong> downloads and verifies the installer for you. On macOS, install the new <code>.dmg</code> yourself; on Linux, unpack the new archive and run <code>./install.sh</code> again.</p>
 </section>
 
 <section id="agents-and-providers" class="doc">
@@ -891,7 +894,7 @@ workspacer jobs remove &lt;id&gt;</code></pre>
 
 <section id="legacy" class="doc">
 <h2>the electron app</h2>
-<p>The Electron desktop app ships alongside the native app in this release, and its installers are on the <a href="https://github.com/DJTouchette/workspacer/releases">releases page</a>. The next release deprecates it, and new work already goes into the native app. Its documentation is kept, unchanged, on the <a href="docs-electron.html">Electron app docs</a> page.</p>
+<p>The Electron desktop app ships alongside the native app in this release, v0.170.0, and its installers are on the <a href="https://github.com/DJTouchette/workspacer/releases">releases page</a>. That is its final release: it gets no further updates, and the next release deprecates it. The native app <a href="#getting-started">imports its settings and sessions</a> on first launch. Its documentation is kept, unchanged, on the <a href="docs-electron.html">Electron app docs</a> page.</p>
 <p>Some of what it documents has no counterpart in the native app, on purpose. If you followed a link here looking for one of these, this is where it went:</p>
 <ul class="moved">
 <li id="fleet-manager"><strong>The Fleet Manager</strong>, one manager agent that dispatches workers and is woken when they finish. The native app has no launcher for a manager, and the Fleet Manager is not coming to it; it does show a manager's wakes when it attaches to a hub that has one. In the native app, an agent hands work to another with <a href="#spawning">the spawn-agent skill</a>. <a href="docs-electron.html#fleet-manager">Electron app docs →</a></li>

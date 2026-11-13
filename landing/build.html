@@ -195,8 +195,9 @@ make test-tui             # cargo test for apps/tui
 make test                 # all of the above, plus the Electron app's suites</code></pre>
 <p>From <code>apps/native</code>, <code>cargo test --locked --no-default-features</code> runs the core and protocol suite with no display and no GUI libraries, which is the fast loop while you work on the model or the bus client.</p>
 <h3>package</h3>
-<pre><code>make package-native-linux # apps/native/target/package/workspacer-native-&lt;version&gt;-linux-&lt;arch&gt;.tar.gz</code></pre>
-<p>That is a release build packed with a per-user installer (<code>install.sh</code>, into <code>~/.local</code>) and a checksum beside the archive. The Windows installer is built by <code>apps/native/scripts/package-windows.mjs</code> and needs Node 22 and NSIS; <code>apps/native/README.md</code> has the exact steps. There is no macOS package, because an app bundle needs signing and notarization that are not set up.</p>
+<pre><code>make package-native-linux             # apps/native/target/package/workspacer-&lt;version&gt;-linux-&lt;arch&gt;.tar.gz
+apps/native/scripts/package-macos.sh  # apps/native/target/package/Workspacer-&lt;version&gt;-macos-&lt;arch&gt;.dmg</code></pre>
+<p>The Linux archive is a release build packed with a per-user installer (<code>install.sh</code>, into <code>~/.local</code>) and a checksum beside it. The macOS script builds <code>Workspacer.app</code>, signs it ad hoc and wraps it in a <code>.dmg</code>; it is not notarized, so a downloaded copy needs <code>xattr -cr /Applications/Workspacer.app</code> once. The Windows installer is built by <code>apps/native/scripts/package-windows.mjs</code> and needs Node 22 and NSIS; <code>apps/native/README.md</code> has the exact steps. The release workflow builds all three and attaches them to tagged releases.</p>
 <h3>per-component builds</h3>
 <p>Every component also builds on its own from its directory; the make targets just delegate. The component READMEs go further than this page: <code>apps/native/README.md</code>, <code>apps/tui/README.md</code>, <code>services/claudemon/README.md</code>, and for the hub <code>services/hub-rs/MIGRATION.md</code>.</p>
 <pre><code>make build                # every component, the Electron app included
@@ -380,7 +381,7 @@ services/hub-rs/target/release/workspacer-rust serve
 
     <section id="electron" class="doc">
 <h2>the electron app</h2>
-<div class="callout legacy"><strong>On its way out.</strong> The Electron app in <code>apps/desktop</code> ships alongside the native app in this release, and the next release deprecates it. New work goes into the native app. This section is here so the code stays explainable, not as a recommendation.</div>
+<div class="callout legacy"><strong>On its way out.</strong> The Electron app in <code>apps/desktop</code> ships alongside the native app in this release, v0.170.0, which is its last: the release workflow no longer builds it, and the next release deprecates it. New work goes into the native app. This section is here so the code stays explainable, not as a recommendation.</div>
 <p>It is an Electron main process, a React renderer, and two child processes it supervises. Some things exist only here: tiled panes, the embedded browser, plugin panes and the Plugins Manager, the brief board, and the Fleet Manager launcher. The Fleet Manager is not being brought to the native app.</p>
 <h3>build and run</h3>
 <pre><code>make install      # cd apps/desktop &amp;&amp; npm install

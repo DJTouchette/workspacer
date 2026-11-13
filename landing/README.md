@@ -27,14 +27,15 @@ phases. See "Release phases" below before changing a word of it.
 The native app is the product and the pages lead with it. What they say about
 the Electron app depends on which release is current:
 
-1. **The interim release (now).** It ships both: the Electron build and the
-   native packages are attached to the same release. The pages say the Electron
-   app "ships alongside the native app in this release" and that "the next
-   release deprecates it". The download buttons prefer the native package and,
-   where a platform has none (macOS), offer the Electron installer under its
-   own name.
-2. **The release after that.** Electron is deprecated. The pages say so, and
-   the buttons stop offering it.
+1. **The interim release, v0.170.0 (now).** It carries both: native packages
+   for Windows, macOS and Linux, and the Electron app's final build. The pages
+   say the Electron app "ships alongside the native app in this release", that
+   this is its last release, and that "the next release deprecates it". The
+   download buttons offer the native package for the visitor's OS, and
+   `#dl-alts` lists the Electron installers as its final build.
+2. **The release after that.** Electron is deprecated, and the release
+   workflow already no longer builds it. The pages say so, and the buttons
+   stop offering it.
 
 To move from phase 1 to phase 2:
 
@@ -47,8 +48,9 @@ To move from phase 1 to phase 2:
   `docs.html`, the component list and the `#electron` callout on `build.html`,
   one sentence each on `build-plugin.html` and `enterprise.html`, and three
   lines of `llms.txt`.
-- The macOS row and the macOS item in `docs.html#getting-started` point Mac
-  users at the Electron `.dmg`. Decide what replaces that.
+- Electron's installers disappear from the release by themselves, so the
+  `#dl-alts` list shrinks without an edit; the flag only matters for the
+  fallback and the label.
 - The Fleet Manager is not coming to the native app, so it leaves with
   Electron. Its paragraph on `enterprise.html`, its stubs in `docs.html#legacy`
   and its `llms.txt` line then describe a deprecated app's feature: shorten
@@ -196,9 +198,12 @@ Claims map to things the native app ships today, and the sources are:
 - **Footprint.** The size bars and the proof band compare *download size on
   Linux x64*: the native figure is `make package-native-linux` on this tree,
   the Electron figure is the AppImage attached to the latest release. Both are
-  **hand-written** and go stale; re-measure when you touch the page. Last
-  measured at 0.169.0: 33.6 MB against 168.9 MB (the bar is 20% wide), with a
-  107 MB stripped binary inside the archive, which the caption admits. There are
+  **hand-written** and go stale; re-measure when you touch the page. Both
+  figures are assets of v0.170.0, the one release with both apps: the native
+  Linux archive at 33.6 MB against the Electron AppImage at 158.5 MB (the bar
+  is 21% wide). The archive's stripped binary is about 107 MB, which the
+  caption admits. Once Electron stops shipping there is nothing newer to
+  compare against, so the bars stay a v0.170.0 comparison. There are
   deliberately no memory or CPU numbers: the only ones recorded
   (`apps/native/VALIDATION.md`) were taken on a software renderer. The
   "bounded" tile quotes `apps/native/README.md` → Performance boundaries.
@@ -277,20 +282,30 @@ pass and one GitHub Releases fetch. The native package always wins: native
 patterns require `native` in the asset name and Electron patterns exclude it,
 so the two can never be confused. In order:
 
-1. the release has a native package for the visitor's OS: direct download;
+1. the release has a native package for the visitor's OS: direct download
+   (since v0.170.0 that is every desktop OS);
 2. it has none, and `ELECTRON_SHIPS` is true: the Electron installer for that
    OS, labelled "Electron app for …" so nobody takes it for the native one;
-3. neither: the nav and hero buttons point at `#get`, whose rows say how to
-   build it, and the CTA button stays the repo link.
+3. neither: the nav and hero buttons point at `#get`, and the CTA button stays
+   the repo link.
 
-`#dl-alts` lists every native link, then every Electron link, then the
-releases page. All of it degrades to the static HTML if the API is down.
+`#dl-alts` lists every native link, then every Electron link the release still
+has, then the releases page. All of it degrades to the static HTML if the API
+is down.
+
+The patterns follow the names `apps/native/scripts/package-*` write
+(`Workspacer-Setup-<v>-x64.exe`, `Workspacer-<v>-macos-arm64.dmg`,
+`workspacer-<v>-linux-x64.tar.gz`) and still accept the pre-0.170.0 names. The
+native Windows installer and Electron's differ by one character
+(`Workspacer-Setup-…` against `Workspacer.Setup.…`), which is why the patterns
+are anchored. If a package is renamed, the button silently falls through to
+the next step, so re-run the check in this file's history: load the page with
+the release API mocked to the real asset list and read the three buttons.
 
 The three `#get` rows are hand-written statements about what
-`.github/workflows/release.yml` produces: the Windows native installer
-(`native-windows-package`), the Linux native archive (`native-linux-package`,
-stable tags only) and no native macOS package. Update the rows when that
-workflow changes.
+`.github/workflows/release.yml` attaches (`attach-native-release`): the
+Windows installer, the Apple Silicon `.dmg` and the Linux archive. Update the
+rows when that workflow changes.
 
 The nav pill shows the live star count, but only above a `FLOOR` (10). Below
 that the number reads as a liability rather than proof, and the plain "GitHub"
