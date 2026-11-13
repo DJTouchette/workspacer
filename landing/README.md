@@ -27,17 +27,17 @@ phases. See "Release phases" below before changing a word of it.
 The native app is the product and the pages lead with it. What they say about
 the Electron app depends on which release is current:
 
-1. **The interim release, v0.170.0 (now).** It carries both: native packages
+1. **The interim release, v0.170.0.** It carries both: native packages
    for Windows, macOS and Linux, and the Electron app's final build. The pages
    say the Electron app "ships alongside the native app in this release", that
    this is its last release, and that "the next release deprecates it". The
    download buttons offer the native package for the visitor's OS, and
    `#dl-alts` lists the Electron installers as its final build.
-2. **The release after that.** Electron is deprecated, and the release
-   workflow already no longer builds it. The pages say so, and the buttons
-   stop offering it.
+2. **The release after that, v0.170.1 onward (now).** Electron is
+   deprecated, and the release workflow no longer builds it. The pages say
+   so, and the buttons stop offering it.
 
-To move from phase 1 to phase 2:
+Moving from phase 1 to phase 2 (done for v0.170.1):
 
 - In `index.html`, set `ELECTRON_SHIPS = false` in the download script. That
   one flag stops the Electron fallback and relabels the releases link.

@@ -932,7 +932,7 @@
   </div>
   <div class="facts">
     <div class="fact"><b>Alpha, and it means it.</b> Sharp edges, breaking changes between releases, and features that land faster than the docs describing them.</div>
-    <div class="fact"><b>The Electron app is on its way out.</b> This release is its last: it ships alongside the native app and gets no further updates, and the next release deprecates it. On first launch the native app imports its settings, sessions, jobs and library, and leaves the Electron app's data untouched. It keeps <a href="docs-electron.html">its own docs</a>.</div>
+    <div class="fact"><b>The Electron app is deprecated.</b> v0.170.0 was its final release, and it gets no further updates. On first launch the native app imports its settings, sessions, jobs and library, and leaves the Electron app's data untouched. It keeps <a href="docs-electron.html">its own docs</a>.</div>
     <div class="fact"><b>Native does less, on purpose.</b> The Electron app's tiled panes, embedded browser, plugin panes, brief board and Fleet Manager are not here. The Fleet Manager is not coming to the native app either: here, agents hand work to each other with the <code>spawn-agent</code> skill. If you depend on one of the others, use the Electron app for now.</div>
     <div class="fact"><b>The builds are unsigned.</b> Windows warns you and lets you click through; macOS needs one command, below. The app tells you when a newer release exists: on Windows it can install it and restart, on macOS and Linux you install the new download yourself.</div>
     <div class="fact"><b>The Mac build is Apple Silicon only, and not notarized.</b> It is signed ad hoc, so macOS quarantines the download until you clear the flag yourself. There is no Intel build. The <a href="#get">download section</a> has the command.</div>
@@ -997,7 +997,7 @@
     <div class="row"><span class="name">macos</span><span class="desc">An Apple Silicon <code>.dmg</code>, <code>Workspacer-…-macos-arm64.dmg</code>. It is signed ad hoc and not notarized: after dragging it to Applications, run <code>xattr -cr /Applications/Workspacer.app</code> once.</span></div>
     <div class="row"><span class="name">linux</span><span class="desc">An archive, <code>workspacer-…-linux-x64.tar.gz</code>. Unpack it and run <code>./install.sh</code>: it installs for your user, and <code>wks-native-uninstall</code> removes exactly what it wrote.</span></div>
   </div>
-  <div class="dl-alts" id="dl-alts">every download, and the Electron app's final build, is on <a href="https://github.com/DJTouchette/workspacer/releases">the releases page</a>.</div>
+  <div class="dl-alts" id="dl-alts">every download is on <a href="https://github.com/DJTouchette/workspacer/releases">the releases page</a>; the deprecated Electron app's final build is <a href="https://github.com/DJTouchette/workspacer/releases/tag/v0.170.0">v0.170.0</a>.</div>
 </div></section>
 
 <footer><div class="wrap">
@@ -1104,13 +1104,11 @@
 (function () {
   var REPO = 'DJTouchette/workspacer';
   var RELEASES = 'https://github.com/' + REPO + '/releases';
-  // v0.170.0 carries the Electron app's final build beside the native
-  // packages, so its installers are listed, and offered to a visitor whose OS
-  // has no native package in the release. The release after that deprecates
-  // Electron: set this to false then, and the buttons stop offering it and
-  // the links call it deprecated. The copy that has to change with it is
-  // listed in landing/README.md.
-  var ELECTRON_SHIPS = true;
+  // Phase 2 (since v0.170.1): Electron is deprecated and no release after
+  // v0.170.0 carries it, so the buttons never offer it and the releases link
+  // calls its installers deprecated. True only while a latest release ships
+  // Electron beside the native packages (phase 1, landing/README.md).
+  var ELECTRON_SHIPS = false;
   // Three buttons share one detection pass: nav, hero, and the final CTA.
   var btns = ['dl-btn', 'dl-btn-hero', 'dl-btn-nav']
     .map(function (id) { return document.getElementById(id); })

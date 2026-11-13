@@ -23,6 +23,19 @@ export interface ChangelogRelease {
 /** Newest first, exactly as CHANGELOG.md orders them. */
 export const CHANGELOG: readonly ChangelogRelease[] = [
   {
+    version: '0.170.1',
+    date: '2026-11-13',
+    unreleased: false,
+    sections: [
+      {
+        title: 'Changed',
+        items: [
+          'Releases ship only Workspacer Native (Windows installer, Apple Silicon `.dmg`, Linux archive) and the standalone server and claudemon bundles. The Electron app is deprecated: v0.170.0 was its final release, and its installers stay on that release. An Electron install stays on 0.170.0 and shows where to get the native app.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.170.0',
     date: '2026-11-13',
     unreleased: false,

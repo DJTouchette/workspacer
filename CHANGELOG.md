@@ -7,6 +7,15 @@ rolling `nightly` prerelease tracks `main` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.170.1] - 2026-11-13
+
+### Changed
+- Releases ship only Workspacer Native (Windows installer, Apple Silicon
+  `.dmg`, Linux archive) and the standalone server and claudemon bundles. The
+  Electron app is deprecated: v0.170.0 was its final release, and its
+  installers stay on that release. An Electron install stays on 0.170.0 and
+  shows where to get the native app.
+
 ## [0.170.0] - 2026-11-13
 
 Workspacer is now a native app on Windows, macOS and Linux. This is the

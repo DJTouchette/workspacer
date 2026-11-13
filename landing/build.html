@@ -154,7 +154,7 @@
 <li><code>services/hub-rs</code>: <strong>the hub</strong>. The event bus, the capability router, the shared services, the plugin system and the MCP facade. It builds as a library (the <code>workspacer-hub</code> crate) and as the <code>workspacer-rust</code> executable, installed under the name <code>workspacer</code>.</li>
 <li><code>services/claudemon</code>: <strong>the session engine</strong>. It owns agent sessions, PTYs and the per-provider adapters. Also a library and a <code>claudemon</code> executable.</li>
 <li><code>apps/tui</code>: <code>wks-tui</code>, a terminal client on the same bus.</li>
-<li><code>apps/desktop</code>: the Electron app. <strong>On its way out</strong>: this release ships it alongside the native app and the next release deprecates it, so new work goes into the native app. Everything about it lives in <a href="#electron">its own section</a> at the end of this page.</li>
+<li><code>apps/desktop</code>: the Electron app. <strong>Deprecated</strong>: v0.170.0 was its final release and the release workflow no longer builds it, so new work goes into the native app. Everything about it lives in <a href="#electron">its own section</a> at the end of this page.</li>
 </ul>
 <p>The root <code>Makefile</code> is the single entry point; every target delegates into the right component directory.</p>
 <h3>toolchains</h3>
@@ -381,7 +381,7 @@ services/hub-rs/target/release/workspacer-rust serve
 
     <section id="electron" class="doc">
 <h2>the electron app</h2>
-<div class="callout legacy"><strong>On its way out.</strong> The Electron app in <code>apps/desktop</code> ships alongside the native app in this release, v0.170.0, which is its last: the release workflow no longer builds it, and the next release deprecates it. New work goes into the native app. This section is here so the code stays explainable, not as a recommendation.</div>
+<div class="callout legacy"><strong>Deprecated.</strong> The Electron app in <code>apps/desktop</code> is deprecated: v0.170.0 was its final release, and the release workflow no longer builds it. New work goes into the native app. This section is here so the code stays explainable, not as a recommendation.</div>
 <p>It is an Electron main process, a React renderer, and two child processes it supervises. Some things exist only here: tiled panes, the embedded browser, plugin panes and the Plugins Manager, the brief board, and the Fleet Manager launcher. The Fleet Manager is not being brought to the native app.</p>
 <h3>build and run</h3>
 <pre><code>make install      # cd apps/desktop &amp;&amp; npm install

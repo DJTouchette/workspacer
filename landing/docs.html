@@ -180,7 +180,7 @@
     <section id="overview" class="doc">
 <h2>overview</h2>
 <p>work{spacer} is a small native app for running coding agents on your own machine, with your own CLIs and subscriptions. It is one window: a list of sessions on the left and one conversation on the right. Nothing here is a hosted service.</p>
-<p>These docs cover the <strong>native app</strong> (<code>wks-native</code>). The Electron desktop app ships alongside it in this release and is deprecated in the next; its docs are kept as they were on the <a href="docs-electron.html">Electron app docs</a> page.</p>
+<p>These docs cover the <strong>native app</strong> (<code>wks-native</code>). The Electron desktop app is deprecated (v0.170.0 was its final release); its docs are kept as they were on the <a href="docs-electron.html">Electron app docs</a> page.</p>
 <h3>the problem</h3>
 <p>One agent session is easy. You sit in the terminal it runs in and watch it. That breaks the moment you have more than one going. You lose track of which agent is working, which one is blocked on an approval, and which one finished ten minutes ago and is sitting idle.</p>
 <p>work{spacer} keeps that state in front of you. The sidebar groups sessions by what they need: the ones waiting on you first, then the ones working. Approvals and questions are answered in the conversation they belong to. And when one agent would be better off handing part of the job to another, it can: any agent work{spacer} starts can <a href="#spawning">spawn a child</a>, on the same provider or a different one, and get woken when the child is done.</p>
@@ -894,7 +894,7 @@ workspacer jobs remove &lt;id&gt;</code></pre>
 
 <section id="legacy" class="doc">
 <h2>the electron app</h2>
-<p>The Electron desktop app ships alongside the native app in this release, v0.170.0, and its installers are on the <a href="https://github.com/DJTouchette/workspacer/releases">releases page</a>. That is its final release: it gets no further updates, and the next release deprecates it. The native app <a href="#getting-started">imports its settings and sessions</a> on first launch. Its documentation is kept, unchanged, on the <a href="docs-electron.html">Electron app docs</a> page.</p>
+<p>The Electron desktop app is deprecated. v0.170.0 was its final release, and its installers stay on <a href="https://github.com/DJTouchette/workspacer/releases/tag/v0.170.0">that release's page</a>; it gets no further updates. The native app <a href="#getting-started">imports its settings and sessions</a> on first launch. Its documentation is kept, unchanged, on the <a href="docs-electron.html">Electron app docs</a> page.</p>
 <p>Some of what it documents has no counterpart in the native app, on purpose. If you followed a link here looking for one of these, this is where it went:</p>
 <ul class="moved">
 <li id="fleet-manager"><strong>The Fleet Manager</strong>, one manager agent that dispatches workers and is woken when they finish. The native app has no launcher for a manager, and the Fleet Manager is not coming to it; it does show a manager's wakes when it attaches to a hub that has one. In the native app, an agent hands work to another with <a href="#spawning">the spawn-agent skill</a>. <a href="docs-electron.html#fleet-manager">Electron app docs →</a></li>
