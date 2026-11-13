@@ -20,7 +20,7 @@ HUB_RUST  := services/hub-rs
         build-cli test test-desktop test-hub test-tui test-claudemon test-routing-harness \
         claudemon-routes docs-drift package clean dev-native run-native build-native test-native \
         dev-native-local run-native-local build-native-local bench-native-switch package-native-linux \
-        landing-shots
+        landing-shots landing-plugin-md
 
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
@@ -90,6 +90,12 @@ package-native-linux:
 landing-shots:
 	cd $(NATIVE) && cargo build --locked --bin wks-native --bin native-harness
 	landing/capture-shots.sh
+
+## landing-plugin-md: regenerate landing/build-plugin.md, the plain-text twin of
+##             landing/build-plugin.html. Edit the HTML, then run this.
+landing-plugin-md:
+	python3 landing/gen-build-plugin-md.py landing/build-plugin.html > landing/build-plugin.md.tmp
+	mv landing/build-plugin.md.tmp landing/build-plugin.md
 
 ## test-native: native UI/protocol tests and embedded-engine lifecycle regression.
 test-native:

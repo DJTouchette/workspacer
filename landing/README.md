@@ -6,9 +6,22 @@ enquiry styling and behavior live in `contact.css` and `contact.js`.
 - `index.html` is the marketing page. It leads with the native app
   (`apps/native`); the Electron app is described as deprecated.
 - `enterprise.html` is the professional-use page with a guided pilot offer.
-- `docs.html` is the detailed user docs (sidebar nav, one section per topic).
-- `build.html` is the build & internals page (architecture, providers, plugins, MCP).
+- `docs.html` is the user docs for the native app and the hub (sidebar nav, one
+  section per topic). `docs-electron.html` is the previous docs page, kept
+  unchanged under a deprecation banner as the Electron app's legacy docs.
+- `build.html` is the build & internals page (building from source, the Rust
+  hub and session engine, providers, plugins, MCP, federation, and a legacy
+  section for the Electron app).
+- `build-client.html` is the "build a client" page (the session engine's HTTP
+  and SSE API).
 - `build-plugin.html` is the "build a plugin" page (linked from the nav).
+  `build-plugin.md` is its plain-text twin for LLMs and is **generated**: edit
+  the HTML, then run `make landing-plugin-md`. The generator refuses markup it
+  cannot convert instead of dropping it.
+
+Every page states the same position: the native app is the product, and the
+Electron app is deprecated (it still runs, its installers stay on the releases
+page, new work goes native). If that changes, it changes on all of them.
 
 ## Analytics
 
@@ -21,8 +34,10 @@ by design.
 
 ## Look
 
-Everforest ground (`#1b2023`) with the sapling accent (`#a7c080`). The pages
-share one `:root` token block; if you change it, change it in all of them.
+Everforest ground (`#1b2023`) with the sapling accent (`#a7c080`). `index.html`
+and `enterprise.html` share one `:root` token block; the docs and build pages
+carry the same palette under their own variable names. If you change a colour,
+change it on every page.
 Three rules carry the design, and each one was a deliberate fix:
 
 - **Sans for prose, mono for code.** The pages used to be monospace throughout,
@@ -115,10 +130,15 @@ window shown at a third of the page is a grey smudge, which is why the
 "simple" section is rows (`.feat`) rather than a three-up of cards, and why the
 gallery uses the smallest window the content still fits in.
 
+The script also takes the captures the docs and enterprise pages use
+(History, Projects, Settings, the Light theme). It drives the window with real
+key presses, and a key chord occasionally lands before a view is ready, so
+**look at what it produced** before committing: a capture that shows the chat
+where a view should be is a miss, and running it again fixes it.
+
 `mobile-fleet.webp` and `mobile-chat.webp` are the phone client, staged from an
-earlier fabricated fleet. `brief-board`, `fleet-manager`, `review-pane` and
-`sidebar-recent` are Electron captures still used by `enterprise.html` and
-`docs.html`; the marketing page no longer references them.
+earlier fabricated fleet. `sidebar-recent.webp` is the one Electron capture
+left, used by `docs-electron.html`.
 
 Every frame is flat, with an optional `.frame-cap` caption. Fake terminal
 chrome (traffic lights) around a GUI capture is a category error.
@@ -158,9 +178,8 @@ Claims map to things the native app ships today, and the sources are:
   overclaims the boring parts doesn't get believed about the interesting ones.
 
 The Electron app is described as **deprecated** (still runs, installers stay on
-the releases page, new work goes native). `docs.html`, `build.html` and
-`enterprise.html` still describe the Electron app, and the page admits that in
-its honest list until they are rewritten.
+the releases page, new work goes native), and the honest list links its legacy
+docs.
 
 Push notifications are deliberately not promised.
 
@@ -193,15 +212,24 @@ Reference: [Formspree's vanilla JS guide](https://help.formspree.io/articles/bui
 The hero's pilot link goes to the separate lower `#pilot` section. Keep that
 destination below the product tour: placing it beside the hero made the link
 produce no visible movement on tall desktop windows. The screenshot tour uses
-the existing example-workspace captures, with keyboard-accessible tabs and
-full-size image links. Without JavaScript, all three views remain visible.
+native captures (delegation, Changes, History), with keyboard-accessible tabs
+and full-size image links. Without JavaScript, all three views remain visible.
 
-Claims are grounded in `docs/features/fleet-workflows.md`,
-`apps/desktop/src/renderer/src/lib/fleetManager.ts`, and the workflow runtime/settings under
-`apps/desktop/src/`. Configured workflows require the desktop host. Each
-developer has their own installation; this page does not promise shared
-team administration. Local coordination does not mean model requests stay on
-the machine. The public workflow guide is `docs.html#fleet-workflows`.
+The page describes what the native app does for professional use, grounded in
+`apps/native/README.md` and the `spawn-agent` skill. The Fleet Manager and
+configured workflows get one plain paragraph, and it is worded carefully for a
+reason: the workflow runtime is in the Rust hub (`services/hub-rs`:
+`workflows.rs`, `workflow_runtime.rs`, the `manager` flag in `spawn_plan.rs`),
+so it runs wherever the hub does, but the only launcher for a manager and the
+only workflow editor are in the Electron app. The native app, the phone client,
+the TUI and the CLI cannot start one. Don't shorten that to "requires Electron"
+or to "native does it"; neither is true. Each developer has their own
+installation; this page does not promise shared team administration. Local
+coordination does not mean model requests stay on the machine. The workflow
+guide is `docs-electron.html#fleet-workflows`.
+
+The pilot offer's own wording ("a workflow matched to a real task") predates
+this and was left alone; what the pilot installs is the owner's call.
 
 ## Download buttons and the star pill
 
@@ -228,9 +256,27 @@ label is the better pill. It also stays "GitHub" if the API is rate-limited.
 
 ## Docs
 
-`docs.html` is generated from per-section drafts that were each grounded against
-the real source, then swept for voice and rendered to a single static page.
-Sections: overview, getting started, running agents, the agent pane, pane types,
-layout and navigation, attention and notifications, remote and multi-client,
-extending (plugins / mcp / tui), and configuration. Architecture internals moved
-to `build.html`.
+`docs.html` documents the native app first (overview, getting started, running
+agents, agents that spawn agents, the conversation, views, keys, attention,
+remote, settings), then the hub-level topics that apply to any client (jobs,
+limit-aware routing, MCP and plugins, configuration). It is written from
+`apps/native/README.md` and the shipped skills; when the README changes, this
+page is what goes stale.
+
+Two things are load-bearing:
+
+- **The jobs section is pinned by a test.**
+  `services/hub-rs/src/services/jobs/docs_tests.rs` reads this file, runs every
+  `<pre data-job-example>` block through the real validator, and checks that
+  the spec's field and kind names are still documented. After touching the
+  section, run `cargo test --locked --lib docs_tests` in `services/hub-rs`.
+- **Old anchors still resolve.** Sections that moved to `docs-electron.html`
+  (`#fleet-manager`, `#fleet-workflows`, `#briefs`, `#agent-pane`, `#panes`,
+  `#layout-and-navigation`, `#launch-integrations`) are short stubs under
+  `#legacy` that link to the same anchor on the legacy page, because the app,
+  plugin READMEs and old links point at them. Don't delete a stub without
+  checking who links to it.
+
+`docs-electron.html` is frozen: it is not updated, and where it says "the
+desktop app" it means the Electron app. Architecture internals live in
+`build.html`.
