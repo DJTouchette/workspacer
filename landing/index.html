@@ -932,10 +932,10 @@
   </div>
   <div class="facts">
     <div class="fact"><b>Alpha, and it means it.</b> Sharp edges, breaking changes between releases, and features that land faster than the docs describing them.</div>
-    <div class="fact"><b>The Electron app is deprecated.</b> It still runs and its installers stay on the releases page, but new work goes into the native app. Its documentation is kept as the <a href="docs-electron.html">legacy docs</a>.</div>
-    <div class="fact"><b>Native does less, on purpose.</b> The Electron app's tiled panes, embedded browser, plugin panes, brief board and Fleet Manager are not here. If you depend on one of them, stay on Electron for now.</div>
+    <div class="fact"><b>The Electron app is on its way out.</b> This release ships it alongside the native app; the next release deprecates it. New work goes into the native app, and the Electron app keeps <a href="docs-electron.html">its own docs</a>.</div>
+    <div class="fact"><b>Native does less, on purpose.</b> The Electron app's tiled panes, embedded browser, plugin panes, brief board and Fleet Manager are not here. If you depend on one of them, use the Electron app for now.</div>
     <div class="fact"><b>The builds are unsigned.</b> Windows warns you and lets you click through. The app tells you when a newer release exists: on Windows it can install it and restart, on Linux you unpack the new archive yourself.</div>
-    <div class="fact"><b>There is no macOS package.</b> A signed, notarized bundle isn't set up, so on a Mac you build from source. The <a href="#get">download section</a> has the command.</div>
+    <div class="fact"><b>There is no native macOS package.</b> A signed, notarized bundle isn't set up, so on a Mac you build the native app from source or use the Electron app. The <a href="#get">download section</a> has both.</div>
     <div class="fact"><b>Quitting stops your agents.</b> The window owns them. Close-to-background is a setting, or run the hub headless and attach to it. A stopped Claude or Codex session can be resumed from History.</div>
     <div class="fact"><b>Bring your own CLIs and subscriptions.</b> work{spacer} drives Claude Code, Codex, OpenCode and GitHub Copilot. It doesn't replace them, resell them, or proxy them.</div>
     <div class="fact"><b>The providers aren't at parity.</b> You start Claude Code or Codex from the app. OpenCode and Copilot only arrive as spawned children, and Claude Code is where the deepest integration lives.</div>
@@ -988,16 +988,16 @@
     <a class="btn btn-line btn-lg" href="docs.html">Read the docs</a>
     <a class="btn btn-line btn-lg" href="enterprise.html#pilot" data-contact-open>Discuss a pilot</a>
   </div>
-  <!-- One row per OS, and each row says what is true today rather than what
-       the button would like to be true. Check these against
+  <!-- One row per OS, and each row says what the release workflow produces
+       rather than what the button would like to be true. Check these against
        .github/workflows/release.yml and apps/native/README.md when either
        changes: which packages are attached to a release is decided there. -->
   <div class="tile tree get-rows" id="source">
     <div class="row"><span class="name">windows</span><span class="desc">The release build attaches an installer, <code>Workspacer-Native-Rust-Preview-Setup</code>. It is unsigned, so SmartScreen warns and lets you through.</span></div>
-    <div class="row"><span class="name">linux</span><span class="desc">One make target builds the package: <code>make package-native-linux</code>, then unpack it and run <code>./install.sh</code>. It installs for your user and <code>wks-native-uninstall</code> removes exactly what it wrote.</span></div>
-    <div class="row"><span class="name">macos</span><span class="desc">From source, with Xcode's command-line tools and Rust: <code>make run-native-local</code>.</span></div>
+    <div class="row"><span class="name">linux</span><span class="desc">The release build attaches an archive, <code>workspacer-native-…-linux-x64.tar.gz</code>. Unpack it and run <code>./install.sh</code>: it installs for your user, and <code>wks-native-uninstall</code> removes exactly what it wrote. <code>make package-native-linux</code> builds the same archive from source.</span></div>
+    <div class="row"><span class="name">macos</span><span class="desc">No native package yet. Build it from source with Xcode's command-line tools and Rust (<code>make run-native-local</code>), or use the Electron app's Apple Silicon <code>.dmg</code>. That one is unsigned too: after dragging it to Applications, run <code>xattr -dr com.apple.quarantine /Applications/Workspacer.app</code>.</span></div>
   </div>
-  <div class="dl-alts" id="dl-alts">the deprecated Electron app's installers are still on <a href="https://github.com/DJTouchette/workspacer/releases">the releases page</a>.</div>
+  <div class="dl-alts" id="dl-alts">this release also ships the Electron app. Its installers are on <a href="https://github.com/DJTouchette/workspacer/releases">the releases page</a>.</div>
 </div></section>
 
 <footer><div class="wrap">
@@ -1096,15 +1096,20 @@
     .catch(function () { /* leave the plain "GitHub" label */ });
 })();
 
-// Route the download buttons to the NATIVE package in the latest GitHub
-// Release for the visitor's OS. The Electron installers are deprecated and are
-// never picked: they stay reachable through the releases link, labelled as
-// what they are. Degrades in order: native asset → the #get section, which
-// says how to build it (no native package for this OS, or the release has
-// none yet) → the HTML defaults (API down).
+// Route the download buttons to the right asset of the latest GitHub Release
+// for the visitor's OS. The native package always wins. Degrades in order:
+// native asset → (while ELECTRON_SHIPS) the Electron installer for that OS,
+// named as the Electron app → the #get section, which says how to build it
+// → the HTML defaults (API down).
 (function () {
   var REPO = 'DJTouchette/workspacer';
   var RELEASES = 'https://github.com/' + REPO + '/releases';
+  // The interim release ships the Electron app beside the native one, so a
+  // visitor with no native package for their OS (macOS, today) is offered it.
+  // The release after that deprecates Electron: set this to false then, and
+  // the buttons stop offering it and the links call it deprecated. The copy
+  // that has to change with it is listed in landing/README.md.
+  var ELECTRON_SHIPS = true;
   // Three buttons share one detection pass: nav, hero, and the final CTA.
   var btns = ['dl-btn', 'dl-btn-hero', 'dl-btn-nav']
     .map(function (id) { return document.getElementById(id); })
@@ -1132,33 +1137,51 @@
     .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(r.status)); })
     .then(function (rel) {
       var assets = rel.assets || [];
-      var url = function (re) {
+      var url = function (re, not) {
         for (var i = 0; i < assets.length; i++) {
-          if (re.test(assets[i].name)) return assets[i].browser_download_url;
+          var n = assets[i].name;
+          if (re.test(n) && !(not && not.test(n))) return assets[i].browser_download_url;
         }
         return null;
       };
       // Names from apps/native/scripts: package-windows.mjs writes
       // "Workspacer-Native-Rust-Preview-Setup-<v>-x64.exe" and package-linux.sh
-      // writes "workspacer-native-<v>-linux-<arch>.tar.gz". There is no macOS
-      // package. Every pattern requires "native", so an Electron installer can
-      // never match.
-      var dl = {
+      // writes "workspacer-native-<v>-linux-<arch>.tar.gz". There is no native
+      // macOS package. Every native pattern requires "native".
+      var native = {
         Windows: url(/native.*setup.*\.exe$/i),
         Linux: url(/native.*linux.*\.tar\.gz$/i),
         macOS: null,
       };
-      var pick = os ? dl[os] : null;
+      // electron-builder's names: "Workspacer Setup <v>.exe" (nsis),
+      // "Workspacer-<v>-arm64.dmg", "Workspacer-<v>.AppImage". Every pattern
+      // excludes "native", so the two sets can never be confused. The mac leg
+      // is Apple Silicon only, and the label says so rather than handing an
+      // Intel visitor a build that won't run.
+      var macArm = url(/arm64\.dmg$/i);
+      var electron = !ELECTRON_SHIPS ? {} : {
+        Windows: url(/Setup.*\.exe$/i, /native/i) || url(/\.exe$/i, /portable|native/i),
+        Linux: url(/\.AppImage$/i),
+        macOS: macArm || url(/\.dmg$/i),
+      };
       var v = (rel.tag_name || '').replace(/^v/, '');
+      var ver = v ? ' · v' + v : '';
 
-      if (pick) {
+      if (os && native[os]) {
         btns.forEach(function (b) {
-          b.href = pick;
-          label(b, 'Download for ' + os + (v ? ' · v' + v : ''));
+          b.href = native[os];
+          label(b, 'Download for ' + os + ver);
+        });
+      } else if (os && electron[os]) {
+        // No native package for this OS in this release. Offer the Electron
+        // app under its own name, so nobody takes it for the native one.
+        var osLabel = os === 'macOS' && macArm ? 'macOS (Apple Silicon)' : os;
+        btns.forEach(function (b) {
+          b.href = electron[os];
+          label(b, 'Electron app for ' + osLabel + ver);
         });
       } else if (os) {
-        // No native package for this visitor. Send them to the instructions
-        // rather than to an installer for the app this page is retiring.
+        // Nothing to download for this visitor: send them to the instructions.
         btns.forEach(function (b) {
           if (b.id === 'dl-btn') return;      // already inside #get; stays the repo link
           b.href = '#get';
@@ -1166,16 +1189,19 @@
         });
       }
 
-      // Every native link there is, so nobody is stranded on a wrong
-      // detection, then the old app under its own name.
+      // Every link there is, so nobody is stranded on a wrong detection.
       if (alts) {
-        var links = [];
-        if (dl.Windows) links.push('<a href="' + dl.Windows + '">windows installer</a>');
-        if (dl.Linux) links.push('<a href="' + dl.Linux + '">linux package</a>');
-        var head = links.length ? 'native: ' + links.join(' &middot; ')
-          : (v ? 'v' + v + ' carries no native package yet, so build it as above' : '');
-        alts.innerHTML = (head ? head + ' &middot; ' : '') +
-          '<a href="' + RELEASES + '">deprecated electron installers</a>';
+        var link = function (href, text) { return href ? '<a href="' + href + '">' + text + '</a>' : null; };
+        var join = function (list) { return list.filter(Boolean).join(' &middot; '); };
+        var nat = join([link(native.Windows, 'windows installer'), link(native.Linux, 'linux package')]);
+        var ele = join([link(electron.Linux, 'linux appimage'), link(electron.macOS, 'macos ' + (macArm ? 'apple silicon' : 'dmg')),
+                        link(electron.Windows, 'windows installer')]);
+        var parts = [];
+        if (nat) parts.push('native: ' + nat);
+        else if (v) parts.push('v' + v + ' carries no native package, so build it as above');
+        if (ele) parts.push('electron app: ' + ele);
+        parts.push('<a href="' + RELEASES + '">' + (ELECTRON_SHIPS ? 'all releases' : 'deprecated electron installers') + '</a>');
+        alts.innerHTML = parts.join(' &nbsp;|&nbsp; ');
       }
     })
     .catch(function () { /* keep the fallbacks wired in the HTML */ });

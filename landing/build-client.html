@@ -188,7 +188,7 @@ claudemon init --dry-run  # print the merged document instead of writing it</cod
 <ul>
 <li><strong>The native app</strong> (<code>wks-native --local</code>) keeps its engine on a loopback port the OS picks at startup, so there is no fixed <code>7891</code> to aim at. Its hub is the door: the bus listens on the loopback port saved in the app's <code>config/hub-port</code> file, and asks for a token like any hub. Build against <a href="build-plugin.html#bus">the bus</a> and you are a second client on the same live sessions.</li>
 <li><strong>A <code>workspacer serve</code> you started</strong> is option 1: claudemon on <code>7891</code>, the bus on <code>7895</code>. Point the native app at it with <code>--bus ws://127.0.0.1:7895/bus</code> and your client and ours stay in lockstep. This is the fastest way to develop against either API.</li>
-<li><strong>The deprecated Electron app</strong> starts claudemon on <code>7891</code> itself. Before spawning it probes <code>/health</code>, and a healthy daemon that is already there gets adopted rather than replaced and is not signalled on quit.</li>
+<li><strong>The Electron app</strong> starts claudemon on <code>7891</code> itself. Before spawning it probes <code>/health</code>, and a healthy daemon that is already there gets adopted rather than replaced and is not signalled on quit.</li>
 </ul>
 <h3>check it's up</h3>
 <pre><code>curl -s http://127.0.0.1:7891/health          # -> ok

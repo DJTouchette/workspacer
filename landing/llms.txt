@@ -1,6 +1,6 @@
 # work{spacer}
 
-> A small native app for running coding agents on your own CLIs. One Rust binary with the hub and the session engine compiled in: no Electron, no bundled browser. You start Claude Code or Codex from the app, and every agent it starts carries a `spawn-agent` skill that lets it start a child on another provider (Claude Code, Codex, OpenCode, GitHub Copilot), hand it one self-contained task, and get woken when the child finishes or gets stuck. The earlier Electron desktop app (panes, plugin panes, the Fleet Manager and per-project briefs) is deprecated; its documentation is kept on a separate legacy page.
+> A small native app for running coding agents on your own CLIs. One Rust binary with the hub and the session engine compiled in: no Electron, no bundled browser. You start Claude Code or Codex from the app, and every agent it starts carries a `spawn-agent` skill that lets it start a child on another provider (Claude Code, Codex, OpenCode, GitHub Copilot), hand it one self-contained task, and get woken when the child finishes or gets stuck. The earlier Electron desktop app (panes, plugin panes, the Fleet Manager and per-project briefs) ships alongside the native app in this release and is deprecated in the next; its documentation is kept on a separate page.
 
 ## Docs
 
@@ -19,9 +19,9 @@
 - [Configuration](docs.html#configuration): which hub owns which directory, and the shared config file.
 - [Enterprise pilots](enterprise.html): what a professional user gets from the native app, and a scoped, paid setup and onboarding offer. Individual installations; no shared team administration.
 
-## Legacy docs (deprecated Electron app)
+## Electron app docs
 
-- [Legacy docs](docs-electron.html): the Electron desktop app's documentation, kept as it was. The app still runs; new work goes into the native app.
+- [Electron app docs](docs-electron.html): the Electron desktop app's documentation, kept as it was. The app ships in this release and is deprecated in the next; new work goes into the native app.
 - [Fleet Manager](docs-electron.html#fleet-manager) and [configurable Fleet workflows](docs-electron.html#fleet-workflows): a manager agent that dispatches work through defined steps. The hub has the runtime; the launcher and the workflow editor are in the Electron app only.
 - [Briefs](docs-electron.html#briefs), [the agent pane](docs-electron.html#agent-pane), [pane types](docs-electron.html#panes), [layout and navigation](docs-electron.html#layout-and-navigation).
 - [Optional Headroom routing](docs-electron.html#launch-integrations): per-session Claude/Codex routing through an independently managed proxy, chosen in the Electron app's spawn dialog.
@@ -35,7 +35,7 @@
 - [Writing a plugin (overview)](build.html#plugins): the short tour, including what works wherever the hub runs and what only the Electron app draws.
 - [The MCP facade](build.html#mcp): exposing the hub's capabilities as MCP tools. Spawned agents receive the Workspacer and plugin tools through lifecycle-bound identity tokens; manual clients can use view, triage or operator credentials.
 - [Hub federation](build.html#federation): link two machines' hubs so one client covers both. Hub-stamped events, `hub:<peer>/<method>` calls, peers.json.
-- [The Electron app (legacy)](build.html#electron): building and running the deprecated app.
+- [The Electron app](build.html#electron): building and running the Electron app, which is deprecated in the next release.
 
 ## Build a client
 
@@ -49,7 +49,7 @@
 Full-text plugin reference for LLMs: [build-plugin.md](build-plugin.md) is the complete, plain-Markdown how-to. Point here for copy-paste manifests and bus code.
 
 - [Build a plugin (HTML)](build-plugin.html): the rendered how-to page.
-- [The two kinds](build-plugin.html#intro): webview (`ui`) vs sidecar (`server`), and where each shows up. Sidecars, provided methods and agent tools work wherever the hub runs; panes, widgets and hotkeys render only in the deprecated Electron app and its web build.
+- [The two kinds](build-plugin.html#intro): webview (`ui`) vs sidecar (`server`), and where each shows up. Sidecars, provided methods and agent tools work wherever the hub runs; panes, widgets and hotkeys render only in the Electron app and its web build.
 - [Widgets](build-plugin.html#widgets): small pane-less UI contributions (Electron app only).
 - [Your first plugin](build-plugin.html#first): folder, minimal manifest, the webview page, and a sidecar sketch.
 - [The manifest](build-plugin.html#manifest): the `plugin.json` fields: `id`, `apiVersion` (must be `"1"`), `version` (release version; drives update detection), `server`, `ui`, `panes`, `hotkeys`, `settings`, `capabilities`, `provides`, `tools` (MCP tools contributed to agents via the workspacer facade), `emits`/`consumes`, `install`.

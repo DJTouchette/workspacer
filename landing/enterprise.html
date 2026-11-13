@@ -362,7 +362,7 @@
        (workflows.rs, workflow_runtime.rs, spawn_plan.rs `manager`), where the
        runtime exists without Electron, and apps/native, the phone client and
        the CLI, none of which can start a manager or edit a workflow. -->
-  <p class="enterprise-scope"><b>Fleet Manager and configured workflows.</b> Workspacer also has a manager agent that dispatches a task through steps you define, by default an optional scout, an implementer, and a fresh independent reviewer, with provider and model preferences set by role. The Rust hub inside the native app has the same workflow runtime, but a manager is started, and its workflows are edited, in the Electron app. That app is deprecated: it still runs and its installers stay on the releases page, while new work goes into the native app, which has no manager launcher or workflow editor. The native app can attach to the Electron app's hub to follow that work. <a href="docs-electron.html#fleet-workflows">Read the workflow docs</a></p>
+  <p class="enterprise-scope"><b>Fleet Manager and configured workflows.</b> Workspacer also has a manager agent that dispatches a task through steps you define, by default an optional scout, an implementer, and a fresh independent reviewer, with provider and model preferences set by role. The Rust hub inside the native app has the same workflow runtime, but a manager is started, and its workflows are edited, in the Electron app. That app ships alongside the native app in this release and is deprecated in the next. New work goes into the native app, which has no manager launcher or workflow editor. The native app can attach to the Electron app's hub to follow that work. <a href="docs-electron.html#fleet-workflows">Read the workflow docs</a></p>
 </div></section>
 
 <section id="pilot" class="pilot-section" aria-labelledby="pilot-title"><div class="wrap">
@@ -417,7 +417,7 @@
       <p class="pilot-contact">Prefer email? <a href="mailto:thetouchstonedev@gmail.com?subject=Workspacer%20pilot%20enquiry">thetouchstonedev@gmail.com</a></p>
     </aside>
   </div>
-  <p class="enterprise-scope"><b>Deployment today.</b> Workspacer is a single-user native app. The release build produces a Windows installer; on Linux and macOS it is built from source. Configured Fleet workflows are run from the deprecated Electron app. Each developer uses their own installation and provider access, and nothing here is shared team administration. Coordination runs locally; your coding tools send prompts and context to their configured model providers. Builds are currently unsigned and in alpha. <a href="index.html#get">How to get it</a> · <a href="index.html#status">Current limitations</a></p>
+  <p class="enterprise-scope"><b>Deployment today.</b> Workspacer is a single-user native app. The release build produces a Windows installer and a Linux archive; on macOS it is built from source. Configured Fleet workflows are run from the Electron app, which this release still ships. Each developer uses their own installation and provider access, and nothing here is shared team administration. Coordination runs locally; your coding tools send prompts and context to their configured model providers. Builds are currently unsigned and in alpha. <a href="index.html#get">How to get it</a> · <a href="index.html#status">Current limitations</a></p>
 </div></section>
 </main>
 

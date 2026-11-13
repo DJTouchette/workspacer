@@ -4,11 +4,11 @@ Static pages with no build step. Page-specific styles are inline; shared
 enquiry styling and behavior live in `contact.css` and `contact.js`.
 
 - `index.html` is the marketing page. It leads with the native app
-  (`apps/native`); the Electron app is described as deprecated.
+  (`apps/native`).
 - `enterprise.html` is the professional-use page with a guided pilot offer.
 - `docs.html` is the user docs for the native app and the hub (sidebar nav, one
   section per topic). `docs-electron.html` is the previous docs page, kept
-  unchanged under a deprecation banner as the Electron app's legacy docs.
+  unchanged under a status banner as the Electron app's docs.
 - `build.html` is the build & internals page (building from source, the Rust
   hub and session engine, providers, plugins, MCP, federation, and a legacy
   section for the Electron app).
@@ -19,9 +19,41 @@ enquiry styling and behavior live in `contact.css` and `contact.js`.
   the HTML, then run `make landing-plugin-md`. The generator refuses markup it
   cannot convert instead of dropping it.
 
-Every page states the same position: the native app is the product, and the
-Electron app is deprecated (it still runs, its installers stay on the releases
-page, new work goes native). If that changes, it changes on all of them.
+Every page states the same position on the two apps, and it comes in two
+phases. See "Release phases" below before changing a word of it.
+
+## Release phases
+
+The native app is the product and the pages lead with it. What they say about
+the Electron app depends on which release is current:
+
+1. **The interim release (now).** It ships both: the Electron build and the
+   native packages are attached to the same release. The pages say the Electron
+   app "ships alongside the native app in this release" and that "the next
+   release deprecates it". The download buttons prefer the native package and,
+   where a platform has none (macOS), offer the Electron installer under its
+   own name.
+2. **The release after that.** Electron is deprecated. The pages say so, and
+   the buttons stop offering it.
+
+To move from phase 1 to phase 2:
+
+- In `index.html`, set `ELECTRON_SHIPS = false` in the download script. That
+  one flag stops the Electron fallback and relabels the releases link.
+- Reword the status sentences.
+  `grep -n -i "this release\|next release\|on its way out" landing/*.html landing/llms.txt`
+  finds every one: the honest list and the `#get` rows on `index.html`, the
+  banner on `docs-electron.html`, the overview and `#legacy` section of
+  `docs.html`, the component list and the `#electron` callout on `build.html`,
+  one sentence each on `build-plugin.html` and `enterprise.html`, and three
+  lines of `llms.txt`.
+- The macOS row and the macOS item in `docs.html#getting-started` point Mac
+  users at the Electron `.dmg`. Decide what replaces that.
+- Run `make landing-plugin-md` afterwards.
+
+The deprecated wording has been written once already: it is the state of these
+files just before the commit titled "Landing: both apps ship in this release".
+Reverting that commit's `landing/` changes gets most of the way there.
 
 ## Analytics
 
@@ -67,7 +99,7 @@ better-known page.
 - The headline is the three things the page is about, in one line: a *small
   app* (footprint, simplicity) where your agents can *call each other*
   (cross-provider spawn). An older headline sold the Fleet Manager and the
-  brief; those belong to the Electron app, which the page now calls deprecated.
+  brief; those belong to the Electron app.
 - `.pane-demo` is **markup, not a screenshot**, and it is an illustration of
   one spawn rather than a copy of the app's chrome (the native app has no tab
   strip). The three panels tell one story: you ask Claude for something, it
@@ -177,9 +209,8 @@ Claims map to things the native app ships today, and the sources are:
   stops the agents it owns. The page says so. Don't soften it; a page that
   overclaims the boring parts doesn't get believed about the interesting ones.
 
-The Electron app is described as **deprecated** (still runs, installers stay on
-the releases page, new work goes native), and the honest list links its legacy
-docs.
+What the page says about the Electron app follows "Release phases" above; the
+honest list links its docs.
 
 Push notifications are deliberately not promised.
 
@@ -234,21 +265,24 @@ this and was left alone; what the pilot installs is the owner's call.
 ## Download buttons and the star pill
 
 Three buttons (`dl-btn-nav`, `dl-btn-hero`, `dl-btn`) share one UA-detection
-pass and one GitHub Releases fetch. They only ever pick a **native** package:
-every asset pattern requires `native` in the name, so an Electron installer can
-never match. When the latest release has a native package for the visitor's OS
-the buttons become a direct download; when it has none (macOS always, any OS
-if the release predates native packaging) the nav and hero buttons point at
-`#get`, whose rows say how to build it, and the CTA button stays the repo link.
-`#dl-alts` lists the native links that exist and then the releases page under
-the label "deprecated electron installers".
+pass and one GitHub Releases fetch. The native package always wins: native
+patterns require `native` in the asset name and Electron patterns exclude it,
+so the two can never be confused. In order:
+
+1. the release has a native package for the visitor's OS: direct download;
+2. it has none, and `ELECTRON_SHIPS` is true: the Electron installer for that
+   OS, labelled "Electron app for …" so nobody takes it for the native one;
+3. neither: the nav and hero buttons point at `#get`, whose rows say how to
+   build it, and the CTA button stays the repo link.
+
+`#dl-alts` lists every native link, then every Electron link, then the
+releases page. All of it degrades to the static HTML if the API is down.
 
 The three `#get` rows are hand-written statements about what
-`.github/workflows/release.yml` and `apps/native/scripts/package-*.{sh,mjs}`
-produce. As of this writing the release workflow attaches the Windows
-installer only; the Linux archive is a CI artifact and is **not** attached to
-releases, so the Linux row tells people to build it. Update the row (and the
-asset pattern already waiting for it in the script) when that changes.
+`.github/workflows/release.yml` produces: the Windows native installer
+(`native-windows-package`), the Linux native archive (`native-linux-package`,
+stable tags only) and no native macOS package. Update the rows when that
+workflow changes.
 
 The nav pill shows the live star count, but only above a `FLOOR` (10). Below
 that the number reads as a liability rather than proof, and the plain "GitHub"
@@ -277,6 +311,6 @@ Two things are load-bearing:
   plugin READMEs and old links point at them. Don't delete a stub without
   checking who links to it.
 
-`docs-electron.html` is frozen: it is not updated, and where it says "the
-desktop app" it means the Electron app. Architecture internals live in
+`docs-electron.html` is frozen: it is not being extended, and where it says
+"the desktop app" it means the Electron app. Architecture internals live in
 `build.html`.
