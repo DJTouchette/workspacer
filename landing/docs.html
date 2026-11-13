@@ -615,7 +615,7 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 </ul>
 <p>When the answer is no it comes with a <strong>blocker per reason</strong>, each naming the session, job or peer responsible and saying what it is doing, so an unexpected no is something you can go and deal with rather than a bare false.</p>
 <p>Two limits worth knowing. <strong>A shell job does not count as a job about to fire</strong>, because a shell action is how you run this check, and a poller that counted itself would block forever; work you need protected belongs behind a spawn or call action. And an agent whose process has wedged mid-turn never reports its turn ending, so it reads as busy indefinitely and holds the machine up. That is the direction this is meant to fail in: it costs uptime rather than work.</p>
-<p>Wiring it up is an ordinary job. This check powers nothing down by itself; the script is yours, and what it does with a yes is entirely your call. The one machine work{spacer} can switch off on its own is a registered <a href="#remote">remote worker node</a>, and that is a button somebody presses rather than anything a quiescence answer triggers.</p>
+<p>Wiring it up is an ordinary job. This check powers nothing down by itself; the script is yours, and what it does with a yes is entirely your call. The one machine work{spacer} can switch off on its own is a registered <a href="docs-electron.html#remote">remote worker node</a>, and that is a button somebody presses rather than anything a quiescence answer triggers.</p>
 <pre data-job-example><code>{
   "name": "Power down when the fleet is quiet",
   "enabled": true,
