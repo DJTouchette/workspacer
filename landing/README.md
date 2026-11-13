@@ -3,7 +3,8 @@
 Static pages with no build step. Page-specific styles are inline; shared
 enquiry styling and behavior live in `contact.css` and `contact.js`.
 
-- `index.html` is the marketing page.
+- `index.html` is the marketing page. It leads with the native app
+  (`apps/native`); the Electron app is described as deprecated.
 - `enterprise.html` is the professional-use page with a guided pilot offer.
 - `docs.html` is the detailed user docs (sidebar nav, one section per topic).
 - `build.html` is the build & internals page (architecture, providers, plugins, MCP).
@@ -20,8 +21,8 @@ by design.
 
 ## Look
 
-Everforest ground (`#1b2023`) with the sapling accent (`#a7c080`). All four
-pages share one `:root` token block — if you change it, change it in all four.
+Everforest ground (`#1b2023`) with the sapling accent (`#a7c080`). The pages
+share one `:root` token block; if you change it, change it in all of them.
 Three rules carry the design, and each one was a deliberate fix:
 
 - **Sans for prose, mono for code.** The pages used to be monospace throughout,
@@ -43,91 +44,125 @@ screenshot on the page. The hero has a masked grid instead, confined to itself.
 ## Hero
 
 Two columns, left-aligned: copy on the left, `.pane-demo` on the right. Keep it
-that way. The previous hero had converged on the standard shape for this
-category — centered pill, centered headline, two CTAs, a ring of floating
-provider logos, one big screenshot below — which read as a straight copy of a
-much better-known page with the same headline noun. Every one of those elements
-was individually fine and collectively a clone.
+that way. An earlier hero had converged on the standard shape for this
+category (centered pill, centered headline, two CTAs, a ring of floating
+provider logos, one big screenshot below), which read as a copy of a much
+better-known page.
 
-- `.pane-demo` is **markup, not a screenshot**: the app's tab strip, a turn's
-  work log, an approval card waiting on a keypress, and the session status bar.
-  It costs no image, stays sharp at any width, and re-states the headline claim
-  instead of illustrating it. If you change pane chrome in the app, change it
-  here too — a stale mock is worse than no mock.
-- **The tabs work.** `chat` / `review` / `terminal` is a real ARIA tablist with
-  roving tabindex and arrow keys, driven by the last IIFE in the page script.
-  All three panels stay mounted in one grid cell and inactive ones take
-  `.off` (`visibility: hidden`), so the pane never changes height when you
-  click — except under 560px, where `.off` becomes `display: none` because a
-  fixed height would leave a hole under the two short tabs. The panels tell one
-  story on purpose: the agent edits `bus.go`, asks to run that package's tests,
-  and leaves the diff staged.
-- The background is **not a square grid** — that's the other shape every tool
-  page has. It's an editor's ground: horizontal line rhythm plus one accent
-  column ruler standing in the gutter at 48%, dropped below 980px where there
-  is no gutter. `.shot-band` and `.proof` need `position: relative` or the
-  absolutely-positioned `.hero-grid` paints its rules over them, screenshot
-  included.
-- The big screenshot lives in `.shot-band` below the fold instead, sharing a
+- The headline is the three things the page is about, in one line: a *small
+  app* (footprint, simplicity) where your agents can *call each other*
+  (cross-provider spawn). An older headline sold the Fleet Manager and the
+  brief; those belong to the Electron app, which the page now calls deprecated.
+- `.pane-demo` is **markup, not a screenshot**, and it is an illustration of
+  one spawn rather than a copy of the app's chrome (the native app has no tab
+  strip). The three panels tell one story: you ask Claude for something, it
+  spawns a Codex child and ends its turn, and the child's result comes back as
+  a wake. The third tab quotes `apps/desktop/assets/skills/spawn-agent/SKILL.md`
+  **verbatim**. If the skill's wording changes, change the quotes.
+- **The tabs work.** It is a real ARIA tablist with roving tabindex and arrow
+  keys, driven by an IIFE in the page script. All three panels stay mounted in
+  one grid cell and inactive ones take `.off` (`visibility: hidden`), so the
+  pane never changes height when you click, except under 560px, where `.off`
+  becomes `display: none`.
+- The approval card in the mock shows the app's own three buttons (Allow once,
+  Deny, Deny with note…) and **no key chips**, because the native approval card
+  has none. Don't invent one to fill a gap. The `spawn` line uses real
+  `spawn_agent` parameter names (`provider`, `worktree`, `trackTask`).
+- The background is **not a square grid**. It's an editor's ground: horizontal
+  line rhythm plus one accent column ruler standing in the gutter at 48%,
+  dropped below 980px where there is no gutter. `.shot-band` and `.proof` need
+  `position: relative` or the absolutely-positioned `.hero-grid` paints its
+  rules over them, screenshot included.
+- The big screenshot lives in `.shot-band` below the fold, sharing a
   `--bg-elev` plinth with the proof band so the two read as one block.
-- Headline is the IDE claim ("An IDE where the agents do the typing"), not
-  "control plane" — that phrase is in the hub's own vocabulary (`build.html`,
-  where it's accurate) and shouldn't double as the product's tagline.
 - The diff in the mock uses green for the addition and *dimmed* for the
   removal. No red: the page has one loud colour, and a `--red` token would have
-  to be added to all four `:root` blocks to stay in sync.
-- Every `kbd` in the hero is a **real default** — `y`/`n` are
-  `fleet-approve-yes`/`fleet-approve-no` in
-  `apps/desktop/src/renderer/src/hooks/configDefaults.ts`, and Escape is the
-  interrupt. The review panel has no key chips because the review pane has no
-  bindings; only the Fleet Deck and the Inbox do. Don't invent one to fill a
-  gap. Same rule for the paths and commands in there: use current Rust paths such
-  as `services/hub-rs/src/runtime.rs` and repo-root commands such as
-  `cargo test --locked --manifest-path services/hub-rs/Cargo.toml`.
-  Historical Go examples must be labeled historical, not advertised as live commands.
+  to be added to every page's `:root` block to stay in sync.
 
 ## Logos
 
-The marketing page inlines the real Claude, Codex (OpenAI), and OpenCode marks
-as SVG in the harness grid. The Claude mark keeps its brand clay color; the
-other two tint with `currentColor`. Pi has no mark and uses a mono `π`.
+The page inlines the real Claude, Codex (OpenAI), OpenCode and GitHub Copilot
+marks as SVG in the harness grid. The Claude mark keeps its brand clay color;
+the others tint with `currentColor`. Pi is not in the grid: it is not offered,
+and the caveat line under the grid says why.
 
-They used to appear a second time as floating glass tiles in the hero. That
-went away with the hero rework below — a ring of provider logos around a
-centered headline is the single most copied shape in this category, and we had
-it verbatim.
+Each tag says what that provider can do **from the native app**: Claude Code
+and Codex can be started from New Agent and spawned as children; OpenCode and
+Copilot only arrive as children (`apps/native/src/navigation.rs` has two
+`Provider` variants; `spawn_agent` accepts four). Keep the tags honest if
+either list changes.
 
 ## Screenshots
 
-`.frame` holds real captures from `shots/` (webp, staged from live sessions).
-To refresh one, restage the shot and drop the new capture into the matching
-`shots/` file. The old fake terminal chrome (mac traffic lights) is gone — it
-was a category error around captures of an Electron GUI. Every frame is flat
-now, with an optional `.frame-cap` caption; the tilted hero shot went away with
-the hero rework.
+Every `shots/native-*.webp` is a capture of the real `wks-native` window
+showing the fixture hub (`native-harness serve`, the same fixture `--demo` runs
+in-process). No agent, credential or model is involved. Restage all of them
+with one command:
 
-Cards pin their shot to the bottom with `margin-top: auto`, so a row of cards
-with uneven copy still lines its screenshots up. Keep that if you add a card.
+```sh
+make landing-shots        # builds the two binaries, then runs landing/capture-shots.sh
+```
+
+It needs Linux with `Xvfb`, `openbox`, `xdotool`, `cwebp` and a software Vulkan
+driver (Mesa lavapipe). Captures are taken at 2x; the `width`/`height`
+attributes in `index.html` are the logical window size, so keep the two in
+step. The script's header explains the two fixtures and why the scroll counts
+are tied to the window height.
+
+Three sizes, for three jobs: 1280×760 for the two full-width frames, 900×600
+for the feature rows, 820×550 for the three-up gallery. A capture of a whole
+window shown at a third of the page is a grey smudge, which is why the
+"simple" section is rows (`.feat`) rather than a three-up of cards, and why the
+gallery uses the smallest window the content still fits in.
+
+`mobile-fleet.webp` and `mobile-chat.webp` are the phone client, staged from an
+earlier fabricated fleet. `brief-board`, `fleet-manager`, `review-pane` and
+`sidebar-recent` are Electron captures still used by `enterprise.html` and
+`docs.html`; the marketing page no longer references them.
+
+Every frame is flat, with an optional `.frame-cap` caption. Fake terminal
+chrome (traffic lights) around a GUI capture is a category error.
 
 ## Copy
 
-Written in a relaxed voice, and deliberately short — the page is a poster, not
-a datasheet. Six sections: the babysitting problem, the harnesses, panes,
-supervise + remote, architecture, and open source. Exhaustive feature lists
-belong in `docs.html`, not here; the previous version crammed nine features
-into single sentences.
+Written in a relaxed voice, and deliberately short: the page is a poster, not
+a datasheet. Three ideas, in this order, and everything else is support:
 
-Feature claims map to things that ship today: the agent providers (Claude Code,
-Codex, OpenCode, and Pi in beta), ambient awareness and the Triage Inbox, the
-GUI agent pane, the review pane, the pane types, UI modes (fleet/focus), the
-remote clients (the `/m` mobile PWA, `/remote`, and the full app at `/app`),
-plugins, the MCP facade, and the desktop + claudemon + hub split. Push
-notifications are deliberately not promised until they're reliable.
+1. **Small** (`#small`): one binary, no webview, bounded memory by design.
+2. **Cross-provider spawn** (`#spawn`): the `spawn-agent` skill.
+3. **Simple** (`#simple`): a list and a conversation.
 
-The proof band under the hero (harnesses / themes / plugins / licence) and the
-version strings in the footer and the open-source tile are **hand-written** and
-go stale. Check them against `apps/desktop/package.json`, `themes.ts`, and the
-plugin catalog when you touch the page.
+Then remote (`#remote`), the honest list (`#status`), open source (`#open`)
+and how to get it (`#get`). Exhaustive feature lists belong in the docs.
+
+Claims map to things the native app ships today, and the sources are:
+
+- **Footprint.** The size bars and the proof band compare *download size on
+  Linux x64*: the native figure is `make package-native-linux` on this tree,
+  the Electron figure is the AppImage attached to the latest release. Both are
+  **hand-written** and go stale; re-measure when you touch the page. Last
+  measured at 0.169.0: 33.6 MB against 168.9 MB (the bar is 20% wide), with a
+  107 MB stripped binary inside the archive, which the caption admits. There are
+  deliberately no memory or CPU numbers: the only ones recorded
+  (`apps/native/VALIDATION.md`) were taken on a software renderer. The
+  "bounded" tile quotes `apps/native/README.md` → Performance boundaries.
+- **Spawn.** `apps/desktop/assets/skills/spawn-agent/SKILL.md`, the
+  `spawn_agent` tool in `services/hub-rs/assets/mcp-tools.json`, and
+  `.rivet/context/domains/agent-spawn.md` (per-session skill delivery, nothing
+  written into the project, wakes route to the direct parent).
+- **Simple, remote.** `apps/native/README.md`: New Agent, approvals and
+  questions, Changes, the terminal, History, Jobs, Settings → Remote.
+- **What it isn't.** The native app has no Fleet Manager launcher, board,
+  tiled panes, embedded browser or plugin panes, and in `--local` mode quitting
+  stops the agents it owns. The page says so. Don't soften it; a page that
+  overclaims the boring parts doesn't get believed about the interesting ones.
+
+The Electron app is described as **deprecated** (still runs, installers stay on
+the releases page, new work goes native). `docs.html`, `build.html` and
+`enterprise.html` still describe the Electron app, and the page admits that in
+its honest list until they are rewritten.
+
+Push notifications are deliberately not promised.
 
 ## Enterprise enquiries
 
@@ -171,10 +206,23 @@ the machine. The public workflow guide is `docs.html#fleet-workflows`.
 ## Download buttons and the star pill
 
 Three buttons (`dl-btn-nav`, `dl-btn-hero`, `dl-btn`) share one UA-detection
-pass and one GitHub Releases fetch; `#dl-alts` gets every platform's link so a
-wrong detection strands nobody. All of it degrades to the releases page.
+pass and one GitHub Releases fetch. They only ever pick a **native** package:
+every asset pattern requires `native` in the name, so an Electron installer can
+never match. When the latest release has a native package for the visitor's OS
+the buttons become a direct download; when it has none (macOS always, any OS
+if the release predates native packaging) the nav and hero buttons point at
+`#get`, whose rows say how to build it, and the CTA button stays the repo link.
+`#dl-alts` lists the native links that exist and then the releases page under
+the label "deprecated electron installers".
 
-The nav pill shows the live star count, but only above a `FLOOR` (10) — below
+The three `#get` rows are hand-written statements about what
+`.github/workflows/release.yml` and `apps/native/scripts/package-*.{sh,mjs}`
+produce. As of this writing the release workflow attaches the Windows
+installer only; the Linux archive is a CI artifact and is **not** attached to
+releases, so the Linux row tells people to build it. Update the row (and the
+asset pattern already waiting for it in the script) when that changes.
+
+The nav pill shows the live star count, but only above a `FLOOR` (10). Below
 that the number reads as a liability rather than proof, and the plain "GitHub"
 label is the better pill. It also stays "GitHub" if the API is rate-limited.
 
