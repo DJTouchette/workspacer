@@ -1,6 +1,6 @@
 # work{spacer}
 
-> A local-first control plane and IDE for running many coding agents (Claude Code, Codex, GitHub Copilot, OpenCode, Pi) side by side. One manager agent dispatches the fleet and is woken when work lands, and writes what the fleet learns into a per-project brief that outlives the sessions. Around that sit the panes, the diff review, the plugin system, and a WebSocket hub bus every client speaks.
+> A small native app for running coding agents on your own CLIs. One Rust binary with the hub and the session engine compiled in: no Electron, no bundled browser. You start Claude Code or Codex from the app, and every agent it starts carries a `spawn-agent` skill that lets it start a child on another provider (Claude Code, Codex, OpenCode, GitHub Copilot), hand it one self-contained task, and get woken when the child finishes or gets stuck. The earlier Electron desktop app (panes, plugin panes, the Fleet Manager and per-project briefs) is deprecated; most of the linked docs below still describe it.
 
 ## Docs
 
