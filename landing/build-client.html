@@ -153,40 +153,43 @@
 
     <section id="why" class="doc">
 <h2>the seam</h2>
-<p>The desktop app is not work{spacer}. It's a <em>client</em>. The agent sessions, the PTYs, the transcripts, the token accounting, the approval queue all live in <code>claudemon</code>, a Rust daemon that keeps running whether or not a window is open. Everything the Electron UI shows, it got over HTTP.</p>
-<p>Which means anything else can get it too. This page is the contract: run the daemon, speak this API, and you have the whole fleet, every provider and approval and live conversation, with none of our UI.</p>
+<p>The window is not work{spacer}. It's a <em>client</em>. The agent sessions, the PTYs, the transcripts, the token accounting, the approval queue all live in <code>claudemon</code>, the Rust session engine. <code>workspacer serve</code> runs it with no window at all, and the native app compiles the same engine in. Nothing a window shows is private to it.</p>
+<p>Which means anything else can get it too. This page is the contract for the engine's own HTTP API: run it, speak this API, and you have the whole fleet, every provider and approval and live conversation, with none of our UI.</p>
 <h3>who this is for</h3>
 <ul>
 <li>You want a <strong>lighter client</strong>: a status bar, a menu-bar widget, a single-pane view, a dashboard on a second monitor.</li>
 <li>You want a <strong>different shape</strong> entirely: a web app, a mobile app, an Emacs mode, a Raycast extension, a physical button that approves the pending tool call.</li>
 <li>You want to <strong>drive agents from a script</strong> without a UI at all: spawn, prompt, watch for the answer, move on.</li>
-<li>You're on a machine where an Electron app is the wrong answer, and a browser tab or a terminal is the right one.</li>
+<li>You're on a machine where a desktop window is the wrong answer, and a browser tab or a terminal is the right one.</li>
 </ul>
-<p>There's already a second client proving the seam holds: <a href="https://github.com/DJTouchette/workspacer/tree/master/apps/tui"><code>wks-tui</code></a>, the Rust terminal client in <code>apps/tui/</code>. It talks to exactly this API and nothing else. When you want to know how a real client handles a case, read that. It is the reference implementation.</p>
-<div class="callout"><strong>Two APIs, one stack.</strong> <code>claudemon</code> (this page) is the session API, the direct lowest-level surface and the right one for a UI. The <code>hub</code> bus is the control plane on top: pub/sub events, capability RPC, plugins, MCP, remote access. If you're writing a <em>plugin</em> that lives inside work{spacer}, you want the <a href="build-plugin.html">bus instead</a>. If you're writing your <em>own app</em>, you want this.</div>
+<p>There's already a client proving the seam holds: <a href="https://github.com/DJTouchette/workspacer/tree/master/apps/tui"><code>wks-tui</code></a>, the Rust terminal client in <code>apps/tui/</code>. Run it with <code>--direct</code> and it talks to exactly this API and nothing else; <code>apps/tui/src/claudemon.rs</code> is that client, in one file. When you want to know how a real client handles a case, read that. It is the reference implementation.</p>
+<div class="callout"><strong>Two APIs, one stack.</strong> <code>claudemon</code> (this page) is the session API: plain HTTP and SSE on loopback, no auth, the lowest-level surface there is. The <code>hub</code> bus is the control plane on top: one authenticated WebSocket carrying pub/sub events, capability RPC, plugins, MCP and remote access. Our own windows are bus clients. The native app (<code>apps/native</code>) and <code>wks-tui</code> in its default mode both speak the bus, and the native app is built on seven methods: <code>sessions.snapshots</code>, <code>sessions.conversation</code>, <code>agents.sendMessage</code>, <code>claude.approve</code>, <code>claude.answer</code>, <code>claude.signal</code> and <code>agents.spawn</code>. Use the bus when you need a token, another machine, or agents that carry the work{spacer} tools; <a href="build-plugin.html#bus">its protocol is here</a>. Use this page when you want a small local client or a script and nothing in between.</div>
     </section>
 
     <section id="run" class="doc">
 <h2>run it headless</h2>
-<p>Three ways to get an API to talk to. All of them end with claudemon listening on <code>127.0.0.1:7891</code>.</p>
+<p>Two ways to get this API on a known port, and one case where you want the bus instead. The first two end with claudemon listening on <code>127.0.0.1:7891</code>.</p>
 <h3>1. the whole stack, no GUI</h3>
-<p>The <code>workspacer</code> CLI supervises claudemon plus the hub (and the headless capability provider, <code>brain</code>) as one unit. This is the server bundle. Grab <code>workspacer-server-&lt;os&gt;-&lt;arch&gt;</code> from the <a href="https://github.com/DJTouchette/workspacer/releases">releases</a>, or <code>make build-cli</code> from source:</p>
+<p><code>workspacer serve</code> is one Rust process that owns the session engine, the hub and the MCP facade. There are no helper daemons to supervise. This is the server bundle: grab <code>workspacer-server-&lt;os&gt;-&lt;arch&gt;</code> from the <a href="https://github.com/DJTouchette/workspacer/releases">releases</a>, or <code>make build-cli</code> from source, which builds it as <code>services/hub-rs/target/release/workspacer-rust</code>.</p>
 <pre><code>workspacer serve
 workspacer serve --json          # ready banner as one JSON object on stdout</code></pre>
-<p>Useful flags: <code>--host</code> (default <code>127.0.0.1</code>), <code>--claudemon-api-port</code> (<code>7891</code>), <code>--claudemon-hook-port</code> (<code>7890</code>), <code>--hub-port</code> (<code>7895</code>), <code>--token</code> (or <code>$HUB_TOKEN</code>).</p>
+<p>Useful flags: <code>--host</code> (default <code>127.0.0.1</code>; it moves the hub's listener, the engine stays on loopback), <code>--hub-port</code> (<code>7895</code>), <code>--token</code> (or <code>$HUB_TOKEN</code>), and on <code>serve</code> itself <code>--claudemon-api-port</code> (<code>7891</code>), <code>--claudemon-hook-port</code> (<code>7890</code>) and <code>--mcp-port</code> (<code>7897</code>). Changing either engine port also requires an explicit <code>--claudemon-db-path</code>, so an alternate port never quietly shares the default database.</p>
 <h3>2. claudemon alone</h3>
 <p>If you only want the session API and none of the control plane, run the daemon straight. This is the smallest thing that works:</p>
 <pre><code>claudemon serve
 claudemon serve --host 127.0.0.1 --hook-port 7890 --api-port 7891</code></pre>
 <p>Two ports, and they do different jobs. <code>--api-port</code> (7891) is <em>this API</em>, the one your client talks to. <code>--hook-port</code> (7890) is where Claude Code's hooks POST their lifecycle events <em>in</em>; you never call it, but the daemon needs it to observe PTY-transport Claude sessions. <code>--db-path</code> overrides the SQLite store.</p>
-<p>One-time setup so Claude Code emits those hooks:</p>
+<p>The standalone daemon is also a release asset, <code>workspacer-claudemon-&lt;os&gt;-&lt;arch&gt;</code>. To have it observe <code>claude</code> sessions you start yourself in a terminal, install its hooks once:</p>
 <pre><code>claudemon init            # merge hooks + statusLine into ~/.claude/settings.json
 claudemon init --dry-run  # print the merged document instead of writing it</code></pre>
-<p>The merge is atomic and idempotent, and leaves your own settings alone. If you'd rather not touch the global file at all, <code>--overlay &lt;path&gt;</code> writes a standalone claudemon-owned settings file to pass to <code>claude --settings</code> instead.</p>
-<h3>3. alongside the running app</h3>
-<p>If the desktop app is already open, claudemon is <em>already</em> on 7891, spawned by the app. Point your client at it and you're a second client on the same live sessions. Nothing to start, no conflict: your UI and the desktop UI will see the same fleet and each other's changes, live.</p>
-<p>This is the fastest way to develop. Open the app, start building against 7891, watch your client and the real one stay in lockstep.</p>
-<div class="callout"><strong>Adoption, not collision.</strong> Before spawning, the desktop probes <code>/health</code> on the port. A <em>healthy</em> daemon that's already there gets <strong>adopted</strong>: the app uses it and never signals it on quit. So a <code>workspacer serve</code> you started stays yours; opening the GUI later just joins it.</div>
+<p>The merge is atomic and idempotent, and leaves your own settings alone. If you'd rather not touch the global file at all, <code>--overlay &lt;path&gt;</code> writes a standalone claudemon-owned settings file to pass to <code>claude --settings</code> instead. This step is for the standalone daemon only: <code>workspacer serve</code> and the apps hand their hooks to each Claude launch, and <code>serve</code> removes claudemon entries an older version left in the global file.</p>
+<h3>3. alongside a running app</h3>
+<p>Which API you can join depends on the app.</p>
+<ul>
+<li><strong>The native app</strong> (<code>wks-native --local</code>) keeps its engine on a loopback port the OS picks at startup, so there is no fixed <code>7891</code> to aim at. Its hub is the door: the bus listens on the loopback port saved in the app's <code>config/hub-port</code> file, and asks for a token like any hub. Build against <a href="build-plugin.html#bus">the bus</a> and you are a second client on the same live sessions.</li>
+<li><strong>A <code>workspacer serve</code> you started</strong> is option 1: claudemon on <code>7891</code>, the bus on <code>7895</code>. Point the native app at it with <code>--bus ws://127.0.0.1:7895/bus</code> and your client and ours stay in lockstep. This is the fastest way to develop against either API.</li>
+<li><strong>The deprecated Electron app</strong> starts claudemon on <code>7891</code> itself. Before spawning it probes <code>/health</code>, and a healthy daemon that is already there gets adopted rather than replaced and is not signalled on quit.</li>
+</ul>
 <h3>check it's up</h3>
 <pre><code>curl -s http://127.0.0.1:7891/health          # -> ok
 curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
@@ -237,17 +240,17 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
 { "kind": "question",
   "questions": [ { "question": "Which database?",
                    "header": "Storage",
-                   "multiSelect": false,
+                   "multi_select": false,
                    "options": [ … ] } ],
   "raw": { … } }</code></pre>
-<p>Answer the first with <a href="#rest"><code>/approve</code></a>, the second with <a href="#rest"><code>/answer</code></a>. <code>raw</code> is the untouched upstream payload; reach for it when you need a field the daemon didn't normalize.</p>
+<p>Answer the first with <a href="#rest"><code>/approve</code></a>, the second with <a href="#rest"><code>/answer</code></a>. <code>raw</code> is the untouched upstream payload; reach for it when you need a field the daemon didn't normalize. Two of its fields are worth knowing: <code>raw.pending_id</code> names the card on screen, and <code>raw.always_options</code>, when present, lists the "always allow…" grants this particular request can offer.</p>
 <h3>provider and transport</h3>
-<p><code>provider</code> is which agent backend drives the session: <code>claude</code>, <code>codex</code>, <code>copilot</code>, <code>opencode</code>, or <code>pi</code>. <code>transport</code> is <em>how</em>: <code>pty</code> (there's a real terminal you can attach to and stream bytes from) or <code>stream</code> (headless, with no PTY, so don't offer a terminal view). Gate your UI on <code>transport</code>, not on <code>provider</code>: Claude runs both ways.</p>
+<p><code>provider</code> is which agent backend drives the session: <code>claude</code>, <code>codex</code>, <code>copilot</code>, <code>opencode</code>, or <code>pi</code>. (The daemon still drives Pi; the hub's own launchers refuse it, because Pi's CLI has no MCP bridge for the work{spacer} tools.) <code>transport</code> is <em>how</em>: <code>pty</code> (there's a real terminal you can attach to and stream bytes from) or <code>stream</code> (headless, with no PTY, so don't offer a terminal view). Gate your UI on <code>transport</code>, not on <code>provider</code>: Claude runs both ways.</p>
     </section>
 
     <section id="rest" class="doc">
 <h2>http reference</h2>
-<p>Base URL is <code>http://127.0.0.1:7891</code>. JSON in, JSON out. Every route is in <code>services/claudemon/src/daemon/api.rs</code>, which is the authority if this page ever drifts.</p>
+<p>Base URL is <code>http://127.0.0.1:7891</code>. JSON in, JSON out. Every route is in <code>services/claudemon/src/daemon/api.rs</code>, and the full served table is generated into <code>contracts/claudemon-routes.json</code> and checked by a test. Those two are the authority if this page ever drifts. The tables below are the routes a client needs, not all of them.</p>
 
 <h3>reading the fleet</h3>
 <table>
@@ -256,7 +259,7 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
 <tr><td><span class="verb">GET</span> <code>/sessions</code></td><td>Every session as the object above, each with <code>usage</code> and <code>archived</code> merged in. <code>?include_archived=true</code> adds stopped + long-idle rows (7 days); <code>?include_empty=true</code> additionally un-hides spawned-but-never-used rows. Both default off.</td></tr>
 <tr><td><span class="verb">GET</span> <code>/sessions/:id</code></td><td>One session, same shape. <code>404</code> if unknown.</td></tr>
 <tr><td><span class="verb">GET</span> <code>/sessions/:id/transcript</code></td><td>The raw Claude JSONL transcript. <code>?cwd=</code> helps locate it when the id and the on-disk name differ.</td></tr>
-<tr><td><span class="verb">GET</span> <code>/sessions/:id/conversation</code></td><td>Structured conversation; <a href="#conversation">see below</a>. <code>?since=&lt;seq&gt;</code> for incremental catch-up.</td></tr>
+<tr><td><span class="verb">GET</span> <code>/sessions/:id/conversation</code></td><td>Structured conversation; <a href="#conversation">see below</a>. <code>?since=&lt;seq&gt;</code> for incremental catch-up, <code>?limit=</code> and <code>?before=</code> to page.</td></tr>
 <tr><td><span class="verb">GET</span> <code>/sessions/:id/output</code></td><td>The PTY scrollback buffer (<code>pty</code> transport only).</td></tr>
 <tr><td><span class="verb">GET</span> <code>/usage</code></td><td>Account-level rate-limit windows, no session needed: <code>five_hour_pct</code>, <code>five_hour_resets_at</code>, <code>seven_day_pct</code>, <code>seven_day_resets_at</code>, <code>monthly_pct</code>, <code>monthly_resets_at</code>, <code>out_of_credits</code>, <code>fetched_at</code>. <code>503</code> when the account can't be queried, so you can tell <em>unknown</em> from <em>no active window</em>.</td></tr>
 <tr><td><span class="verb">GET</span> <code>/heartbeats</code></td><td>Keep-warm ping log (the scheduled 5h-window warmer).</td></tr>
@@ -265,15 +268,15 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
 <h3>driving a session</h3>
 <table>
 <tr><th>route</th><th>body</th></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/message</code></td><td><code>{ "text": "…" }</code>, <strong>the one you want.</strong> Sends a prompt through the settle-and-verify pipeline: delivered now if the prompt is up, queued and flushed on the next idle transition otherwise (cold start, mid-turn, open dialog). Only a stopped session rejects it. Prefer this over <code>/input</code> for anything user-facing.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/message</code></td><td><code>{ "text": "…" }</code>, <strong>the one you want.</strong> Sends a prompt through the settle-and-verify pipeline: delivered now if the prompt is up, queued and flushed on the next idle transition otherwise (cold start, mid-turn, open dialog). Only a stopped session rejects it. Optional <code>"delivery": "steer" | "now"</code> says how it lands on a managed session that is mid-turn; <code>steer</code> is the default. Prefer this over <code>/input</code> for anything user-facing.</td></tr>
 <tr><td><span class="verb post">POST</span> <code>/sessions/:id/input</code></td><td><code>{ "text": "…", "newline": true }</code> or <code>{ "bytes_b64": "…" }</code>: raw bytes into the PTY, no pipeline, no guarantees. For terminal emulation and keystrokes, not prompts.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/approve</code></td><td><code>{ "decision": "yes" | "no" | "always", "reason": "…" }</code> resolves a pending approval. <code>reason</code> rides along with a block and shows up in the agent's context. (<code>always</code> is treated as <code>yes</code>; hooks have no "remember this" channel.)</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/answer</code></td><td><code>{ "option": 2 }</code> (1-indexed) or <code>{ "text": "…" }</code>. Multi-question prompts take <code>{ "answers": ["2", "my answer"] }</code>, one per question in order. Pass <code>answerKinds: ["option","text"]</code> alongside it so a free-text answer that happens to be a number isn't remapped to an option.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/signal</code></td><td><code>{ "signal": "sigint" | "sigterm" | "sigkill" }</code>. <code>sigint</code> is a structural interrupt on managed providers: it stops the <em>turn</em> without killing the session, so PTY-free clients can cancel too.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/approve</code></td><td><code>{ "decision": "yes" | "no" | "always", "reason": "…" }</code> resolves a pending approval. <code>reason</code> rides along with a block and shows up in the agent's context. <code>always</code> is exactly <code>yes</code> and grants nothing beyond the one request. To grant a real "always allow", send <code>yes</code> with <code>"alwaysOption"</code> set to the <code>id</code> of one of the card's <code>raw.always_options</code>. Pass <code>"requestId"</code> (the card's <code>raw.pending_id</code>) and a decision for a card that is no longer on screen is refused with <code>409</code> instead of landing on the next one.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/answer</code></td><td><code>{ "option": 2 }</code> (1-indexed) or <code>{ "text": "…" }</code>. Multi-question prompts take <code>{ "answers": ["2", "my answer"] }</code>, one per question in order. Pass <code>answerKinds: ["option","text"]</code> alongside it so a free-text answer that happens to be a number isn't remapped to an option. <code>"requestId"</code> works here as it does on <code>/approve</code>.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/signal</code></td><td><code>{ "signal": "SIGINT" | "SIGTERM" | "SIGKILL" }</code>, upper case. <code>SIGINT</code> is a structural interrupt on managed providers: it stops the <em>turn</em> without killing the session, so PTY-free clients can cancel too.</td></tr>
 <tr><td><span class="verb post">POST</span> <code>/sessions/:id/permission-mode</code></td><td><code>{ "mode": "…" }</code>, a live switch: no restart, conversation untouched.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/model</code></td><td>Live model switch on providers that support it.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/resize</code></td><td>Resize the PTY (<code>pty</code> transport).</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/:id/handoff</code></td><td>Build a deterministic handoff brief for another agent to pick up. <code>{ "no_persist": true }</code> returns it without writing to disk.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/model</code></td><td><code>{ "model": "…", "effort": "…" }</code>, a live model or effort switch on providers that support it. At least one field is required.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/resize</code></td><td><code>{ "cols": 120, "rows": 40 }</code> resizes the PTY (<code>pty</code> transport).</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/:id/handoff</code></td><td>Build a deterministic handoff brief for another agent to pick up; the reply carries the markdown and the path it was saved to under <code>~/.workspacer/handoffs/</code>. <code>{ "no_persist": true }</code> returns it without writing to disk.</td></tr>
 <tr><td><span class="verb post">POST</span> <code>/sessions/:id/decide</code></td><td><code>{ "body": { … } }</code>, the raw hook decision, returned to Claude Code verbatim. Bypasses <code>/approve</code>'s opinionated mapping when you need exact control.</td></tr>
 <tr><td><span class="verb post">POST</span> <code>/sessions/:id/gate</code></td><td><code>{ "on": true }</code> opts this session into the deferred-hook gateway, parking <code>PreToolUse</code> responses until a client decides.</td></tr>
 </table>
@@ -281,9 +284,9 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
 <h3>starting sessions</h3>
 <table>
 <tr><th>route</th><th>body</th></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/spawn</code></td><td>A PTY session. <code>{ "argv": ["claude", …], "cwd": "/path", "cols": 120, "rows": 40, "env": {…}, "session_id": "…" }</code>. <code>argv</code> and <code>cwd</code> are required.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/spawn</code></td><td>A PTY session. <code>{ "argv": ["claude", …], "cwd": "/path", "cols": 120, "rows": 40, "env": {…}, "session_id": "…", "first_message": "…" }</code>. <code>argv</code> and <code>cwd</code> are required; the PTY is 80×24 if you give no size.</td></tr>
 <tr><td><span class="verb post">POST</span> <code>/sessions/spawn-managed</code></td><td>A managed (daemon-driven) session, the modern path. <code>provider</code> must be <code>claude</code>, <code>codex</code>, <code>copilot</code>, <code>opencode</code>, or <code>pi</code>; anything else is a <code>400</code>. Returns the session id <em>immediately</em> and boots the adapter in the background, so you can render the card while the process starts.</td></tr>
-<tr><td><span class="verb">GET</span> <code>/providers/:provider/models</code></td><td>Models available for <code>codex</code>, <code>copilot</code>, <code>opencode</code>, or <code>pi</code>. <code>?bin=</code> and <code>?cwd=</code> override the binary and working dir.</td></tr>
+<tr><td><span class="verb">GET</span> <code>/providers/:provider/models</code></td><td><code>{ "models": [{ id, label, default }] }</code> for <code>codex</code>, <code>copilot</code>, <code>opencode</code>, or <code>pi</code>, asked live of the installed CLI. <code>?cwd=</code> sets the working dir. The daemon resolves the binary itself; a caller-supplied <code>?bin=</code> is ignored.</td></tr>
 </table>
 <p>The managed spawn body in full. Everything but <code>provider</code> and <code>cwd</code> is optional:</p>
 <pre><code>{
@@ -293,15 +296,18 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
   "effort": "high",
   "bin": "codex",                // defaults to the provider name
   "yolo": false,                 // auto-approve everything
-  "mcp": "…",                    // MCP config override
-  "instructions": "…",           // system prompt / instructions
+  "mcp": "…",                    // an MCP server URL to register with the provider
+  "instructions": "…",           // role instructions, prepended to the first turn
   "session_id": "…",             // pin the id instead of generating one
   "transport": "stream",         // headless, no native TUI
-  "permission_mode": "…",
-  "resume": "…",                 // resume a prior session id
+  "permission_mode": "…",        // claude only, in the CLI's own vocabulary
+  "resume": "…",                 // claude only: resume a prior session id
   "extra_args": ["--flag"],
-  "env": { "KEY": "value" }
+  "env": { "KEY": "value" },
+  "first_message": "…"           // the first prompt, delivered as part of the spawn
 }</code></pre>
+<p>Both spawn routes answer with <code>first_message_queued</code>, your confirmation that the prompt was taken. Use <code>first_message</code> rather than a spawn followed by <code>/message</code>: the id comes back before the session is being driven, and a message that lands in that gap is refused with a <code>404</code>.</p>
+<div class="callout"><strong>A session spawned here is a bare provider session.</strong> The work{spacer} MCP tools, the per-session identity token and the skills (<code>spawn-agent</code> among them) are added by the hub's <code>agents.spawn</code>, not by the daemon. If you want agents that can call each other, spawn through the bus.</div>
     </section>
 
     <section id="streams" class="doc">
@@ -328,8 +334,8 @@ events.addEventListener('session.update', (e) =&gt; {
 
     <section id="conversation" class="doc">
 <h2>the conversation</h2>
-<p>You don't have to parse terminal scrollback, and you shouldn't. claudemon reads the agent's own transcript and gives you a typed item list, the same one the desktop app renders.</p>
-<p><code>GET /sessions/:id/conversation</code> returns <code>{ session_id, seq, items }</code>. Each item is tagged by <code>kind</code>:</p>
+<p>You don't have to parse terminal scrollback, and you shouldn't. claudemon reads the agent's own transcript and gives you a typed item list, the same one our own clients render.</p>
+<p><code>GET /sessions/:id/conversation</code> returns <code>{ session_id, seq, first_seq, window_first_seq, items }</code>. Each item is tagged by <code>kind</code>:</p>
 <table>
 <tr><th>kind</th><th>fields</th></tr>
 <tr><td><code>user_message</code></td><td><code>text</code>, <code>timestamp</code></td></tr>
@@ -339,6 +345,8 @@ events.addEventListener('session.update', (e) =&gt; {
 <tr><td><code>usage</code></td><td><code>model</code>, <code>usage</code>, <code>message_id</code>, <code>sidechain</code> (true for subagent turns)</td></tr>
 <tr><td><code>plan</code></td><td><code>steps</code>, <code>updatedAt</code>, the agent's checklist</td></tr>
 <tr><td><code>slash_command</code></td><td><code>name</code>, <code>args</code>, <code>timestamp</code></td></tr>
+<tr><td><code>reasoning</code></td><td><code>item_id</code>, <code>text</code>, <code>timestamp</code>, the model's thinking where the provider exposes it</td></tr>
+<tr><td><code>compaction</code></td><td><code>trigger</code>, <code>pre_tokens</code>, <code>post_tokens</code>, <code>timestamp</code></td></tr>
 <tr><td><code>command_output</code></td><td><code>output</code>, <code>is_error</code>, <code>timestamp</code></td></tr>
 </table>
 <p>Pair <code>tool_result</code> to <code>tool_use</code> by <code>tool_use_id</code> → <code>id</code>. Ignore kinds you don't know. More will be added, and that's the intended failure mode.</p>
@@ -349,6 +357,7 @@ events.addEventListener('session.update', (e) =&gt; {
 <li>Subscribe to <code>/conversation/stream</code> and append the <code>items</code> of each <code>conversation.delta</code>.</li>
 <li>If a delta arrives with <code>reset: true</code>, <strong>discard your buffer</strong> and take the items as the new truth. That's a compaction or a replay rather than an append.</li>
 <li>If you dropped frames, re-fetch with <code>?since=&lt;last_seq&gt;</code> and you'll get only what you missed.</li>
+<li>For a long conversation, ask for the newest page with <code>?limit=N</code>. While the reply's <code>window_first_seq</code> is greater than its <code>first_seq</code> there are older items, and <code>?before=&lt;window_first_seq&gt;&amp;limit=N</code> pages back to them.</li>
 </ul>
 <p>Sessions are capped at 5000 items in memory; older ones fall off the front. The transcript on disk is still complete; use <code>/transcript</code> if you need it all.</p>
     </section>
@@ -401,17 +410,17 @@ function render() {
   console.clear();
   console.log(rows.join('\n'));
 }</code></pre>
-<p>That's the entire loop every work{spacer} client runs, ours included: seed from <code>/sessions</code>, subscribe to <code>/events</code>, POST to act. Add <code>/conversation/stream</code> and you have a chat UI. Add <code>/sessions/:id/stream</code> and you have a terminal.</p>
+<p>That's the entire loop: seed from <code>/sessions</code>, subscribe to <code>/events</code>, POST to act. Our own clients run the same three steps, over the bus (a snapshot, a subscription, a call). Add <code>/conversation/stream</code> and you have a chat UI. Add <code>/sessions/:id/stream</code> and you have a terminal.</p>
 <h3>spawning one</h3>
 <pre><code>const res = await fetch(`${API}/sessions/spawn-managed`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ provider: 'claude', cwd: '/home/you/project',
-                         transport: 'stream' }),
+                         transport: 'stream',
+                         first_message: 'Read the README and summarize the architecture.' }),
 });
-const { session_id } = await res.json();
-await say(session_id, 'Read the README and summarize the architecture.');</code></pre>
-<p>The id comes back before the adapter finishes booting, so render the card immediately and let the first <code>session.update</code> fill it in.</p>
+const { session_id, first_message_queued } = await res.json();</code></pre>
+<p>The id comes back before the adapter finishes booting, so render the card immediately and let the first <code>session.update</code> fill it in. The prompt rides the spawn for the same reason: a <code>say()</code> sent the moment the id arrives can reach a session nothing is driving yet.</p>
     </section>
 
     <section id="security" class="doc">
@@ -424,7 +433,7 @@ await say(session_id, 'Read the README and summarize the architecture.');</code>
 <li><strong>Bounded bodies.</strong> 16 MB request-body cap, so a buggy or hostile local client can't push an unbounded payload through the fan-out and into SQLite.</li>
 <li><strong>Path-traversal-proof ids.</strong> Session ids are validated (≤128 chars, ASCII alphanumeric plus <code>-</code> <code>_</code> <code>.</code>, no <code>..</code>) before touching the filesystem, <code>%2e%2e%2f</code> included, since axum decodes first.</li>
 </ul>
-<div class="callout"><strong>Don't put claudemon on a network.</strong> There's no auth to turn on. If you need remote reach, put the <strong>hub</strong> there instead. It has token auth, capability-scoped tokens (<code>view</code> / <code>triage</code> / <code>operator</code>, plus <code>provider</code> for a headless node), and is designed to be reachable over a Tailscale tailnet. Your remote client talks to the hub; the hub talks to claudemon over loopback. See <a href="build.html#architecture">the internals page</a>.</div>
+<div class="callout"><strong>Don't put claudemon on a network.</strong> There's no auth to turn on. If you need remote reach, put the <strong>hub</strong> there instead. It has token auth, capability-scoped tokens (<code>view</code> / <code>triage</code> / <code>operator</code>, plus <code>provider</code> for a headless node; mint one with <code>workspacer token create --scope view</code>), and is designed to be reachable over a Tailscale tailnet. Your remote client talks to the hub; the hub drives the engine in the same process. See <a href="build.html#architecture">the internals page</a>.</div>
     </section>
 
     <section id="stability" class="doc">
@@ -432,7 +441,7 @@ await say(session_id, 'Read the README and summarize the architecture.');</code>
 <p>Straight answer: work{spacer} is alpha and this API is not versioned yet. Here's what that means in practice, so you can judge the risk yourself rather than guess.</p>
 <h3>what you can lean on</h3>
 <ul>
-<li><strong>Route paths and verbs.</strong> The table above is the daemon's whole surface and it's been stable in shape. <code>/sessions</code>, <code>/events</code>, <code>/message</code>, <code>/approve</code>, and <code>/answer</code> are load-bearing for three shipped clients.</li>
+<li><strong>Route paths and verbs.</strong> The routes in the tables above have been stable in shape. <code>/sessions</code>, <code>/events</code>, <code>/message</code>, <code>/approve</code>, and <code>/answer</code> are load-bearing for clients that ship: <code>wks-tui</code> and the Electron app call them directly, and a generated route table fails the build when a caller and the daemon disagree.</li>
 <li><strong>Additive fields.</strong> New session fields land with serde defaults and back-compat on purpose, so old rows and old clients keep deserializing. You'll see fields appear; you shouldn't see them vanish.</li>
 <li><strong>Tagged unions stay tagged.</strong> <code>pending.kind</code> and conversation <code>kind</code> are discriminators; new variants get added to them.</li>
 <li><strong>The enum values above.</strong> <code>mode</code>, <code>transport</code>, and the signal names are the wire vocabulary every client already depends on.</li>
@@ -441,7 +450,7 @@ await say(session_id, 'Read the README and summarize the architecture.');</code>
 <ul>
 <li><strong>New <code>kind</code> values, on both unions.</strong> Treat an unknown kind as "render generically", never as an error.</li>
 <li><strong>New <code>mode</code>-adjacent state.</strong> Compaction and background-subagent tracking both arrived as new fields rather than new modes; expect more of that.</li>
-<li><strong>Provider-specific corners.</strong> The managed-spawn options track four upstream CLIs that change independently of us.</li>
+<li><strong>Provider-specific corners.</strong> The managed-spawn options track upstream CLIs that change independently of us.</li>
 <li><strong>Anything not on this page.</strong> If you found it by reading the source, it isn't a promise.</li>
 </ul>
 <h3>writing a client that survives</h3>
@@ -449,7 +458,7 @@ await say(session_id, 'Read the README and summarize the architecture.');</code>
 <li><strong>Ignore unknown fields and unknown kinds.</strong> Don't use a strict deserializer that errors on extras.</li>
 <li><strong>Pin a version you tested against</strong> and read the <a href="https://github.com/DJTouchette/workspacer/blob/master/CHANGELOG.md">changelog</a> before upgrading the daemon.</li>
 <li><strong>Prefer <code>/message</code> over <code>/input</code></strong>, and <code>/approve</code> over <code>/decide</code>. The opinionated endpoints are the ones we keep working; the raw ones expose upstream shapes that shift.</li>
-<li><strong>Read <code>apps/tui</code> when a case is unclear.</strong> It's a real client against this exact API, and it gets updated with the daemon.</li>
+<li><strong>Read <code>apps/tui/src/claudemon.rs</code> when a case is unclear.</strong> It's a real client against this exact API, and its test server answers <code>404</code> for any path the generated route table doesn't serve.</li>
 </ul>
 <p>If you build something, <a href="https://github.com/DJTouchette/workspacer/issues">open an issue</a>. The fastest way for this surface to become a versioned, frozen contract is for there to be clients whose breakage would matter.</p>
     </section>
