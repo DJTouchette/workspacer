@@ -95,7 +95,7 @@
   aside .label + nav + .label, aside .label.next { margin-top: 22px; }
   aside a.out::before { content: "\2197"; }
 
-  /* Anchors that are not sections: old ids that now point at the legacy docs. */
+  /* Anchors that are not sections: old ids that now point at the Electron app docs. */
   .doc [id] { scroll-margin-top: 70px; }
   .doc ol { margin: 12px 0 12px 22px; display: grid; gap: 8px; max-width: 78ch; color: var(--ink-dim); }
   .doc ol li { padding-left: 4px; }
@@ -173,14 +173,14 @@
       <a href="#configuration">configuration</a>
       <div class="label next">before</div>
       <a href="#legacy">the electron app</a>
-      <a class="out" href="docs-electron.html">legacy docs</a>
+      <a class="out" href="docs-electron.html">Electron app docs</a>
     </nav>
   </aside>
   <main>
     <section id="overview" class="doc">
 <h2>overview</h2>
 <p>work{spacer} is a small native app for running coding agents on your own machine, with your own CLIs and subscriptions. It is one window: a list of sessions on the left and one conversation on the right. Nothing here is a hosted service.</p>
-<p>These docs cover the <strong>native app</strong> (<code>wks-native</code>). The earlier Electron desktop app is deprecated; it still runs, and its docs are kept as they were on the <a href="docs-electron.html">legacy docs</a> page.</p>
+<p>These docs cover the <strong>native app</strong> (<code>wks-native</code>). The Electron desktop app ships alongside it in this release and is deprecated in the next; its docs are kept as they were on the <a href="docs-electron.html">Electron app docs</a> page.</p>
 <h3>the problem</h3>
 <p>One agent session is easy. You sit in the terminal it runs in and watch it. That breaks the moment you have more than one going. You lose track of which agent is working, which one is blocked on an approval, and which one finished ten minutes ago and is sitting idle.</p>
 <p>work{spacer} keeps that state in front of you. The sidebar groups sessions by what they need: the ones waiting on you first, then the ones working. Approvals and questions are answered in the conversation they belong to. And when one agent would be better off handing part of the job to another, it can: any agent work{spacer} starts can <a href="#spawning">spawn a child</a>, on the same provider or a different one, and get woken when the child is done.</p>
@@ -204,8 +204,8 @@
 <p>The builds are unsigned alpha builds. What exists differs per platform, and this is the state of it:</p>
 <ul>
 <li><strong>Windows.</strong> The release build attaches an installer, <code>Workspacer-Native-Rust-Preview-Setup-&lt;version&gt;-x64.exe</code>. It is unsigned, so SmartScreen warns and lets you through. It installs the app, a standalone <code>workspacer-rust.exe</code>, its own Start menu shortcut and uninstaller, and keeps its data in <code>%LOCALAPPDATA%\Workspacer Native Rust Preview</code>. Uninstalling keeps that data.</li>
-<li><strong>Linux.</strong> One make target builds the package from a checkout: <code>make package-native-linux</code> writes <code>apps/native/target/package/workspacer-native-&lt;version&gt;-linux-&lt;arch&gt;.tar.gz</code> with a checksum beside it. Unpack it and run <code>./install.sh</code>, which installs for the current user into <code>~/.local</code> (set <code>PREFIX</code> for another place). <code>wks-native-uninstall</code> removes exactly the files the installer wrote; sessions, settings and logs are kept. The archive is not attached to releases yet.</li>
-<li><strong>macOS.</strong> There is no package, because a signed and notarized bundle is not set up. Build and run from source: <code>make run-native-local</code>, with Xcode's command-line tools and a current stable Rust.</li>
+<li><strong>Linux.</strong> The release build attaches an archive, <code>workspacer-native-&lt;version&gt;-linux-x64.tar.gz</code>, with a checksum beside it. Unpack it and run <code>./install.sh</code>, which installs for the current user into <code>~/.local</code> (set <code>PREFIX</code> for another place). <code>wks-native-uninstall</code> removes exactly the files the installer wrote; sessions, settings and logs are kept. From a checkout, <code>make package-native-linux</code> builds the same archive into <code>apps/native/target/package/</code>.</li>
+<li><strong>macOS.</strong> There is no native package, because a signed and notarized bundle is not set up. Build and run from source: <code>make run-native-local</code>, with Xcode's command-line tools and a current stable Rust. Or use the Electron app's Apple Silicon <code>.dmg</code> from the same release; the <a href="docs-electron.html#getting-started">Electron app docs</a> cover installing it.</li>
 </ul>
 <p>Building from source on Linux needs a few system libraries first. On Debian or Ubuntu:</p>
 <pre><code>sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev \
@@ -488,7 +488,7 @@
 <a href="shots/mobile-fleet.webp" target="_blank" style="flex:1;line-height:0;border:0"><img src="shots/mobile-fleet.webp" width="640" height="859" loading="lazy" style="width:100%;height:auto;border:1px solid #2a3134;border-radius:12px" alt="The phone client's Fleet tab: filters for All / Waiting / In flight / Landed, and a card per agent with its project, task, status, model, context meter and cost" /></a>
 <a href="shots/mobile-chat.webp" target="_blank" style="flex:1;line-height:0;border:0"><img src="shots/mobile-chat.webp" width="640" height="1098" loading="lazy" style="width:100%;height:auto;border:1px solid #2a3134;border-radius:12px" alt="An agent transcript on the phone: collapsible work cards, diff counts, model and permission pills, and the composer" /></a>
 </p>
-<p>The phone client was built alongside the Electron app, so some of its tabs are about features the native app does not have a launcher for (the Fleet Manager's flows and briefs). The <a href="docs-electron.html#remote">legacy docs</a> describe every tab. Push notifications from it are still being hardened and are not something to rely on.</p>
+<p>The phone client was built alongside the Electron app, so some of its tabs are about features the native app does not have a launcher for (the Fleet Manager's flows and briefs). The <a href="docs-electron.html#remote">Electron app docs</a> describe every tab. Push notifications from it are still being hardened and are not something to rely on.</p>
 <h3>attach the app to another hub</h3>
 <p>The native app is a client too. Point it at a hub on another machine and it shows that hub's sessions:</p>
 <pre><code>wks-native --bus wss://my-host/bus --token-file /path/to/token</code></pre>
@@ -517,7 +517,7 @@ workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
 <h3>more than one machine</h3>
 <p>A hub can link to another machine's hub, so agents can be started and queued on either from one place. Peers are named in a <code>peers.json</code> in the hub's config directory, each with a name, a URL and a token minted on the other machine:</p>
 <pre><code>[{ "name": "work-pc", "url": "ws://work-pc:7895/bus", "token": "&lt;that token&gt;" }]</code></pre>
-<p>The token you mint is the ceiling on everything the link can do. Use your tailnet hostname, as with everything else here. The <a href="docs-electron.html#remote">legacy docs</a> go deeper on federation, on remote worker nodes that can be switched off between uses, and on the browser clients (<code>/remote</code> and <code>/app</code>) that the standalone server also serves.</p>
+<p>The token you mint is the ceiling on everything the link can do. Use your tailnet hostname, as with everything else here. The <a href="docs-electron.html#remote">Electron app docs</a> go deeper on federation, on remote worker nodes that can be switched off between uses, and on the browser clients (<code>/remote</code> and <code>/app</code>) that the standalone server also serves.</p>
 </section>
 
 <section id="settings" class="doc">
@@ -819,12 +819,12 @@ workspacer jobs remove &lt;id&gt;</code></pre>
 <p>To point your <em>own</em> MCP client at it, mint a token with <code>workspacer token create --scope operator --label "my client"</code> and send it as <code>Authorization: Bearer &lt;token&gt;</code>, or as <code>?t=&lt;token&gt;</code> on the URL for clients that cannot set headers. A <code>view</code> or <code>triage</code> token gets a correspondingly smaller set of tools. The <code>facade.untokenedAccess</code> config key is the escape hatch: see <a href="#configuration">configuration</a>. The endpoint details are on the <a href="build.html#mcp">build &amp; internals</a> page.</p>
 <h3>plugins</h3>
 <p>A plugin is a folder with a manifest. It can run a supervised <strong>sidecar</strong> process, contribute <strong>MCP tools</strong> that every agent then receives, and, in clients that can show them, add <strong>panes</strong>. The hub loads and supervises plugins, so the sidecars and the tools work under the native app's hub and under <code>workspacer serve</code>.</p>
-<p>What the native app does not have is plugin UI: it shows no plugin panes, and it has no plugin manager. Browsing the catalog, installing, enabling and disabling plugins has a UI in the Electron app only, described in the <a href="docs-electron.html#extending">legacy docs</a>.</p>
+<p>What the native app does not have is plugin UI: it shows no plugin panes, and it has no plugin manager. Browsing the catalog, installing, enabling and disabling plugins has a UI in the Electron app only, described in the <a href="docs-electron.html#extending">Electron app docs</a>.</p>
 <blockquote>Enabled plugins are trusted local code running as your user, with your access to the machine. There is no sandbox. Only enable plugins you trust.</blockquote>
 <p>To write one, see <a href="build-plugin.html">build a plugin</a>.</p>
 <h3>the terminal client (wks-tui)</h3>
 <p><code>wks-tui</code> is a terminal client on the same bus, for when you would rather stay on the keyboard or the box has no display. It talks to the hub by default. If no hub is running on this machine it starts one (<code>workspacer-rust serve</code>) and stops it again on exit; <code>--no-spawn</code> turns that off, and a hub that was already running is left alone. Point it at another machine's bus to drive that one instead.</p>
-<p>Navigation is vim-first: <code>Ctrl-K</code> opens a fuzzy command palette and <code>j</code>/<code>k</code> move. Its config (theme and key remaps) lives at <code>~/.config/workspacer/tui.json</code>. The <a href="docs-electron.html#extending">legacy docs</a> list its keys in full, and the <a href="build.html">build &amp; internals</a> page covers launching it from source.</p>
+<p>Navigation is vim-first: <code>Ctrl-K</code> opens a fuzzy command palette and <code>j</code>/<code>k</code> move. Its config (theme and key remaps) lives at <code>~/.config/workspacer/tui.json</code>. The <a href="docs-electron.html#extending">Electron app docs</a> list its keys in full, and the <a href="build.html">build &amp; internals</a> page covers launching it from source.</p>
 </section>
 
 <section id="configuration" class="doc">
@@ -878,7 +878,7 @@ workspacer jobs remove &lt;id&gt;</code></pre>
 <li><strong>usage</strong>: <code>pollOnBoot: true</code>. When the session engine starts it reads each signed-in account's usage windows, so the meters are accurate with nothing running. Turn it off and it polls only accounts that have a live session.</li>
 <li><strong>facade</strong>: <code>untokenedAccess: deny</code>, what the MCP endpoint does with a request that carries <em>no</em> token. There is no Settings toggle for this one; it is a config-file key, and the default is the safe end. <code>deny</code> answers <code>401</code>. <code>view</code> hands an uncredentialed caller the read-only tier: no spawning or writing, but it can still list your agents and read every transcript, so treat it as "anything on this machine may read my work". <code>operator</code> hands it <em>everything</em>: spawn agents, write files, rewrite this config. Agents work{spacer} starts are never affected, because they carry a per-session token minted for them at launch.</li>
 </ul>
-<p>The file has more sections than these (<code>ui</code>, <code>terminal</code>, <code>browser</code>, <code>panes</code>, <code>keybindings</code> and others). They configure the Electron app's interface and are documented in the <a href="docs-electron.html#configuration">legacy docs</a>; the native app keeps its own interface preferences on the device instead.</p>
+<p>The file has more sections than these (<code>ui</code>, <code>terminal</code>, <code>browser</code>, <code>panes</code>, <code>keybindings</code> and others). They configure the Electron app's interface and are documented in the <a href="docs-electron.html#configuration">Electron app docs</a>; the native app keeps its own interface preferences on the device instead.</p>
 <h3>ports</h3>
 <p>A standalone hub binds these by default: the bus on <code>7895</code>, the MCP endpoint on <code>7897</code>, and the session engine's two loopback ports, <code>7890</code> and <code>7891</code>. The engine's ports are always loopback, and the bus is too unless you pass <code>--host</code>. The native app in local mode does not use fixed ports for its bus: it allocates loopback ports, and the bus keeps the one it first received so that Tailscale Serve still reaches it after a restart.</p>
 <h3>environment variables</h3>
@@ -891,16 +891,16 @@ workspacer jobs remove &lt;id&gt;</code></pre>
 
 <section id="legacy" class="doc">
 <h2>the electron app</h2>
-<p>The Electron desktop app is deprecated. It still runs, and its installers stay on the <a href="https://github.com/DJTouchette/workspacer/releases">releases page</a>, but new work goes into the native app. Its documentation is kept, unchanged, on the <a href="docs-electron.html">legacy docs</a> page.</p>
+<p>The Electron desktop app ships alongside the native app in this release, and its installers are on the <a href="https://github.com/DJTouchette/workspacer/releases">releases page</a>. The next release deprecates it, and new work already goes into the native app. Its documentation is kept, unchanged, on the <a href="docs-electron.html">Electron app docs</a> page.</p>
 <p>Some of what it documents has no counterpart in the native app, on purpose. If you followed a link here looking for one of these, this is where it went:</p>
 <ul class="moved">
-<li id="fleet-manager"><strong>The Fleet Manager</strong>, one manager agent that dispatches workers and is woken when they finish. The native app has no launcher for a manager; it does show a manager's wakes when it attaches to a hub that has one. <a href="docs-electron.html#fleet-manager">Legacy docs →</a></li>
-<li id="fleet-workflows"><strong>Configurable Fleet workflows</strong>: default and per-project workflows, role-based routing and pinned task definitions, set up in the Electron app's settings. <a href="docs-electron.html#fleet-workflows">Legacy docs →</a></li>
-<li id="briefs"><strong>Briefs and the brief board.</strong> The <code>brief.md</code> file itself is not Electron-only: agents the native app starts keep it with the <code>project-brief</code> <a href="#spawning">skill</a>. The board that shows briefs as cards is. <a href="docs-electron.html#briefs">Legacy docs →</a></li>
-<li id="agent-pane"><strong>The agent pane.</strong> Its native counterpart is <a href="#conversation">the conversation</a>. <a href="docs-electron.html#agent-pane">Legacy docs →</a></li>
-<li id="panes"><strong>Pane types</strong>: tiled terminal, browser, editor, review, library, analytics and plugin panes. The native app has <a href="#views">views</a> instead of panes, and no embedded browser. <a href="docs-electron.html#panes">Legacy docs →</a></li>
-<li id="layout-and-navigation"><strong>Layout and navigation</strong>: UI modes, layout templates, the command palette and prefix chords. For the native app see <a href="#keys">keys and navigation</a>. <a href="docs-electron.html#layout-and-navigation">Legacy docs →</a></li>
-<li id="launch-integrations"><strong>Optional Headroom routing</strong> and launch integrations: a plugin that prepares a session at launch, chosen in the Electron app's spawn dialog. New Agent in the native app has no launch-integration choice. <a href="docs-electron.html#launch-integrations">Legacy docs →</a></li>
+<li id="fleet-manager"><strong>The Fleet Manager</strong>, one manager agent that dispatches workers and is woken when they finish. The native app has no launcher for a manager; it does show a manager's wakes when it attaches to a hub that has one. <a href="docs-electron.html#fleet-manager">Electron app docs →</a></li>
+<li id="fleet-workflows"><strong>Configurable Fleet workflows</strong>: default and per-project workflows, role-based routing and pinned task definitions, set up in the Electron app's settings. <a href="docs-electron.html#fleet-workflows">Electron app docs →</a></li>
+<li id="briefs"><strong>Briefs and the brief board.</strong> The <code>brief.md</code> file itself is not Electron-only: agents the native app starts keep it with the <code>project-brief</code> <a href="#spawning">skill</a>. The board that shows briefs as cards is. <a href="docs-electron.html#briefs">Electron app docs →</a></li>
+<li id="agent-pane"><strong>The agent pane.</strong> Its native counterpart is <a href="#conversation">the conversation</a>. <a href="docs-electron.html#agent-pane">Electron app docs →</a></li>
+<li id="panes"><strong>Pane types</strong>: tiled terminal, browser, editor, review, library, analytics and plugin panes. The native app has <a href="#views">views</a> instead of panes, and no embedded browser. <a href="docs-electron.html#panes">Electron app docs →</a></li>
+<li id="layout-and-navigation"><strong>Layout and navigation</strong>: UI modes, layout templates, the command palette and prefix chords. For the native app see <a href="#keys">keys and navigation</a>. <a href="docs-electron.html#layout-and-navigation">Electron app docs →</a></li>
+<li id="launch-integrations"><strong>Optional Headroom routing</strong> and launch integrations: a plugin that prepares a session at launch, chosen in the Electron app's spawn dialog. New Agent in the native app has no launch-integration choice. <a href="docs-electron.html#launch-integrations">Electron app docs →</a></li>
 </ul>
 </section>
     <div class="foot">work{spacer} :: a small native app for coding agents :: open source (MIT) :: <a href="enterprise.html#pilot" data-contact-open>contact</a></div>

@@ -92,7 +92,7 @@
 
   .callout { border: 1px solid var(--line); border-left: 2px solid var(--cyan); background: var(--bg-2); padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0; max-width: 80ch; color: var(--ink-dim); }
   .callout strong { color: var(--cyan); }
-  /* The one deprecated thing on the page. Amber is already the alpha badge's
+  /* The one retiring thing on the page. Amber is already the alpha badge's
      colour, the site's "true, with a condition". */
   .callout.legacy { border-left-color: var(--amber); }
   .callout.legacy strong { color: var(--amber); }
@@ -140,7 +140,7 @@
       <a href="#plugins">writing a plugin</a>
       <a href="#mcp">the mcp facade</a>
       <a href="#federation">hub federation</a>
-      <a href="#electron">the electron app (legacy)</a>
+      <a href="#electron">the electron app</a>
     </nav>
   </aside>
   <main>
@@ -148,13 +148,13 @@
     <section id="building" class="doc">
 <h2>building from source</h2>
 <p>This page is for people building work{spacer} from the repo or extending it. If you just want to <em>use</em> it, the <a href="docs.html">operational docs</a> are what you want.</p>
-<p>work{spacer} is a monorepo. Four Rust components are the product, and one deprecated app sits beside them:</p>
+<p>work{spacer} is a monorepo. Four Rust components are the product, and one older app sits beside them:</p>
 <ul>
 <li><code>apps/native</code>: <strong>the native app</strong>, <code>wks-native</code>. A GPUI window with no webview in it. This is the product.</li>
 <li><code>services/hub-rs</code>: <strong>the hub</strong>. The event bus, the capability router, the shared services, the plugin system and the MCP facade. It builds as a library (the <code>workspacer-hub</code> crate) and as the <code>workspacer-rust</code> executable, installed under the name <code>workspacer</code>.</li>
 <li><code>services/claudemon</code>: <strong>the session engine</strong>. It owns agent sessions, PTYs and the per-provider adapters. Also a library and a <code>claudemon</code> executable.</li>
 <li><code>apps/tui</code>: <code>wks-tui</code>, a terminal client on the same bus.</li>
-<li><code>apps/desktop</code>: the Electron app. <strong>Deprecated</strong>: it still builds and runs, but new work goes into the native app. Everything about it lives in <a href="#electron">its own section</a> at the end of this page.</li>
+<li><code>apps/desktop</code>: the Electron app. <strong>On its way out</strong>: this release ships it alongside the native app and the next release deprecates it, so new work goes into the native app. Everything about it lives in <a href="#electron">its own section</a> at the end of this page.</li>
 </ul>
 <p>The root <code>Makefile</code> is the single entry point; every target delegates into the right component directory.</p>
 <h3>toolchains</h3>
@@ -210,7 +210,7 @@ make clean                # remove build artifacts across all components</code><
 <ul>
 <li><strong>the hub</strong> (<code>services/hub-rs</code>, Rust). One runtime that owns the bus (a WebSocket at <code>/bus</code>), the capability router, the shared services behind those capabilities (sessions, spawning, git, files, jobs, plugins, federation), the phone and web clients it serves, and the MCP facade. As a standalone process it binds <code>127.0.0.1:7895</code>, with the facade on <code>127.0.0.1:7897</code>.</li>
 <li><strong>the session engine</strong> (<code>services/claudemon</code>, Rust). It owns the sessions: per-session state, PTYs, the per-provider adapters, and a structured conversation so a client reads messages and tool calls instead of raw scrollback. Standalone it listens for Claude Code hook events on <code>127.0.0.1:7890</code> and serves REST + SSE on <code>127.0.0.1:7891</code>. That API is documented in full on <a href="build-client.html">build a client</a>.</li>
-<li><strong>clients</strong>. <code>wks-native</code>, <code>wks-tui</code>, the phone client the hub serves at <code>/m</code>, any MCP client, and the deprecated Electron app. They all speak the same bus, so a session started in one can be watched and driven from another.</li>
+<li><strong>clients</strong>. <code>wks-native</code>, <code>wks-tui</code>, the phone client the hub serves at <code>/m</code>, any MCP client, and the Electron app. They all speak the same bus, so a session started in one can be watched and driven from another.</li>
 </ul>
 <h3>three ways it runs</h3>
 <ul>
@@ -218,7 +218,7 @@ make clean                # remove build artifacts across all components</code><
 <li><strong><code>workspacer serve</code>.</strong> The same backend with no window: one process owning the engine, the bus, the services and the facade. <code>--hub-only</code> starts the control plane without an engine, and <code>--external-claudemon</code> lets a hub-only server borrow a daemon someone else owns. This is what runs on a box with no desktop.</li>
 <li><strong><code>wks-native</code> with no flag, or <code>--bus</code>.</strong> A client and nothing else. It attaches to a hub that already exists and leaves that hub running when it exits.</li>
 </ul>
-<div class="callout"><strong>If you remember three processes.</strong> Earlier versions of this page described an Electron app supervising two daemons, a Go hub, a separate <code>brain</code> provider and a private Node companion. The Go hub, the brain and the companion are gone from the tree: the Rust hub owns their jobs in one runtime. The Go source survives only as a pinned historical checkout used as a test oracle (<code>scripts/reference/README.md</code>). The Electron app is still here, deprecated, and described <a href="#electron">below</a>.</div>
+<div class="callout"><strong>If you remember three processes.</strong> Earlier versions of this page described an Electron app supervising two daemons, a Go hub, a separate <code>brain</code> provider and a private Node companion. The Go hub, the brain and the companion are gone from the tree: the Rust hub owns their jobs in one runtime. The Go source survives only as a pinned historical checkout used as a test oracle (<code>scripts/reference/README.md</code>). The Electron app is still here for one more release, and described <a href="#electron">below</a>.</div>
 <h3>the hub bus</h3>
 <p>Each client opens <strong>one</strong> bidirectional WebSocket to <code>ws://&lt;addr&gt;/bus</code> and exchanges JSON frames. Publish and subscribe share the same pipe, unlike the engine's SSE-down / POST-up split, because it keeps plugins simple. The frames and topic matching live in <code>src/protocol.rs</code>; the bus actor and the router in <code>src/runtime.rs</code>.</p>
 <p><strong>Pub/sub.</strong> Subscribe to topics, publish events:</p>
@@ -278,7 +278,7 @@ hub → caller:   {"op":"result","id":"req-1","result":{...}}</code></pre>
 <p>The plugin system belongs to the hub, so a plugin's backend half works wherever the hub does, and its user-interface half only where a client draws it.</p>
 <ul>
 <li><strong>Everywhere the hub runs</strong>, including inside <code>wks-native --local</code> and under <code>workspacer serve</code>: the sidecar and its supervision, the capabilities it <code>provides</code>, the events it publishes and consumes, its settings, and its <code>tools</code>. Tools are the part an agent sees: every agent the hub launches is given the tools of every enabled plugin.</li>
-<li><strong>Only in the Electron app</strong> (deprecated): panes, hotkeys, command-palette entries, the Plugins Manager, and theme injection into plugin webviews. <strong>The native app draws no plugin panes.</strong> A plugin that is only a pane has nowhere to appear there.</li>
+<li><strong>Only in the Electron app</strong>: panes, hotkeys, command-palette entries, the Plugins Manager, and theme injection into plugin webviews. <strong>The native app draws no plugin panes.</strong> A plugin that is only a pane has nowhere to appear there.</li>
 </ul>
 <p>The plugins directory is <code>&lt;configDir&gt;/plugins</code> unless <code>--plugins-dir</code> says otherwise. For development, point a control plane at your own directory, or let the dev command build, load and reload one plugin as you edit it:</p>
 <pre><code>workspacer serve --hub-only --plugins-dir /absolute/path/to/plugins
@@ -379,8 +379,8 @@ services/hub-rs/target/release/workspacer-rust serve
     </section>
 
     <section id="electron" class="doc">
-<h2>the electron app (legacy)</h2>
-<div class="callout legacy"><strong>Deprecated.</strong> The Electron app in <code>apps/desktop</code> still builds, still runs, and its installers stay on the releases page. New work goes into the native app. This section is here so the code stays explainable, not as a recommendation.</div>
+<h2>the electron app</h2>
+<div class="callout legacy"><strong>On its way out.</strong> The Electron app in <code>apps/desktop</code> ships alongside the native app in this release, and the next release deprecates it. New work goes into the native app. This section is here so the code stays explainable, not as a recommendation.</div>
 <p>It is an Electron main process, a React renderer, and two child processes it supervises. Some things exist only here: tiled panes, the embedded browser, plugin panes and the Plugins Manager, the brief board, and the Fleet Manager launcher.</p>
 <h3>build and run</h3>
 <pre><code>make install      # cd apps/desktop &amp;&amp; npm install

@@ -8,13 +8,13 @@ A plugin extends work{spacer} with automations, capabilities, tools for agents, 
 
 ### where a plugin shows up
 
-Read this before you choose a shape. The hub is the same Rust code whether it runs inside the native app, under `workspacer serve`, or beside the deprecated Electron app, so everything a plugin does *on the bus* works in all three. What differs is who can draw your UI.
+Read this before you choose a shape. The hub is the same Rust code whether it runs inside the native app, under `workspacer serve`, or beside the Electron app, so everything a plugin does *on the bus* works in all three. What differs is who can draw your UI.
 
 - **Everywhere:** a sidecar process (`server`), the bus methods you answer (`provides`), the events you publish and consume, your stored `settings`, and the MCP `tools` you hand to agents. Every agent the hub starts gets your tools while the plugin is enabled, whichever window started it.
 - **Only where the web renderer runs:** panes (`ui`, `panes`), `widgets`, `hotkeys`, and the screens that manage plugins and edit their settings. That renderer is the Electron app, and the same code served to a browser at `/app` by a `workspacer serve` that has the web bundle beside it (the release server bundle does).
 - **Not in the native app:** it has no plugin renderer and no plugin manager. Its hub still loads your plugin, runs its sidecar and gives its tools to agents, but a pane has nowhere to open; a request to open one is answered with a notice that the native client cannot render it.
 
-So for the native app, build a sidecar that contributes `tools` or automation. Build a pane when your users run the Electron app or the web app.
+So for the native app, build a sidecar that contributes `tools` or automation. Build a pane when your users run the Electron app or the web app, and keep in mind that the Electron app ships in this release and is deprecated in the next.
 
 Every plugin is one of two shapes, and it's the first decision you make. The split is exactly the `server` vs `ui` field in the manifest.
 
