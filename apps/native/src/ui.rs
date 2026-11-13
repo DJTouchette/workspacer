@@ -824,8 +824,7 @@ impl Workspace {
         });
         let prompt = cx.new(|cx| {
             InputState::new(window, cx)
-                .multi_line(true)
-                .rows(3)
+                .auto_grow(LAUNCH_PROMPT_ROWS, LAUNCH_PROMPT_ROWS)
                 .placeholder("Describe the task, or leave this empty to start idle")
         });
         let project_path = cx
@@ -1644,7 +1643,8 @@ impl Workspace {
             return;
         }
         if self.new_session {
-            if kind == Submit::Send {
+            // Send now is Ctrl/Cmd+Enter where Enter sends: both start it.
+            if kind != Submit::Queue {
                 self.create(window, cx);
             }
             return;
@@ -1718,8 +1718,13 @@ impl Workspace {
     /// key (it commits the composition), and so does any state where the
     /// draft cannot be sent: nothing is inserted, nothing is lost.
     fn composer_enter(&mut self, _: &ComposerEnter, window: &mut Window, cx: &mut Context<Self>) {
-        let composing = self
-            .composer
+        // New Agent's first message is the composer until there is a chat.
+        let input = if self.new_session {
+            &self.prompt
+        } else {
+            &self.composer
+        };
+        let composing = input
             .update(cx, |input, cx| {
                 gpui::EntityInputHandler::marked_text_range(input, window, cx)
             })
@@ -1985,6 +1990,10 @@ impl Workspace {
     }
 }
 
+/// New Agent's first message: the rows it rests at, and the most it grows to.
+const LAUNCH_PROMPT_ROWS: usize = 3;
+const LAUNCH_PROMPT_MAX_ROWS: usize = 12;
+
 impl Workspace {
     /// Input's auto-grow minimum belongs to its text element. Adjust that row
     /// budget itself, so caret scrolling and painting use the real viewport
@@ -2000,6 +2009,17 @@ impl Workspace {
             .clamp(1., most) as usize;
         self.composer
             .update(cx, |input, cx| input.set_auto_grow_rows(1, rows, cx));
+        // New Agent's first message starts taller and has the page to grow
+        // into: up to a third of the window, the rest scrolls inside it.
+        let most = (f32::from(height) * 0.33 / (f32::from(window.rem_size()) * 1.25)).floor()
+            as usize;
+        self.prompt.update(cx, |input, cx| {
+            input.set_auto_grow_rows(
+                LAUNCH_PROMPT_ROWS,
+                most.clamp(LAUNCH_PROMPT_ROWS, LAUNCH_PROMPT_MAX_ROWS),
+                cx,
+            )
+        });
     }
 }
 

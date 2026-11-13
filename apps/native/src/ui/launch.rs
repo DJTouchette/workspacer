@@ -891,6 +891,12 @@ impl Workspace {
             .child(
                 div()
                     .debug_selector(|| "launch-prompt".into())
+                    // Send with Enter applies to the first message too. The
+                    // context is the prompt's alone: the model menu's search
+                    // beside it keeps its own Enter.
+                    .when(self.settings.enter_sends, |d| {
+                        d.key_context("ComposerEnter")
+                    })
                     .child(Input::new(&self.prompt).appearance(false).disabled(busy)),
             )
             .child(
@@ -972,14 +978,20 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(keycap(
-                        if cfg!(target_os = "macos") {
-                            "⌘ Enter"
-                        } else {
-                            "Ctrl Enter"
-                        },
-                        p,
-                    ))
+                    .child(
+                        div()
+                            .debug_selector(|| "launch-send-hint".into())
+                            .child(keycap(
+                                if self.settings.enter_sends {
+                                    "Enter"
+                                } else if cfg!(target_os = "macos") {
+                                    "⌘ Enter"
+                                } else {
+                                    "Ctrl Enter"
+                                },
+                                p,
+                            )),
+                    )
                     .child("start")
                     .child(div().w_2())
                     .child(keycap("Esc", p))

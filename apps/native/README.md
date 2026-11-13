@@ -125,7 +125,10 @@ started yet, laid out like a live one rather than as a form:
   agent idle), a chip naming the agent, the **model** menu, the non-default
   options as chips, and **Start agent** where Send will be. The line under it
   reports a short failure, progress or a missing project, and the keys
-  (`Ctrl/Cmd+Enter` starts, `Esc` goes back).
+  (`Ctrl/Cmd+Enter` starts, `Esc` goes back). The message box rests at three
+  lines and grows with the draft, up to a third of the window (twelve lines at
+  most), then scrolls. With **Send messages with Enter** on, Enter starts the
+  agent and Shift+Enter adds a line, as in a chat.
 
 The page answers one question at a time. The agent chip swaps it for the
 agent's settings: Claude or Codex, **effort** (with the model list's reload),
@@ -370,9 +373,9 @@ Captured during a real Codex round trip through an isolated backend:
   **Reconnect and wake** remain where a read failed or the server paused).
   **Settings → Keyboard → Send messages with** switches the composer to Enter
   to send and Shift+Enter for a new line. The choice is saved on this device and
-  applies only to the chat composer: other fields keep their Enter, an open IME
-  composition keeps Enter for the input method, and a busy composer neither
-  sends nor adds a line.
+  applies only to the chat composer and New Agent's first message: other
+  fields keep their Enter, an open IME composition keeps Enter for the input
+  method, and a busy composer neither sends nor adds a line.
 - **Sending while the agent works** (a turn running, an approval or question
   open, or a send still in flight): the send key **steers** — the message is
   sent now and the agent reads it at its next step (Claude's next tool
@@ -708,7 +711,7 @@ editing; this is Vim-style app navigation, not a modal text editor.
 | `Ctrl/Cmd+P` | Projects, including with Vim disabled |
 | `Ctrl/Cmd+,` | Settings, including with Vim disabled |
 | `Ctrl/Cmd+Enter` | Send, start the agent, or pin the focused project-path field |
-| `Enter` / `Shift+Enter` | With **Send messages with Enter**: send / new line in the composer |
+| `Enter` / `Shift+Enter` | With **Send messages with Enter**: send (or start the agent) / new line in the composer |
 | `Tab` | While the agent works, with a draft: queue it for the turn's end (not during an IME composition) |
 | `/` then `↑`/`↓`, `Enter`/`Tab`, `Esc` | Composer command menu: move, insert, close |
 | `Ctrl/Cmd+Shift+Enter` (or `Ctrl/Cmd+Enter` when Enter sends) | While the agent works: send now |

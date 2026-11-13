@@ -473,6 +473,89 @@ fn new_session_form_creates_once_and_keeps_failed_input(cx: &mut TestAppContext)
     });
 }
 
+/// The first message is typed in a composer: it grows with the draft, and
+/// Settings → Keyboard → Send messages with Enter starts the agent with
+/// Enter (Shift+Enter adds a line, Ctrl/Cmd+Enter still starts).
+#[gpui::test]
+fn first_message_grows_and_follows_send_with_enter(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    let focus_prompt = |visual: &mut gpui::VisualTestContext, text: &str| {
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.prompt.update(cx, |input, cx| {
+                    input.set_value(text.to_owned(), window, cx);
+                    input.focus(window, cx)
+                })
+            })
+        });
+        visual.run_until_parked();
+    };
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            this.update_view(Arc::new(state("a")), window, cx);
+            this.show_new_session(window, cx);
+            this.select_project("/work/project", window, cx);
+        })
+    });
+    visual.simulate_resize(size(px(1000.), px(700.)));
+    visual.run_until_parked();
+    // Default: Enter is a new line, and the box grows to hold it.
+    focus_prompt(&mut visual, "");
+    let rest = visual.debug_bounds("launch-prompt").unwrap().size.height;
+    visual.simulate_input("one");
+    for line in ["two", "three", "four", "five"] {
+        visual.simulate_keystrokes("enter");
+        visual.simulate_input(line);
+    }
+    visual.run_until_parked();
+    assert!(next_effect(&mut commands).is_none(), "Enter is a new line");
+    workspace.read_with(&visual, |this, cx| {
+        assert_eq!(
+            this.prompt.read(cx).value().as_ref(),
+            "one\ntwo\nthree\nfour\nfive"
+        )
+    });
+    let grown = visual.debug_bounds("launch-prompt").unwrap();
+    let composer = visual.debug_bounds("launch-task").unwrap();
+    let start = visual.debug_bounds("launch-start").unwrap();
+    assert!(grown.size.height > rest, "{rest:?} -> {grown:?}");
+    assert!(
+        start.top() >= grown.bottom() && start.bottom() < composer.bottom(),
+        "the grown draft keeps Start inside the composer"
+    );
+    // Send with Enter: Shift+Enter adds the line, Enter starts the agent.
+    visual.update(|_, cx| {
+        workspace.update(cx, |this, cx| {
+            this.settings.enter_sends = true;
+            cx.notify();
+        })
+    });
+    focus_prompt(&mut visual, "");
+    visual.simulate_input("Fix");
+    visual.simulate_keystrokes("shift-enter");
+    visual.simulate_input("the tests");
+    visual.simulate_keystrokes("enter");
+    let Some(Command::Create(request)) = next_effect(&mut commands) else {
+        panic!("Enter starts the agent")
+    };
+    assert_eq!(request.message, "Fix\nthe tests");
+    assert!(commands.try_recv().is_err());
+    // Ctrl/Cmd+Enter (send now in a chat) starts it in either mode.
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.spawn_pending = false;
+            this.update_view(Arc::new(state("a")), window, cx);
+        })
+    });
+    focus_prompt(&mut visual, "Again");
+    visual.simulate_keystrokes("ctrl-enter");
+    let Some(Command::Create(request)) = next_effect(&mut commands) else {
+        panic!("Ctrl+Enter starts the agent")
+    };
+    assert_eq!(request.message, "Again");
+}
+
 #[gpui::test]
 fn default_access_applies_on_new_launch_and_provider_switch(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
