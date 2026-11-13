@@ -168,7 +168,7 @@
 
     <section id="run" class="doc">
 <h2>run it headless</h2>
-<p>Two ways to get this API on a known port, and one case where you want the bus instead. The first two end with claudemon listening on <code>127.0.0.1:7891</code>.</p>
+<p>Three ways to get an API to talk to. The first two put claudemon on <code>127.0.0.1:7891</code>; the third depends on which app is already running.</p>
 <h3>1. the whole stack, no GUI</h3>
 <p><code>workspacer serve</code> is one Rust process that owns the session engine, the hub and the MCP facade. There are no helper daemons to supervise. This is the server bundle: grab <code>workspacer-server-&lt;os&gt;-&lt;arch&gt;</code> from the <a href="https://github.com/DJTouchette/workspacer/releases">releases</a>, or <code>make build-cli</code> from source, which builds it as <code>services/hub-rs/target/release/workspacer-rust</code>.</p>
 <pre><code>workspacer serve
