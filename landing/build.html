@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>work{spacer} :: build &amp; internals</title>
-<meta name="description" content="Building work{spacer} from source, the three-process architecture, the hub bus protocol, writing plugins, and the MCP facade." />
+<meta name="description" content="Building work{spacer} from source: the native app, the Rust hub and session engine it embeds, the hub bus protocol, how agents are driven, plugins, the MCP facade, and federation." />
 <!-- The pages named JetBrains Mono without ever loading it. Prose is sans now;
      mono is reserved for code, the wordmark, and terminal bodies. -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -92,6 +92,10 @@
 
   .callout { border: 1px solid var(--line); border-left: 2px solid var(--cyan); background: var(--bg-2); padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0; max-width: 80ch; color: var(--ink-dim); }
   .callout strong { color: var(--cyan); }
+  /* The one deprecated thing on the page. Amber is already the alpha badge's
+     colour, the site's "true, with a condition". */
+  .callout.legacy { border-left-color: var(--amber); }
+  .callout.legacy strong { color: var(--amber); }
 
   .foot { color: var(--ink-faint); font-size: 12.5px; margin-top: 50px; padding-top: 22px; border-top: 1px solid var(--line); }
 
@@ -134,8 +138,9 @@
       <a href="#architecture">architecture internals</a>
       <a href="#providers">how agents are driven</a>
       <a href="#plugins">writing a plugin</a>
-      <a href="#mcp">the mcp facade &amp; brain</a>
+      <a href="#mcp">the mcp facade</a>
       <a href="#federation">hub federation</a>
+      <a href="#electron">the electron app (legacy)</a>
     </nav>
   </aside>
   <main>
@@ -143,340 +148,186 @@
     <section id="building" class="doc">
 <h2>building from source</h2>
 <p>This page is for people building work{spacer} from the repo or extending it. If you just want to <em>use</em> it, the <a href="docs.html">operational docs</a> are what you want.</p>
-<p>work{spacer} is a monorepo. The Electron desktop app in <code>apps/desktop</code> is the primary client. It spawns and supervises two daemons at runtime: <code>claudemon</code> (Rust, in <code>services/claudemon</code>) and <code>workspacer-rust</code> (Rust control plane, in <code>services/hub-rs</code>). A Rust TUI lives in <code>apps/tui</code>. The root <code>Makefile</code> is the single entry point; every target just delegates into the right component directory.</p>
+<p>work{spacer} is a monorepo. Four Rust components are the product, and one deprecated app sits beside them:</p>
+<ul>
+<li><code>apps/native</code>: <strong>the native app</strong>, <code>wks-native</code>. A GPUI window with no webview in it. This is the product.</li>
+<li><code>services/hub-rs</code>: <strong>the hub</strong>. The event bus, the capability router, the shared services, the plugin system and the MCP facade. It builds as a library (the <code>workspacer-hub</code> crate) and as the <code>workspacer-rust</code> executable, installed under the name <code>workspacer</code>.</li>
+<li><code>services/claudemon</code>: <strong>the session engine</strong>. It owns agent sessions, PTYs and the per-provider adapters. Also a library and a <code>claudemon</code> executable.</li>
+<li><code>apps/tui</code>: <code>wks-tui</code>, a terminal client on the same bus.</li>
+<li><code>apps/desktop</code>: the Electron app. <strong>Deprecated</strong>: it still builds and runs, but new work goes into the native app. Everything about it lives in <a href="#electron">its own section</a> at the end of this page.</li>
+</ul>
+<p>The root <code>Makefile</code> is the single entry point; every target delegates into the right component directory.</p>
 <h3>toolchains</h3>
-<p>Toolchains are pinned with <a href="https://mise.jdx.dev"><code>mise</code></a> via <code>mise.toml</code> at the repo root:</p>
 <ul>
-<li><strong>Go 1.25</strong> only for explicitly invoked historical oracles; see <code>scripts/reference/README.md</code>. Shipping backends build with Rust.</li>
-<li><strong>Node 22</strong> for the Electron app and the Vite renderer.</li>
-<li><strong>Rust</strong> via the standard <code>cargo</code> / <code>rustup</code> toolchain (not pinned by mise).</li>
+<li><strong>Rust</strong>, a current stable toolchain through <code>rustup</code>. It is not pinned, and it is all the native app, the hub, the engine and the TUI need.</li>
+<li><strong>Node 22</strong>, pinned by <a href="https://mise.jdx.dev"><code>mise</code></a> in <code>mise.toml</code>. Only the Electron app needs it, plus the script that packages the native Windows installer.</li>
+<li><strong>Go 1.25</strong>, also in <code>mise.toml</code>, only for an optional historical test oracle. Nothing that ships is Go; see <code>scripts/reference/README.md</code>.</li>
 </ul>
-<p><code>mise.toml</code> also puts <code>./apps/desktop/node_modules/.bin</code> on <code>PATH</code> so the app's local binaries resolve inside tasks.</p>
-<h3>install</h3>
-<p>From the repo root:</p>
-<pre><code>make install      # cd apps/desktop &amp;&amp; npm install</code></pre>
-<p>That installs the desktop JS deps. A <code>postinstall</code> step runs <code>electron-rebuild</code> against <code>better-sqlite3</code> so the native module matches your Electron version.</p>
-<h3>dev</h3>
-<pre><code>make dev          # desktop app in dev mode
-make dev-share    # same dev loop, remote sharing forced ON
-./dev             # thin wrapper around npm run dev</code></pre>
-<p><code>make dev</code> runs <code>npm run dev</code>. The dev loop builds the shared <code>workspacer-rust</code> executable, builds a release <code>claudemon</code>, builds the main process, ensures the web renderer bundle exists, starts the Vite renderer on <code>http://localhost:5173</code>, waits for it, then launches Electron with <code>ELECTRON_DEV=1</code> and hot reload.</p>
-<p><code>make dev-share</code> runs <code>npm run dev:share</code>, which sets <code>WORKSPACER_REMOTE_SHARE=1</code> first and is otherwise the same loop. <code>./dev</code> is a thin wrapper that runs <code>npm run dev</code> straight.</p>
-<p><strong>remote sharing.</strong> Sharing is a runtime toggle in the app (Remote control → Start sharing). When it is on, or forced on with <code>WORKSPACER_REMOTE_SHARE=1</code>, the hub binds beyond loopback so another PC or phone (intended over a Tailscale tailnet) can reach the bus and the web clients (<code>/m</code>, <code>/remote</code>, <code>/app</code>). The URL and token show up in the app's Hub status.</p>
-<ul>
-<li><code>WORKSPACER_REMOTE_SHARE=1</code> forces it on at launch. Default bind is <code>0.0.0.0:7895</code>.</li>
-<li><code>WORKSPACER_REMOTE_ADDR=host:port</code> overrides the bind address. Pin it to your tailnet IP to keep it off the LAN.</li>
-<li>Default (unset): the hub stays on <code>127.0.0.1</code>. A bus token is always created either way; remote mode reuses it as the bearer secret.</li>
-</ul>
-<h3>building claudemon by itself</h3>
-<p>The dev loop already builds <code>claudemon</code>, so there's nothing extra to do before spawning agents. To rebuild just the daemon (e.g. while iterating on Rust code):</p>
-<pre><code>make build-claudemon     # cargo build --release in services/claudemon</code></pre>
-<p>The binary lands at <code>services/claudemon/target/release/claudemon</code>. <code>make build</code> also covers it.</p>
-<h3>build</h3>
-<pre><code>make build               # shared backend, claudemon, desktop, TUI and native
-make build-hub           # shared Rust backend and standalone CLI
-make build-cli           # same shared Rust executable
-make build-claudemon     # cargo build --release for claudemon
-make build-tui           # cargo build --release for wks-tui</code></pre>
-<p><code>make build</code> runs <code>build-hub</code>, <code>build-claudemon</code>, <code>build-desktop</code>, <code>build-tui</code>, and <code>build-native</code>. <code>build-desktop</code> runs the desktop <code>npm run build</code> (main process + the Electron renderer + the web renderer bundle).</p>
-<p><code>make build-hub</code> and <code>make build-cli</code> both invoke the Rust backend builder. The executable lands at <code>services/hub-rs/target/release/workspacer-rust</code> (with <code>.exe</code> on Windows). Standalone <code>serve</code> owns its engine, bus, services and MCP facade in one process; it does not require sibling Go hub/brain/MCP binaries.</p>
-<h3>package</h3>
-<pre><code>make package             # build daemons + electron-builder installers</code></pre>
-<p>This builds the renderer and main process, the Rust backend and a release <code>claudemon</code>, then runs <code>electron-builder</code>. Installers land in <code>apps/desktop/release/</code>. Electron packages <code>workspacer-rust</code> under <code>&lt;resources&gt;/hub</code> and its separately owned <code>claudemon</code>. The release workflow also produces standalone <code>workspacer-server-&lt;platform&gt;</code> archives with the shared Rust executable, its <code>workspacer</code> alias, web/plugin assets and documentation. The native Windows preview has its own installer and identity.</p>
-<h3>test</h3>
-<pre><code>make test                # desktop + Rust hub + claudemon + TUI + native suites
-make test-desktop        # npm test (main via vitest, renderer via vitest)
-make test-hub            # cargo test for services/hub-rs
-make test-claudemon      # cargo test in services/claudemon
-make test-tui            # cargo test</code></pre>
-<p>The desktop app also has an e2e suite (<code>npm run test:e2e</code>, Playwright) that is not part of <code>make test</code>.</p>
+<p>The native app links against system libraries. On Debian or Ubuntu:</p>
+<pre><code>sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev \
+  libwayland-dev libssl-dev libasound2-dev libvulkan1 mesa-vulkan-drivers</code></pre>
+<p>Linux also needs a working X11 or Wayland display and a Vulkan driver. macOS needs Xcode's command-line tools. Windows needs the MSVC Rust toolchain and the Visual Studio C++ build tools.</p>
+<h3>run the native app</h3>
+<pre><code>make dev-native-local     # debug build, then the window with its own backend
+make run-native-local     # the same, as a release build
+make build-native         # just build apps/native/target/release/wks-native</code></pre>
+<p>The <code>-local</code> targets start <code>wks-native --local</code>: the window owns the hub and the session engine in its own process, so there is nothing else to build or start first. No Node, no Go, no separate daemon.</p>
+<pre><code>make dev-native           # debug build, attached to a hub that is already running
+make run-native           # the same, as a release build</code></pre>
+<p>Without <code>--local</code> the app is only a client. It connects to <code>ws://127.0.0.1:7895/bus</code> unless you point it elsewhere, and it never owns or stops the backend it attached to. Every target passes <code>ARGS</code> through:</p>
+<pre><code>make dev-native-local ARGS="--keep-running"     # closing the window minimizes instead of quitting
+make dev-native ARGS="--bus wss://host/bus --token-file /path/to/token"
+make dev-native ARGS="--demo"                   # fixture sessions; no agents, credentials or model calls</code></pre>
+<h3>build the backend by itself</h3>
+<pre><code>make build-cli            # services/hub-rs/target/release/workspacer-rust
+make build-hub            # the same target under its older name
+services/hub-rs/target/release/workspacer-rust serve</code></pre>
+<p><code>serve</code> is the whole backend in one process: session engine, bus, services and MCP facade. It needs no sibling binaries. Installed releases expose the same executable as <code>workspacer</code>, so the command reads <code>workspacer serve</code> there. <code>make build-claudemon</code> builds the engine's standalone executable (<code>services/claudemon/target/release/claudemon</code>), which the native app and <code>serve</code> do not need: they link the engine as a library.</p>
 <h3>run the tui</h3>
-<pre><code>make dev-tui             # wks-tui debug build; builds the Rust backend first, then claudemon (debug)
-make run-tui             # wks-tui release build; builds release claudemon + Rust backend + TUI first</code></pre>
-<p>The TUI defaults to the hub bus and can bootstrap a missing local Rust backend; it preserves ownership of pre-existing services. Pass <code>ARGS="--direct"</code> for the standalone claudemon-direct path, e.g. <code>make run-tui ARGS="--direct"</code>.</p>
-<h3>GPU escape hatch</h3>
-<p>Some Linux GPUs (hybrid Intel + AMD/NVIDIA laptops under Wayland) render the Chromium surface as garbage, speckled corruption. If you hit that:</p>
-<pre><code>WORKSPACER_DISABLE_GPU=1 ./dev</code></pre>
-<p>When set to <code>1</code>, the app calls <code>disableHardwareAcceleration()</code> and adds <code>--disable-gpu-compositing</code>. Single-GPU machines that render fine should leave it unset.</p>
+<pre><code>make dev-tui              # wks-tui, debug; builds the Rust backend and claudemon first
+make run-tui              # wks-tui, release</code></pre>
+<p>The TUI is a bus client by default and starts a local Rust backend if none is running. <code>ARGS="--direct"</code> skips the bus and talks to claudemon's own API instead.</p>
+<h3>test</h3>
+<pre><code>make test-native          # native UI and protocol tests, plus the embedded-engine lifecycle test
+make test-hub             # cargo test for services/hub-rs
+make test-claudemon       # cargo test for services/claudemon
+make test-tui             # cargo test for apps/tui
+make test                 # all of the above, plus the Electron app's suites</code></pre>
+<p>From <code>apps/native</code>, <code>cargo test --locked --no-default-features</code> runs the core and protocol suite with no display and no GUI libraries, which is the fast loop while you work on the model or the bus client.</p>
+<h3>package</h3>
+<pre><code>make package-native-linux # apps/native/target/package/workspacer-native-&lt;version&gt;-linux-&lt;arch&gt;.tar.gz</code></pre>
+<p>That is a release build packed with a per-user installer (<code>install.sh</code>, into <code>~/.local</code>) and a checksum beside the archive. The Windows installer is built by <code>apps/native/scripts/package-windows.mjs</code> and needs Node 22 and NSIS; <code>apps/native/README.md</code> has the exact steps. There is no macOS package, because an app bundle needs signing and notarization that are not set up.</p>
 <h3>per-component builds</h3>
-<p>Every component also builds on its own from its directory; the make targets just delegate. See the per-component READMEs: <code>apps/desktop/README.md</code>, <code>apps/tui/README.md</code>, <code>services/claudemon/README.md</code>, <code>services/hub-rs/MIGRATION.md</code>.</p>
-<pre><code>make clean               # remove build artifacts across all components</code></pre>
+<p>Every component also builds on its own from its directory; the make targets just delegate. The component READMEs go further than this page: <code>apps/native/README.md</code>, <code>apps/tui/README.md</code>, <code>services/claudemon/README.md</code>, and for the hub <code>services/hub-rs/MIGRATION.md</code>.</p>
+<pre><code>make build                # every component, the Electron app included
+make clean                # remove build artifacts across all components</code></pre>
     </section>
 
     <section id="architecture" class="doc">
 <h2>architecture internals</h2>
-<p>work{spacer} is three processes, not one. The desktop app you click is just a client. The actual work (the agent sessions, the PTYs, the transcripts) lives in daemons that keep running with or without a window open.</p>
-<h3>the three processes</h3>
+<p>There are two halves: a backend that owns the agents, and clients that show them. The native app is a client that can also carry the backend inside it.</p>
+<h3>the pieces</h3>
 <ul>
-<li><strong>desktop</strong> (<code>apps/desktop</code>), the Electron + React app. This is the primary GUI client. Electron main spawns and supervises the two daemons below as child processes, connects to the hub as a bus client, and forwards events into the renderer. It owns nothing about sessions itself, it just drives them.</li>
-<li><strong>claudemon</strong> (<code>services/claudemon</code>, Rust), owns the sessions. It ingests Claude Code hook events on <code>127.0.0.1:7890</code>, holds per-session state and PTYs, and serves session state + bidirectional control on <code>127.0.0.1:7891</code> over REST + SSE. It parses the <code>~/.claude/projects/*/*.jsonl</code> transcripts so any client gets a structured conversation, not raw scrollback. That REST + SSE surface is documented in full on <a href="build-client.html">build a client</a>, which is the seam to write your own UI against.</li>
-<li><strong>hub</strong> (<code>services/hub</code>, Go), the control-plane. A WebSocket event bus, a process supervisor, a capability (RPC) router, the plugin system, and an MCP facade. It runs independently of the UI so plugins and remote clients can broker events with or without a window open. Default bind is <code>127.0.0.1:7895</code>.</li>
+<li><strong>the hub</strong> (<code>services/hub-rs</code>, Rust). One runtime that owns the bus (a WebSocket at <code>/bus</code>), the capability router, the shared services behind those capabilities (sessions, spawning, git, files, jobs, plugins, federation), the phone and web clients it serves, and the MCP facade. As a standalone process it binds <code>127.0.0.1:7895</code>, with the facade on <code>127.0.0.1:7897</code>.</li>
+<li><strong>the session engine</strong> (<code>services/claudemon</code>, Rust). It owns the sessions: per-session state, PTYs, the per-provider adapters, and a structured conversation so a client reads messages and tool calls instead of raw scrollback. Standalone it listens for Claude Code hook events on <code>127.0.0.1:7890</code> and serves REST + SSE on <code>127.0.0.1:7891</code>. That API is documented in full on <a href="build-client.html">build a client</a>.</li>
+<li><strong>clients</strong>. <code>wks-native</code>, <code>wks-tui</code>, the phone client the hub serves at <code>/m</code>, any MCP client, and the deprecated Electron app. They all speak the same bus, so a session started in one can be watched and driven from another.</li>
 </ul>
-<p>A Rust TUI (<code>apps/tui</code>, <code>wks-tui</code>) is a second client. Remote and web clients connect to the same hub bus. A session running on one client can be observed and driven from another.</p>
-<h3>who spawns what</h3>
-<p>Electron main is the supervisor of the daemons:</p>
+<h3>three ways it runs</h3>
 <ul>
-<li><code>claudemonDaemon.ts</code> spawns <code>claudemon serve --hook-port 7890 --api-port 7891</code>.</li>
-<li><code>hubDaemon.ts</code> spawns <code>hub</code> with <code>--addr</code>, <code>--claudemon-events http://127.0.0.1:7891/events</code> (so claudemon becomes the first producer on the bus), <code>--plugins-dir</code>, <code>--claudemon</code>, and a <code>--token</code>.</li>
+<li><strong><code>wks-native --local</code>.</strong> The app starts the same hub and engine as a library, on a dedicated OS thread with its own Tokio runtime, never on the UI thread. The UI sends bounded, typed commands and reads the latest immutable view through a watch channel. State lives in <em>Workspacer Native Rust Preview</em> under the platform's local-data directory (or wherever <code>--rust-local-dir</code> points), and the listeners take loopback ports the OS hands out rather than the fixed ones above (the bus remembers the one it first got, so a shared link keeps working across restarts). Closing the window quits unless <code>--keep-running</code> is set, and quitting joins the hub and the engine before the process exits, including the provider processes they own.</li>
+<li><strong><code>workspacer serve</code>.</strong> The same backend with no window: one process owning the engine, the bus, the services and the facade. <code>--hub-only</code> starts the control plane without an engine, and <code>--external-claudemon</code> lets a hub-only server borrow a daemon someone else owns. This is what runs on a box with no desktop.</li>
+<li><strong><code>wks-native</code> with no flag, or <code>--bus</code>.</strong> A client and nothing else. It attaches to a hub that already exists and leaves that hub running when it exits.</li>
 </ul>
-<p>Binary resolution is mode-aware. In dev (<code>ELECTRON_DEV=1</code> or not packaged) the binaries come from <code>services/claudemon/target/release/claudemon</code> and <code>services/hub/hub</code>. Packaged, they come from <code>&lt;resourcesPath&gt;/claudemon/</code> and <code>&lt;resourcesPath&gt;/hub/</code>. Both daemons must already be built, <code>make build-claudemon</code> and <code>make build-hub</code>, or <code>make build</code> for everything.</p>
-<p>Before spawning, each supervisor probes the port's <code>/health</code>: a <em>healthy</em> daemon already there (a running <code>workspacer serve</code>) is <strong>adopted</strong>: no spawn, no supervision, never signaled on quit. Only an occupied-but-dead port gets the stale-process kill (<code>killStaleListener</code>, via <code>lsof -ti :&lt;port&gt;</code> on Unix, <code>netstat</code>/<code>taskkill</code> on Windows) before spawning and polling <code>/health</code> for up to 5s.</p>
-<p>The same stack also comes up with no Electron at all: <code>workspacer serve</code> (<code>./cmd/workspacer</code>) resolves its sibling binaries, starts <code>claudemon</code> plus the <code>hub</code> with <code>--brain-scope full</code>, wires the shared token through, and supervises both with the desktop's restart-backoff semantics. That's what the standalone server bundle runs.</p>
+<div class="callout"><strong>If you remember three processes.</strong> Earlier versions of this page described an Electron app supervising two daemons, a Go hub, a separate <code>brain</code> provider and a private Node companion. The Go hub, the brain and the companion are gone from the tree: the Rust hub owns their jobs in one runtime. The Go source survives only as a pinned historical checkout used as a test oracle (<code>scripts/reference/README.md</code>). The Electron app is still here, deprecated, and described <a href="#electron">below</a>.</div>
 <h3>the hub bus</h3>
-<p>Each client opens <strong>one</strong> bidirectional WebSocket to <code>ws://&lt;addr&gt;/bus</code> and exchanges JSON frames. Publish and subscribe share the same pipe, unlike claudemon's SSE-down / POST-up split, because it keeps plugins simple.</p>
+<p>Each client opens <strong>one</strong> bidirectional WebSocket to <code>ws://&lt;addr&gt;/bus</code> and exchanges JSON frames. Publish and subscribe share the same pipe, unlike the engine's SSE-down / POST-up split, because it keeps plugins simple. The frames and topic matching live in <code>src/protocol.rs</code>; the bus actor and the router in <code>src/runtime.rs</code>.</p>
 <p><strong>Pub/sub.</strong> Subscribe to topics, publish events:</p>
 <pre><code>client → hub:   {"op":"subscribe","topics":["agent.*"]}
-                {"op":"publish","event":{"type":"agent.spawned","source":"plugin.x","data":{...}}}
+                {"op":"publish","event":{"type":"myplugin.tick","source":"myplugin","data":{...}}}
 hub → client:   {"op":"event","event":{...}}</code></pre>
-<p>Topic patterns are exact (<code>agent.spawned</code>), namespace wildcard (<code>agent.*</code>), or all (<code>*</code>). The event envelope is <code>{ id, type, source, time, data }</code>; the hub stamps <code>id</code>/<code>time</code> if you leave them blank. Fan-out is non-blocking: a slow client gets events dropped and counted rather than stalling everyone else.</p>
-<p><strong>Capabilities (RPC).</strong> The same socket carries request/reply. A provider registers method names; a caller calls them; the hub routes the call to the owning provider and the reply back, correlating by a global id:</p>
-<pre><code>provider → hub: {"op":"register","methods":["agents.list","agents.sendMessage"]}
-caller   → hub: {"op":"call","id":"req-1","method":"agents.list","params":{...}}
-hub → provider: {"op":"call","id":"&lt;global&gt;","method":"agents.list","params":{...}}
+<p>Topic patterns are exact (<code>agent.snapshot</code>), namespace wildcard (<code>agent.*</code>), or all (<code>*</code>). The event envelope is <code>{ id, type, source, time, data }</code>, plus <code>hub</code> when the event came from a federated peer; the hub stamps <code>id</code> and <code>time</code> if you leave them blank. Fan-out never blocks: a subscriber that falls behind misses events instead of stalling everyone else.</p>
+<p><strong>Capabilities (RPC).</strong> The same socket carries request/reply. A provider registers method names; a caller calls them; the hub routes the call to whoever owns the method and the reply back, correlating by a global id:</p>
+<pre><code>provider → hub: {"op":"register","methods":["myplugin.lookup"]}
+caller   → hub: {"op":"call","id":"req-1","method":"myplugin.lookup","params":{...}}
+hub → provider: {"op":"call","id":"&lt;global&gt;","method":"myplugin.lookup","params":{...}}
 provider → hub: {"op":"result","id":"&lt;global&gt;","result":{...}}
 hub → caller:   {"op":"result","id":"req-1","result":{...}}</code></pre>
-<p>The hub never <em>executes</em> a capability, it only routes. The router is <strong>single-owner per method</strong>: two providers registering the same method would collide. That constraint shapes the whole "who owns what" story. The MCP facade (<code>cmd/mcp</code>) is just another caller on this bus, re-exposing each capability as an MCP tool.</p>
-<p>In the running app, Electron main is the capability <strong>provider</strong> (<code>hubCapabilities.ts</code>): it provides <code>agents.list</code>, <code>agents.sendMessage</code>, <code>notifications.post</code>, and the rest. Because those caps only exist while the GUI is up, there's a headless provider, <code>cmd/brain</code>, that can register the same surface against claudemon's HTTP API with no window open. Single-owner routing is why brain runs in scopes: <code>full</code> (headless, provides everything) or <code>catalog</code> (alongside the app, owns only the file-backed subset while the app keeps the live agent caps). The desktop spawns the hub with <code>--brain-scope catalog</code> or <code>off</code> depending on <code>brainDelegation.ts</code>.</p>
-<h3>token auth</h3>
-<p>The hub always loads or creates a bus token, even on the localhost-only default. It lives at <code>&lt;configDir&gt;/remote-token</code> (created with mode <code>0600</code>, 24 random bytes, base64url). The local hub client presents it; that's how the bus tells the trusted host apart from plugin sidecars and webviews, which carry their own per-plugin tokens. This is the basis of plugin capability enforcement.</p>
-<p>The hub flag is <code>--token</code> (or <code>$HUB_TOKEN</code>). When set, auth is required on <code>/bus</code>, <code>/remote</code>, and the <code>/plugins/*</code> admin routes. Empty means no auth, which is only safe because the default bind is loopback. Install/reload routes require the <em>host</em> token and answer <code>403</code> to manually scoped credentials; remote capability providers use the separate <code>provider</code> identity.</p>
-<p>Remote sharing reuses the same token as a bearer secret. It's opt-in via <code>WORKSPACER_REMOTE_SHARE</code>; setting it makes the hub bind off loopback (default <code>0.0.0.0:7895</code>, overridable with <code>WORKSPACER_REMOTE_ADDR</code>, intended to be pinned to a Tailscale IP). Binding off localhost without auth is meaningless, so in that mode the token is required on <code>/bus</code>.</p>
-<p>Authorization for remote/user credentials is per-method as well as per-connection. The hub honors <strong>capability-scoped tokens</strong> minted with <code>workspacer token create --scope view|triage|operator|provider</code>. Enabled plugins are a separate trust model: installation and enablement trust their code with the Workspacer user's machine access; manifest method/path declarations are routing metadata, not grants. Authentication, provenance, host-owned event protection, provider namespace ownership, webview isolation, and archive integrity remain enforced.</p>
-<h3>one agent, one card, everywhere</h3>
-<p>The layout is mirrored across clients (desktop, web, phone) through a hub-owned shared document, last-writer-wins. The real identity of an agent is its live claudemon <code>sessionId</code>. Historically each client minted a random card id, so the same session got a different id on every client and a blind whole-array sync made them ping-pong (spawn one, end up with seven).</p>
-<p>Two defenses live in <code>agentIdentity.ts</code>:</p>
+<p>The router is <strong>single-owner per method</strong>, and a registration is released when its connection drops. Most methods a client calls (<code>agents.spawn</code>, <code>agents.sendMessage</code>, <code>sessions.snapshots</code>, <code>sessions.conversation</code>, <code>claude.approve</code>, <code>claude.answer</code>) are answered by the hub's own services, which take precedence over anything registered from outside. External providers add to that: a plugin sidecar answering methods in its own namespace, for example. The MCP facade is just another caller, re-exposing capabilities as MCP tools.</p>
+<h3>tokens</h3>
+<p>The bus is authenticated, and different credentials carry different provenance:</p>
 <ul>
-<li><strong>deterministic id</strong>: <code>agentIdForSession(sessionId)</code> returns <code>agent-&lt;sessionId&gt;</code>, so every client produces the <em>same</em> card id for a session and never diverges.</li>
-<li><strong>dedupe on sync</strong>: <code>dedupeBySessionId</code> runs whenever a layout is taken in, collapsing any cards that still share a <code>sessionId</code> down to one. The survivor is the lexicographically-smallest id (so every client agrees) placed at the first occurrence (so ordering stays stable). Cards with no <code>sessionId</code> (stopped or local agents) are always kept.</li>
+<li><strong>The host token</strong> lives at <code>&lt;configDir&gt;/remote-token</code> (24 random bytes, base64url, owner-readable). It identifies the machine's owner. If it goes missing from a directory that holds other state, <code>serve</code> refuses to mint a new identity unless you pass <code>--allow-new-token</code>.</li>
+<li><strong>Scoped tokens</strong> are minted with <code>workspacer token create --scope view|triage|operator|provider</code> and kept in <code>tokens.json</code>. View and triage are exact method allowlists that fail closed. Operator has the ordinary method surface but still not the host-only administration handlers. <code>token list</code> and <code>token revoke</code> manage them, and the bus revalidates open connections.</li>
+<li><strong>Per-session bearers</strong> are minted for each agent the hub launches so its tool calls carry its identity, and revoked when the session ends.</li>
+<li><strong>Per-plugin tokens</strong> identify each enabled plugin. Installing or reloading plugins needs the host token and answers <code>403</code> to every scoped one, operator included, because it runs code on the hub's machine.</li>
 </ul>
-<p>The net effect: one card per session across every client.</p>
-<h3>auto-restart with backoff</h3>
-<p>Both daemons are supervised the same way (<code>RestartBackoff</code> in <code>daemonUtils.ts</code>). On an unexpected exit (not an intentional <code>stopClaudemon()</code>/<code>stopHub()</code>), the app respawns with exponential backoff:</p>
-<ul>
-<li>base delay <code>1000ms</code>, doubling each attempt, capped at <code>30000ms</code>.</li>
-<li>gives up after <code>10</code> consecutive failures (then logs "restart the app to recover").</li>
-<li>if the daemon stayed healthy for at least <code>60000ms</code>, the next crash is treated as a fresh failure and the counter resets, so transient crashes don't burn the budget.</li>
-</ul>
-<p>An intentional stop sets a flag so the supervised process isn't respawned, and clears the failure counter so the next manual start begins fresh. The hub in turn supervises its own children the same way: spawn, health-check, restart-on-crash, graceful stop (SIGTERM then SIGKILL), with each lifecycle change reported on the bus as a <code>sidecar.*</code> event. That covers plugin sidecars and the brain provider.</p>
+<p><code>&lt;configDir&gt;</code> is <code>$XDG_CONFIG_HOME/workspacer</code> or <code>~/.config/workspacer</code> on Linux and macOS, and <code>%APPDATA%\workspacer</code> on Windows. The native app's <code>--local</code> mode keeps its own copy inside its data directory instead.</p>
+<p>Remote access is opt-in. A standalone hub listens on loopback until <code>--host</code> says otherwise. In the native app, Settings → Remote puts the hub behind Tailscale HTTPS for devices on your tailnet and creates pairing links at one of three access levels: read-only, triage, or full control.</p>
+<h3>shutdown and supervision</h3>
+<p>The hub supervises plugin sidecars (below) and nothing else: there is no sibling process to restart, because there are no sibling processes. An interrupt or SIGTERM to <code>workspacer serve</code> shuts the owned backend down, and a second signal may force the exit. The native app does the equivalent on Quit. A borrowed daemon (<code>--external-claudemon</code>) is left alive when the borrower exits.</p>
     </section>
 
     <section id="providers" class="doc">
 <h2>how agents are driven</h2>
-<p>Workspacer admits four supported coding agents: Claude Code, Codex, GitHub Copilot, and OpenCode. The internal provider union also retains <code>pi</code> for the experimental daemon adapter:</p>
-<pre><code>type AgentProvider = 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi'</code></pre>
-<p><code>undefined</code> is treated as <code>'claude'</code> for back-compat, so any agent or config that predates multi-provider support keeps working.</p>
-<h3>the two tiers</h3>
-<p>There are two integration tiers, decided by provider.</p>
-<p><strong>Tier-1 (PTY / terminal view).</strong> A provider runs as its own interactive CLI inside a PTY. The launch side is provider-agnostic: <code>apps/desktop/src/main/services/agentProviders.ts</code> resolves the binary on <code>PATH</code> (<code>resolveAgentBinary</code> looks for <code>codex</code> / <code>opencode</code>, falling back to the bare command name so a freshly-installed CLI works without a restart) and <code>buildAgentArgv</code> just returns <code>[binary]</code> for non-Claude providers. Claude itself always gets the full flag set from <code>claudeResolver</code> (<code>--session-id</code> / <code>--model</code> / <code>--resume</code> / profile env like <code>CLAUDE_CONFIG_DIR</code>).</p>
-<p><strong>Tier-2 (managed adapter).</strong> claudemon drives the provider's own machine interface and translates its events into claudemon's session model, so the agent lights up the GUI and Fleet Deck with the same telemetry (mode/state, live conversation, token/cost/usage, pending approvals) as a Claude session. There is normally no PTY in this mode. Codex's default <em>hybrid</em> transport is the exception: the native Codex TUI runs in a PTY (the Term view) alongside the managed thread, one shared conversation.</p>
-<p>In the desktop main process (<code>apps/desktop/src/main/ipc.ts</code>), the <code>CLAUDE_SPAWN</code> handler routes every managed spawn through the shared <code>spawnManagedAgent</code> (<code>managedSpawn.ts</code>) instead of spawning a PTY. That covers non-Claude providers, Claude on the <code>stream</code> transport, and headless (<code>transport:"stream"</code>) Codex. The hub-bus <code>agents.spawn</code> capability uses the same helper so the two spawn transports can't drift.</p>
-<p>How each managed provider is driven (claudemon, <code>services/claudemon/src/providers/</code>):</p>
+<p>The hub launches four coding agents: Claude Code, Codex, GitHub Copilot and OpenCode. A spawn that names no provider gets Claude. A spawn that names <code>pi</code> is refused, because Pi's CLI has no MCP bridge and so cannot receive the work{spacer} tools every agent is given. The planning and launch code is <code>services/hub-rs/src/services/{spawn_plan,agent_spawn,agent_lifecycle}.rs</code>.</p>
+<p>Who can start what depends on the client. The native app's New Agent offers Claude Code and Codex. All four are reachable through the <code>agents.spawn</code> capability and the <code>spawn_agent</code> tool, which is how an agent spawns a child on another provider.</p>
+<h3>two transports</h3>
+<p>A session is either a terminal or a managed stream.</p>
+<p><strong>PTY.</strong> The provider's own interactive CLI runs inside a pseudo-terminal the engine owns, and clients attach a terminal view to it.</p>
+<p><strong>Managed (stream).</strong> The engine drives the provider's machine interface and translates its events into one session model, so every provider shows the same things: mode, live conversation, usage, pending approvals and questions. There is normally no PTY.</p>
+<p>The transport is the one the spawn asks for, else <code>&lt;provider&gt;.transport</code> in <code>config.yaml</code>. The shipped defaults are <code>stream</code> for Claude and Codex, and the native app always asks for <code>stream</code>. Every provider other than Claude is managed whatever the transport says.</p>
+<p>How each provider is driven (<code>services/claudemon/src/providers/</code>):</p>
 <ul>
-<li><strong>Claude (terminal transport)</strong>: observed indirectly via injected <strong>hooks</strong> (lifecycle events POSTed to claudemon), the <strong>JSONL transcript</strong> tail (<code>~/.claude</code>), and the <strong>statusLine</strong> (context % / cost / rate limits). This is the original behavior, kept behind <code>claude.transport: pty</code>.</li>
-<li><strong>Claude, headless transport (the default)</strong>: claudemon spawns <code>claude --print --input-format stream-json --output-format stream-json</code> (<code>claude_stream.rs</code>) and drives the control protocol directly: approvals and <code>AskUserQuestion</code>s arrive as <code>can_use_tool</code> control requests, and model / permission-mode switches go out as <code>set_model</code> / <code>set_permission_mode</code>. No PTY, so the pane is GUI-only. Hooks still run for headless sessions, so the hook-derived state machine agrees across both transports.</li>
-<li><strong>OpenCode</strong>: claudemon spawns <code>opencode serve</code> (headless HTTP, default <code>127.0.0.1:4096</code>, OpenAPI 3.1), creates/drives a session over HTTP, and consumes the <code>GET /event</code> SSE stream. Frames look like <code>{ "type": "&lt;entity&gt;.&lt;action&gt;", "properties": {…} }</code> (e.g. <code>session.idle</code>, <code>message.part.updated</code>, <code>permission.updated</code>). The translator is defensive: unknown event types and missing fields are ignored, not errors.</li>
-<li><strong>Codex</strong>: claudemon runs <code>codex app-server</code> as a WebSocket daemon (<code>codex app-server --listen ws://127.0.0.1:&lt;port&gt;</code>, JSON-RPC 2.0 over ws) rather than over stdio. A plain ws endpoint is the one transport the native TUI (<code>codex --remote ws://…</code>) and claudemon's RPC client can share, which is what makes the default hybrid (GUI + Term) session possible. Ownership is TUI-first in hybrid: the native TUI creates the thread and claudemon discovers and rejoins it (<code>thread/loaded/list</code> + <code>thread/resume</code>); with <code>transport:"stream"</code> (the spawn dialog's <em>headless</em> option) the daemon does <code>thread/start</code> itself, with no native TUI and a GUI-only pane. Either way it does <code>turn/start</code> per GUI prompt, and consumes notifications: <code>turn/started|completed|failed</code>, <code>item/started|completed</code>, <code>item/agentMessage/delta</code> (streamed text), <code>thread/tokenUsage/updated</code>, and approval requests (<code>item/commandExecution/requestApproval</code>, <code>item/fileChange/requestApproval</code>). A session→thread sidecar under <code>~/.workspacer/codex-threads</code> makes it durable: a restarted daemon lazily replays the thread's rollout into the conversation, and a resume rejoins via <code>thread/resume</code>. Codex's wire reports tokens but no dollars, so cost is estimated from the pricing table (<code>session/pricing.rs</code>, user overrides at <code>~/.workspacer/model-rates.json</code>).</li>
-<li><strong>GitHub Copilot</strong> (beta): claudemon runs ONE <code>copilot -p &lt;prompt&gt; --output-format json</code> process per <em>turn</em> and reads newline JSON from its stdout (<code>providers/copilot.rs</code>). The flag that makes a one-shot CLI into a conversation is <code>--session-id &lt;uuid&gt;</code>, which both creates a session with that id and resumes an existing one — so claudemon pins its own session id and every later turn rejoins the same conversation, with no sidecar file. That also makes model / effort switches genuinely live (the next turn is a new argv) and makes Copilot the one managed provider whose restart really does preserve the conversation. Events read: <code>assistant.turn_start</code>, <code>assistant.message_delta</code>, <code>assistant.message</code>, <code>tool.execution_start|complete</code>, <code>model.turn_started</code> / <code>model.model_call_success</code> (real per-call token counts plus Copilot's own context-window size), <code>session.mcp_servers_loaded</code>, and the terminal <code>result</code>. Two things are unlike every other provider: <code>-p</code> mode <em>cannot ask</em>, so tools always run automatically and the two permission tiers are directory-confined vs. <code>--allow-all</code>; and a hard failure can print prose to stderr while exiting 0, so the adapter proves a turn succeeded (empty stderr, a <code>result</code> frame, exit code 0, some output) before it ever reports idle. Copilot bills in AI credits, not dollars, so cost is a pricing-table estimate like Codex's.</li>
-<li><strong>Pi</strong>: an experimental daemon adapter exists, but Workspacer refuses Pi agent spawns because the CLI has no MCP bridge for the required Workspacer tools.</li>
+<li><strong>Claude, managed (the default)</strong>: the engine spawns <code>claude --print --input-format stream-json --output-format stream-json</code> (<code>claude_stream.rs</code>) and speaks the control protocol directly. Approvals and questions arrive as control requests; interrupts, model switches and permission-mode switches go back the same way. Stream sessions need no hooks.</li>
+<li><strong>Claude, PTY</strong> (<code>claude.transport: pty</code>): observed from the outside, through hooks that POST lifecycle events to the engine, the JSONL transcript under <code>~/.claude</code>, and the status line. The hooks ride on each launch through <code>--settings</code>; nothing is written into your global Claude settings.</li>
+<li><strong>Codex</strong>: the engine runs <code>codex app-server</code> as a WebSocket daemon (<code>codex app-server --listen ws://127.0.0.1:&lt;port&gt;</code>, JSON-RPC 2.0) rather than over stdio. On <code>stream</code> it starts the thread itself (<code>thread/start</code>), sends each prompt with <code>turn/start</code> or steers a running turn with <code>turn/steer</code>, and consumes the notifications: turns starting and completing, items, streamed message deltas, token usage, and approval requests. On <code>pty</code> the session is a hybrid: the native Codex TUI runs in a terminal and creates the thread, and the engine finds it (<code>thread/loaded/list</code>) and rejoins it (<code>thread/resume</code>), so one conversation shows in both. A session-to-thread record under <code>~/.workspacer/codex-threads</code> makes a session resumable after a restart. Codex reports tokens but not dollars, so cost is an estimate from a pricing table (<code>session/pricing.rs</code>, with your own rates in <code>~/.workspacer/model-rates.json</code>).</li>
+<li><strong>OpenCode</strong>: the engine spawns <code>opencode serve</code> (HTTP, default <code>127.0.0.1:4096</code>), drives a session over HTTP, and consumes the <code>GET /event</code> SSE stream. The translator is defensive: unknown event types and missing fields are ignored, not errors.</li>
+<li><strong>GitHub Copilot</strong> (beta): one <code>copilot -p &lt;prompt&gt; --output-format json</code> process per <em>turn</em>, read as newline JSON (<code>copilot.rs</code>). <code>--session-id &lt;uuid&gt;</code> both creates a session with that id and resumes one, so the engine pins its own id and every later turn rejoins the same conversation. <code>-p</code> mode cannot ask, so tools run without prompting and the choice is between directory-confined and <code>--allow-all</code>. Copilot bills in credits, so cost is an estimate here too.</li>
 </ul>
-<p>The low-level managed daemon endpoint still contains adapter support including Pi, but Workspacer's desktop and headless spawn providers admit only Claude, Codex, Copilot, and OpenCode because every supported agent must receive the ambient tool surface.</p>
-<p>Internally each adapter is split into a pure per-provider <code>translate()</code> (native event → <code>AgentUpdate</code>s, unit-tested) and a shared <code>apply_updates</code> layer. <code>AgentUpdate</code> is the common vocabulary: <code>Idle</code>, <code>Busy</code>, <code>PermissionPending</code>, <code>AssistantText</code>, <code>UserText</code>, <code>ToolUse</code>, <code>Usage</code>, <code>Error</code>.</p>
-<p><strong>Approvals.</strong> Managed agents forward approval requests to the UI. When the adapter sees a request (<code>requestApproval</code> for Codex, a <code>permission.updated</code> event for OpenCode) it parks the request id and surfaces a pending approval, the same as a Claude one, so the user's decision is sent back to the agent. YOLO mode is the exception: it answers every request <code>accept</code> inline and never parks one.</p>
-<p><strong>Questions.</strong> Supported managed providers get structured <code>AskUserQuestion</code> through their MCP integration: Codex mounts a config override, OpenCode a remote MCP entry, and Copilot a session-scoped additional config file.</p>
-<p><strong>Interrupt.</strong> <code>/signal</code> SIGINT is structural on managed drivers: Codex <code>turn/interrupt</code>, OpenCode <code>POST /session/:id/abort</code>, Pi's RPC abort. The turn stops without killing the session, so PTY-free clients can cancel too.</p>
+<p>Each adapter is a pure per-provider translator (native event → <code>AgentUpdate</code>s, unit-tested) over a shared layer that folds updates into the session store. <code>AgentUpdate</code> is the common vocabulary: <code>Idle</code>, <code>Busy</code>, <code>PermissionPending</code>, <code>AssistantText</code>, <code>UserText</code>, <code>ToolUse</code>, <code>ToolResult</code>, <code>Usage</code>, <code>Plan</code>, <code>Error</code> and a few more.</p>
+<p><strong>Approvals and questions.</strong> A managed adapter parks the provider's request and surfaces it as a pending approval or question, and the answer you give is sent back to the agent. On Claude stream and Codex each card carries an id, and the engine refuses an answer addressed to a card other than the one on screen, so a late click can't land on a newer request.</p>
+<p><strong>Interrupt.</strong> On managed sessions an interrupt is structural, not a signal to a terminal: Codex gets <code>turn/interrupt</code>, OpenCode gets <code>POST /session/:id/abort</code>. The turn stops and the session stays.</p>
+<h3>what every agent is handed</h3>
+<p>Before a launch the hub checks that its MCP facade is ready, mints the session a bearer token, and injects the facade into the agent's MCP configuration. The agent gets the work{spacer} tools and every enabled plugin's tools. It also gets work{spacer}'s own skills, among them <code>spawn-agent</code>: written once to a content-addressed directory under <code>~/.workspacer/agent-skills</code> and handed to that session only, as a plugin directory for Claude, as an extra skill root for Codex's app-server, and as a line of instructions naming each skill file for Copilot and OpenCode. Nothing is written into your project. The code is <code>services/hub-rs/src/services/launch_instructions.rs</code> and <code>session_facade.rs</code>.</p>
     </section>
 
     <section id="plugins" class="doc">
 <h2>writing a plugin</h2>
-<p>A plugin is a polyglot sidecar (any language) plus a <code>plugin.json</code> manifest that declares what it contributes. The hub reads <code>&lt;plugins-dir&gt;/&lt;name&gt;/plugin.json</code>, validates it, starts the sidecar, and announces the contribution on the bus (<code>plugin.loaded</code> / <code>plugin.unloaded</code>). The desktop renderer picks that up and registers the pane types, command-palette entries, and hotkeys. This section is the overview; for the full hands-on how-to (first plugin, manifest reference, bus protocol, hot-reload, publishing) see <a href="build-plugin.html">build a plugin</a>.</p>
-<p>With the installed Rust CLI on PATH, start a plugin development control plane:</p>
-<pre><code>workspacer serve --hub-only --plugins-dir /absolute/path/to/plugins</code></pre>
-<p>In the running app the plugins dir is <code>&lt;configDir&gt;/plugins</code>, and the Plugins Manager installs into it for you. For development, drop your plugin's folder in there (or point a dev hub at your own dir) and it loads on the next scan.</p>
-
-<h3>the two kinds of plugin</h3>
-<p>Every plugin is a folder with a <code>plugin.json</code> at its root. What that manifest declares decides which of two shapes it takes. The split is exactly the <code>server</code> vs <code>ui</code> field, and it's the first decision you make.</p>
-<h4>1. webview-only plugin (<code>ui</code>)</h4>
-<p>Set <code>ui</code> to a subdirectory of static assets and <strong>omit <code>server</code></strong>. The hub serves the files in an origin-isolated pane and injects a per-plugin identity token. Enabling the plugin is the trust decision: manifest methods and paths are advisory, while browser isolation still protects the host app document.</p>
+<p>A plugin is a folder with a <code>plugin.json</code> manifest and, optionally, a sidecar process in any language. The hub loads <code>&lt;plugins-dir&gt;/&lt;name&gt;/plugin.json</code>, validates it, starts the sidecar, and announces it on the bus (<code>plugin.loaded</code> / <code>plugin.unloaded</code>). This section is the overview; the hands-on how-to (first plugin, manifest reference, bus protocol, hot-reload, publishing) is <a href="build-plugin.html">build a plugin</a>.</p>
+<h3>what works where</h3>
+<p>The plugin system belongs to the hub, so a plugin's backend half works wherever the hub does, and its user-interface half only where a client draws it.</p>
 <ul>
-<li>Reach for it when your plugin <em>is</em> a UI: a dashboard, a panel, an editor, a rule editor.</li>
-<li>Any language that compiles to static HTML/JS/CSS. No build step needed if you ship plain files.</li>
-<li>Bundled examples (in <code>plugins/examples/</code>): the <code>editor</code> and the <code>transcript-timeline</code> replay pane.</li>
+<li><strong>Everywhere the hub runs</strong>, including inside <code>wks-native --local</code> and under <code>workspacer serve</code>: the sidecar and its supervision, the capabilities it <code>provides</code>, the events it publishes and consumes, its settings, and its <code>tools</code>. Tools are the part an agent sees: every agent the hub launches is given the tools of every enabled plugin.</li>
+<li><strong>Only in the Electron app</strong> (deprecated): panes, hotkeys, command-palette entries, the Plugins Manager, and theme injection into plugin webviews. <strong>The native app draws no plugin panes.</strong> A plugin that is only a pane has nowhere to appear there.</li>
 </ul>
-<h4>2. sidecar plugin (<code>server</code>)</h4>
-<p>Set <code>server.command</code> to a long-lived process the hub spawns and supervises (spawn → health-poll → restart-on-crash, SIGTERM then SIGKILL on stop). It's a polyglot sidecar: <strong>any language</strong>. It connects to the bus itself, so it can run <em>always-on with no pane at all</em> (an automation), <code>provide</code> capabilities other clients call, and/or serve its own webview panes from its port (the hub proxies <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code>).</p>
+<p>The plugins directory is <code>&lt;configDir&gt;/plugins</code> unless <code>--plugins-dir</code> says otherwise. For development, point a control plane at your own directory, or let the dev command build, load and reload one plugin as you edit it:</p>
+<pre><code>workspacer serve --hub-only --plugins-dir /absolute/path/to/plugins
+workspacer plugin dev /absolute/path/to/my-plugin</code></pre>
+<h3>the two kinds</h3>
 <ul>
-<li>Reach for it when your plugin <em>does</em> something in the background: reacts to events, calls out to another service, answers capabilities for the rest of the fleet.</li>
-<li>Give it a <code>port</code> + <code>health</code> path so the supervisor can health-check it and surface <code>sidecar.*</code> status colors.</li>
-<li>Examples: the bundled <code>clock-plugin</code> (the minimal sidecar demo) and the catalog's automations: <code>policy-approver</code>, <code>fleet-guardian</code>, <code>test-on-save</code>, <code>slack-bridge</code>.</li>
+<li><strong>Sidecar (<code>server</code>).</strong> Set <code>server.command</code> to a long-lived process. It connects to the bus itself, so it can run with no pane at all: react to events, answer capabilities, contribute tools. This is the kind that is useful with the native app.</li>
+<li><strong>Webview-only (<code>ui</code>).</strong> Set <code>ui</code> to a subdirectory of static assets and omit <code>server</code>. The hub serves the files at <code>/plugins/ui/&lt;id&gt;/</code> for a client to show in an origin-isolated pane. Today that client is the Electron app.</li>
 </ul>
-<p>A sidecar can serve panes too, so the two are not exclusive in spirit, but a single manifest sets <em>either</em> <code>server</code> <em>or</em> <code>ui</code> as the way its panes are served. If it declares panes with neither, the loader rejects it (the webview would have no URL to load).</p>
-
-<h3>write your first plugin</h3>
-<p>The fastest path is a <strong>webview-only</strong> plugin that lists the running agents. Three files, no build step.</p>
-<h4>1. the folder</h4>
-<pre><code>my-hello/
-  plugin.json
-  ui/
-    index.html</code></pre>
-<h4>2. the manifest</h4>
-<pre><code>{
-  "id": "example.hello",
-  "name": "Hello",
-  "apiVersion": "1",
-  "ui": "ui",
-  "panes": [
-    { "type": "example.hello", "title": "Hello", "icon": "👋", "scope": "both" }
-  ],
-  "hotkeys": [
-    { "id": "open-hello", "default": "ctrl+shift+h", "command": "open-pane:example.hello" }
-  ],
-  "capabilities": ["agents.list"]
-}</code></pre>
-<p><code>ui: "ui"</code> makes it webview-only. <code>panes</code> contributes one pane type; <code>hotkeys</code> binds a key to open it; <code>capabilities</code> documents that this plugin expects to use <code>agents.list</code>. Keep it accurate for discovery and review; enabled-plugin calls are ambient.</p>
-<h4>3. the page</h4>
-<p>The host injects your plugin identity token as <code>?busToken=…</code> on the pane URL. Open one WebSocket to the bus with it, then <code>call</code> a capability or <code>subscribe</code> to events. Enabled-plugin access is ambient; the identity preserves provenance and lifecycle revocation.</p>
-<pre><code>const token = new URLSearchParams(location.search).get('busToken') || '';
-const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const ws = new WebSocket(`${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`);
-
-let nextId = 1;
-const pending = new Map();
-function call(method, params = {}) {
-  return new Promise((resolve, reject) =&gt; {
-    const id = 'c' + nextId++;
-    pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ op: 'call', id, method, params }));
-  });
-}
-
-ws.onopen = async () =&gt; {
-  const agents = await call('agents.list');       // one of your declared caps
-  document.body.textContent = `${agents.length} agent(s) running`;
-};
-ws.onmessage = (ev) =&gt; {
-  const f = JSON.parse(ev.data);
-  if (f.op === 'result' &amp;&amp; pending.has(f.id)) { pending.get(f.id).resolve(f.result); pending.delete(f.id); }
-  if (f.op === 'error'  &amp;&amp; pending.has(f.id)) { pending.get(f.id).reject(new Error(f.error)); pending.delete(f.id); }
-};</code></pre>
-<p>Style it with the injected <code>--wks-*</code> theme tokens (with fallbacks) so it matches the app; see <a href="#plugins">theming</a> below.</p>
-<h4>4. load it</h4>
-<p>Drop <code>my-hello/</code> into your plugins dir (in the app: <code>&lt;configDir&gt;/plugins</code>; in dev: whatever you passed to <code>--plugins-dir</code>). The hub scans it, validates the manifest, and emits <code>plugin.loaded</code>; the renderer registers your pane and hotkey. Open it with <code>Ctrl+Shift+H</code> or from the command palette. To share it later, push the folder to GitHub and install it by URL from the Plugins Manager.</p>
-<p>To make this a <strong>sidecar</strong> instead, drop <code>ui</code>, add a <code>server</code> block pointing at your process (and an <code>install</code> build step if it needs compiling), and connect to the bus from that process the same way, with the same frames and the same token model.</p>
-
 <h3>the manifest (plugin.json)</h3>
-<p>Schema version is <code>"apiVersion": "1"</code> (the loader rejects anything else). Real fields, from <code>internal/plugin/manifest.go</code>:</p>
+<p>The loader is <code>services/hub-rs/src/plugins/manifest.rs</code>. What it reads and enforces:</p>
 <ul>
-<li><code>id</code>, <code>name</code>, <code>id</code> is required and is the install dir / token key.</li>
-<li><code>server</code>, the sidecar process: <code>command</code> (required when <code>server</code> is set), <code>args</code>, <code>port</code>, <code>health</code> (a path, e.g. <code>/health</code>). The hub serves the plugin's panes from <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code>.</li>
-<li><code>ui</code>, instead of <code>server</code>, a subdir of static assets the hub serves itself at <code>/plugins/ui/&lt;id&gt;/</code>. This is a webview-only plugin with no sidecar process. Only the named subdir is exposed (not <code>plugin.json</code> or <code>.bus-token</code>).</li>
-<li><code>panes</code>, pane types injected into the UI. Each: <code>type</code> (unique id), <code>title</code>, <code>icon</code>, <code>path</code>, and <code>scope</code> (<code>global</code> = Overview only, <code>agent</code> = inside an agent workspace and gets its sessionId/cwd, <code>both</code> = wherever you are, the default).</li>
-<li><code>hotkeys</code>, <code>id</code>, <code>default</code> (e.g. <code>ctrl+shift+a</code>), and <code>command</code>, which is either <code>open-pane:&lt;paneType&gt;</code> or <code>emit:&lt;eventType&gt;</code>.</li>
-<li><code>capabilities</code>, bus methods the plugin intends to <strong>call</strong>. The object form may document intended paths, but enabled plugins are trusted code running as the Workspacer user; this metadata is not filesystem confinement.</li>
-<li><code>provides</code>, capabilities the plugin <strong>answers</strong> on the bus (it becomes a provider other clients can call).</li>
-<li><code>emits</code> / <code>consumes</code>, event types it publishes / subscribes to.</li>
-<li><code>settings</code>, typed settings (<code>boolean</code>/<code>number</code>/<code>string</code>/<code>select</code>) the host renders in Settings and delivers into the webview as <code>window.__WKS_SETTINGS__</code> + a <code>wks-settings</code> event.</li>
-<li><code>install</code>, a one-time setup argv run in the plugin dir after a GitHub install (e.g. <code>["go","build","-o","server","."]</code>).</li>
+<li><code>id</code> and <code>name</code>. The id is letters, digits, <code>.</code>, <code>_</code> and <code>-</code>, and it cannot claim a namespace the hub itself uses.</li>
+<li><code>apiVersion</code>, which must be <code>"1"</code>.</li>
+<li><code>server</code>: <code>command</code> (required when <code>server</code> is set), <code>args</code>, <code>port</code>, and <code>health</code> (a path such as <code>/health</code>).</li>
+<li><code>ui</code>: a relative subdirectory of static assets.</li>
+<li><code>provides</code>: the capabilities the plugin answers. Each must sit in the plugin's own namespace: <code>&lt;id&gt;.something</code>, or <code>&lt;id&gt;.*</code>.</li>
+<li><code>tools</code>: MCP tools for agents. Each has a <code>name</code> (lowercase letters, digits and underscores), a <code>description</code>, a <code>method</code> that one of your <code>provides</code> entries covers, and optionally an <code>inputSchema</code> of type <code>object</code>.</li>
+<li><code>settings</code>: typed settings (<code>boolean</code>, <code>number</code>, <code>string</code>, <code>select</code>), scoped <code>global</code> or <code>project</code>. A <code>secret</code> must be a global string with no default.</li>
+<li><code>install</code>: a one-time setup argv run in the plugin directory after an install.</li>
 </ul>
-
-<h3>talking to the bus</h3>
-<p>Whether webview or sidecar, a plugin is just another client on the hub bus. It opens one WebSocket to <code>ws://&lt;addr&gt;/bus?token=&lt;busToken&gt;</code> (webviews get the token in the pane URL as <code>?busToken=</code>; sidecars get theirs in the <code>HUB_TOKEN</code> environment variable) and exchanges JSON frames. Three ops matter:</p>
-<pre><code>// subscribe to events (topics you declared in "consumes")
-ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.*', 'ui.*'] }));
-
-// publish an event (a type you declared in "emits")
-ws.send(JSON.stringify({ op: 'publish',
-  event: { type: 'command.focus_agent', source: 'example.hello', data: { sessionId } } }));
-
-// call a capability (a method you declared in "capabilities"); reply comes back as op:'result'
-ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {} }));</code></pre>
-<p>Manifest calls and event declarations provide discovery and routing metadata. Enabled plugins are not confined by those declarations. Topic patterns remain exact (<code>agent.spawned</code>), namespace wildcard (<code>agent.*</code>), or all (<code>*</code>), and each authenticated plugin identity preserves provenance.</p>
-
-<h3>events: what you can consume and emit</h3>
-<p>Events are fire-and-forget pub/sub (state changes, lifecycle, UI activity). Declare the ones you subscribe to in <code>consumes</code> and the ones you publish in <code>emits</code>. Capabilities (next section) are the request/reply channel. Use those when you need an answer or want to <em>make</em> something happen.</p>
-<h4>consume: events the fleet publishes to you</h4>
+<p>Anything else in the file (<code>panes</code>, <code>hotkeys</code>, <code>capabilities</code>, <code>emits</code>, <code>consumes</code>) is carried through for clients to use. Declaring panes with neither <code>server</code> nor <code>ui</code> is rejected, since nothing could serve them.</p>
+<h3>trust</h3>
+<p>Enabling a plugin trusts its code with your machine. There is no OS sandbox and no filesystem confinement: a sidecar and its install step run as you. The method and path lists a manifest declares are documentation and routing metadata, not grants. What <em>is</em> enforced is identity and provenance: each plugin has its own token, it can only register methods in its own namespace, host-owned topics and routes stay protected, archive extraction is guarded against path traversal, and installing or reloading requires the host token. Enable only plugins you trust.</p>
+<h3>the supervisor</h3>
+<p><code>src/plugins/supervisor.rs</code> runs each sidecar. If the manifest gives a <code>port</code> and a <code>health</code> path it polls <code>http://127.0.0.1:&lt;port&gt;&lt;health&gt;</code> every two seconds, with a <code>200</code> meaning healthy. An unexpected exit is restarted after a backoff that starts at one second, doubles to a thirty-second cap, and resets once the process has stayed up for thirty seconds. A stop sends SIGTERM on Unix and kills the process if it is still there five seconds later. Each change is published as <code>sidecar.running</code>, <code>sidecar.healthy</code>, <code>sidecar.unhealthy</code>, <code>sidecar.crashed</code> or <code>sidecar.stopped</code>.</p>
+<h3>bundled examples and the catalog</h3>
+<p>In <code>plugins/examples/</code>:</p>
 <ul>
-<li><code>agent.spawned</code>, an agent session started.</li>
-<li><code>agent.state_changed</code>, an agent's live state changed, the workhorse event: the state dot (idle / working / needs-approval / done), context %, token/cost, and pending approvals/questions. Published by claudemon.</li>
-<li><code>agent.snapshot</code>, a full per-agent snapshot (state + usage) for a session, from the catalog/headless provider.</li>
-<li><code>agent.statusline</code>, the context % / cost / rate-limit status line for an agent.</li>
-<li><code>agent.done</code>, an agent finished working (working → idle). This is the "it needs you or it's finished" signal.</li>
-<li><code>agent.terminated</code>, an agent session ended and its card went away.</li>
-<li><code>sidecar.running</code> / <code>sidecar.healthy</code> / <code>sidecar.unhealthy</code> / <code>sidecar.crashed</code> / <code>sidecar.stopped</code>, a plugin sidecar's supervisor state (these back the health colors in the Plugins Manager).</li>
-<li><code>plugin.loaded</code> / <code>plugin.unloaded</code>, a plugin was loaded or removed.</li>
-<li><code>plugin.settings.changed</code>, a plugin's settings were edited in Settings.</li>
-<li><code>plugin.install.progress</code>, progress frames during an install.</li>
-<li><code>ui.pane.opened</code> / <code>ui.pane.focused</code> / <code>ui.tab.focused</code>, renderer activity naming which pane or tab the user is looking at (subscribe to <code>ui.*</code> to follow focus).</li>
-<li><code>fs.changed</code>, a file you're watching changed (paired with the <code>fs.watch</code> capability).</li>
-<li><code>git.changed</code>, a repo's git state changed (what the Review pane listens to).</li>
+<li><strong>clock-plugin</strong>: the minimal sidecar. Start here.</li>
+<li><strong>headroom</strong>: a Node sidecar that contributes a launch integration, routing a session through a proxy you run.</li>
+<li><strong>editor</strong> and <strong>transcript-timeline</strong>: webview plugins, so they need the Electron app to be seen.</li>
 </ul>
-<p>Subscribing to a namespace (<code>agent.*</code>, <code>sidecar.*</code>, <code>plugin.*</code>, <code>ui.*</code>) is the easy way to catch a whole family without listing each type.</p>
-<h4>emit: events you publish</h4>
-<ul>
-<li><strong>Your own namespaced events</strong>, anything under your plugin's namespace, e.g. <code>example.hello.tick</code> or <code>rules.fired</code>. Declare each type (or a <code>myplugin.*</code> wildcard) in <code>emits</code>. Other plugins can <code>consume</code> them.</li>
-<li><code>command.focus_agent</code>, ask the app to focus an agent, <code>data: { sessionId }</code>. The renderer acts on it (the Fleet Radar and Cost HUD catalog plugins use this to jump the desktop to an agent when you click its card).</li>
-<li><code>command.spawn_agent</code>, ask the app to spawn an agent.</li>
-</ul>
-<p>The <code>command.*</code> namespace is the "ask the host to do something" channel: you publish, the desktop renderer picks it up and acts. A hotkey can fire one directly with <code>"command": "emit:&lt;eventType&gt;"</code> instead of opening a pane.</p>
-
-<h3>capabilities: what you can call and provide</h3>
-<p>Capabilities are request/reply methods. List the ones you <strong>call</strong> in <code>capabilities</code>; register the ones you <strong>answer</strong> in <code>provides</code>. The methods the host registers today (provided by the desktop app, or headlessly by <code>cmd/brain</code>) are the same surface the MCP facade re-exposes as tools:</p>
-<h4>agents &amp; sessions</h4>
-<ul>
-<li><code>agents.list</code>, running agents with state / usage / pending asks.</li>
-<li><code>agents.sendMessage</code>, send a prompt to an agent (<code>{ sessionId, text }</code>).</li>
-<li><code>agents.spawn</code> / <code>agents.kill</code>, start a new agent (returns its sessionId) / terminate one.</li>
-<li><code>agents.poll</code>, pull the latest agent set.</li>
-<li><code>claude.approve</code> / <code>claude.answer</code> / <code>claude.signal</code> / <code>claude.gate</code>, resolve an approval, answer an AskUserQuestion, send a signal (SIGINT/SIGTERM/…), gate a deferred hook.</li>
-<li><code>claude.listModels</code> / <code>claude.sessionsForDir</code>, model list and resumable sessions for a directory.</li>
-<li><code>sessions.list</code> / <code>sessions.snapshot</code> / <code>sessions.snapshots</code>, live session state.</li>
-<li><code>sessions.transcript</code> / <code>sessions.conversation</code>, read a session's transcript / structured conversation.</li>
-<li><code>sessions.save</code> / <code>sessions.load</code> / <code>sessions.delete</code>, saved-session management.</li>
-<li><code>sessions.terminalInput</code> / <code>sessions.terminalResize</code> / <code>sessions.attachTerminal</code> / <code>sessions.detachTerminal</code> / <code>sessions.terminalKeepalive</code>, drive a PTY.</li>
-</ul>
-<h4>notifications</h4>
-<ul>
-<li><code>notifications.post</code>, show a desktop notification (<code>{ title, body }</code>).</li>
-</ul>
-<h4>filesystem &amp; search (ambient for enabled plugins)</h4>
-<p>The object form can document intended roots using <code>${pluginDir}</code>, <code>${agentCwd}</code>, or an absolute path. It is not a security boundary: enabled plugin code may access the host as the Workspacer user.</p>
-<ul>
-<li><code>fs.read</code> / <code>fs.write</code> / <code>fs.append</code> / <code>fs.copy</code>, host file I/O. Enabled plugins are trusted code; manifest paths document intent but do not confine access.</li>
-<li><code>fs.listEntries</code> / <code>fs.listDir</code> / <code>fs.realpath</code>, browse and resolve within scope.</li>
-<li><code>fs.watch</code> / <code>fs.unwatch</code>, watch for external changes (delivered back as the <code>fs.changed</code> event).</li>
-<li><code>search.project</code> (ripgrep-backed, scoped to a <code>cwd</code>), and the broader <code>search.files</code> / <code>search.everything</code>.</li>
-</ul>
-<h4>provide your own</h4>
-<p>List method names in <code>provides</code> and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call. A bridge sidecar, for instance, can consume an external MCP server and re-expose its tools as hub capabilities. The router is single-owner per method, so pick a namespace nobody else claims.</p>
-<blockquote>The exact params/return shape of each host capability isn't a frozen public API yet, so treat <code>plugins/examples/</code> and <code>apps/desktop/src/main/services/hubCapabilities.ts</code> as the source of truth for field names, and the MCP tool list (below) for the stable subset.</blockquote>
-
-<h3>the plugin manager</h3>
-<p>The plugin manager (<code>internal/plugin/manager.go</code>) owns the loaded set. <code>Add</code> starts the sidecar and emits <code>plugin.loaded</code>; <code>Remove</code> stops it, drops its bus identity, and emits <code>plugin.unloaded</code>. <code>SetEnabled</code> toggles a <code>.disabled</code> marker and reloads. Each plugin gets a stable authenticated identity for provenance; enabled plugins are trusted rather than capability-sandboxed.</p>
-<h3>the installer</h3>
-<p>The installer (<code>internal/plugin/install.go</code>) takes a GitHub reference or tarball. Extraction remains <strong>zip-slip-guarded</strong> and install/reinstall is atomic. This is a trusted-install model, not an OS sandbox: enabled plugins and install steps run as the Workspacer user and may access the machine. Manifest metadata provides routing, provenance, and UI integration, not containment. Enable only plugins you trust.</p>
-<h3>the process supervisor</h3>
-<p>The process supervisor (<code>internal/supervisor/supervisor.go</code>) runs each sidecar: spawn, health-poll, restart-on-crash. If the manifest gives a <code>port</code> + <code>health</code>, the supervisor GETs <code>http://127.0.0.1:&lt;port&gt;&lt;health&gt;</code> every 2s (200 == healthy) and emits <code>sidecar.healthy</code> / <code>sidecar.unhealthy</code> as it flips. Graceful stop sends <strong>SIGTERM, then SIGKILL</strong> after a 5s <code>WaitDelay</code>. An unexpected exit is reported as <code>sidecar.crashed</code> and restarted after a backoff (default 1s). States: <code>stopped</code>, <code>running</code>, <code>healthy</code>, <code>unhealthy</code>, <code>crashed</code>.</p>
-<h3>theming</h3>
-<p>Plugin panes render as webviews and the host injects its active theme as <code>--wks-*</code> CSS custom properties on <code>:root</code> (re-injected on every live theme switch and every in-plugin navigation). It also sets zero-specificity <code>:where(html, body)</code> defaults so a plugin with no styling still looks native, and exposes a JS hook for canvas UIs: <code>window.__WKS_THEME__</code> and a <code>wks-theme</code> event. Reference tokens with a fallback so the page still works in a plain browser: <code>background: var(--wks-bg-base, #1a1a1a)</code>. Tokens: <code>--wks-bg-base/-raised/-surface/-elevated</code>, <code>--wks-text-primary/-secondary</code>, <code>--wks-accent</code>, <code>--wks-success/-error/-warning</code>, and more (see <code>docs/plugins/plugin-theming.md</code>). Injection is for plugin panes only, never the regular browser pane.</p>
-<h3>bundled examples &amp; the plugin catalog</h3>
-<p>Bundled in <code>plugins/examples/</code>:</p>
-<ul>
-<li><strong>clock-plugin</strong>: the minimal sidecar demo: one webview pane and one hotkey (<code>ctrl+shift+k</code> → <code>open-pane:example.clock</code>). Start here if you're writing your first plugin.</li>
-<li><strong>editor</strong>: the CodeMirror editor described above, a webview plugin. Its origin isolation protects the app document, but the enabled plugin is trusted and not an OS/filesystem sandbox.</li>
-<li><strong>transcript-timeline</strong>: a scrubbable session replay pane. Pick any live or historical session and drag through its prompts, tool calls, and file edits; it can even materialize the replay into a disposable git worktree that physically follows the scrubber.</li>
-</ul>
-<p>Beyond the bundled examples there's a public catalog of install-ready plugins at <a href="https://github.com/DJTouchette/workspacer-plugins">workspacer-plugins</a>: dashboards (Fleet Radar, Cost HUD, Focus Tracker), fleet automations (Policy Approver, Fleet Guardian, Escalation Chains, Typecheck Gate, Test on Save, CI Watcher), and remote reach (Slack Bridge, Phone Push, Standup Digest). Each is a zero-dependency repo you can install straight from the Plugins Manager (paste <code>DJTouchette/workspacer-plugin-&lt;name&gt;</code>), and together they double as reference implementations for every plugin shape above.</p>
+<p>There is also a public catalog of install-ready plugins at <a href="https://github.com/DJTouchette/workspacer-plugins">workspacer-plugins</a>. Read each one's manifest before assuming it suits the native app: the automations are sidecars, the dashboards are panes.</p>
     </section>
 
     <section id="mcp" class="doc">
-<h2>the mcp facade &amp; brain</h2>
-<p><code>services/hub-rs/src/mcp.rs</code> exposes the hub's capabilities as MCP tools, so an ephemeral <code>claude -p</code> supervisor (or any MCP client) can view and drive the whole fleet. It is a thin adapter: a tool call becomes a bus <code>call</code>, the provider (Electron main, or the shared Rust service) executes it, and the reply becomes the tool result. The facade never touches workspacer state.</p>
+<h2>the mcp facade</h2>
+<p><code>services/hub-rs/src/mcp.rs</code> exposes the hub's capabilities as MCP tools, so an agent, or any MCP client you configure, can see and drive every session. It is a thin adapter: a tool call becomes a bus <code>call</code>, the service that owns the method runs it, and the reply becomes the tool result. This is the mechanism under <code>spawn-agent</code>: the skill tells an agent how to use the <code>spawn_agent</code> tool, and the tool is one of these.</p>
 <p>It serves two transports off one server: <code>/mcp</code> (Streamable HTTP, the current MCP HTTP transport) and <code>/sse</code> (legacy SSE), plus <code>/health</code>.</p>
+<h3>agents get it automatically</h3>
+<p>Every agent the hub launches receives the full tool set plus every enabled plugin's tools. Its bearer token (an <code>Authorization</code> header, or <code>?t=</code> for clients that can only register a URL) supplies session identity and is revoked when the session ends; it is not a grant selector. The launcher verifies the facade is ready before minting that token, and a facade that is configured but cannot be verified refuses the launch rather than starting an agent with no tools. Older <code>toolScope</code>, plugin-selection and grant fields still parse and do nothing.</p>
+<h3>attaching your own client</h3>
+<p>With a standalone server the facade is at a fixed address:</p>
 <pre><code># From the repository root; do not start beside an existing owner on these ports.
 make build-cli
 services/hub-rs/target/release/workspacer-rust serve
-# Installed releases expose the same command as: workspacer serve
-# One process owns engine, hub and MCP; retain the reported pairing credential.</code></pre>
-<p>Attach it to Claude Code via <code>--mcp-config</code>. Mint the client a token first — a credential-less caller is refused (see below):</p>
+# Installed releases expose the same command as: workspacer serve</code></pre>
+<p>Mint the client a token first, since a caller with no credential is refused:</p>
 <pre><code>workspacer token create --scope operator --label "my mcp client"</code></pre>
 <pre><code>{
   "mcpServers": {
@@ -487,44 +338,72 @@ services/hub-rs/target/release/workspacer-rust serve
     }
   }
 }</code></pre>
-<p>Clients whose MCP registration is a bare URL and can't send headers (codex's <code>-c</code> overrides, <code>opencode.json</code>) append the token as <code>?t=&lt;token&gt;</code> instead.</p>
-<p>Every supported Workspacer-spawned agent receives the full operator tool set plus every enabled plugin tool. Its bearer token (an <code>Authorization</code> header, or <code>?t=</code> for URL-only clients) supplies session identity and is revoked when the session ends; it is not a grant selector. Legacy <code>toolScope</code>, plugin-selection, profile-grant, and yolo-grant fields remain parseable but inert. Desktop and headless spawns both verify the facade's identity, bind, hub connection, and initial plugin catalog immediately before minting that token. Pi is refused because it has no MCP bridge.</p>
-<p><strong>A request with no credential at all is refused with <code>401</code>.</strong> The facade speaks plain HTTP on loopback, and loopback is reachable by every process and every user account on the machine (and by a container sharing the host network namespace), so "whoever reached the port" is not an identity and gets no tools. Before 0.160 it got the whole operator set; that is what changed. A DNS-rebinding <code>Host</code> guard and a fail-closed non-loopback bind policy were already in place and are unchanged.</p>
-<p>The dial is <code>facade.untokenedAccess</code> in <code>config.yaml</code> (the binary's <code>-untokened</code> flag / <code>WKS_MCP_UNTOKENED</code>), with three positions:</p>
+<p>Clients whose MCP registration is a bare URL and can't send headers append the token as <code>?t=&lt;token&gt;</code> instead. View, triage and operator tiers apply to tokens you mint this way; they do not apply to the agents the hub launches. The native app's <code>--local</code> mode runs the same facade, but on a loopback port the OS assigns at startup, so <code>7897</code> is only the address of a standalone <code>serve</code>.</p>
+<h3>no credential, no tools</h3>
+<p><strong>A request with no credential at all is refused with <code>401</code>.</strong> The facade speaks plain HTTP on loopback, and loopback is reachable by every process and every user account on the machine (and by a container sharing the host network namespace), so "whoever reached the port" is not an identity. Before 0.160 it got the whole operator set; that is what changed.</p>
+<p>The dial is <code>facade.untokenedAccess</code> in <code>config.yaml</code> (also <code>serve --untokened</code> and <code>WKS_MCP_UNTOKENED</code>), with three positions:</p>
 <ul>
-<li><code>deny</code> — the default. Credential-less requests get <code>401</code> on <code>/mcp</code> and <code>/sse</code>; <code>/health</code> stays open so liveness probes need no secret.</li>
-<li><code>view</code> — credential-less requests get the read-only tier. No spawning or writing, but every agent list and every transcript, to anything on the machine.</li>
-<li><code>operator</code> — credential-less requests get everything. The pre-0.160 behaviour, kept as an explicit opt-in for a hand-configured local client that cannot carry a token.</li>
+<li><code>deny</code>, the default. Credential-less requests get <code>401</code> on <code>/mcp</code> and <code>/sse</code>; <code>/health</code> stays open so liveness probes need no secret.</li>
+<li><code>view</code>. Credential-less requests get the read-only tier. No spawning or writing, but every session list and every transcript, to anything on the machine.</li>
+<li><code>operator</code>. Credential-less requests get everything. The pre-0.160 behaviour, kept as an explicit opt-in for a hand-configured local client that cannot carry a token.</li>
 </ul>
-<p>Nothing work{spacer} spawns is affected by any of the three: every facade session carries its own per-session token, presented as an <code>Authorization</code> header on the generated <code>--mcp-config</code> file (Claude PTY and stream) or as <code>?t=</code> on the URL (codex, opencode, copilot). The setting only governs callers that present nothing.</p>
-<p>The facade includes a <code>help</code> tool rendered from the live registry, and installed plugins contribute tools via their manifest's <code>tools</code> array. The initial plugin catalog is synchronized before facade readiness; later enable/disable changes are polled and apply to newly built server catalogs. MCP clients that cache <code>tools/list</code> may need to reconnect or refresh because this path does not currently emit a list-changed notification. See <a href="build-plugin.html#capabilities">the plugin guide</a>.</p>
+<p>Nothing work{spacer} launches is affected by any of the three, because every launched session carries its own token. The setting only governs callers that present nothing, and a token that is present but unknown or revoked is always <code>401</code>.</p>
+<h3>the tools</h3>
+<p>The facade includes a <code>help</code> tool rendered from the live registry, and plugins contribute tools through their manifest's <code>tools</code> array. The initial plugin catalog is loaded before the facade reports ready; later changes are polled and apply to newly built catalogs. An MCP client that caches <code>tools/list</code> may need to reconnect, because there is no list-changed notification on this path.</p>
 <ul>
-<li><code>list_agents</code>, running agents + state/usage/pending asks.</li>
-<li><code>get_transcript</code>, read a session's transcript.</li>
-<li><code>spawn_agent</code>, start a new agent; returns its sessionId.</li>
-<li><code>create_terminal</code>, open a new shell PTY; returns its sessionId.</li>
+<li><code>list_agents</code>, running agents with state, usage and pending asks.</li>
+<li><code>spawn_agent</code>, start a new agent on any of the four providers; returns its sessionId.</li>
 <li><code>send_message</code>, send a prompt to an agent.</li>
-<li><code>approve</code>, resolve a permission prompt (yes/no/always).</li>
-<li><code>answer</code>, answer an AskUserQuestion picker.</li>
-<li><code>signal</code>, send a signal (SIGINT/SIGTERM/…).</li>
-<li><code>terminal_input</code>, write raw bytes into a PTY.</li>
-<li><code>notify</code>, show a desktop notification.</li>
+<li><code>get_transcript</code> / <code>get_conversation</code>, read what a session has said and done.</li>
+<li><code>approve</code>, resolve a permission prompt.</li>
+<li><code>answer</code>, answer a question an agent asked.</li>
+<li><code>signal</code>, interrupt or stop a session.</li>
+<li><code>create_terminal</code> / <code>terminal_input</code>, open a shell and write to it.</li>
+<li><code>notify</code>, post a notification.</li>
 </ul>
-<p>The rest cover snapshots and conversations (<code>get_snapshot</code>, <code>list_snapshots</code>, <code>get_conversation</code>), models and resumable sessions (<code>list_models</code>, <code>list_resumable_sessions</code>), config and profiles (<code>get_config</code>, <code>reload_config</code>, <code>list/add/remove_profiles</code>), saved sessions and layouts, the library, analytics summaries, terminal resize, ambient file/search access (<code>read_file</code>, <code>write_file</code>, <code>list_dir</code>, <code>search_project</code>), and UI navigation. View/triage/operator tiers apply to manually minted remote credentials, not Workspacer-spawned agents. <code>services/hub-rs/assets/mcp-effective-tools.json</code> (implemented in <code>services/hub-rs/src/mcp.rs</code>) is the authoritative list.</p>
-<p><code>spawn_agent</code> / <code>create_terminal</code> need the matching capabilities registered by a provider; the session runs headless in claudemon and a desktop pane can attach later. Supported spawned agents receive the ambient operator surface. Pairing, provider identity, authenticated host operations, plugin provenance, and remote transport authorization remain separate boundaries.</p>
-<p>Note: the agent-driving capabilities (<code>agents.*</code>, <code>claude.*</code>, <code>sessions.*</code>) are normally provided by the Electron main process, so they only exist while the desktop app is running. <code>cmd/brain</code> is a standalone provider that fills the gap headlessly (backed by claudemon's HTTP API), and the hub can supervise it with <code>--brain-scope full</code> (headless) or <code>--brain-scope catalog</code> (alongside the app). So the MCP facade works with no GUI open.</p>
+<p>The rest cover snapshots (<code>get_snapshot</code>, <code>list_snapshots</code>), models and resumable sessions (<code>list_models</code>, <code>list_resumable_sessions</code>), config and profiles (<code>get_config</code>, <code>reload_config</code>, <code>list_profiles</code>), file and search access (<code>read_file</code>, <code>write_file</code>, <code>list_dir</code>, <code>search_project</code>), the project brief (<code>brief_append</code>), and more. <code>services/hub-rs/assets/mcp-effective-tools.json</code> is the authoritative list, by tier.</p>
     </section>
 
     <section id="federation" class="doc">
 <h2>hub federation (hub-of-hubs)</h2>
-<p>A hub can link <em>upstream</em> to named peer hubs and republish their fleet onto its own bus, so every client keeps its one-bus invariant while the fleet spans machines. Design + implementation notes: <code>docs/hub-federation.md</code>.</p>
+<p>A hub can link to named peer hubs and republish their sessions onto its own bus, so every client keeps its one connection while the agents span machines. The code is <code>services/hub-rs/src/federation.rs</code>; design notes are in <code>docs/hub-federation.md</code>.</p>
 <ul>
-<li><strong>Links are ordinary bus clients.</strong> Each peer in <code>~/.config/workspacer/peers.json</code> (<code>{name, url, token}</code>, mode 0600, since tokens never ride argv or config.yaml) gets an outbound <code>busclient</code> holding a scoped token the peer minted. The peer needs no concept of federation; the token's tier is the ceiling on the whole link.</li>
-<li><strong>Events forward off an allowlist</strong> (<code>agent.*</code>, <code>workflow.*</code>), stamped with the peer name in a new envelope field (<code>hub</code>). Payloads are never rewritten. The allowlist is not <code>*</code>, and each exclusion has a reason: a peer's <code>layout.changed</code> would clobber the local layout document, its <code>plugin.*</code> topics are host-only for a reason, and its <code>command.*</code> events would drive this machine's UI. Loop prevention is a tree invariant: an event that already carries a stamp is dropped, never re-forwarded.</li>
-<li><strong>Calls qualify:</strong> <code>hub:work/claude.approve</code> forwards to peer "work" with a 25s budget. Scoped remote credentials are checked against the bare method. Plugin identities remain local and cannot be used as federation credentials.</li>
-<li><strong>Reachability is first-class:</strong> <code>hub.peer.connected</code>/<code>disconnected</code> events drive client tombstones, and <code>federation.peers</code> (view-tier) reports each link's state so call-seeded clients can merge peer fleets at boot (<code>hub:&lt;peer&gt;/sessions.snapshots</code>).</li>
-<li><strong>Try it on one machine:</strong> from the repository root, <code>cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test federation</code> exercises isolated real Rust hubs, forwarding and reconnect. This is a local contract test, not a cloud rollout.</li>
+<li><strong>Links are ordinary bus clients.</strong> Each peer in <code>&lt;configDir&gt;/peers.json</code> (<code>name</code>, <code>url</code>, <code>token</code>, and an optional <code>dispatch</code> flag) gets an outbound bus connection holding a scoped token the peer minted. The peer needs no concept of federation; the token's tier is the ceiling on the whole link. Tokens stay in that file, never in argv or <code>config.yaml</code>.</li>
+<li><strong>Events forward off an allowlist</strong> (<code>agent.*</code>, <code>workflow.*</code>, <code>host.*</code>, <code>queue.*</code>), stamped with the peer's name in the envelope's <code>hub</code> field. Payloads are never rewritten. Everything else stays home on purpose: a peer's <code>layout.changed</code> would clobber the local layout, and its <code>command.*</code> events would drive this machine's UI. An event that already carries a stamp is dropped, never forwarded again.</li>
+<li><strong>Calls qualify:</strong> <code>hub:work/claude.approve</code> forwards to peer "work", with a 25-second budget for an ordinary call. A scoped credential is checked against the bare method. Plugin identities stay local and cannot be used as federation credentials.</li>
+<li><strong>Dispatch is a separate opt-in.</strong> Linking a peer lets you see and drive its sessions. Letting this hub start new work on it needs <code>dispatch</code> set on that peer.</li>
+<li><strong>Reachability is first-class:</strong> <code>hub.peer.connected</code> and <code>hub.peer.disconnected</code> events let clients mark a peer's sessions as offline instead of losing them, and <code>federation.peers</code> (view tier) reports each link's state. Changing the peer list (<code>federation.savePeersConfig</code>) needs the host token and replaces the live links without a restart.</li>
+<li><strong>In the native app</strong> peers show up on the Hosts screen and in New Agent's <em>Run on</em> switch.</li>
+<li><strong>Try it on one machine:</strong> from the repository root, <code>cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test federation</code> exercises isolated real hubs, forwarding and reconnect. This is a local contract test, not a cloud rollout.</li>
 </ul>
+    </section>
+
+    <section id="electron" class="doc">
+<h2>the electron app (legacy)</h2>
+<div class="callout legacy"><strong>Deprecated.</strong> The Electron app in <code>apps/desktop</code> still builds, still runs, and its installers stay on the releases page. New work goes into the native app. This section is here so the code stays explainable, not as a recommendation.</div>
+<p>It is an Electron main process, a React renderer, and two child processes it supervises. Some things exist only here: tiled panes, the embedded browser, plugin panes and the Plugins Manager, the brief board, and the Fleet Manager launcher.</p>
+<h3>build and run</h3>
+<pre><code>make install      # cd apps/desktop &amp;&amp; npm install
+make dev          # the app in dev mode, with hot reload
+make dev-share    # the same loop with remote sharing forced on
+./dev             # thin wrapper around npm run dev
+make build-desktop
+make package      # electron-builder installers, into apps/desktop/release/
+make test-desktop # npm test</code></pre>
+<p><code>make install</code> also runs <code>electron-rebuild</code> against <code>better-sqlite3</code> so the native module matches your Electron version. <code>make dev</code> builds <code>workspacer-rust</code> and a release <code>claudemon</code>, builds the main process, starts the Vite renderer on <code>http://localhost:5173</code>, waits for it, then launches Electron. The Playwright suite (<code>npm run test:e2e</code>) is not part of <code>make test</code>.</p>
+<p><strong>GPU.</strong> Some Linux GPUs render the Chromium surface as speckled garbage, or crash Electron's GPU process on launch. <code>make dev</code> therefore sets <code>WORKSPACER_DISABLE_GPU=1</code> by default, which calls <code>disableHardwareAcceleration()</code> and adds <code>--disable-gpu-compositing</code>. Run <code>make dev WORKSPACER_DISABLE_GPU=0</code> to test real-GPU paths. None of this applies to the native app, which has no Chromium in it.</p>
+<h3>who spawns what</h3>
+<p>Electron main supervises two children:</p>
+<ul>
+<li><code>claudemonDaemon.ts</code> spawns <code>claudemon serve --hook-port 7890 --api-port 7891</code>.</li>
+<li><code>hubDaemon.ts</code> spawns <code>workspacer-rust … serve --hub-only --external-claudemon …</code>: the Rust hub as a control plane that borrows the engine Electron already started. Electron then registers its own desktop services with that hub.</li>
+</ul>
+<p>In dev the binaries come from <code>services/claudemon/target/release/claudemon</code> and <code>services/hub-rs/target/release/workspacer-rust</code>; packaged, from <code>&lt;resourcesPath&gt;/claudemon/</code> and <code>&lt;resourcesPath&gt;/hub/</code>. Before spawning, each supervisor probes the port's <code>/health</code>. A <em>healthy</em> service already there, such as a running <code>workspacer serve</code>, is <strong>adopted</strong>: no spawn, no supervision, never signaled on quit.</p>
+<p>Owned children restart with backoff (<code>RestartBackoff</code> in <code>lib/daemonUtils.ts</code>): one second, doubling to a thirty-second cap, giving up after ten consecutive failures, with the counter reset once a child has stayed up for a minute.</p>
+<h3>remote sharing</h3>
+<p>Sharing is a runtime toggle in the app. <code>WORKSPACER_REMOTE_SHARE=1</code> forces it on at launch (default bind <code>0.0.0.0:7895</code>), and <code>WORKSPACER_REMOTE_ADDR=host:port</code> overrides the bind address, which is worth pinning to a tailnet IP. Both variables are read by Electron's launcher, not by the hub. When the built web renderer is present the hub also serves it at <code>/app</code>, which is this same React interface in a browser.</p>
+<h3>one agent, one card</h3>
+<p>The Electron and web clients mirror their layout through a hub-owned shared document, last writer wins. Two helpers in <code>agentIdentity.ts</code> keep that from multiplying cards: <code>agentIdForSession(sessionId)</code> derives the card id from the session id, so every client produces the same one, and <code>dedupeBySessionId</code> collapses any cards that still share a session whenever a layout is taken in. The native app has no layout document and does not take part in this.</p>
     </section>
 
     <div class="foot">work{spacer} :: build &amp; internals :: <a href="docs.html">operational docs →</a> :: <a href="enterprise.html#pilot" data-contact-open>contact</a></div>
