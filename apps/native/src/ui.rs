@@ -2011,8 +2011,8 @@ impl Workspace {
             .update(cx, |input, cx| input.set_auto_grow_rows(1, rows, cx));
         // New Agent's first message starts taller and has the page to grow
         // into: up to a third of the window, the rest scrolls inside it.
-        let most = (f32::from(height) * 0.33 / (f32::from(window.rem_size()) * 1.25)).floor()
-            as usize;
+        let most =
+            (f32::from(height) * 0.33 / (f32::from(window.rem_size()) * 1.25)).floor() as usize;
         self.prompt.update(cx, |input, cx| {
             input.set_auto_grow_rows(
                 LAUNCH_PROMPT_ROWS,
