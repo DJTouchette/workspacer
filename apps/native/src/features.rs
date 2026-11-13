@@ -1747,6 +1747,15 @@ pub fn installed_version() -> String {
             std::env::current_exe()
                 .ok()
                 .and_then(|p| p.parent().map(|p| p.join("build-stamp.json")))
+                // In a macOS app bundle, codesign treats everything in
+                // Contents/MacOS as code, so the stamp sits in Resources.
+                .map(|p| {
+                    let bundled = p.parent().map(|d| d.join("../Resources/build-stamp.json"));
+                    match bundled {
+                        Some(b) if cfg!(target_os = "macos") && !p.exists() && b.exists() => b,
+                        _ => p,
+                    }
+                })
                 .and_then(|p| std::fs::read(p).ok())
                 .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
                 .and_then(|v| v["version"].as_str().map(str::to_owned))

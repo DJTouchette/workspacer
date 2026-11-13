@@ -6,7 +6,7 @@
 # quarantine flag cleared once (xattr -cr /Applications/Workspacer.app).
 # Launched from Finder it owns its local engine (see macos_bundle_launch in
 # src/main.rs); the version is read back from build-stamp.json beside the
-# binary, as on Windows and Linux.
+# binary (in Contents/Resources: codesign treats Contents/MacOS as code).
 set -euo pipefail
 native=$(cd -- "$(dirname -- "$0")/.." && pwd)
 root=$(cd -- "$native/../.." && pwd)
@@ -50,7 +50,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 install -m 755 "$binary" "$app/Contents/MacOS/wks-native"
 commit=$(git -C "$root" rev-parse HEAD 2>/dev/null || true)
 if [ -n "$commit" ]; then commit="\"$commit\""; else commit=null; fi
-cat >"$app/Contents/MacOS/build-stamp.json" <<STAMP
+cat >"$app/Contents/Resources/build-stamp.json" <<STAMP
 {
   "component": "native",
   "version": "$version",

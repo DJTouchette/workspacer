@@ -680,7 +680,7 @@ jobs:
           app="$mnt/Workspacer.app"
           test -L "$mnt/Applications"
           codesign --verify --strict --verbose=2 "$app"
-          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['platform']=='darwin-arm64', d; print(d)" "$app/Contents/MacOS/build-stamp.json"
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['platform']=='darwin-arm64', d; print(d)" "$app/Contents/Resources/build-stamp.json"
           "$app/Contents/MacOS/wks-native" --help >/dev/null
       - name: Upload native macOS .dmg
         uses: actions/upload-artifact@v4
