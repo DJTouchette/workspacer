@@ -393,7 +393,7 @@ Today the integration is chosen in the Electron app's Spawn agent dialog; the na
 
 Return optional `env` (string map) and `args` (string array): the host overlays the child environment and appends arguments after profile/host arguments. It rejects extra fields, nulls, NUL characters and oversized patches. Executable and cwd overrides are not allowed. Errors stop the launch; None bypasses the hook entirely.
 
-The selected plugin ID persists with the workspace and runs again on resume. Current entry points are local Claude PTY/stream and Codex managed/hybrid sessions launched from the Electron app. This is a trusted-sidecar contribution. The [Headroom example](https://github.com/DJTouchette/workspacer/blob/master/plugins/examples/headroom/README.md) uses supervisor-issued `HUB_TOKEN` and `WKS_SETTINGS`, with no runtime npm dependencies. See the [full contract](https://github.com/DJTouchette/workspacer/blob/master/docs/launch-integrations.md) for limits and [setup instructions](docs.html#launch-integrations).
+The selected plugin ID persists with the workspace and runs again on resume. Current entry points are local Claude PTY/stream and Codex managed/hybrid sessions launched from the Electron app. This is a trusted-sidecar contribution. The [Headroom example](https://github.com/DJTouchette/workspacer/blob/master/plugins/examples/headroom/README.md) uses supervisor-issued `HUB_TOKEN` and `WKS_SETTINGS`, with no runtime npm dependencies. See the [full contract](https://github.com/DJTouchette/workspacer/blob/master/docs/launch-integrations.md) for limits and [setup instructions](docs-electron.html#launch-integrations).
 
 ## The bus protocol
 

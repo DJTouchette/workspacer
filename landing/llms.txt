@@ -1,38 +1,59 @@
 # work{spacer}
 
-> A small native app for running coding agents on your own CLIs. One Rust binary with the hub and the session engine compiled in: no Electron, no bundled browser. You start Claude Code or Codex from the app, and every agent it starts carries a `spawn-agent` skill that lets it start a child on another provider (Claude Code, Codex, OpenCode, GitHub Copilot), hand it one self-contained task, and get woken when the child finishes or gets stuck. The earlier Electron desktop app (panes, plugin panes, the Fleet Manager and per-project briefs) is deprecated; most of the linked docs below still describe it.
+> A small native app for running coding agents on your own CLIs. One Rust binary with the hub and the session engine compiled in: no Electron, no bundled browser. You start Claude Code or Codex from the app, and every agent it starts carries a `spawn-agent` skill that lets it start a child on another provider (Claude Code, Codex, OpenCode, GitHub Copilot), hand it one self-contained task, and get woken when the child finishes or gets stuck. The earlier Electron desktop app (panes, plugin panes, the Fleet Manager and per-project briefs) is deprecated; its documentation is kept on a separate legacy page.
 
 ## Docs
 
-- [Enterprise pilots](enterprise.html): professional-use workflows and a scoped, paid setup and onboarding offer. Individual desktop installations; configured workflows require the desktop host.
-- [Configurable Fleet workflows](docs.html#fleet-workflows): default and per-project workflows, role-based routing, pinned task definitions, and runtime scope.
-- [Operational docs](docs.html): overview, getting started, running agents, the agent pane, pane types, layout and navigation, attention and notifications, remote and multi-client, extending, and configuration.
-- [Overview](docs.html#overview): the problem, the mental model (one agent = one session = one workspace), and what runs on your machine.
-- [Running agents](docs.html#agents-and-providers): the five providers, the spawn dialog, terminal-style vs managed agents.
-- [Pane types](docs.html#panes): terminal, browser, editor, review/diff, library, analytics, overview, plugin panes (including the Notes plugin's scratchpad), and more.
-- [Extending (plugins, mcp, tui)](docs.html#extending): installing plugins, driving the fleet over MCP, the terminal client.
+- [Docs](docs.html): the native app and the hub, one section per topic.
+- [Overview](docs.html#overview): the problem, the mental model (one agent is one session, children nest under their parent, the window is a client of a hub), and what runs on your machine.
+- [Getting started](docs.html#getting-started): what exists per OS, `--local` against attaching with `--bus`, `--demo`, first run, quitting and updating.
+- [Running agents](docs.html#agents-and-providers): New Agent, the two providers the app starts (Claude Code, Codex), models, access modes, session names.
+- [Agents that spawn agents](docs.html#spawning): the `spawn-agent` skill, children, wakes, child approvals, the other shipped skills, and handing a conversation to the other provider.
+- [The conversation](docs.html#conversation): tool cards, approvals, questions, steering and queueing, slash commands, attachments.
+- [Views](docs.html#views): Changes, terminal, files, History, Projects, Jobs, Hosts.
+- [Keys and navigation](docs.html#keys), [attention and notifications](docs.html#attention), [appearance and settings](docs.html#settings).
+- [Remote and other clients](docs.html#remote): Settings → Remote over Tailscale, pairing a phone, attaching to another hub, `workspacer serve`.
+- [Jobs](docs.html#jobs): scheduled and one-off work the hub runs, the job spec, and worked examples.
+- [Limit-aware routing](docs.html#routing): choosing a provider and model by role and by what each account has left.
+- [MCP, plugins, and the TUI](docs.html#extending): driving the hub over MCP, where plugins apply, the terminal client.
+- [Configuration](docs.html#configuration): which hub owns which directory, and the shared config file.
+- [Enterprise pilots](enterprise.html): what a professional user gets from the native app, and a scoped, paid setup and onboarding offer. Individual installations; no shared team administration.
 
-- [Optional Headroom routing](docs.html#launch-integrations): per-session local desktop Claude/Codex routing through an independently managed proxy; plugin setup and limitations.
-- [Launch integration contract](build-plugin.html#launch-integrations): optional sidecar manifest contribution, preparation RPC, child environment/args, and resume persistence.
+## Legacy docs (deprecated Electron app)
+
+- [Legacy docs](docs-electron.html): the Electron desktop app's documentation, kept as it was. The app still runs; new work goes into the native app.
+- [Fleet Manager](docs-electron.html#fleet-manager) and [configurable Fleet workflows](docs-electron.html#fleet-workflows): a manager agent that dispatches work through defined steps. The hub has the runtime; the launcher and the workflow editor are in the Electron app only.
+- [Briefs](docs-electron.html#briefs), [the agent pane](docs-electron.html#agent-pane), [pane types](docs-electron.html#panes), [layout and navigation](docs-electron.html#layout-and-navigation).
+- [Optional Headroom routing](docs-electron.html#launch-integrations): per-session Claude/Codex routing through an independently managed proxy, chosen in the Electron app's spawn dialog.
 
 ## Build & internals
 
-- [Build & internals](build.html): building from source, the three-process architecture, how agents are driven, writing a plugin, the MCP facade and brain.
-- [Architecture internals](build.html#architecture): the desktop / claudemon / hub split and the hub bus.
-- [How agents are driven](build.html#providers): the two integration tiers and each provider's managed adapter.
-- [Writing a plugin (overview)](build.html#plugins): the short tour of the plugin system.
-- [Hub federation](build.html#federation): link two machines' hubs so one UI covers both fleets. Hub-stamped events, `hub:<peer>/<method>` calls, peers.json, tombstones.
-- [The MCP facade & brain](build.html#mcp): exposing the hub's capabilities as MCP tools. Spawned agents receive the ambient operator/plugin surface through lifecycle-bound identity tokens; manual clients may still use view/triage/operator credentials. Includes registry-derived help and UI navigation.
+- [Build & internals](build.html): building from source, the architecture, how agents are driven, a plugin overview, the MCP facade, federation.
+- [Building from source](build.html#building): the native app's make targets, the standalone backend, the TUI, tests and packaging.
+- [Architecture internals](build.html#architecture): the Rust hub, the session engine and their clients, and the three ways they run (`wks-native --local`, `workspacer serve`, attach-only). The hub bus.
+- [How agents are driven](build.html#providers): the provider adapters, which providers are admitted, and what every spawned agent is handed.
+- [Writing a plugin (overview)](build.html#plugins): the short tour, including what works wherever the hub runs and what only the Electron app draws.
+- [The MCP facade](build.html#mcp): exposing the hub's capabilities as MCP tools. Spawned agents receive the Workspacer and plugin tools through lifecycle-bound identity tokens; manual clients can use view, triage or operator credentials.
+- [Hub federation](build.html#federation): link two machines' hubs so one client covers both. Hub-stamped events, `hub:<peer>/<method>` calls, peers.json.
+- [The Electron app (legacy)](build.html#electron): building and running the deprecated app.
+
+## Build a client
+
+- [Build a client](build-client.html): the session engine's HTTP and SSE API, for writing your own client.
+- [The seam](build-client.html#why), [run it headless](build-client.html#run), [the session model](build-client.html#model).
+- [HTTP reference](build-client.html#rest), [the live streams](build-client.html#streams), [the conversation](build-client.html#conversation).
+- [A client in 40 lines](build-client.html#client), [the local security model](build-client.html#security), [what's stable](build-client.html#stability).
 
 ## Build a plugin
 
 Full-text plugin reference for LLMs: [build-plugin.md](build-plugin.md) is the complete, plain-Markdown how-to. Point here for copy-paste manifests and bus code.
 
 - [Build a plugin (HTML)](build-plugin.html): the rendered how-to page.
-- [The two kinds](build-plugin.html#intro): webview (`ui`) vs sidecar (`server`).
+- [The two kinds](build-plugin.html#intro): webview (`ui`) vs sidecar (`server`), and where each shows up. Sidecars, provided methods and agent tools work wherever the hub runs; panes, widgets and hotkeys render only in the deprecated Electron app and its web build.
+- [Widgets](build-plugin.html#widgets): small pane-less UI contributions (Electron app only).
 - [Your first plugin](build-plugin.html#first): folder, minimal manifest, the webview page, and a sidecar sketch.
 - [The manifest](build-plugin.html#manifest): the `plugin.json` fields: `id`, `apiVersion` (must be `"1"`), `version` (release version; drives update detection), `server`, `ui`, `panes`, `hotkeys`, `settings`, `capabilities`, `provides`, `tools` (MCP tools contributed to agents via the workspacer facade), `emits`/`consumes`, `install`.
-- [The bus protocol](build-plugin.html#bus): `ws://127.0.0.1:7895/bus?token=`, the `subscribe` / `call` / `publish` / `register` ops.
+- [The bus protocol](build-plugin.html#bus): the hub's WebSocket bus (sidecars are handed its address as `HUB_URL`; a standalone `workspacer serve` listens on `ws://127.0.0.1:7895/bus`), and the `subscribe` / `call` / `publish` / `register` ops.
 - [Capabilities & trust](build-plugin.html#capabilities): enabled plugins are trusted; manifest methods/paths are advisory except provider namespace, routing/provenance, integrity, and UI isolation boundaries.
 - [Events you can consume](build-plugin.html#events): `agent.state_changed`, `agent.snapshot`, `workflow.completed`/`failed`, `ui.*`, `fs.changed`, and what you can emit.
 - [Settings](build-plugin.html#settings): typed manifest settings; live for webviews, restart for sidecars.
