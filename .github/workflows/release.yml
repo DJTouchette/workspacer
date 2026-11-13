@@ -1,12 +1,12 @@
 name: release
 
-# Build the desktop app and shared Rust backend/claudemon executables on
-# all three desktop OSes. On a version tag (v*) the installers are attached to a
-# GitHub Release — along with a standalone headless-server bundle
-# (workspacer-server-<os>-<arch>) and a claudemon-only bundle
-# (workspacer-claudemon-<os>-<arch>) per platform; on PRs / manual runs it's a
-# build smoke-test that just uploads the artifacts so you can catch
-# per-platform breakage early.
+# Build Workspacer Native (Windows installer, macOS .dmg, Linux archive) and
+# the shared Rust backend/claudemon executables on all three desktop OSes. On a
+# version tag (v*) everything is attached to a draft GitHub Release, along with
+# a standalone headless-server bundle (workspacer-server-<os>-<arch>) and a
+# claudemon-only bundle (workspacer-claudemon-<os>-<arch>) per platform; on
+# PRs / manual runs it's a build smoke-test that just uploads the artifacts.
+# v0.170.0 was the last release with an Electron app.
 on:
   push:
     tags: ['v*']
@@ -97,6 +97,9 @@ jobs:
           echo "stamp=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
           echo "migration_preview=$migration_preview" >> "$GITHUB_OUTPUT"
 
+  # Shared Rust backend + browser app per OS: the headless-server and
+  # claudemon-only bundles, and (Windows) the backend the native installer
+  # embeds. The native client builds in its own jobs below.
   build:
     needs: gate
     if: needs.gate.outputs.build == 'true'
@@ -104,41 +107,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # `server` names the standalone headless-server bundle for the leg
-          # (workspacer-server-<server>.tar.gz, .zip on Windows).
-          # Windows → NSIS installer + portable .exe (x64).
           - os: windows-latest
-            artifact: windows
             server: windows-x64
-          # macOS → .dmg, Apple Silicon only. There is no Intel leg: GitHub is
-          # retiring the macos-13 (last Intel) runner pool and its queue never
-          # drained for v0.124.0 — and the daemons build natively per arch, so
-          # an Intel dmg needs an Intel runner, not a cross-compile flag.
-          # Revisit only if Intel-Mac demand actually shows up.
+          # Apple Silicon only: GitHub is retiring the Intel macOS runners and
+          # the daemons build natively per arch.
           - os: macos-15
-            artifact: macos-arm64
             server: darwin-arm64
-          # Linux → AppImage. AppImage is distro-agnostic (runs on Arch, Fedora,
-          # Debian, …); GitHub only offers Ubuntu runners, and we pin the OLDEST
-          # supported Ubuntu so the glibc the AppImage links against stays broadly
-          # compatible (glibc is backward- but not forward-compatible, and
-          # AppImage doesn't bundle it).
+          # Oldest supported Ubuntu, so the binaries link an old glibc.
           - os: ubuntu-22.04
-            artifact: linux
             server: linux-x64
     runs-on: ${{ matrix.os }}
-    # Enter the `release` environment only for Windows tag-builds (that's the
-    # subject our Azure OIDC federated credential trusts). Empty otherwise, so
-    # PR/other-OS legs aren't gated by it.
-    environment: ${{ (matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')) && 'release' || '' }}
     defaults:
       run:
         working-directory: apps/desktop
-    env:
-      # macOS signing isn't wired yet (needs an Apple cert + notarization), so
-      # stop electron-builder hunting for one (which would fail the macOS build).
-      # Windows IS signed below via Azure Trusted Signing on tag builds.
-      CSC_IDENTITY_AUTO_DISCOVERY: false
 
     steps:
       - uses: actions/checkout@v5
@@ -167,20 +148,15 @@ jobs:
           cache-bin: false
           shared-key: release-backends-${{ matrix.server }}
 
-      # apps/desktop's postinstall rebuilds better-sqlite3 against Electron's
-      # ABI for this OS, so the native module ships correctly per platform.
-      - name: Install desktop deps
-        run: npm ci
+      # Build tooling only: no Electron app is packaged, so skip the
+      # postinstall that rebuilds better-sqlite3 against Electron's ABI.
+      - name: Install desktop build tools
+        run: npm ci --ignore-scripts
 
       - name: Install renderer deps
         working-directory: apps/desktop/src/renderer
         run: npm ci
 
-      # Nightlies get a distinguishable semver prerelease version so installers
-      # don't collide with the last stable and the app can show a NIGHTLY badge
-      # (app.getVersion() picks this up at package time). The date.time stamp
-      # comes from the gate job so all legs agree; the source sha lives in the
-      # release notes, not the version.
       - name: Stamp nightly version
         if: needs.gate.outputs.nightly == 'true'
         shell: bash
@@ -190,79 +166,19 @@ jobs:
           npm version --no-git-tag-version "$v"
           echo "nightly version: $v"
 
-      # Windows release builds sign via Azure Trusted Signing (OIDC — no stored
-      # secret). Only when this is a tag build AND the cert-profile var is set,
-      # so PRs and the pre-signing-setup period stay unsigned (and don't fail).
-      # Nightlies are excluded even when dispatched from a v* tag ref — they
-      # must take the unsigned path so the dashed artifactName override applies
-      # (and the release notes' "Unsigned." stays true).
-      - name: Azure login (Windows signing)
-        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '' && needs.gate.outputs.nightly != 'true'
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      # Mirrors `npm run package`: builds the renderer + main and Rust services,
-      # then runs electron-builder for THIS host OS. `--publish
-      # never` keeps electron-builder from uploading (we attach to the Release
-      # ourselves, below).
-      - name: Package (Windows, signed via Azure Trusted Signing)
-        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '' && needs.gate.outputs.nightly != 'true'
-        shell: pwsh
-        run: >
-          npm run package -- --publish never
-          -c.win.azureSignOptions.endpoint=https://eus.codesigning.azure.net/
-          -c.win.azureSignOptions.codeSigningAccountName=WorkSpacer
-          -c.win.azureSignOptions.certificateProfileName=${{ vars.AZURE_CODESIGN_PROFILE }}
-          "-c.win.azureSignOptions.publisherName=${{ vars.AZURE_CODESIGN_PUBLISHER }}"
-
-      - name: Package (unsigned)
-        if: ${{ !(matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '' && needs.gate.outputs.nightly != 'true') }}
+      # The browser app `workspacer serve` hosts at /app, and the Rust hub and
+      # claudemon executables.
+      - name: Build browser app and Rust backends
         shell: bash
-        run: |
-          extra=()
-          if [ "${{ needs.gate.outputs.nightly }}" = "true" ]; then
-            # Nightlies need SPACE-FREE Windows artifact names: GitHub rewrites
-            # spaces in asset names to dots, but the generic update feed requests
-            # the literal (dash-sanitized) fileName from latest.yml — the default
-            # "Workspacer Setup <v>.exe" naming would 404 the nightly updater.
-            # Stable keeps the default names (the landing page links them, and
-            # the GitHub provider handles the dot-rename itself).
-            extra+=('-c.nsis.artifactName=${productName}-Setup-${version}.${ext}')
-            extra+=('-c.portable.artifactName=${productName}-${version}.${ext}')
-          fi
-          npm run package -- --publish never "${extra[@]}"
-
-      - name: Packaged Electron ownership helper regressions
-        if: matrix.os == 'ubuntu-22.04'
-        run: node --test scripts/smoke-electron-ownership.test.mjs
-
-      - name: Smoke packaged Electron ownership under Xvfb
-        if: matrix.os == 'ubuntu-22.04'
-        shell: bash
-        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2 libgbm1
-          xvfb-run -a make test-electron-ownership \
-            WKS_ELECTRON_EXECUTABLE="$GITHUB_WORKSPACE/apps/desktop/release/linux-unpacked/workspacer" \
-            WKS_ELECTRON_SMOKE_REPORT="$GITHUB_WORKSPACE/apps/desktop/release/electron-ownership-smoke.json" \
-            2>&1 | tee apps/desktop/release/electron-ownership-smoke.log
-
-      # Keep diagnostics separate from published installers/update metadata.
-      # The report contains endpoint numbers/status, never fixture credentials.
-      - name: Upload Electron ownership receipt
-        if: always() && matrix.os == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v4
-        with:
-          name: electron-ownership-linux
-          path: |
-            apps/desktop/release/electron-ownership-smoke.json
-            apps/desktop/release/electron-ownership-smoke.log
-          if-no-files-found: warn
+          node scripts/gen-desktop-services.mjs
+          node scripts/gen-agent-skill-plugins.mjs
+          node scripts/gen-config-defaults.mjs
+          node scripts/gen-changelog.mjs
+          npm run build:renderer:web
+          npm run build:hub
+          npm run build:claudemon
 
       # Shared Rust backend: one standalone executable, plus the separately
       # usable claudemon executable and browser/plugin assets.
@@ -414,19 +330,10 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: workspacer-${{ matrix.artifact }}
-          # Installers/archives are already compressed; avoid recompressing them.
+          name: workspacer-server-${{ matrix.server }}
+          # Archives are already compressed; avoid recompressing them.
           compression-level: 0
-          # Installers PLUS the electron-updater metadata (latest*.yml) and the
-          # delta .blockmap files — the updater needs the .yml + .blockmap next
-          # to each installer, not just the installer — plus the standalone
-          # headless-server and claudemon-only bundles.
           path: |
-            apps/desktop/release/*.exe
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*.AppImage
-            apps/desktop/release/*.yml
-            apps/desktop/release/*.blockmap
             apps/desktop/release/workspacer-server-*
             apps/desktop/release/workspacer-claudemon-*
           if-no-files-found: error
@@ -462,15 +369,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.notes.outputs.body }}
-          # Attach the update metadata (latest*.yml) + .blockmap alongside the
-          # installers so electron-updater can read the release as an update
-          # feed, and the standalone headless-server + claudemon-only bundles.
+          # The standalone headless-server + claudemon-only bundles; the native
+          # downloads come from attach-native-release.
           files: |
-            apps/desktop/release/*.exe
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*.AppImage
-            apps/desktop/release/latest*.yml
-            apps/desktop/release/*.blockmap
             apps/desktop/release/workspacer-server-*
             apps/desktop/release/workspacer-claudemon-*
           draft: true
@@ -478,10 +379,8 @@ jobs:
 
     permissions:
       contents: write
-      id-token: write # Azure OIDC federated login for Windows Trusted Signing
 
-  # Independent runner: native compilation overlaps Electron and backend
-  # compilation. Cargo target locks and the two Cargo.lock graphs stay separate.
+  # Independent runner: native compilation overlaps the backend build. Cargo target locks and the two Cargo.lock graphs stay separate.
   native-windows-build:
     needs: gate
     if: needs.gate.outputs.build == 'true'
@@ -572,7 +471,7 @@ jobs:
         with:
           name: native-windows-build-input
           path: ${{ runner.temp }}/native-windows-build-input
-      - name: Download existing Electron-leg backend
+      - name: Download the build leg's Windows backend
         uses: actions/download-artifact@v4
         with:
           name: rust-windows-backend-input
@@ -641,7 +540,7 @@ jobs:
           if-no-files-found: error
 
   # Native macOS: Workspacer.app (ad-hoc signed, not notarized) in a .dmg.
-  # Apple Silicon only, like the Electron leg. The binary embeds the Rust hub
+  # Apple Silicon only, like the backend leg. The binary embeds the Rust hub
   # and claudemon, so there is no separate backend input to carry over.
   native-macos:
     needs: gate
@@ -693,7 +592,7 @@ jobs:
           if-no-files-found: error
 
   # Native Linux: relocatable tar.gz with a per-user install.sh. Built on the
-  # oldest supported Ubuntu for the same glibc reason as the AppImage leg.
+  # oldest supported Ubuntu, so the binary links an old, widely compatible glibc.
   native-linux:
     needs: gate
     if: needs.gate.outputs.build == 'true'
@@ -748,8 +647,8 @@ jobs:
           if-no-files-found: error
 
   # One job attaches every native download to the stable-tag draft, after the
-  # Electron legs have created it: concurrent softprops calls on a tag with no
-  # release yet can each create their own draft.
+  # build legs have created it with the release notes: concurrent softprops
+  # calls on a tag with no release yet can each create their own draft.
   attach-native-release:
     needs: [gate, build, native-windows-package, native-macos, native-linux]
     if: startsWith(github.ref, 'refs/tags/v') && needs.gate.outputs.nightly != 'true'
@@ -777,14 +676,11 @@ jobs:
   # Roll the nightly only after every platform and native installer smoke passed.
   # Build failure leaves the previous release intact; the publish-last rollout
   # below still has a non-atomic boundary after deleting the previous release.
-  # Every updater-critical asset is verified present BEFORE the old release is
+  # Every expected asset is verified present BEFORE the old release is
   # touched, so a leg that "succeeded" but produced no installer can't ship a
-  # release the updater can't read. The latest*.yml/.blockmap metadata IS
-  # attached — nightly installs read this feed via the generic provider
-  # (updateService switches on the -nightly version); stable installs never
-  # see it (their GitHub provider resolves /releases/latest, which excludes
-  # prereleases — and the `nightly` tag sits outside the v* pattern the
-  # landing page watches).
+  # release the native updater can't read. Nightly installs follow the
+  # `nightly` tag; stable ones resolve /releases/latest, which excludes
+  # prereleases (and the `nightly` tag sits outside the landing page's v*).
   publish-nightly:
     needs: [gate, build, native-windows-package, native-macos, native-linux]
     if: needs.gate.outputs.nightly == 'true'
@@ -831,20 +727,11 @@ jobs:
           RUST_MIGRATION_PREVIEW: ${{ needs.gate.outputs.migration_preview }}
         run: |
           set -euo pipefail
-          # Updater-critical assets, per platform — every glob the create below
-          # uses must match BEFORE we touch the live release. (No mac zip yet:
-          # MacUpdater needs one, but mac auto-update is dead until signing
-          # lands anyway — add '*-mac.zip' here when the zip target ships.)
-          # Electron and native Windows installers share the Workspacer-Setup-
-          # prefix (native ends -x64.exe), as do the two macOS .dmg files
-          # (native ends -macos-arm64.dmg); check each side separately.
-          [ -n "$(ls Workspacer-Setup-*.exe 2>/dev/null | grep -v -- '-x64\.exe$')" ] || { echo "missing expected asset: Electron Workspacer-Setup-*.exe"; exit 1; }
-          [ -n "$(ls *-arm64.dmg 2>/dev/null | grep -v -- '-macos-arm64\.dmg$')" ] || { echo "missing expected asset: Electron *-arm64.dmg"; exit 1; }
-          for pat in 'Workspacer-Setup-*-x64.exe' '*.AppImage' 'Workspacer-*-macos-arm64.dmg' \
+          # Expected assets, per platform — every glob the create below uses
+          # must match BEFORE we touch the live release.
+          for pat in 'Workspacer-Setup-*-x64.exe' 'Workspacer-*-macos-arm64.dmg' \
                      'Workspacer-*-macos-arm64.dmg.sha256' \
                      'workspacer-[0-9]*-linux-x64.tar.gz' 'workspacer-[0-9]*-linux-x64.tar.gz.sha256' \
-                     'latest.yml' 'latest-linux.yml' 'latest-mac.yml' \
-                     '*.blockmap' \
                      'workspacer-server-windows-x64.zip' \
                      'workspacer-server-linux-x64.tar.gz' \
                      'workspacer-server-darwin-arm64.tar.gz' \
@@ -881,9 +768,9 @@ jobs:
           {
             printf 'Rolling nightly build of main (%s). Unsigned.\n\n' "${{ github.sha }}"
             if [ "$RUST_MIGRATION_PREVIEW" = "true" ]; then
-              printf '**Rust migration testing nightly.** Electron uses the Rust hub/MCP executable; native Windows embeds the shared Rust backend. The compatibility audit and legacy-code retirement are still in progress. This release is for testing and does not certify complete migration parity.\n\n'
+              printf '**Rust migration testing nightly.** Workspacer Native embeds the shared Rust backend. The compatibility audit and legacy-code retirement are still in progress. This release is for testing and does not certify complete migration parity.\n\n'
             fi
-            printf 'Workspacer Native is unsigned. Windows installs update in place from Settings → About; macOS and Linux show when an update exists and install by replacing the app. Electron nightly installs auto-update onto the next nightly from this feed and never onto stable. To return to stable, install a release build from the releases page.\n\n'
+            printf 'Workspacer Native is unsigned. Windows installs update in place from Settings → About; macOS and Linux show when an update exists and install by replacing the app. To return to stable, install a release build from the releases page.\n\n'
             printf -- '- [Windows x64 installer](https://github.com/%s/releases/download/nightly/%s)\n' "$REPO" "${native_installers[0]}"
             printf -- '- [macOS Apple Silicon .dmg](https://github.com/%s/releases/download/nightly/%s) (run `xattr -cr /Applications/Workspacer.app` once after copying)\n' "$REPO" "${native_dmgs[0]}"
             printf -- '- [Linux x64 archive](https://github.com/%s/releases/download/nightly/%s) (unpack, then `./install.sh`)\n\n' "$REPO" "${native_linux[0]}"
@@ -893,7 +780,7 @@ jobs:
               || printf '_Nothing recorded in CHANGELOG.md yet._\n'
           } > "$notes_file"
           shopt -s nullglob
-          assets=( *.exe *.AppImage *.dmg *.sha256 latest*.yml *.blockmap workspacer-server-* workspacer-claudemon-* workspacer-[0-9]*-linux-x64.tar.gz )
+          assets=( *.exe *.dmg *.sha256 workspacer-server-* workspacer-claudemon-* workspacer-[0-9]*-linux-x64.tar.gz )
           shopt -u nullglob
           gh release create nightly \
             --repo "$REPO" \
