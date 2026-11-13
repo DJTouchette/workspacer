@@ -647,6 +647,72 @@ jobs:
           draft: true
           fail_on_unmatched_files: true
 
+  # The native Linux archive (apps/native/scripts/package-linux.sh), attached to
+  # stable-tag drafts beside the Windows native installer. Nothing `needs` this
+  # job, on purpose: if it fails, every other leg still publishes and the draft
+  # only lacks this one asset.
+  #
+  # Tags only. A nightly is rolled by publish-nightly from a set of assets it
+  # verifies, and this archive is not in that set.
+  #
+  # Same pinned oldest-supported Ubuntu as the AppImage leg, for the same
+  # reason: the binary links the runner's glibc, which is backward- but not
+  # forward-compatible.
+  native-linux-package:
+    needs: gate
+    if: needs.gate.outputs.build == 'true' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write # Attaches the archive to the stable-tag draft.
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache native release dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native
+          cache-on-failure: true
+          cache-bin: false
+          shared-key: release-native-linux
+      - name: Linux native libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libwayland-dev libssl-dev libasound2-dev libvulkan1 mesa-vulkan-drivers
+      # The same proof native-client.yml runs on main: the archive installs,
+      # runs and uninstalls from a clean prefix before anyone downloads it.
+      - name: Package the native Linux build and prove it installs
+        working-directory: apps/native
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=$(scripts/package-linux.sh | tail -1)
+          work=$(mktemp -d)
+          tar -xzf "$archive" -C "$work"
+          (cd "$work"/workspacer-native-* && PREFIX="$work/prefix" ./install.sh)
+          "$work/prefix/bin/wks-native" --help >/dev/null
+          python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$work/prefix/lib/workspacer-native/build-stamp.json"
+          "$work/prefix/bin/wks-native-uninstall"
+          test ! -e "$work/prefix/lib/workspacer-native"
+      - name: Upload native archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspacer-native-linux
+          compression-level: 0
+          path: |
+            apps/native/target/package/workspacer-native-*-linux-*.tar.gz
+            apps/native/target/package/workspacer-native-*-linux-*.tar.gz.sha256
+          if-no-files-found: error
+      - name: Attach native archive to stable-tag draft
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/native/target/package/workspacer-native-*-linux-*.tar.gz
+            apps/native/target/package/workspacer-native-*-linux-*.tar.gz.sha256
+          draft: true
+          fail_on_unmatched_files: true
+
   # Roll the nightly only after every platform and native installer smoke passed.
   # Build failure leaves the previous release intact; the publish-last rollout
   # below still has a non-atomic boundary after deleting the previous release.
