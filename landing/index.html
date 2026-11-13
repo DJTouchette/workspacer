@@ -933,7 +933,7 @@
   <div class="facts">
     <div class="fact"><b>Alpha, and it means it.</b> Sharp edges, breaking changes between releases, and features that land faster than the docs describing them.</div>
     <div class="fact"><b>The Electron app is on its way out.</b> This release ships it alongside the native app; the next release deprecates it. New work goes into the native app, and the Electron app keeps <a href="docs-electron.html">its own docs</a>.</div>
-    <div class="fact"><b>Native does less, on purpose.</b> The Electron app's tiled panes, embedded browser, plugin panes, brief board and Fleet Manager are not here. If you depend on one of them, use the Electron app for now.</div>
+    <div class="fact"><b>Native does less, on purpose.</b> The Electron app's tiled panes, embedded browser, plugin panes, brief board and Fleet Manager are not here. The Fleet Manager is not coming to the native app either: here, agents hand work to each other with the <code>spawn-agent</code> skill. If you depend on one of the others, use the Electron app for now.</div>
     <div class="fact"><b>The builds are unsigned.</b> Windows warns you and lets you click through. The app tells you when a newer release exists: on Windows it can install it and restart, on Linux you unpack the new archive yourself.</div>
     <div class="fact"><b>There is no native macOS package.</b> A signed, notarized bundle isn't set up, so on a Mac you build the native app from source or use the Electron app. The <a href="#get">download section</a> has both.</div>
     <div class="fact"><b>Quitting stops your agents.</b> The window owns them. Close-to-background is a setting, or run the hub headless and attach to it. A stopped Claude or Codex session can be resumed from History.</div>

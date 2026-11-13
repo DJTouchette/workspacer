@@ -49,6 +49,10 @@ To move from phase 1 to phase 2:
   lines of `llms.txt`.
 - The macOS row and the macOS item in `docs.html#getting-started` point Mac
   users at the Electron `.dmg`. Decide what replaces that.
+- The Fleet Manager is not coming to the native app, so it leaves with
+  Electron. Its paragraph on `enterprise.html`, its stubs in `docs.html#legacy`
+  and its `llms.txt` line then describe a deprecated app's feature: shorten
+  them to a pointer at `docs-electron.html`, or drop them.
 - Run `make landing-plugin-md` afterwards.
 
 The deprecated wording has been written once already: it is the state of these
@@ -247,20 +251,24 @@ native captures (delegation, Changes, History), with keyboard-accessible tabs
 and full-size image links. Without JavaScript, all three views remain visible.
 
 The page describes what the native app does for professional use, grounded in
-`apps/native/README.md` and the `spawn-agent` skill. The Fleet Manager and
-configured workflows get one plain paragraph, and it is worded carefully for a
-reason: the workflow runtime is in the Rust hub (`services/hub-rs`:
-`workflows.rs`, `workflow_runtime.rs`, the `manager` flag in `spawn_plan.rs`),
-so it runs wherever the hub does, but the only launcher for a manager and the
-only workflow editor are in the Electron app. The native app, the phone client,
-the TUI and the CLI cannot start one. Don't shorten that to "requires Electron"
-or to "native does it"; neither is true. Each developer has their own
-installation; this page does not promise shared team administration. Local
-coordination does not mean model requests stay on the machine. The workflow
-guide is `docs-electron.html#fleet-workflows`.
+`apps/native/README.md` and the `spawn-agent` skill.
+
+**The Fleet Manager is not coming to the native app.** That is the owner's
+decision, not a gap to be filled later, so the page gives the manager and its
+configured workflows one short paragraph for people who already use them, says
+they stay in the Electron app, and sells delegation as one agent handing work
+to another instead. Don't reintroduce the manager as a selling point, and
+don't describe it as planned for native. (For the record: the workflow runtime
+itself is in the Rust hub, `services/hub-rs` `workflows.rs` and
+`workflow_runtime.rs`, but nothing except the Electron app can start a manager
+or edit a workflow.) Each developer has their own installation; this page does
+not promise shared team administration. Local coordination does not mean model
+requests stay on the machine. The workflow guide is
+`docs-electron.html#fleet-workflows`.
 
 The pilot offer's own wording ("a workflow matched to a real task") predates
-this and was left alone; what the pilot installs is the owner's call.
+this and was left alone; it now reads in its plain sense, a way of working,
+not a configured Fleet workflow.
 
 ## Download buttons and the star pill
 
