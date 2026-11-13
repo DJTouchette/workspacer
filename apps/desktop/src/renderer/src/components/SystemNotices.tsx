@@ -1,5 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { X, AlertTriangle, AlertCircle, Info } from 'lucide-react';
+import { X, AlertTriangle, AlertCircle, Info, ExternalLink } from 'lucide-react';
+import { useAppVersion } from '../hooks/useAppVersion';
+import { SmallButton } from './settings/primitives';
+import {
+  NATIVE_DOWNLOAD_LABEL,
+  NATIVE_MOVE_DETAIL,
+  NATIVE_MOVE_TITLE,
+  openNativeDownload,
+} from '../lib/nativeMove';
 
 interface Notice {
   level: 'error' | 'warn' | 'info';
@@ -7,6 +15,13 @@ interface Notice {
   detail?: string;
   key?: string;
 }
+
+const NATIVE_MOVE_NOTICE: Notice = {
+  level: 'warn',
+  title: NATIVE_MOVE_TITLE,
+  detail: NATIVE_MOVE_DETAIL,
+  key: 'electron-sunset',
+};
 
 const ACCENT: Record<Notice['level'], string> = {
   error: 'var(--wks-error)',
@@ -26,11 +41,20 @@ function Icon({ level }: { level: Notice['level'] }) {
  * failed to start, a crash-loop that gave up, etc.) pushed over
  * `onSystemNotice`. Without these, those failures only hit the console and the
  * app looks silently broken. Same-`key` notices replace rather than stack.
+ *
+ * It also carries one renderer-owned notice: this is the last Electron release
+ * (lib/nativeMove.ts). That one shows on every launch of the desktop shell —
+ * dismissing it hides it for this session only, since the app will never get
+ * another update to remind anyone. A version from the update service is the
+ * desktop-shell signal; the web client reports none and never sees it.
  */
 export const SystemNotices: React.FC<{ onOpenCliSettings?: () => void }> = ({
   onOpenCliSettings,
 }) => {
-  const [notices, setNotices] = useState<Notice[]>([]);
+  const [pushed, setNotices] = useState<Notice[]>([]);
+  const { version } = useAppVersion();
+  const [nativeMoveDismissed, setNativeMoveDismissed] = useState(false);
+  const notices = version && !nativeMoveDismissed ? [NATIVE_MOVE_NOTICE, ...pushed] : pushed;
 
   useEffect(() => {
     const unsub = window.electronAPI.onSystemNotice?.((n) => {
@@ -44,8 +68,9 @@ export const SystemNotices: React.FC<{ onOpenCliSettings?: () => void }> = ({
     };
   }, []);
 
-  const dismiss = useCallback((idx: number) => {
-    setNotices((prev) => prev.filter((_, i) => i !== idx));
+  const dismiss = useCallback((notice: Notice) => {
+    if (notice === NATIVE_MOVE_NOTICE) setNativeMoveDismissed(true);
+    else setNotices((prev) => prev.filter((p) => p !== notice));
   }, []);
 
   if (notices.length === 0) return null;
@@ -116,7 +141,21 @@ export const SystemNotices: React.FC<{ onOpenCliSettings?: () => void }> = ({
                 Settings → Command Line
               </button>
             )}
-            {n.level !== 'info' && (
+            {n === NATIVE_MOVE_NOTICE && (
+              <div style={{ marginTop: 6 }}>
+                <SmallButton
+                  primary
+                  onClick={openNativeDownload}
+                  label={
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      {NATIVE_DOWNLOAD_LABEL}
+                      <ExternalLink size={12} strokeWidth={2} />
+                    </span>
+                  }
+                />
+              </div>
+            )}
+            {n.level !== 'info' && n !== NATIVE_MOVE_NOTICE && (
               <button
                 onClick={() => window.electronAPI.openLogsFolder?.()}
                 style={{
@@ -137,8 +176,9 @@ export const SystemNotices: React.FC<{ onOpenCliSettings?: () => void }> = ({
             )}
           </div>
           <button
-            onClick={() => dismiss(i)}
+            onClick={() => dismiss(n)}
             title="Dismiss"
+            aria-label="Dismiss"
             style={{
               flexShrink: 0,
               cursor: 'pointer',

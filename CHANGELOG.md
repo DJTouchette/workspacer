@@ -7,14 +7,36 @@ rolling `nightly` prerelease tracks `main` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.170.0] - 2026-11-13
+
+Workspacer is now a native app on Windows, macOS and Linux. This is the
+final release of the Electron desktop app: it still installs and updates to
+this version, then receives no further updates. Download Workspacer for your
+platform from this release instead. On first launch the native app imports
+the Electron app's settings, session list, jobs and library; the Electron
+app's own data is left untouched.
 
 ### Added
-- Experimental native Windows x64 installer, separate from the Electron app.
-  The Start menu shortcut launches the Rust/GPUI interface with its embedded
-  local engine, shared Rust backend and C++ runtime.
-  The installer is unsigned and updates are manual; agent CLIs and Git remain
-  separate prerequisites. Uninstall preserves sessions and shared settings.
+- Native downloads for every desktop platform: a Windows x64 installer
+  (`Workspacer-Setup-<version>-x64.exe`), an Apple Silicon `.dmg`
+  (`Workspacer-<version>-macos-arm64.dmg`, ad-hoc signed; clear the quarantine
+  flag once with `xattr -cr /Applications/Workspacer.app`) and a Linux x64
+  archive (`workspacer-<version>-linux-x64.tar.gz`, per-user `./install.sh`).
+  Opened from Finder, the macOS app starts its local engine and uses your
+  login shell's PATH to find agent CLIs, Node and Git.
+- The Electron app shows that it has moved to the native app and links to the
+  download.
+- A new native install imports the Electron app's `config.yaml`, profiles,
+  library, jobs, hub state and session database on first launch, from a
+  consistent snapshot even while the Electron app is still running. An
+  existing native install can import over its own data with
+  `wks-native --local --import-electron`, which first moves that data to a
+  `…before-electron-import-<time>` backup beside it.
+- Native Windows x64 installer, separate from the Electron app. The Start
+  menu shortcut launches the Rust/GPUI interface with its embedded local
+  engine, shared Rust backend and C++ runtime. The installer is unsigned and
+  updates in place from Settings → About; agent CLIs and Git remain separate
+  prerequisites. Uninstall preserves sessions and shared settings.
 - Native client themes, project and settings views, keyboard navigation, and
   live session creation for Claude and Codex against local or existing hubs.
 - Native and headless hosts stop Claude and Codex sessions that sit idle at

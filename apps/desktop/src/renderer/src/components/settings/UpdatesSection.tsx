@@ -1,8 +1,15 @@
 import React from 'react';
 import { Config } from '../../hooks/useConfig';
 import { useAppVersion } from '../../hooks/useAppVersion';
-import { Section, CheckRow } from './primitives';
+import { ExternalLink } from 'lucide-react';
+import { Section, CheckRow, SmallButton } from './primitives';
 import { ReleaseNotes } from '../ReleaseNotes';
+import {
+  NATIVE_DOWNLOAD_LABEL,
+  NATIVE_MOVE_DETAIL,
+  NATIVE_MOVE_TITLE,
+  openNativeDownload,
+} from '../../lib/nativeMove';
 
 const UPDATES_DEFAULTS = { enabled: true, channel: 'latest' };
 
@@ -44,6 +51,40 @@ const UpdatesSection: React.FC<UpdatesSectionProps> = ({ config, save }) => {
         >
           Workspacer v{version}
           {isNightly && <span style={{ color: 'var(--wks-warning)' }}> (nightly build)</span>}
+        </div>
+      )}
+      {/* The last Electron release (lib/nativeMove.ts): whatever the toggle
+          below says, no newer Electron build is coming. Desktop shell only:
+          the web client reports no version. */}
+      {version && (
+        <div
+          data-testid="native-move-updates"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-start',
+            gap: 6,
+            padding: '8px 10px',
+            borderRadius: 'var(--wks-radius-md)',
+            background: 'color-mix(in srgb, var(--wks-warning) 10%, transparent)',
+            fontSize: '0.72rem',
+            color: 'var(--wks-text-secondary)',
+          }}
+        >
+          <span style={{ fontWeight: 600, color: 'var(--wks-text-primary)' }}>
+            {NATIVE_MOVE_TITLE}
+          </span>
+          <span>No further updates will come to this Electron app. {NATIVE_MOVE_DETAIL}</span>
+          <SmallButton
+            primary
+            onClick={openNativeDownload}
+            label={
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {NATIVE_DOWNLOAD_LABEL}
+                <ExternalLink size={12} strokeWidth={2} />
+              </span>
+            }
+          />
         </div>
       )}
       <CheckRow

@@ -22,11 +22,12 @@ Appearance → Window layout chooses Auto (follows the window's shape), Wide or 
 
 ## Windows installer
 
-The release workflow now builds
-`Workspacer-Native-Rust-Preview-Setup-<version>-x64.exe` alongside Electron artifacts.
-The unsigned preview has manual updates and a separate Start menu shortcut,
-uninstall registration, notification identity, and data directory. This preserves
-existing installations while the Rust migration is tested.
+The release workflow builds `Workspacer-Setup-<version>-x64.exe` (named
+`Workspacer-Native-Rust-Preview-Setup-…` before 0.170.0; the updater accepts
+both). The unsigned installer updates in place from Settings → About and keeps
+its own Start menu shortcut, uninstall registration, notification identity and
+data directory (still registered as "Workspacer Native Rust Preview", so
+existing installations upgrade in place).
 
 The package contains the native application, standalone `workspacer-rust.exe`,
 plugin examples and Visual C++ runtime DLLs. It does not bundle Go services,
@@ -47,7 +48,7 @@ cargo build --locked --release --manifest-path services/hub-rs/Cargo.toml --bin 
 $env:NATIVE_CRT_DIR = 'C:\path\to\Microsoft.VC143.CRT'
 node apps/native/scripts/package-windows.mjs
 $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-$version-x64.exe"
+./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Setup-$version-x64.exe"
 ```
 
 Node 22 is a packaging tool dependency. CI resolves a checksum-verified NSIS
@@ -66,7 +67,7 @@ complete migration parity.
 ## Linux package
 
 ```sh
-make package-native-linux     # apps/native/target/package/workspacer-native-<version>-linux-<arch>.tar.gz
+make package-native-linux     # apps/native/target/package/workspacer-<version>-linux-<arch>.tar.gz
 ```
 
 `scripts/package-linux.sh` builds the release binary and packs it with a
@@ -82,10 +83,25 @@ kept. `--no-build` packs an existing `target/release/wks-native`, and
 
 The `native-client` workflow builds, installs, runs and uninstalls the archive
 on pushes to `main` and manual runs, and uploads it as the
-`workspacer-native-linux` artifact. It is not attached to releases, and
-updating is manual: the app says when a newer release exists; unpack the new
-archive and run `./install.sh` again. There is no macOS package (an app bundle
-needs signing and notarization, which are not set up).
+`workspacer-native-linux` artifact; the release workflow builds it on
+Ubuntu 22.04 and attaches it to tagged releases and the nightly. Updating is
+manual: the app says when a newer release exists; unpack the new archive and
+run `./install.sh` again.
+
+## macOS package
+
+```sh
+apps/native/scripts/package-macos.sh   # apps/native/target/package/Workspacer-<version>-macos-<arch>.dmg
+```
+
+Builds `Workspacer.app` (binary, `build-stamp.json`, icon, licences), signs it
+ad hoc and wraps it in a `.dmg` with an Applications link and a checksum. It
+is not notarized: a downloaded copy needs `xattr -cr
+/Applications/Workspacer.app` once. Opened from Finder or the Dock (no
+arguments), the binary adds `--local` and imports the login shell's PATH
+(`macos_bundle_launch` in `src/main.rs`). The release workflow builds it on
+`macos-15` (Apple Silicon) and attaches it to tagged releases and the nightly.
+Updating is manual, as on Linux.
 
 ## Run
 

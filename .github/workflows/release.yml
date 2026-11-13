@@ -631,19 +631,146 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-          ./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-$version-x64.exe"
+          ./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Setup-$version-x64.exe"
       - name: Upload native installer
         uses: actions/upload-artifact@v4
         with:
           name: workspacer-native-windows
           compression-level: 0
-          path: apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-*-x64.exe
+          path: apps/desktop/release/Workspacer-Setup-*-x64.exe
           if-no-files-found: error
-      - name: Attach native installer to stable-tag draft
-        if: startsWith(github.ref, 'refs/tags/v')
+
+  # Native macOS: Workspacer.app (ad-hoc signed, not notarized) in a .dmg.
+  # Apple Silicon only, like the Electron leg. The binary embeds the Rust hub
+  # and claudemon, so there is no separate backend input to carry over.
+  native-macos:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: macos-15
+    permissions:
+      contents: write # Attach to the stable-tag draft.
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache native release dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native
+          cache-on-failure: true
+          cache-bin: false
+          shared-key: release-native-macos
+      - name: Package Workspacer.app and .dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "${{ needs.gate.outputs.nightly }}" = "true" ]; then version="$version-nightly.${{ needs.gate.outputs.stamp }}"; fi
+          apps/native/scripts/package-macos.sh --version "$version"
+      - name: Smoke the .dmg (mount, signature, stamp, launch)
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg=$(ls apps/native/target/package/Workspacer-*-macos-arm64.dmg)
+          (cd apps/native/target/package && shasum -a 256 -c "$(basename "$dmg").sha256")
+          mnt=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
+          trap 'hdiutil detach "$mnt" -force || true' EXIT
+          app="$mnt/Workspacer.app"
+          test -L "$mnt/Applications"
+          codesign --verify --strict --verbose=2 "$app"
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['platform']=='darwin-arm64', d; print(d)" "$app/Contents/MacOS/build-stamp.json"
+          "$app/Contents/MacOS/wks-native" --help >/dev/null
+      - name: Upload native macOS .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspacer-native-macos
+          compression-level: 0
+          path: |
+            apps/native/target/package/Workspacer-*-macos-arm64.dmg
+            apps/native/target/package/Workspacer-*-macos-arm64.dmg.sha256
+          if-no-files-found: error
+
+  # Native Linux: relocatable tar.gz with a per-user install.sh. Built on the
+  # oldest supported Ubuntu for the same glibc reason as the AppImage leg.
+  native-linux:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write # Attach to the stable-tag draft.
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache native release dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native
+          cache-on-failure: true
+          cache-bin: false
+          shared-key: release-native-linux
+      - name: Linux native libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libwayland-dev libssl-dev libasound2-dev
+      - name: Package the Linux archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "${{ needs.gate.outputs.nightly }}" = "true" ]; then version="$version-nightly.${{ needs.gate.outputs.stamp }}"; fi
+          apps/native/scripts/package-linux.sh --version "$version"
+      - name: Smoke install, launch and uninstall from a clean prefix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/native/target/package
+          archive=$(ls workspacer-*-linux-x64.tar.gz)
+          sha256sum -c "$archive.sha256"
+          work=$(mktemp -d)
+          tar -xzf "$archive" -C "$work"
+          (cd "$work"/workspacer-*-linux-x64 && PREFIX="$work/prefix" ./install.sh)
+          "$work/prefix/lib/workspacer-native/wks-native" --help >/dev/null
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['platform']=='linux-x64', d; print(d)" "$work/prefix/lib/workspacer-native/build-stamp.json"
+          "$work/prefix/bin/wks-native-uninstall"
+          test ! -e "$work/prefix/lib/workspacer-native"
+      - name: Upload native Linux archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspacer-native-linux
+          compression-level: 0
+          path: |
+            apps/native/target/package/workspacer-*-linux-x64.tar.gz
+            apps/native/target/package/workspacer-*-linux-x64.tar.gz.sha256
+          if-no-files-found: error
+
+  # One job attaches every native download to the stable-tag draft, after the
+  # Electron legs have created it: concurrent softprops calls on a tag with no
+  # release yet can each create their own draft.
+  attach-native-release:
+    needs: [gate, build, native-windows-package, native-macos, native-linux]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.gate.outputs.nightly != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: workspacer-native-*
+          merge-multiple: true
+          path: native
+      - name: Attach native downloads to stable-tag draft
         uses: softprops/action-gh-release@v2
         with:
-          files: apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-*-x64.exe
+          files: |
+            native/Workspacer-Setup-*-x64.exe
+            native/Workspacer-*-macos-arm64.dmg
+            native/Workspacer-*-macos-arm64.dmg.sha256
+            native/workspacer-*-linux-x64.tar.gz
+            native/workspacer-*-linux-x64.tar.gz.sha256
           draft: true
           fail_on_unmatched_files: true
 
@@ -659,7 +786,7 @@ jobs:
   # prereleases — and the `nightly` tag sits outside the v* pattern the
   # landing page watches).
   publish-nightly:
-    needs: [gate, build, native-windows-package]
+    needs: [gate, build, native-windows-package, native-macos, native-linux]
     if: needs.gate.outputs.nightly == 'true'
     runs-on: ubuntu-latest
     # One lock across ALL refs: a dispatch-nightly from another branch would
@@ -708,7 +835,14 @@ jobs:
           # uses must match BEFORE we touch the live release. (No mac zip yet:
           # MacUpdater needs one, but mac auto-update is dead until signing
           # lands anyway — add '*-mac.zip' here when the zip target ships.)
-          for pat in 'Workspacer-Setup-*.exe' 'Workspacer-Native-Rust-Preview-Setup-*-x64.exe' '*.AppImage' '*-arm64.dmg' \
+          # Electron and native Windows installers share the Workspacer-Setup-
+          # prefix (native ends -x64.exe), as do the two macOS .dmg files
+          # (native ends -macos-arm64.dmg); check each side separately.
+          [ -n "$(ls Workspacer-Setup-*.exe 2>/dev/null | grep -v -- '-x64\.exe$')" ] || { echo "missing expected asset: Electron Workspacer-Setup-*.exe"; exit 1; }
+          [ -n "$(ls *-arm64.dmg 2>/dev/null | grep -v -- '-macos-arm64\.dmg$')" ] || { echo "missing expected asset: Electron *-arm64.dmg"; exit 1; }
+          for pat in 'Workspacer-Setup-*-x64.exe' '*.AppImage' 'Workspacer-*-macos-arm64.dmg' \
+                     'Workspacer-*-macos-arm64.dmg.sha256' \
+                     'workspacer-[0-9]*-linux-x64.tar.gz' 'workspacer-[0-9]*-linux-x64.tar.gz.sha256' \
                      'latest.yml' 'latest-linux.yml' 'latest-mac.yml' \
                      '*.blockmap' \
                      'workspacer-server-windows-x64.zip' \
@@ -741,21 +875,25 @@ jobs:
           # tagging a release with no notes): a nightly must still ship the day
           # someone lands a change nobody wrote a line for.
           notes_file="$RUNNER_TEMP/nightly-notes.md"
-          native_installers=( Workspacer-Native-Rust-Preview-Setup-*-x64.exe )
+          native_installers=( Workspacer-Setup-*-x64.exe )
+          native_dmgs=( Workspacer-*-macos-arm64.dmg )
+          native_linux=( workspacer-[0-9]*-linux-x64.tar.gz )
           {
             printf 'Rolling nightly build of main (%s). Unsigned.\n\n' "${{ github.sha }}"
             if [ "$RUST_MIGRATION_PREVIEW" = "true" ]; then
               printf '**Rust migration testing nightly.** Electron uses the Rust hub/MCP executable; native Windows embeds the shared Rust backend. The compatibility audit and legacy-code retirement are still in progress. This release is for testing and does not certify complete migration parity.\n\n'
             fi
-            printf 'Electron nightly installs auto-update onto the next nightly from this feed and never onto stable. Workspacer Native for Windows is experimental, unsigned, and updated manually using its separate installer. To return to stable, install a release build from the releases page.\n\n'
-            printf '[Download Native Windows installer](https://github.com/%s/releases/download/nightly/%s)\n\n' "$REPO" "${native_installers[0]}"
+            printf 'Workspacer Native is unsigned. Windows installs update in place from Settings → About; macOS and Linux show when an update exists and install by replacing the app. Electron nightly installs auto-update onto the next nightly from this feed and never onto stable. To return to stable, install a release build from the releases page.\n\n'
+            printf -- '- [Windows x64 installer](https://github.com/%s/releases/download/nightly/%s)\n' "$REPO" "${native_installers[0]}"
+            printf -- '- [macOS Apple Silicon .dmg](https://github.com/%s/releases/download/nightly/%s) (run `xattr -cr /Applications/Workspacer.app` once after copying)\n' "$REPO" "${native_dmgs[0]}"
+            printf -- '- [Linux x64 archive](https://github.com/%s/releases/download/nightly/%s) (unpack, then `./install.sh`)\n\n' "$REPO" "${native_linux[0]}"
             printf -- '---\n\n'
             printf '## Unreleased — what has landed since the last stable release\n\n'
             node "$GITHUB_WORKSPACE/scripts/changelog-section.mjs" Unreleased \
               || printf '_Nothing recorded in CHANGELOG.md yet._\n'
           } > "$notes_file"
           shopt -s nullglob
-          assets=( *.exe *.AppImage *.dmg latest*.yml *.blockmap workspacer-server-* workspacer-claudemon-* )
+          assets=( *.exe *.AppImage *.dmg *.sha256 latest*.yml *.blockmap workspacer-server-* workspacer-claudemon-* workspacer-[0-9]*-linux-x64.tar.gz )
           shopt -u nullglob
           gh release create nightly \
             --repo "$REPO" \

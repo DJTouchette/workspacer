@@ -23,7 +23,7 @@ const { uninstall } = stagePayload({
   root, stage, crt: process.env.NATIVE_CRT_DIR,
   version, commit: process.env.GITHUB_SHA || null, backend,
 });
-const installer = path.join(out, `Workspacer-Native-Rust-Preview-Setup-${version}-x64.exe`);
+const installer = path.join(out, `Workspacer-Setup-${version}-x64.exe`);
 const compiler = process.env.MAKENSIS || path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'NSIS/makensis.exe');
 const result = spawnSync(compiler, [
   '/V3', '/WX', '/DRUST_PREVIEW', `/DVERSION=${version}`, `/DSTAGE=${stage}`, `/DOUTPUT=${installer}`,

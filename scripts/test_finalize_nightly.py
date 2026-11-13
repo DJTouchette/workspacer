@@ -45,7 +45,7 @@ class FinalizeNightly(unittest.TestCase):
         gh = self.root / 'gh'
         gh.write_text(FAKE)
         gh.chmod(0o700)
-        self.asset = self.root / 'Workspacer-Native-Rust-Preview-Setup-fixture-x64.exe'
+        self.asset = self.root / 'Workspacer-Setup-fixture-x64.exe'
         self.asset.write_bytes(b'payload')
         self.state = self.root / 'state.json'
         self.env = {**os.environ, 'PATH': f"{self.root}{os.pathsep}{os.environ['PATH']}", 'FAKE_STATE': str(self.state)}
@@ -101,7 +101,7 @@ class FinalizeNightly(unittest.TestCase):
         self.assertIn('scripts/finalize-nightly.py', workflow)
         self.assertIn('"${assets[@]}"', workflow)
         self.assertNotIn('-F draft=false', workflow)
-        self.assertIn('Workspacer-Native-Rust-Preview-Setup-*-x64.exe', workflow)
+        self.assertIn('Workspacer-Setup-*-x64.exe', workflow)
 
 if __name__ == '__main__':
     unittest.main()

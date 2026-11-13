@@ -176,9 +176,9 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-          ./apps/native/scripts/test-windows-installer.ps1 -Backend rust -Installer "apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-$version-x64.exe"
+          ./apps/native/scripts/test-windows-installer.ps1 -Backend rust -Installer "apps/desktop/release/Workspacer-Setup-$version-x64.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: workspacer-native-rust-preview-windows-x64
           if-no-files-found: error
-          path: apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-*-x64.exe
+          path: apps/desktop/release/Workspacer-Setup-*-x64.exe

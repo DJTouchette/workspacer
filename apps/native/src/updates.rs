@@ -11,7 +11,10 @@ use sha2::Digest;
 use std::{cmp::Ordering, path::PathBuf};
 
 const REPO_API: &str = "https://api.github.com/repos/DJTouchette/workspacer/releases";
-const INSTALLER_PREFIX: &str = "Workspacer-Native-Rust-Preview-Setup-";
+/// Current installer name first; the pre-0.170 preview name stays accepted so
+/// a release or nightly built before the rename still offers its installer.
+const INSTALLER_PREFIXES: [&str; 2] =
+    ["Workspacer-Setup-", "Workspacer-Native-Rust-Preview-Setup-"];
 const INSTALLER_SUFFIX: &str = "-x64.exe";
 /// Installers are ~30 MB; refuse anything absurd before writing it to disk.
 const MAX_INSTALLER_BYTES: u64 = 256 * 1024 * 1024;
@@ -95,9 +98,13 @@ pub fn compare(a: &str, b: &str) -> Option<Ordering> {
 pub fn installer_asset(release: &Value) -> Option<Value> {
     release["assets"].as_array()?.iter().find_map(|asset| {
         let name = asset["name"].as_str()?;
-        let version = name
-            .strip_prefix(INSTALLER_PREFIX)?
+        let version = INSTALLER_PREFIXES
+            .iter()
+            .find_map(|prefix| name.strip_prefix(prefix))?
             .strip_suffix(INSTALLER_SUFFIX)?;
+        // The Electron nightly is also "Workspacer-Setup-<v>.exe"; only a
+        // real version before "-x64.exe" is the native installer.
+        compare(version, version)?;
         Some(json!({
             "name": name,
             "version": version,
@@ -165,7 +172,7 @@ pub async fn check(installed: &str) -> Result<Value> {
 pub async fn download(asset: &Value) -> Result<PathBuf> {
     let name = asset["name"].as_str().context("Installer has no name")?;
     ensure!(
-        name.starts_with(INSTALLER_PREFIX)
+        INSTALLER_PREFIXES.iter().any(|p| name.starts_with(p))
             && name.ends_with(INSTALLER_SUFFIX)
             && !name.contains(['/', '\\']),
         "Unexpected installer name"
@@ -769,6 +776,25 @@ mod tests {
         assert_eq!(stable["installable"], false);
         let dev = check_result("0.169.0 (development build)", &release);
         assert!(dev["update_available"].is_null());
+    }
+
+    #[test]
+    fn the_renamed_installer_is_found_beside_electron_assets() {
+        let release = json!({
+            "tag_name": "v0.170.0",
+            "assets": [
+                {"name":"Workspacer.Setup.0.170.0.exe","size":1},
+                {"name":"Workspacer-Setup-0.170.0-nightly.202611130800.exe","size":1},
+                {"name":"Workspacer-Setup-0.170.0-x64.exe","size":2,
+                 "browser_download_url":"https://example.invalid/w.exe"}
+            ]
+        });
+        let asset = installer_asset(&release).unwrap();
+        assert_eq!(asset["name"], "Workspacer-Setup-0.170.0-x64.exe");
+        assert_eq!(asset["version"], "0.170.0");
+        let result = check_result("0.169.0", &release);
+        assert_eq!(result["latest"], "0.170.0");
+        assert_eq!(result["update_available"], true);
     }
 
     /// The argument splitting the C runtime and `CommandLineToArgvW` apply.

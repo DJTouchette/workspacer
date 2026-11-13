@@ -34,7 +34,7 @@ fi
 binary=$native/target/release/wks-native
 [ -x "$binary" ] || { echo "missing $binary (build it, or drop --no-build)" >&2; exit 1; }
 
-name=workspacer-native-$version-linux-$arch
+name=workspacer-$version-linux-$arch
 out=$native/target/package
 stage=$out/$name
 rm -rf "$stage" "$out/$name.tar.gz" "$out/$name.tar.gz.sha256"

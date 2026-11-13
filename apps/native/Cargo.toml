@@ -13,11 +13,14 @@ ui-tests = ["ui", "gpui/test-support"]
 
 # Compatibility feature name: embedded ownership now always uses the Rust hub.
 embedded = ["rust-hub"]
-rust-hub = ["dep:claudemon", "dep:workspacer-hub"]
+rust-hub = ["dep:claudemon", "dep:workspacer-hub", "dep:rusqlite"]
 
 [dependencies]
 claudemon = { path = "../../services/claudemon", optional = true }
 workspacer-hub = { path = "../../services/hub-rs", optional = true }
+# Electron import snapshots live SQLite stores (src/host/electron_import.rs);
+# the same rusqlite claudemon already links.
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 anyhow = "1"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

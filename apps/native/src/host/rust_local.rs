@@ -18,6 +18,9 @@ pub struct RustOptions {
     /// reuse whichever it got. Only the default install asks for the
     /// desktop's 7897, so test and side-by-side instances never race for it.
     pub preferred_mcp_port: Option<u16>,
+    /// The store directory itself, where an Electron import lands.
+    pub directory: PathBuf,
+    pub electron_import: super::electron_import::ElectronImport,
 }
 
 impl RustOptions {
@@ -39,6 +42,8 @@ impl RustOptions {
             usage_poll_on_boot: None,
             claude_hooks: true,
             preferred_mcp_port: None,
+            directory,
+            electron_import: Default::default(),
         })
     }
 }
@@ -51,6 +56,35 @@ pub(super) async fn run(
     mut stopping: oneshot::Receiver<()>,
 ) -> Result<()> {
     let started = std::time::Instant::now();
+    if options.electron_import != super::electron_import::ElectronImport::Off
+        && let Some(sources) = super::electron_import::Sources::detect()
+    {
+        views.send_replace(Arc::new(View {
+            notice: "Importing settings and sessions from the Electron app…".into(),
+            ..Default::default()
+        }));
+        let (mode, target) = (options.electron_import, options.directory.clone());
+        let imported = tokio::task::spawn_blocking(move || {
+            super::electron_import::run(mode, &sources, &target)
+        })
+        .await
+        .context("Electron import stopped")?;
+        match imported {
+            Ok(Some(report)) => tracing::info!(
+                files = report.files,
+                database = report.database,
+                backup = ?report.backup,
+                "imported Electron app data"
+            ),
+            Ok(None) => {}
+            // Forced imports were asked for by name: fail loudly. A first-run
+            // import that fails leaves a fresh store and retries next launch.
+            Err(error) if mode == super::electron_import::ElectronImport::Force => {
+                return Err(error.context("Import from the Electron app failed"));
+            }
+            Err(error) => tracing::warn!("Electron import failed; starting fresh: {error:#}"),
+        }
+    }
     views.send_replace(Arc::new(View {
         notice: "Starting Rust backend…".into(),
         ..Default::default()

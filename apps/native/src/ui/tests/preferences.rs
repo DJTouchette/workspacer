@@ -642,7 +642,7 @@ fn clicked_alert_opens_its_session_unless_the_window_is_pinned(cx: &mut TestAppC
 #[gpui::test]
 fn available_update_shows_a_pill_and_installs_from_about(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
-    let asset = serde_json::json!({"name":"Workspacer-Native-Rust-Preview-Setup-0.170.0-nightly.1-x64.exe",
+    let asset = serde_json::json!({"name":"Workspacer-Setup-0.170.0-nightly.1-x64.exe",
         "version":"0.170.0-nightly.1","size":10,"url":"https://github.com/DJTouchette/workspacer/releases/download/nightly/x.exe"});
     visual.update(|window, cx| {
         workspace.update(cx, |this, cx| {
@@ -729,7 +729,7 @@ fn verified_update_hands_off_only_without_unsaved_edits(cx: &mut TestAppContext)
     };
 
     // A verified download never closes over unsaved edits.
-    let installer = "/tmp/update/Workspacer-Native-Rust-Preview-Setup-0.170.0-x64.exe";
+    let installer = "/tmp/update/Workspacer-Setup-0.170.0-x64.exe";
     request_state(
         &workspace,
         &mut visual,

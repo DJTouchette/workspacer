@@ -68,4 +68,4 @@ jobs:
           name: workspacer-native-windows-quick-${{ github.sha }}
           compression-level: 0
           if-no-files-found: error
-          path: apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-*-x64.exe
+          path: apps/desktop/release/Workspacer-Setup-*-x64.exe

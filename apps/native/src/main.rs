@@ -37,6 +37,12 @@ struct Args {
     #[cfg(feature = "rust-hub")]
     #[arg(long)]
     no_claude_hooks: bool,
+    /// Import the Electron app's settings and sessions over this install's
+    /// own (which are moved to a backup beside them first). A fresh default
+    /// install does this by itself on first launch.
+    #[cfg(feature = "rust-hub")]
+    #[arg(long, requires = "local", conflicts_with = "rust_local_dir")]
+    import_electron: bool,
     /// Retired service-bundle override; local ownership uses Rust in process.
     #[arg(long, requires = "local")]
     services_dir: Option<PathBuf>,
@@ -226,10 +232,64 @@ fn restore_ctrl_c() {
     }
 }
 
+/// Finder and the Dock start `Workspacer.app` with no arguments (older macOS
+/// adds a `-psn_…` process serial number) and launchd's bare PATH. An app
+/// bundle opened that way runs like the Windows and Linux launchers: owning
+/// its local engine, with the user's login-shell PATH so `claude`, `codex`,
+/// `node` and Homebrew `git` resolve the same as in a terminal.
+#[cfg(target_os = "macos")]
+fn macos_bundle_launch(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    args.retain(|arg| !arg.to_string_lossy().starts_with("-psn_"));
+    let in_bundle = std::env::current_exe()
+        .ok()
+        .is_some_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"));
+    if !in_bundle || args.len() > 1 {
+        return args;
+    }
+    args.push("--local".into());
+    if let Some(path) = login_shell_path() {
+        // SAFETY: called first thing in main, before any thread is spawned.
+        unsafe { std::env::set_var("PATH", path) };
+    }
+    args
+}
+
+#[cfg(target_os = "macos")]
+fn login_shell_path() -> Option<String> {
+    use std::{process::Command, time::Duration};
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let mut child = Command::new(shell)
+        .args(["-ilc", "printf '\\n__WKS_PATH__%s\\n' \"$PATH\""])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    // A broken shell profile must not hang the launch.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while child.try_wait().ok()?.is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let output = child.wait_with_output().ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.lines()
+        .find_map(|line| line.strip_prefix("__WKS_PATH__"))
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+}
+
 fn main() -> Result<()> {
     #[cfg(windows)]
     restore_ctrl_c();
+    #[cfg(target_os = "macos")]
+    let args = Args::parse_from(macos_bundle_launch(std::env::args_os().collect()));
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    #[cfg(not(target_os = "macos"))]
     let args = Args::parse();
     #[cfg(feature = "rust-hub")]
     log_to_file(args.rust_local_dir.clone());
@@ -268,6 +328,14 @@ fn main() -> Result<()> {
         let mut options = wks_native::host::RustOptions::isolated(directory)?;
         options.claude_hooks = !args.no_claude_hooks;
         options.preferred_mcp_port = default_install.then_some(wks_native::host::DEFAULT_MCP_PORT);
+        options.electron_import = {
+            use wks_native::host::electron_import::ElectronImport;
+            match (args.import_electron, default_install) {
+                (true, _) => ElectronImport::Force,
+                (false, true) => ElectronImport::IfFresh,
+                (false, false) => ElectronImport::Off,
+            }
+        };
         Some(Mode::Rust(options))
     } else {
         None

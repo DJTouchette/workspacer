@@ -96,7 +96,7 @@ jobs:
           # The archive installs, runs and uninstalls from a clean prefix.
           work=$(mktemp -d)
           tar -xzf "$archive" -C "$work"
-          (cd "$work"/workspacer-native-* && PREFIX="$work/prefix" ./install.sh)
+          (cd "$work"/workspacer-*-linux-* && PREFIX="$work/prefix" ./install.sh)
           "$work/prefix/bin/wks-native" --help >/dev/null
           python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$work/prefix/lib/workspacer-native/build-stamp.json"
           "$work/prefix/bin/wks-native-uninstall"
@@ -107,8 +107,8 @@ jobs:
           name: workspacer-native-linux
           compression-level: 0
           path: |
-            apps/native/target/package/workspacer-native-*-linux-*.tar.gz
-            apps/native/target/package/workspacer-native-*-linux-*.tar.gz.sha256
+            apps/native/target/package/workspacer-*-linux-*.tar.gz
+            apps/native/target/package/workspacer-*-linux-*.tar.gz.sha256
           if-no-files-found: error
       - name: Measure bounded transcript workload
         run: cargo run --locked --release --no-default-features --bin native-harness -- bench --events 20000

@@ -26,7 +26,7 @@ mod windows {
 
     const VERSION: &str = "9.9.9";
     const PREVIOUS: &str = "9.9.8";
-    const SETUP: &str = "Workspacer-Native-Rust-Preview-Setup-9.9.9-x64.exe";
+    const SETUP: &str = "Workspacer-Setup-9.9.9-x64.exe";
 
     fn args() -> Vec<String> {
         vec![
@@ -43,7 +43,7 @@ mod windows {
         let name = exe.file_name().unwrap().to_string_lossy().into_owned();
         if name.eq_ignore_ascii_case("wks-native.exe") {
             app();
-        } else if name.starts_with("Workspacer-Native-Rust-Preview-Setup-") {
+        } else if name.starts_with("Workspacer-Setup-") {
             installer();
         } else if name.eq_ignore_ascii_case("busy.exe") {
             std::thread::sleep(Duration::from_secs(120));
