@@ -83,3 +83,8 @@ shot native-changes     "$plain"   900 600 --screen changes
 shot native-terminal    "$plain"   820 550 --keys ctrl+grave
 shot native-jobs        "$plain"   820 550 --screen jobs
 shot native-everforest  "$plain"   820 550 --theme everforest
+# The docs pages.
+shot native-history     "$plain"   900 600 --screen history
+shot native-projects    "$plain"   900 600 --screen projects
+shot native-settings    "$plain"   900 600 --screen settings
+shot native-light       "$plain"   900 600 --theme light
