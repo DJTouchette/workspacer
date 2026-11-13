@@ -381,7 +381,7 @@ services/hub-rs/target/release/workspacer-rust serve
     <section id="electron" class="doc">
 <h2>the electron app</h2>
 <div class="callout legacy"><strong>On its way out.</strong> The Electron app in <code>apps/desktop</code> ships alongside the native app in this release, and the next release deprecates it. New work goes into the native app. This section is here so the code stays explainable, not as a recommendation.</div>
-<p>It is an Electron main process, a React renderer, and two child processes it supervises. Some things exist only here: tiled panes, the embedded browser, plugin panes and the Plugins Manager, the brief board, and the Fleet Manager launcher.</p>
+<p>It is an Electron main process, a React renderer, and two child processes it supervises. Some things exist only here: tiled panes, the embedded browser, plugin panes and the Plugins Manager, the brief board, and the Fleet Manager launcher. The Fleet Manager is not being brought to the native app.</p>
 <h3>build and run</h3>
 <pre><code>make install      # cd apps/desktop &amp;&amp; npm install
 make dev          # the app in dev mode, with hot reload
