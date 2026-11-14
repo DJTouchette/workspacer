@@ -1,0 +1,10 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- workspacer mark: { ▮ } — code interpolation braces wrapping a cursor.
+       Forest ground (#14181b) + Sapling accent (#a7c080). Everforest palette. -->
+  <rect width="1024" height="1024" rx="224" fill="#14181b"/>
+  <g fill="#a7c080" font-family="JetBrainsMono Nerd Font, JetBrains Mono, monospace" font-weight="700" font-size="600">
+    <text x="486" y="690" text-anchor="end">{</text>
+    <text x="538" y="690" text-anchor="start">}</text>
+  </g>
+  <rect x="476" y="356" width="72" height="312" rx="14" fill="#a7c080"/>
+</svg>

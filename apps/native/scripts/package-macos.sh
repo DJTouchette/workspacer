@@ -21,7 +21,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 if [ -z "$version" ]; then
-    version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$root/apps/desktop/package.json" | head -1)
+    version=$(tr -d '[:space:]' <"$root/VERSION")
 fi
 [ -n "$version" ] || { echo "could not read the release version" >&2; exit 1; }
 [ "$(uname -s)" = Darwin ] || { echo "package on macOS" >&2; exit 1; }
@@ -64,9 +64,9 @@ STAMP
 iconset=$work/Workspacer.iconset
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
-    sips -z $size $size "$root/apps/desktop/build/icon.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    sips -z $size $size "$native/packaging/icons/icon.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
     double=$((size * 2))
-    sips -z $double $double "$root/apps/desktop/build/icon.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+    sips -z $double $double "$native/packaging/icons/icon.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/Workspacer.icns"
 rm -rf "$iconset"

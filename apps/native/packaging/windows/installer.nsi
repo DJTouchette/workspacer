@@ -2,18 +2,20 @@ Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
 
-!ifdef RUST_PREVIEW
-!define PRODUCT "Workspacer Native Rust Preview"
-!define APP_ID "Workspacer.Native.RustPreview"
-!else
 !define PRODUCT "Workspacer Native"
 !define APP_ID "Workspacer.Native"
-!endif
+; The identity this product shipped under while it was a preview. An install
+; over a preview takes over its folder and retires its registration; see
+; .onInit and the end of the Main section. User data is never touched here:
+; the app itself migrates %LOCALAPPDATA%\Workspacer Native Rust Preview.
+!define LEGACY_PRODUCT "Workspacer Native Rust Preview"
+!define LEGACY_APP_ID "Workspacer.Native.RustPreview"
 
 Name "${PRODUCT}"
 OutFile "${OUTPUT}"
-InstallDir "$LOCALAPPDATA\Programs\${PRODUCT}"
-InstallDirRegKey HKCU "Software\${PRODUCT}" "InstallDir"
+; Left empty so .onInit can tell an explicit /D=<folder> (in-app updates pass
+; the existing install folder) from a default install, and choose the default.
+InstallDir ""
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 BrandingText "${PRODUCT}"
@@ -33,6 +35,7 @@ Icon "${STAGE}\icon.ico"
 !insertmacro MUI_LANGUAGE "English"
 
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT}"
+!define LEGACY_UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${LEGACY_PRODUCT}"
 
 Function .onInit
   ${IfNot} ${RunningX64}
@@ -40,6 +43,23 @@ Function .onInit
     Abort
   ${EndIf}
   SetShellVarContext current
+  ; Without /D=, install over what is already there: this product's recorded
+  ; folder, else a preview install's folder (an in-place upgrade from the
+  ; preview identity), else the default.
+  ${If} $INSTDIR == ""
+    ReadRegStr $INSTDIR HKCU "Software\${PRODUCT}" "InstallDir"
+  ${EndIf}
+  ${If} $INSTDIR == ""
+    ReadRegStr $0 HKCU "Software\${LEGACY_PRODUCT}" "InstallDir"
+    ${If} $0 != ""
+    ${AndIf} ${FileExists} "$0\wks-native.exe"
+      StrCpy $INSTDIR $0
+    ${EndIf}
+  ${EndIf}
+  ${If} $INSTDIR == ""
+    StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${PRODUCT}"
+  ${EndIf}
+  ClearErrors
 FunctionEnd
 
 Section "${PRODUCT}" Main
@@ -85,6 +105,26 @@ Section "${PRODUCT}" Main
   WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
+  ; Builds that still raise toasts under the preview identity keep their name
+  ; and icon. Drop LEGACY_APP_ID once no supported build uses it.
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\${LEGACY_APP_ID}" "DisplayName" "${PRODUCT}"
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\${LEGACY_APP_ID}" "IconUri" "$INSTDIR\icon.ico"
+  ; Retire a preview registration that this install replaced in place, so
+  ; Windows lists one app. The preview's uninstaller is not run (this folder's
+  ; Uninstall.exe was just rewritten) and no user data is moved or deleted. A
+  ; preview installed in a different folder is still a working install, so its
+  ; registration and shortcuts stay.
+  ReadRegStr $0 HKCU "Software\${LEGACY_PRODUCT}" "InstallDir"
+  ${If} $0 == ""
+    ReadRegStr $0 HKCU "${LEGACY_UNINSTALL_KEY}" "InstallLocation"
+  ${EndIf}
+  ${If} $0 == $INSTDIR
+    DeleteRegKey HKCU "${LEGACY_UNINSTALL_KEY}"
+    DeleteRegKey HKCU "Software\${LEGACY_PRODUCT}"
+    Delete "$SMPROGRAMS\${LEGACY_PRODUCT}.lnk"
+    Delete "$DESKTOP\${LEGACY_PRODUCT}.lnk"
+  ${EndIf}
+  ClearErrors
 SectionEnd
 
 Section "Uninstall"
@@ -99,5 +139,12 @@ Section "Uninstall"
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
   DeleteRegKey HKCU "Software\${PRODUCT}"
   DeleteRegKey HKCU "Software\Classes\AppUserModelId\${APP_ID}"
-  ; Session databases, shared config and user-created files are retained.
+  ; Only when no preview install in another folder still owns it.
+  ReadRegStr $0 HKCU "Software\${LEGACY_PRODUCT}" "InstallDir"
+  ${If} $0 == ""
+    DeleteRegKey HKCU "Software\Classes\AppUserModelId\${LEGACY_APP_ID}"
+  ${EndIf}
+  ; Session databases, shared config and user-created files are retained:
+  ; nothing under %LOCALAPPDATA%\${PRODUCT} or %LOCALAPPDATA%\${LEGACY_PRODUCT}
+  ; (the app's data folders) is ever deleted here.
 SectionEnd

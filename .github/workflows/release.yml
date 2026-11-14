@@ -1,12 +1,16 @@
 name: release
 
-# Build Workspacer Native (Windows installer, macOS .dmg, Linux archive) and
+# Build Workspacer Native (Windows x64 installer, macOS .dmg for Apple Silicon
+# and Intel, Linux archive for x64 and arm64) and
 # the shared Rust backend/claudemon executables on all three desktop OSes. On a
 # version tag (v*) everything is attached to a draft GitHub Release, along with
 # a standalone headless-server bundle (workspacer-server-<os>-<arch>) and a
 # claudemon-only bundle (workspacer-claudemon-<os>-<arch>) per platform; on
 # PRs / manual runs it's a build smoke-test that just uploads the artifacts.
 # v0.170.0 was the last release with an Electron app.
+#
+# The release version is the root VERSION file. apps/desktop/package.json
+# carries a copy for the browser app; scripts/check-version.mjs keeps them equal.
 on:
   push:
     tags: ['v*']
@@ -57,6 +61,8 @@ jobs:
       migration_preview: ${{ steps.decide.outputs.migration_preview }}
     steps:
       - uses: actions/checkout@v5
+      - name: VERSION and the browser app's version agree
+        run: node scripts/check-version.mjs
       - id: decide
         env:
           GH_TOKEN: ${{ github.token }}
@@ -161,10 +167,13 @@ jobs:
         if: needs.gate.outputs.nightly == 'true'
         shell: bash
         run: |
-          base=$(node -p "require('./package.json').version")
+          set -euo pipefail
+          base=$(tr -d '[:space:]' < ../../VERSION)
           v="$base-nightly.${{ needs.gate.outputs.stamp }}"
+          printf '%s\n' "$v" > ../../VERSION
+          # The browser app reports package.json's version; keep it in step.
           npm version --no-git-tag-version "$v"
-          echo "nightly version: $v"
+          node ../../scripts/check-version.mjs
 
       # The browser app `workspacer serve` hosts at /app, and the Rust hub and
       # claudemon executables.
@@ -212,7 +221,7 @@ jobs:
           fi
           WKS_STAMP_COMPONENT=server \
           WKS_STAMP_INSTALL=release \
-          WKS_STAMP_VERSION="$(node -p "require('./apps/desktop/package.json').version")" \
+          WKS_STAMP_VERSION="$(tr -d '[:space:]' < VERSION)" \
           WKS_STAMP_TAG="$stamp_tag" \
           WKS_STAMP_COMMIT="${{ github.sha }}" \
           WKS_STAMP_PLATFORM="${{ matrix.server }}" \
@@ -270,7 +279,7 @@ jobs:
           $binary = Join-Path $inputDir 'workspacer-rust.exe'
           @{
             kind = 'rust-windows-backend'; commit = $env:GITHUB_SHA
-            version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+            version = (Get-Content VERSION -Raw).Trim()
             platform = 'windows-x64'; run = $env:GITHUB_RUN_ID
             files = @(@{ path = 'workspacer-rust.exe'; sha256 = (Get-FileHash $binary -Algorithm SHA256).Hash })
           } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $inputDir 'provenance.json')
@@ -420,7 +429,7 @@ jobs:
           foreach ($required in @('vcruntime140.dll', 'msvcp140.dll')) {
             if (!(Test-Path "$inputDir/crt/$required" -PathType Leaf)) { throw "Missing compiler CRT: $required" }
           }
-          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+          $version = (Get-Content VERSION -Raw).Trim()
           if ('${{ needs.gate.outputs.nightly }}' -eq 'true') { $version += '-nightly.${{ needs.gate.outputs.stamp }}' }
           $files = @(Get-ChildItem $inputDir -File -Recurse | ForEach-Object {
             @{ path = [System.IO.Path]::GetRelativePath($inputDir, $_.FullName).Replace('\', '/')
@@ -446,26 +455,26 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write # Native installer remains an attachment to stable-tag drafts.
+      id-token: write # Azure OIDC federated login for Windows Trusted Signing
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
+      # The packaging scripts are plain Node with no dependencies: no npm
+      # install, and nothing from apps/desktop.
       - name: Set up packaging Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
-      - name: Install locked packaging tools without Electron rebuild
-        working-directory: apps/desktop
-        run: npm ci --ignore-scripts
+      # package-windows.mjs and the build stamp read VERSION.
       - name: Stamp nightly version
         if: needs.gate.outputs.nightly == 'true'
-        working-directory: apps/desktop
         shell: bash
         run: |
-          base=$(node -p "require('./package.json').version")
-          npm version --no-git-tag-version "$base-nightly.${{ needs.gate.outputs.stamp }}"
+          set -euo pipefail
+          base=$(tr -d '[:space:]' < VERSION)
+          printf '%s\n' "$base-nightly.${{ needs.gate.outputs.stamp }}" > VERSION
+          cat VERSION
       - name: Download native compiler inputs
         uses: actions/download-artifact@v4
         with:
@@ -480,7 +489,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+          $version = (Get-Content VERSION -Raw).Trim()
           function Verify-Inputs([string]$directory, [string]$kind) {
             $receiptPath = Join-Path $directory 'provenance.json'
             $receipt = Get-Content $receiptPath -Raw | ConvertFrom-Json
@@ -517,35 +526,107 @@ jobs:
           Copy-Item "$nativeDir/crt/*.dll" apps/native/target/release/
           Copy-Item "$backendDir/workspacer-rust.exe" services/hub-rs/target/release/
           "NATIVE_CRT_DIR=$nativeDir/crt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      # Windows code signing (Azure Trusted Signing), the same account, endpoint
+      # and condition the Electron installer was signed with through v0.170.0:
+      # real v* tags only, once the AZURE_CODESIGN_PROFILE repo variable exists.
+      # PRs, nightlies and the pre-signing-setup period skip all three signing
+      # steps and ship exactly the unsigned installer they did before.
+      - name: Azure login (Windows signing)
+        if: startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '' && needs.gate.outputs.nightly != 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # Before packaging, so the installer carries signed executables. The CRT
+      # DLLs are already signed by Microsoft; native-harness.exe is not shipped.
+      - name: Sign the shipped executables
+        if: startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '' && needs.gate.outputs.nightly != 'true'
+        shell: pwsh
+        env:
+          CODESIGN_PROFILE: ${{ vars.AZURE_CODESIGN_PROFILE }}
+          CODESIGN_PUBLISHER: ${{ vars.AZURE_CODESIGN_PUBLISHER }}
+        run: |
+          ./apps/native/scripts/sign-windows.ps1 -Files @(
+            'apps/native/target/release/wks-native.exe',
+            'services/hub-rs/target/release/workspacer-rust.exe')
+      # GitHub's Windows image ships NSIS; the pinned Chocolatey install only
+      # covers an image without it. No node_modules are involved.
+      - name: Ensure NSIS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (!(Test-Path $makensis -PathType Leaf)) {
+            Write-Host '::warning::NSIS is not preinstalled on this runner image; installing NSIS 3.10 with Chocolatey.'
+            choco install nsis --version=3.10 --no-progress -y
+            if ($LASTEXITCODE -ne 0 -or !(Test-Path $makensis -PathType Leaf)) { throw 'NSIS installation failed' }
+          }
+          & $makensis /VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'makensis is not runnable' }
       - name: Resolve native installer compiler
         run: node apps/native/scripts/resolve-nsis.mjs
-      - name: Package native Windows installer (unsigned)
+      - name: Package native Windows installer
         shell: pwsh
         run: |
           node --test apps/native/scripts/windows-payload.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Native payload tests failed' }
           node apps/native/scripts/package-windows.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Native packaging failed' }
-      - name: Smoke test native Windows install, local backend and uninstall
+      - name: Sign the installer
+        if: startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '' && needs.gate.outputs.nightly != 'true'
+        shell: pwsh
+        env:
+          CODESIGN_PROFILE: ${{ vars.AZURE_CODESIGN_PROFILE }}
+          CODESIGN_PUBLISHER: ${{ vars.AZURE_CODESIGN_PUBLISHER }}
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          ./apps/native/scripts/sign-windows.ps1 -Files @("apps/native/target/package/Workspacer-Setup-$version-x64.exe")
+      # After signing: the checksum is of the file people download. Same
+      # `<hash>  <name>` line sha256sum writes for the .dmg and .tar.gz.
+      - name: Checksum the installer
         shell: pwsh
         run: |
-          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-          ./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Setup-$version-x64.exe"
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content VERSION -Raw).Trim()
+          $installer = Get-Item "apps/native/target/package/Workspacer-Setup-$version-x64.exe"
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$($installer.FullName).sha256", "$hash  $($installer.Name)`n")
+          Get-Content "$($installer.FullName).sha256"
+      - name: Smoke test native Windows install, preview upgrade, local backend and uninstall
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          ./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/native/target/package/Workspacer-Setup-$version-x64.exe"
       - name: Upload native installer
         uses: actions/upload-artifact@v4
         with:
           name: workspacer-native-windows
           compression-level: 0
-          path: apps/desktop/release/Workspacer-Setup-*-x64.exe
+          path: |
+            apps/native/target/package/Workspacer-Setup-*-x64.exe
+            apps/native/target/package/Workspacer-Setup-*-x64.exe.sha256
           if-no-files-found: error
 
-  # Native macOS: Workspacer.app (ad-hoc signed, not notarized) in a .dmg.
-  # Apple Silicon only, like the backend leg. The binary embeds the Rust hub
-  # and claudemon, so there is no separate backend input to carry over.
+  # Native macOS: Workspacer.app (ad-hoc signed, not notarized) in a .dmg, built
+  # natively per architecture. The binary embeds the Rust hub and claudemon, so
+  # there is no separate backend input to carry over. The Apple Silicon leg
+  # keeps the job's original check name.
   native-macos:
     needs: gate
     if: needs.gate.outputs.build == 'true'
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: native-macos
+            runner: macos-15
+            arch: arm64
+          - name: native-macos-x64
+            runner: macos-15-intel
+            arch: x64
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write # Attach to the stable-tag draft.
     steps:
@@ -559,19 +640,19 @@ jobs:
           workspaces: apps/native
           cache-on-failure: true
           cache-bin: false
-          shared-key: release-native-macos
+          shared-key: release-native-macos-${{ matrix.arch }}
       - name: Package Workspacer.app and .dmg
         shell: bash
         run: |
           set -euo pipefail
-          version=$(node -p "require('./apps/desktop/package.json').version")
+          version=$(tr -d '[:space:]' < VERSION)
           if [ "${{ needs.gate.outputs.nightly }}" = "true" ]; then version="$version-nightly.${{ needs.gate.outputs.stamp }}"; fi
           apps/native/scripts/package-macos.sh --version "$version"
       - name: Smoke the .dmg (mount, signature, stamp, launch)
         shell: bash
         run: |
           set -euo pipefail
-          dmg=$(ls apps/native/target/package/Workspacer-*-macos-arm64.dmg)
+          dmg=$(ls apps/native/target/package/Workspacer-*-macos-${{ matrix.arch }}.dmg)
           (cd apps/native/target/package && shasum -a 256 -c "$(basename "$dmg").sha256")
           mnt=$(mktemp -d)
           hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
@@ -579,24 +660,37 @@ jobs:
           app="$mnt/Workspacer.app"
           test -L "$mnt/Applications"
           codesign --verify --strict --verbose=2 "$app"
-          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['platform']=='darwin-arm64', d; print(d)" "$app/Contents/Resources/build-stamp.json"
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['platform']=='darwin-${{ matrix.arch }}', d; print(d)" "$app/Contents/Resources/build-stamp.json"
           "$app/Contents/MacOS/wks-native" --help >/dev/null
       - name: Upload native macOS .dmg
         uses: actions/upload-artifact@v4
         with:
-          name: workspacer-native-macos
+          name: workspacer-native-macos-${{ matrix.arch }}
           compression-level: 0
           path: |
-            apps/native/target/package/Workspacer-*-macos-arm64.dmg
-            apps/native/target/package/Workspacer-*-macos-arm64.dmg.sha256
+            apps/native/target/package/Workspacer-*-macos-${{ matrix.arch }}.dmg
+            apps/native/target/package/Workspacer-*-macos-${{ matrix.arch }}.dmg.sha256
           if-no-files-found: error
 
-  # Native Linux: relocatable tar.gz with a per-user install.sh. Built on the
-  # oldest supported Ubuntu, so the binary links an old, widely compatible glibc.
+  # Native Linux: relocatable tar.gz with a per-user install.sh. x64 is built on
+  # the oldest supported Ubuntu, so the binary links an old, widely compatible
+  # glibc; arm64 on GitHub's hosted arm runner. The x64 leg keeps the job's
+  # original check name.
   native-linux:
     needs: gate
     if: needs.gate.outputs.build == 'true'
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: native-linux
+            runner: ubuntu-22.04
+            arch: x64
+          - name: native-linux-arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write # Attach to the stable-tag draft.
     steps:
@@ -610,7 +704,7 @@ jobs:
           workspaces: apps/native
           cache-on-failure: true
           cache-bin: false
-          shared-key: release-native-linux
+          shared-key: release-native-linux-${{ matrix.arch }}
       - name: Linux native libraries
         run: |
           sudo apt-get update
@@ -619,7 +713,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version=$(node -p "require('./apps/desktop/package.json').version")
+          version=$(tr -d '[:space:]' < VERSION)
           if [ "${{ needs.gate.outputs.nightly }}" = "true" ]; then version="$version-nightly.${{ needs.gate.outputs.stamp }}"; fi
           apps/native/scripts/package-linux.sh --version "$version"
       - name: Smoke install, launch and uninstall from a clean prefix
@@ -627,23 +721,23 @@ jobs:
         run: |
           set -euo pipefail
           cd apps/native/target/package
-          archive=$(ls workspacer-*-linux-x64.tar.gz)
+          archive=$(ls workspacer-*-linux-${{ matrix.arch }}.tar.gz)
           sha256sum -c "$archive.sha256"
           work=$(mktemp -d)
           tar -xzf "$archive" -C "$work"
-          (cd "$work"/workspacer-*-linux-x64 && PREFIX="$work/prefix" ./install.sh)
+          (cd "$work"/workspacer-*-linux-${{ matrix.arch }} && PREFIX="$work/prefix" ./install.sh)
           "$work/prefix/lib/workspacer-native/wks-native" --help >/dev/null
-          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['platform']=='linux-x64', d; print(d)" "$work/prefix/lib/workspacer-native/build-stamp.json"
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['platform']=='linux-${{ matrix.arch }}', d; print(d)" "$work/prefix/lib/workspacer-native/build-stamp.json"
           "$work/prefix/bin/wks-native-uninstall"
           test ! -e "$work/prefix/lib/workspacer-native"
       - name: Upload native Linux archive
         uses: actions/upload-artifact@v4
         with:
-          name: workspacer-native-linux
+          name: workspacer-native-linux-${{ matrix.arch }}
           compression-level: 0
           path: |
-            apps/native/target/package/workspacer-*-linux-x64.tar.gz
-            apps/native/target/package/workspacer-*-linux-x64.tar.gz.sha256
+            apps/native/target/package/workspacer-*-linux-${{ matrix.arch }}.tar.gz
+            apps/native/target/package/workspacer-*-linux-${{ matrix.arch }}.tar.gz.sha256
           if-no-files-found: error
 
   # One job attaches every native download to the stable-tag draft, after the
@@ -666,14 +760,50 @@ jobs:
         with:
           files: |
             native/Workspacer-Setup-*-x64.exe
+            native/Workspacer-Setup-*-x64.exe.sha256
             native/Workspacer-*-macos-arm64.dmg
             native/Workspacer-*-macos-arm64.dmg.sha256
+            native/Workspacer-*-macos-x64.dmg
+            native/Workspacer-*-macos-x64.dmg.sha256
             native/workspacer-*-linux-x64.tar.gz
             native/workspacer-*-linux-x64.tar.gz.sha256
+            native/workspacer-*-linux-arm64.tar.gz
+            native/workspacer-*-linux-arm64.tar.gz.sha256
           draft: true
           fail_on_unmatched_files: true
 
-  # Roll the nightly only after every platform and native installer smoke passed.
+      # Installed Electron 0.170.0 (the last Electron release, Windows and
+      # Linux) still asks /releases/latest for latest.yml / latest-linux.yml
+      # every few hours, and reports an error when the newest release has
+      # none. Carry v0.170.0's files forward UNCHANGED: they say "version
+      # 0.170.0", which that app already is, so it reports up to date and
+      # downloads nothing. Best effort: without them the only cost is that
+      # error, so a missing v0.170.0 feed warns instead of failing the release.
+      - name: Fetch the final Electron release's update feed
+        id: electron-feed
+        if: github.ref_name != 'v0.170.0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p electron-feed
+          if ! gh release download v0.170.0 --repo "$REPO" --pattern 'latest*.yml' --dir electron-feed; then
+            echo "::warning::v0.170.0 has no latest*.yml to carry forward; installed Electron 0.170.0 will report an update error."
+          fi
+          found=false
+          if compgen -G 'electron-feed/latest*.yml' > /dev/null; then found=true; ls -l electron-feed; fi
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+      - name: Attach the Electron update feed to stable-tag draft
+        if: steps.electron-feed.outputs.found == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: electron-feed/latest*.yml
+          draft: true
+          fail_on_unmatched_files: false
+
+  # Roll the nightly only after every platform and native installer smoke passed
+  # (a matrix job in `needs` succeeds only when all of its legs did).
   # Build failure leaves the previous release intact; the publish-last rollout
   # below still has a non-atomic boundary after deleting the previous release.
   # Every expected asset is verified present BEFORE the old release is
@@ -704,6 +834,9 @@ jobs:
       - name: Publication request and readback regressions (fake gh)
         run: python3 -B -m unittest discover -s scripts -p 'test_finalize_nightly.py' -v
 
+      - name: Electron nightly feed bridge regressions
+        run: python3 -B -m unittest discover -s scripts -p 'test_electron_feed_bridge.py' -v
+
       - name: Recheck testing-nightly CI before changing the live release
         if: needs.gate.outputs.migration_preview == 'true'
         env:
@@ -719,6 +852,30 @@ jobs:
           merge-multiple: true
           path: dist
 
+      # An installed Electron NIGHTLY polls .../releases/download/nightly/
+      # latest*.yml. Publish v0.170.0's feed files there with each url/path
+      # made an absolute link to the v0.170.0 asset, so the last Electron
+      # nightly updates itself to the final Electron release (whose own feed is
+      # /releases/latest, handled on stable tags). Best effort: any failure
+      # here warns and the nightly ships without the bridge.
+      - name: Bridge the Electron nightly feed to v0.170.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          feed="$RUNNER_TEMP/electron-feed"
+          mkdir -p "$feed"
+          if gh release download v0.170.0 --repo "$REPO" --pattern 'latest*.yml' --dir "$feed" \
+             && gh release view v0.170.0 --repo "$REPO" --json assets > "$RUNNER_TEMP/electron-assets.json" \
+             && compgen -G "$feed/latest*.yml" > /dev/null; then
+            python3 scripts/electron-feed-bridge.py --repo "$REPO" --tag v0.170.0 \
+              --assets "$RUNNER_TEMP/electron-assets.json" --out dist "$feed"/latest*.yml \
+              || { echo "::warning::Could not rewrite the Electron nightly feed; publishing without it."; rm -f dist/latest*.yml; }
+          else
+            echo "::warning::v0.170.0 has no latest*.yml; Electron nightlies will not be bridged to it."
+          fi
+
       - name: Verify assets and roll the nightly release
         working-directory: dist
         env:
@@ -729,9 +886,11 @@ jobs:
           set -euo pipefail
           # Expected assets, per platform — every glob the create below uses
           # must match BEFORE we touch the live release.
-          for pat in 'Workspacer-Setup-*-x64.exe' 'Workspacer-*-macos-arm64.dmg' \
-                     'Workspacer-*-macos-arm64.dmg.sha256' \
+          for pat in 'Workspacer-Setup-*-x64.exe' 'Workspacer-Setup-*-x64.exe.sha256' \
+                     'Workspacer-*-macos-arm64.dmg' 'Workspacer-*-macos-arm64.dmg.sha256' \
+                     'Workspacer-*-macos-x64.dmg' 'Workspacer-*-macos-x64.dmg.sha256' \
                      'workspacer-[0-9]*-linux-x64.tar.gz' 'workspacer-[0-9]*-linux-x64.tar.gz.sha256' \
+                     'workspacer-[0-9]*-linux-arm64.tar.gz' 'workspacer-[0-9]*-linux-arm64.tar.gz.sha256' \
                      'workspacer-server-windows-x64.zip' \
                      'workspacer-server-linux-x64.tar.gz' \
                      'workspacer-server-darwin-arm64.tar.gz' \
@@ -764,7 +923,9 @@ jobs:
           notes_file="$RUNNER_TEMP/nightly-notes.md"
           native_installers=( Workspacer-Setup-*-x64.exe )
           native_dmgs=( Workspacer-*-macos-arm64.dmg )
+          native_dmgs_x64=( Workspacer-*-macos-x64.dmg )
           native_linux=( workspacer-[0-9]*-linux-x64.tar.gz )
+          native_linux_arm64=( workspacer-[0-9]*-linux-arm64.tar.gz )
           {
             printf 'Rolling nightly build of main (%s). Unsigned.\n\n' "${{ github.sha }}"
             if [ "$RUST_MIGRATION_PREVIEW" = "true" ]; then
@@ -773,14 +934,18 @@ jobs:
             printf 'Workspacer Native is unsigned. Windows installs update in place from Settings → About; macOS and Linux show when an update exists and install by replacing the app. To return to stable, install a release build from the releases page.\n\n'
             printf -- '- [Windows x64 installer](https://github.com/%s/releases/download/nightly/%s)\n' "$REPO" "${native_installers[0]}"
             printf -- '- [macOS Apple Silicon .dmg](https://github.com/%s/releases/download/nightly/%s) (run `xattr -cr /Applications/Workspacer.app` once after copying)\n' "$REPO" "${native_dmgs[0]}"
-            printf -- '- [Linux x64 archive](https://github.com/%s/releases/download/nightly/%s) (unpack, then `./install.sh`)\n\n' "$REPO" "${native_linux[0]}"
+            printf -- '- [macOS Intel .dmg](https://github.com/%s/releases/download/nightly/%s) (same `xattr` step)\n' "$REPO" "${native_dmgs_x64[0]}"
+            printf -- '- [Linux x64 archive](https://github.com/%s/releases/download/nightly/%s) (unpack, then `./install.sh`)\n' "$REPO" "${native_linux[0]}"
+            printf -- '- [Linux arm64 archive](https://github.com/%s/releases/download/nightly/%s) (unpack, then `./install.sh`)\n\n' "$REPO" "${native_linux_arm64[0]}"
+            printf 'Each download has a `.sha256` beside it.\n\n'
             printf -- '---\n\n'
             printf '## Unreleased — what has landed since the last stable release\n\n'
             node "$GITHUB_WORKSPACE/scripts/changelog-section.mjs" Unreleased \
               || printf '_Nothing recorded in CHANGELOG.md yet._\n'
           } > "$notes_file"
           shopt -s nullglob
-          assets=( *.exe *.dmg *.sha256 workspacer-server-* workspacer-claudemon-* workspacer-[0-9]*-linux-x64.tar.gz )
+          # latest*.yml: the Electron nightly feed bridge, when the step above wrote it.
+          assets=( *.exe *.dmg *.sha256 workspacer-server-* workspacer-claudemon-* workspacer-[0-9]*-linux-*.tar.gz latest*.yml )
           shopt -u nullglob
           gh release create nightly \
             --repo "$REPO" \

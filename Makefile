@@ -1,10 +1,16 @@
 # Workspacer monorepo — top-level orchestrator.
 #
-#   apps/desktop      Electron app (npm)        — the GUI client
-#   apps/native       GPUI client (Rust/cargo)  — the native GUI
+#   apps/native       GPUI client (Rust/cargo)  — the app: what `make dev`,
+#                                                 `make package` and releases build
+#   apps/desktop      Electron app (npm)        — deprecated (last release
+#                                                 v0.170.0); its renderer is still
+#                                                 the /app web client. Reach it
+#                                                 through the *-desktop targets.
 #   apps/tui          wks-tui (Rust/cargo)      — the terminal client
 #   services/claudemon  Claude session daemon (Rust/cargo)
 #   services/hub-rs     shared Rust backend and standalone launcher
+#
+# The release version is the root VERSION file (see scripts/check-version.mjs).
 #
 # Each component also builds on its own from its directory; these targets just
 # delegate so you have one entry point from the repo root.
@@ -16,28 +22,40 @@ CLAUDEMON := services/claudemon
 HUB       := services/hub
 HUB_RUST  := services/hub-rs
 
-.PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
+.PHONY: dev dev-desktop dev-share dev-tui run-tui install install-native install-desktop \
+        build build-desktop build-hub build-claudemon build-tui \
         build-cli test test-desktop test-hub test-tui test-claudemon test-routing-harness \
-        claudemon-routes docs-drift package clean dev-native run-native build-native test-native \
-        dev-native-local run-native-local build-native-local bench-native-switch package-native-linux \
+        claudemon-routes docs-drift package package-native package-desktop clean \
+        dev-native run-native build-native test-native \
+        dev-native-local run-native-local build-native-local bench-native-switch \
+        package-native-linux package-native-macos package-native-windows check-version \
         landing-shots landing-plugin-md
 
-## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
-##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
-##      to force it on at launch instead.
+## dev: run the native app (debug build) with its embedded Rust backend.
+##      Same as `make dev-native-local`; nothing else has to be running.
+##      ARGS="--keep-running" minimizes the window on close.
+dev: dev-native-local
+
+## dev-desktop: run the deprecated Electron app in dev mode (Vite + Electron).
+##              Needs `make install-desktop` first. Remote sharing is a runtime
+##              toggle there (Remote control → Start sharing); use
+##              `make dev-share` to force it on at launch instead.
 ##
 ## GPU is disabled by default in dev: Electron's GPU process segfaults 3x per
 ## launch in Mesa's libgallium (observed on Arch, Mesa 26.1.x, Wayland) before
 ## Chromium falls back to SwiftShader anyway — the crash-loop plus coredump
 ## processing is a big part of slow boots. This jumps straight to the fallback.
-## Re-enable with `make dev WORKSPACER_DISABLE_GPU=0` to test real-GPU paths.
+## Re-enable with `make dev-desktop WORKSPACER_DISABLE_GPU=0` to test real-GPU paths.
 WORKSPACER_DISABLE_GPU ?= 1
-dev:
+dev-desktop:
 	cd $(DESKTOP) && WORKSPACER_DISABLE_GPU=$(WORKSPACER_DISABLE_GPU) npm run dev
 
-## dev-share: like `dev` but force-enables remote sharing at launch (env var),
-##            for testing the web/bridged client without flipping the UI toggle.
+## dev-share: launches the ELECTRON dev loop (`dev-desktop`), not the native
+##            app, with remote sharing forced on at launch, for testing the
+##            web/bridged client without flipping the UI toggle. It works by
+##            setting WORKSPACER_REMOTE_SHARE=1, which only the Electron host reads.
 dev-share:
+	@echo "dev-share: starting the Electron dev loop (apps/desktop) with remote sharing forced on"
 	cd $(DESKTOP) && WORKSPACER_DISABLE_GPU=$(WORKSPACER_DISABLE_GPU) npm run dev:share
 
 ## dev-tui: run wks-tui (debug); builds the Rust services first. The TUI
@@ -52,7 +70,7 @@ dev-tui: build-hub
 run-tui: build-claudemon build-hub build-tui
 	cd $(TUI) && cargo run --release -- $(ARGS)
 
-## dev-native: run the native GUI against the running desktop/headless hub.
+## dev-native: run the native GUI against an already running hub.
 ##             ARGS="--bus wss://host/bus --token-file /path/to/token" for remote.
 ##             Demo data is opt-in only: ARGS="--demo".
 ##             Use dev-native-local to own an embedded backend instead.
@@ -80,10 +98,37 @@ build-native:
 ## build-native-local: build the native binary and all required local services.
 build-native-local: build-native
 
+## package: build the native app's download for this OS into
+##          apps/native/target/package/ (Linux tar.gz, macOS .dmg, Windows
+##          installer). The Electron installers are `make package-desktop`.
+package: package-native
+
+package-native:
+	@case "$$(uname -s)" in \
+	  Linux) $(MAKE) package-native-linux ;; \
+	  Darwin) $(MAKE) package-native-macos ;; \
+	  *) $(MAKE) package-native-windows ;; \
+	esac
+
 ## package-native-linux: release build packed as a tar.gz with a per-user
 ##             installer (apps/native/target/package/). Linux only.
 package-native-linux:
 	$(NATIVE)/scripts/package-linux.sh
+
+## package-native-macos: release build as Workspacer.app in a .dmg
+##             (apps/native/target/package/). macOS only.
+package-native-macos:
+	$(NATIVE)/scripts/package-macos.sh
+
+## package-native-windows: Workspacer-Setup-<version>-x64.exe
+##             (apps/native/target/package/). Windows x64 only; needs NSIS and
+##             NATIVE_CRT_DIR (see apps/native/scripts/package-windows.mjs).
+package-native-windows: build-native build-rust-backend
+	node $(NATIVE)/scripts/package-windows.mjs
+
+## check-version: VERSION and apps/desktop/package.json must agree.
+check-version:
+	node scripts/check-version.mjs
 
 ## landing-shots: restage the marketing page's native captures (landing/shots/native-*.webp)
 ##             from the fixture hub. Linux only; needs Xvfb, openbox, xdotool and cwebp.
@@ -112,8 +157,28 @@ bench-native-switch:
 	cd $(NATIVE) && cargo run --locked --profile $(PROFILE) --bin native-harness -- bench-switch
 	cd $(NATIVE) && WKS_NATIVE_BENCH_SWITCH=10 cargo test --locked --profile $(PROFILE) --features ui-tests --bin wks-native bench_switch_frames -- --nocapture
 
-## install: install desktop JS dependencies
-install:
+## install: build the native app and install it for the current user
+##          (Linux: ~/.local, or PREFIX=...; removable with wks-native-uninstall).
+##          The native app has no dependencies to install first. On macOS and
+##          Windows use `make package` and open the .dmg / run the installer.
+INSTALL_STAGE := $(NATIVE)/target/package/install-stage
+install: install-native
+
+install-native:
+	@case "$$(uname -s)" in \
+	  Linux) ;; \
+	  *) echo "make install is Linux-only: run 'make package' and open the result from apps/native/target/package/" >&2; exit 1 ;; \
+	esac
+	@set -e; \
+	archive=$$($(NATIVE)/scripts/package-linux.sh | tail -n 1); \
+	rm -rf $(INSTALL_STAGE); mkdir -p $(INSTALL_STAGE); \
+	tar -xzf "$$archive" -C $(INSTALL_STAGE); \
+	(cd $(INSTALL_STAGE)/workspacer-*-linux-* && ./install.sh); \
+	rm -rf $(INSTALL_STAGE)
+
+## install-desktop: install the Electron app's JS dependencies (needed by
+##          dev-desktop, build-desktop, test-desktop and package-desktop).
+install-desktop:
 	cd $(DESKTOP) && npm install
 
 ## build: build every component
@@ -242,8 +307,9 @@ claudemon-routes:
 docs-drift:
 	bash scripts/check-doc-drift.sh
 
-## package: build daemons + produce desktop installers (electron-builder)
-package:
+## package-desktop: build daemons + produce the deprecated Electron installers
+##          (electron-builder, into apps/desktop/release/). Not part of a release.
+package-desktop:
 	cd $(DESKTOP) && npm run package
 
 ## clean: remove build artifacts across components

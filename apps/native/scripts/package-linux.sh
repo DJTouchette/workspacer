@@ -2,7 +2,7 @@
 # Package the native client for Linux as a relocatable tar.gz with a
 # per-user installer. Usage: package-linux.sh [--no-build] [--version V]
 #
-# The version defaults to apps/desktop/package.json's, the release version
+# The version defaults to the root VERSION file, the release version
 # the Windows installer is stamped with too; the app reads it back from
 # build-stamp.json beside the binary (features::installed_version).
 set -euo pipefail
@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 if [ -z "$version" ]; then
-    version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$root/apps/desktop/package.json" | head -1)
+    version=$(tr -d '[:space:]' <"$root/VERSION")
 fi
 [ -n "$version" ] || { echo "could not read the release version" >&2; exit 1; }
 case "$(uname -m)" in
@@ -54,7 +54,7 @@ cat >"$stage/lib/workspacer-native/build-stamp.json" <<STAMP
 }
 STAMP
 install -m 644 "$native/packaging/linux/workspacer-native.desktop" "$stage/share/applications/"
-install -m 644 "$root/apps/desktop/build/icon.svg" \
+install -m 644 "$native/packaging/icons/icon.svg" \
     "$stage/share/icons/hicolor/scalable/apps/workspacer-native.svg"
 install -m 644 "$root/LICENSE" "$stage/share/licenses/workspacer-native/LICENSE"
 install -m 644 "$native/assets/fonts/Inter-LICENSE.txt" "$native/assets/fonts/JetBrainsMono-LICENSE.txt" \

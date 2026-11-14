@@ -14,7 +14,6 @@ function fixture(t) {
   const files = [
     'apps/native/target/release/wks-native.exe',
     'services/hub-rs/target/release/workspacer-rust.exe',
-    'apps/native/packaging/windows/README-rust.txt',
     ...['workspacer', 'hub', 'brain', 'mcp'].map(name => `services/hub/${name}.exe`),
     'apps/desktop/dist/headless/desktop-host.cjs', 'node/node.exe', 'node/LICENSE',
     'LICENSE', 'apps/native/packaging/windows/README.txt',
@@ -26,8 +25,8 @@ function fixture(t) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, file);
   }
-  fs.mkdirSync(path.join(root, 'apps/desktop/build'), { recursive: true });
-  fs.copyFileSync(path.join(repo, 'apps/desktop/build/icon.ico'), path.join(root, 'apps/desktop/build/icon.ico'));
+  fs.mkdirSync(path.join(root, 'apps/native/packaging/icons'), { recursive: true });
+  fs.copyFileSync(path.join(repo, 'apps/native/packaging/icons/icon.ico'), path.join(root, 'apps/native/packaging/icons/icon.ico'));
   return {
     root, stage: path.join(root, 'apps/native/target/windows-package'),
     crt: path.join(root, 'crt'), nodeExecutable: path.join(root, 'node/node.exe'),
@@ -38,7 +37,7 @@ function fixture(t) {
 test('default payload includes Rust backend with a conservative uninstall manifest', t => {
   const options = fixture(t);
   const { stage, uninstall } = stagePayload(options);
-  for (const file of ['wks-native.exe', 'workspacer-rust.exe', 'vcruntime140.dll', 'vcruntime140_1.dll',
+  for (const file of ['wks-native.exe', 'workspacer-rust.exe', 'README.txt', 'icon.ico', 'vcruntime140.dll', 'vcruntime140_1.dll',
     'msvcp140.dll', 'examples/sample/manifest.json']) assert.ok(fs.statSync(path.join(stage, file)).isFile(), file);
   const stamp = JSON.parse(fs.readFileSync(path.join(stage, 'build-stamp.json')));
   assert.equal(stamp.version, options.version);
@@ -66,7 +65,7 @@ test('NSIS compiles the staged payload into a Windows installer', { skip: !proce
   const { stage, uninstall } = stagePayload(options);
   const output = path.join(options.root, 'Native Setup.exe');
   const prefix = process.platform === 'win32' ? '/' : '-';
-  const args = ['V3', 'WX', 'DRUST_PREVIEW', `DVERSION=${options.version}`, `DSTAGE=${stage}`, `DOUTPUT=${output}`, `DUNINSTALL_FILES=${uninstall}`]
+  const args = ['V3', 'WX', `DVERSION=${options.version}`, `DSTAGE=${stage}`, `DOUTPUT=${output}`, `DUNINSTALL_FILES=${uninstall}`]
     .map(arg => prefix + arg);
   args.push(path.join(repo, 'apps/native/packaging/windows/installer.nsi'));
   const result = spawnSync(process.env.MAKENSIS, args, { encoding: 'utf8' });
@@ -74,7 +73,7 @@ test('NSIS compiles the staged payload into a Windows installer', { skip: !proce
   assert.equal(fs.readFileSync(output).subarray(0, 2).toString(), 'MZ');
 });
 
-test('Rust preview payload needs no Go or Node input and excludes every legacy companion', t => {
+test('payload needs no Go or Node input and excludes every legacy companion', t => {
   const options = { ...fixture(t), backend: 'rust', nodeExecutable: undefined, nodeVersion: undefined };
   for (const name of ['workspacer', 'hub', 'brain', 'mcp']) fs.unlinkSync(path.join(options.root, `services/hub/${name}.exe`));
   fs.rmSync(path.join(options.root, 'node'), { recursive: true });
@@ -98,14 +97,19 @@ test('unknown backend is refused before changing an existing stage', t => {
   assert.equal(fs.readFileSync(path.join(options.stage,'keep.txt'),'utf8'),'safe');
 });
 
-test('NSIS compiles isolated Rust preview installer identity', { skip: !process.env.MAKENSIS }, t => {
-  const options = {...fixture(t),backend:'rust'};
-  const {stage,uninstall}=stagePayload(options);
-  const output=path.join(options.root,'Rust Preview Setup.exe');
-  const prefix=process.platform==='win32'?'/':'-';
-  const args=['V3','WX','DRUST_PREVIEW',`DVERSION=${options.version}`,`DSTAGE=${stage}`,`DOUTPUT=${output}`,`DUNINSTALL_FILES=${uninstall}`].map(a=>prefix+a);
-  args.push(path.join(repo,'apps/native/packaging/windows/installer.nsi'));
-  const result=spawnSync(process.env.MAKENSIS,args,{encoding:'utf8'});
-  assert.equal(result.status,0,`${result.error||''}\n${result.stdout}\n${result.stderr}`);
-  assert.equal(fs.readFileSync(output).subarray(0,2).toString(),'MZ');
+test('installer has one product identity and retires the preview one without touching user data', () => {
+  const script = fs.readFileSync(path.join(repo, 'apps/native/packaging/windows/installer.nsi'), 'utf8');
+  assert.match(script, /^!define PRODUCT "Workspacer Native"$/m);
+  assert.match(script, /^!define APP_ID "Workspacer\.Native"$/m);
+  assert.doesNotMatch(script, /RUST_PREVIEW/);
+  // In-place upgrade from the preview: its folder becomes the default, and
+  // its registration goes after a successful install.
+  assert.match(script, /^!define LEGACY_PRODUCT "Workspacer Native Rust Preview"$/m);
+  assert.match(script, /ReadRegStr \$0 HKCU "Software\\\$\{LEGACY_PRODUCT\}" "InstallDir"/);
+  assert.match(script, /DeleteRegKey HKCU "\$\{LEGACY_UNINSTALL_KEY\}"/);
+  assert.match(script, /DeleteRegKey HKCU "Software\\\$\{LEGACY_PRODUCT\}"/);
+  // Never the old uninstaller, never a recursive delete, never the data folders.
+  const code = script.split('\n').filter(line => !line.trim().startsWith(';')).join('\n');
+  assert.doesNotMatch(code, /ExecWait|Exec |RMDir \/r|Delete .*\*|LOCALAPPDATA\\\$\{(LEGACY_)?PRODUCT\}/);
+  assert.equal([...code.matchAll(/LOCALAPPDATA/g)].length, 1, 'only the default install folder names LOCALAPPDATA');
 });

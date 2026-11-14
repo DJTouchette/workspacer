@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Run the Workspacer desktop app in dev mode from the repo root.
-# Thin wrapper around `apps/desktop` npm dev (Vite renderer + Electron main).
+# Run Workspacer in dev mode from the repo root: the native app (debug build)
+# with its embedded Rust backend. Same as `make dev`; arguments pass through,
+# e.g. `./dev --keep-running`.
+#
+# The deprecated Electron loop is `make dev-desktop`.
 set -euo pipefail
-cd "$(dirname "$0")/apps/desktop"
-exec npm run dev "$@"
+cd "$(dirname "$0")"
+exec cargo run --locked --manifest-path apps/native/Cargo.toml -- --local "$@"

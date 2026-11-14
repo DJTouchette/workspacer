@@ -1,26 +1,35 @@
-Workspacer Native (experimental) - Windows x64
+Workspacer Native (Windows x64)
 
-Launch Workspacer Native from the Start menu to start the native GUI and its
-local backend. The installer includes the service binaries, shared service
-bundle, private Node runtime and Microsoft C++ runtime DLLs. It does not need
-Electron or a separately installed Node runtime for shared services.
+Launch Workspacer Native from the Start menu. The shortcut runs
+wks-native.exe --local: the app owns its backend (hub, session engine, MCP
+tools and desktop services) in its own process. Nothing else has to be
+running, and no Node runtime or Electron app is needed.
 
-Install and sign in to Claude Code or Codex separately to run agents. Install
-Git for project operations. Close Workspacer Native before upgrading. Local
-mode needs ports 7895 and 7897; close another Workspacer backend using these
-ports first, or connect to that backend instead.
+Install and sign in to Claude Code or Codex separately to run agents, and
+install Git for project operations. Agent providers are optional external
+integrations, configured separately.
 
-From this directory:
+From this folder:
   .\wks-native.exe --local
   .\wks-native.exe --bus ws://127.0.0.1:7895/bus
+  .\workspacer-rust.exe --help
 
-Opening wks-native.exe directly without --local connects to an existing hub.
-The Start menu shortcut supplies --local for a self-contained launch.
+wks-native.exe without --local connects to a hub that is already running.
+workspacer-rust.exe is the standalone server and command-line client.
 
-This native installer is unsigned. Updates are manual: download the next
-Workspacer-Native-Setup-<version>-x64.exe and run it after closing the app.
-The Electron app's updater does not update this installation.
+Updates
+  The app checks for new releases and installs them in place from
+  Settings > About. You can also download a newer
+  Workspacer-Setup-<version>-x64.exe and run it; it upgrades this
+  installation where it is.
 
-Uninstall through Windows Settings > Apps. Session data and shared Workspacer
-configuration are retained. The native app's database is separate from the
-Electron app's database; shared configuration is still shared.
+Upgrading from "Workspacer Native Rust Preview"
+  This is the same app under its final name. Running this installer over a
+  preview installation upgrades it in its existing folder and replaces the
+  preview entry in Windows Settings > Apps with "Workspacer Native". Your
+  sessions and settings are kept.
+
+Uninstall
+  Use Windows Settings > Apps. Uninstall preserves sessions and shared
+  settings: it removes only the files this installer placed, and leaves your
+  data folder under %LOCALAPPDATA% and any files you added to this folder.

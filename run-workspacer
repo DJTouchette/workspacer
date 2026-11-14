@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# Launch the packaged Workspacer AppImage with remote sharing ON.
+# Launch the release build of Workspacer Native with its embedded backend
+# (hub, session engine and MCP tools in the app's own process). Arguments pass
+# through to wks-native, e.g. `./run-workspacer --keep-running`.
 #
-# Remote share (WORKSPACER_REMOTE_SHARE=1) makes the hub bind 0.0.0.0:7895 and
-# serve a token-authed /remote (lightweight) and /app (full web app) — reach it
-# from another device on your LAN/tailnet. The remote URL + token are shown in
-# the app's Hub status. Override the bind with WORKSPACER_REMOTE_ADDR=host:port.
+# Build it first with `make build-native`. This used to start the Electron
+# AppImage with remote sharing forced on (WORKSPACER_REMOTE_SHARE=1); the native
+# app does not read that variable, so nothing is forced here. That Electron
+# loop is still `make dev-share`.
 set -euo pipefail
-APPIMAGE="$(dirname "$0")/apps/desktop/release/Workspacer-1.0.1.AppImage"
-if [[ ! -x "$APPIMAGE" ]]; then
-  echo "AppImage not found at $APPIMAGE — build it with: make package" >&2
+BINARY="$(dirname "$0")/apps/native/target/release/wks-native"
+if [[ ! -x "$BINARY" ]]; then
+  echo "wks-native not found at $BINARY — build it with: make build-native" >&2
   exit 1
 fi
-export WORKSPACER_REMOTE_SHARE=1
-# Run without needing FUSE/libfuse: the AppImage runtime self-extracts to a
-# temp dir instead of mounting. (Install `fuse2` for faster native mounting.)
-export APPIMAGE_EXTRACT_AND_RUN=1
-exec "$APPIMAGE" "$@"
+exec "$BINARY" --local "$@"

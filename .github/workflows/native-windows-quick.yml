@@ -29,8 +29,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -38,9 +36,6 @@ jobs:
             services/hub-rs
           # Shares the preview workflow's cache so the first quick build is warm.
           key: rust-native-preview
-      - name: Install packaging compiler tooling
-        working-directory: apps/desktop
-        run: npm ci --ignore-scripts
       - name: Build native Rust app, owned-backend harness and standalone CLI
         shell: pwsh
         run: |
@@ -48,6 +43,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Rust native build failed' }
           cargo build --locked --release --manifest-path services/hub-rs/Cargo.toml --bin workspacer-rust
           if ($LASTEXITCODE -ne 0) { throw 'Rust standalone build failed' }
+      # GitHub's Windows image ships NSIS; the pinned Chocolatey install only
+      # covers an image without it. No node_modules are involved.
+      - name: Ensure NSIS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (!(Test-Path $makensis -PathType Leaf)) {
+            Write-Host '::warning::NSIS is not preinstalled on this runner image; installing NSIS 3.10 with Chocolatey.'
+            choco install nsis --version=3.10 --no-progress -y
+            if ($LASTEXITCODE -ne 0 -or !(Test-Path $makensis -PathType Leaf)) { throw 'NSIS installation failed' }
+          }
+          & $makensis /VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'makensis is not runnable' }
       - name: Resolve installer compiler
         run: node apps/native/scripts/resolve-nsis.mjs
       - name: Create unsigned installer
@@ -68,4 +77,4 @@ jobs:
           name: workspacer-native-windows-quick-${{ github.sha }}
           compression-level: 0
           if-no-files-found: error
-          path: apps/desktop/release/Workspacer-Setup-*-x64.exe
+          path: apps/native/target/package/Workspacer-Setup-*-x64.exe

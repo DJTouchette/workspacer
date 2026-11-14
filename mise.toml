@@ -2,9 +2,12 @@
 # Optional historical oracle tooling only; shipping backends build with Rust.
 # Pinned Go checkout commands: scripts/reference/README.md (no current-tree fallback).
 go = "1.25"
-# Node: Electron app + renderer (README requires Node 18+; pin to current LTS)
+# Node: repo scripts (scripts/*.mjs, native Windows packaging) and the web
+# client / deprecated Electron app in apps/desktop. The native app itself is
+# Rust only. Release CI uses Node 22.
 node = "22"
 
 [env]
-# Ensure the desktop app's node_modules binaries resolve in tasks
+# Only for apps/desktop work (`make install-desktop` creates it): lets its
+# node_modules binaries resolve in tasks. Nothing native needs this.
 _.path = ["./apps/desktop/node_modules/.bin"]

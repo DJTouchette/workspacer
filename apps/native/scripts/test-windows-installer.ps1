@@ -7,14 +7,24 @@ $stage = Join-Path $root 'apps/native/target/windows-package'
 $harness = Join-Path $root 'apps/native/target/release/native-harness.exe'
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("native-install-" + [guid]::NewGuid())
 # Spaces exercise installer command-line quoting and sibling binary resolution.
-$product = 'Workspacer Native Rust Preview'
-$appId = 'Workspacer.Native.RustPreview'
+$product = 'Workspacer Native'
+$appId = 'Workspacer.Native'
+# The identity the app shipped under as a preview; an install over it upgrades in place.
+$legacyProduct = 'Workspacer Native Rust Preview'
+$legacyKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$legacyProduct"
+$legacyInstallKey = "HKCU:\Software\$legacyProduct"
+$legacyShortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) "$legacyProduct.lnk"
+$legacyData = Join-Path $testRoot "data-$legacyProduct"
 $installDir = Join-Path $testRoot $product
 $notificationKey = "HKCU:\Software\Classes\AppUserModelId\$appId"
 $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$product"
 if (Test-Path $key) { throw 'Smoke test requires a user without Workspacer Native installed' }
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) "$product.lnk"
 if (Test-Path $shortcutPath) { throw 'Smoke test refuses to replace an existing shortcut' }
+if ((Test-Path $legacyKey) -or (Test-Path $legacyInstallKey) -or (Test-Path $legacyShortcutPath)) {
+    throw 'Smoke test requires a user without the Workspacer Native Rust Preview installed'
+}
+$simulatedLegacy = $false
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 $uninstalled = $false
 $savedEnv = @{}
@@ -51,7 +61,37 @@ try {
     if ((Get-ItemProperty $key).DisplayVersion -ne $version) { throw 'Installed version does not match the release' }
     # Upgrade in place must preserve data and reproduce the complete payload.
     Set-Content (Join-Path $installDir 'user-file.txt') 'retain me'
-    Invoke-Installer
+    # Simulate a preview install in this folder: only its registration exists,
+    # and the installer is run WITHOUT /D=, as a user double-clicking it would.
+    # It must find the preview's folder, upgrade it in place and leave exactly
+    # one registration, without touching the preview's data folder.
+    $simulatedLegacy = $true
+    Remove-Item "HKCU:\Software\$product" -Recurse -Force
+    Remove-Item $key -Recurse -Force
+    New-Item $legacyInstallKey -Force | Out-Null
+    Set-ItemProperty $legacyInstallKey -Name InstallDir -Value $installDir
+    New-Item $legacyKey -Force | Out-Null
+    Set-ItemProperty $legacyKey -Name DisplayName -Value $legacyProduct
+    Set-ItemProperty $legacyKey -Name InstallLocation -Value $installDir
+    Set-ItemProperty $legacyKey -Name UninstallString -Value ('"' + (Join-Path $installDir 'Uninstall.exe') + '"')
+    $legacyShortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($legacyShortcutPath)
+    $legacyShortcut.TargetPath = Join-Path $installDir 'wks-native.exe'
+    $legacyShortcut.Save()
+    New-Item -ItemType Directory -Path $legacyData | Out-Null
+    Set-Content (Join-Path $legacyData 'state.db') 'preview data'
+    Set-Content (Join-Path $installDir 'build-stamp.json') '{"version":"preview"}'
+    $process = Start-Process $installerPath -ArgumentList '/S' -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Install over a preview failed: $($process.ExitCode)" }
+    if ((Get-Content (Join-Path $installDir 'build-stamp.json') | ConvertFrom-Json).version -ne $version) {
+        throw 'Install without /D= did not upgrade the preview folder in place'
+    }
+    if ((Test-Path $legacyKey) -or (Test-Path $legacyInstallKey)) { throw 'Preview registration survived the upgrade' }
+    if (Test-Path $legacyShortcutPath) { throw 'Preview Start menu shortcut survived the upgrade' }
+    if (!(Test-Path $key) -or (Get-ItemProperty $key).InstallLocation -ne $installDir) { throw 'Upgrade over a preview did not register Workspacer Native in place' }
+    if ((Get-ItemProperty "HKCU:\Software\$product").InstallDir -ne $installDir) { throw 'Upgrade over a preview did not record its install folder' }
+    if ((Get-Content (Join-Path $legacyData 'state.db')) -ne 'preview data') { throw 'Upgrade over a preview touched user data' }
+    if ((Get-Content (Join-Path $installDir 'user-file.txt')) -ne 'retain me') { throw 'Upgrade over a preview removed user files' }
+    $simulatedLegacy = $false
     foreach ($file in Get-ChildItem $stage -File -Recurse) {
         $relative = [System.IO.Path]::GetRelativePath($stage, $file.FullName)
         $installed = Join-Path $installDir $relative
@@ -126,9 +166,15 @@ try {
     }
     if ((Get-Content (Join-Path $installDir 'user-file.txt')) -ne 'retain me') { throw 'Uninstall removed user files' }
     if (!(Test-Path (Join-Path $testRoot 'state.db'))) { throw 'Uninstall removed session data' }
-    Write-Host 'Native install, upgrade, embedded backend, shutdown and uninstall passed.'
+    if ((Get-Content (Join-Path $legacyData 'state.db')) -ne 'preview data') { throw 'Uninstall removed preview data' }
+    Write-Host 'Native install, upgrade, preview migration, embedded backend, shutdown and uninstall passed.'
 } finally {
     foreach ($name in $savedEnv.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }
     if (!$uninstalled) { Invoke-Uninstaller }
+    if ($simulatedLegacy) {
+        # Only what this script created, when the scenario failed part-way.
+        Remove-Item $legacyKey, $legacyInstallKey -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item $legacyShortcutPath -Force -ErrorAction SilentlyContinue
+    }
     Remove-Item $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

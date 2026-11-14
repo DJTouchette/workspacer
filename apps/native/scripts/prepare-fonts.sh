@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 native_font_root="$(cd -- "$(dirname -- "$0")/.." && pwd)"
-native_font_source="$native_font_root/../desktop/src/renderer/src/assets/fonts"
+# Maintainer tool, not a build step: assets/fonts/ holds the committed results,
+# and neither cargo nor packaging runs this. It regenerates them from the
+# variable WOFF2 files, which live with the web client's renderer (their only
+# other consumer). Set NATIVE_FONT_SOURCE to any folder holding
+# Inter-Variable.woff2 and JetBrainsMono-Variable.woff2 to regenerate without
+# an apps/desktop checkout.
+native_font_source="${NATIVE_FONT_SOURCE:-$native_font_root/../desktop/src/renderer/src/assets/fonts}"
+for native_font_name in Inter-Variable JetBrainsMono-Variable; do
+  [ -f "$native_font_source/$native_font_name.woff2" ] || {
+    echo "missing $native_font_source/$native_font_name.woff2 (set NATIVE_FONT_SOURCE)" >&2
+    exit 1
+  }
+done
 native_font_tmp="$(mktemp -d)"
 trap 'rm -rf "$native_font_tmp"' EXIT
 command -v woff2_decompress >/dev/null

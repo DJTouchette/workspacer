@@ -15,6 +15,7 @@ on:
       - 'vendor/gpui-component/**'
       - 'vendor/gpui/**'
       - 'contracts/**'
+      - 'VERSION'
       - 'tools/windows-contract-check/**'
       - 'tools/macos-contract-check/**'
   pull_request:
@@ -27,6 +28,7 @@ on:
       - 'vendor/gpui-component/**'
       - 'vendor/gpui/**'
       - 'contracts/**'
+      - 'VERSION'
       - 'tools/windows-contract-check/**'
       - 'tools/macos-contract-check/**'
 
@@ -92,8 +94,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -102,9 +102,6 @@ jobs:
             services/claudemon
             tools/windows-contract-check
           key: rust-native-preview
-      - name: Install packaging compiler tooling
-        working-directory: apps/desktop
-        run: npm ci --ignore-scripts
       - name: Install ripgrep (search.project's engine)
         shell: pwsh
         run: |
@@ -155,9 +152,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Rust native build failed' }
           cargo build --locked --release --manifest-path services/hub-rs/Cargo.toml --bin workspacer-rust
           if ($LASTEXITCODE -ne 0) { throw 'Rust standalone build failed' }
+      # GitHub's Windows image ships NSIS; the pinned Chocolatey install only
+      # covers an image without it. No node_modules are involved.
+      - name: Ensure NSIS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (!(Test-Path $makensis -PathType Leaf)) {
+            Write-Host '::warning::NSIS is not preinstalled on this runner image; installing NSIS 3.10 with Chocolatey.'
+            choco install nsis --version=3.10 --no-progress -y
+            if ($LASTEXITCODE -ne 0 -or !(Test-Path $makensis -PathType Leaf)) { throw 'NSIS installation failed' }
+          }
+          & $makensis /VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'makensis is not runnable' }
       - name: Resolve installer compiler
         run: node apps/native/scripts/resolve-nsis.mjs
-      - name: Test payload and create separate unsigned preview installer
+      - name: Test payload and create unsigned validation installer
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -171,14 +182,14 @@ jobs:
           node --test apps/native/scripts/windows-payload.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Payload/compiler tests failed' }
           node apps/native/scripts/package-windows.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Rust preview packaging failed' }
-      - name: Install, upgrade, own Rust backend, join shutdown and uninstall
+          if ($LASTEXITCODE -ne 0) { throw 'Native packaging failed' }
+      - name: Install, upgrade over a preview, own Rust backend, join shutdown and uninstall
         shell: pwsh
         run: |
-          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-          ./apps/native/scripts/test-windows-installer.ps1 -Backend rust -Installer "apps/desktop/release/Workspacer-Setup-$version-x64.exe"
+          $version = (Get-Content VERSION -Raw).Trim()
+          ./apps/native/scripts/test-windows-installer.ps1 -Backend rust -Installer "apps/native/target/package/Workspacer-Setup-$version-x64.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: workspacer-native-rust-preview-windows-x64
           if-no-files-found: error
-          path: apps/desktop/release/Workspacer-Setup-*-x64.exe
+          path: apps/native/target/package/Workspacer-Setup-*-x64.exe

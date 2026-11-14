@@ -13,8 +13,8 @@ export function stagePayload({ root, stage, crt, version, commit = null, backend
   copy(path.join(root, 'apps/native/target/release/wks-native.exe'));
   copy(path.join(root, 'services/hub-rs/target/release/workspacer-rust.exe'));
   copy(path.join(root, 'LICENSE'), 'LICENSE.txt');
-  copy(path.join(root, 'apps/desktop/build/icon.ico'));
-  copy(path.join(root, 'apps/native/packaging/windows/README-rust.txt'), 'README.txt');
+  copy(path.join(root, 'apps/native/packaging/icons/icon.ico'));
+  copy(path.join(root, 'apps/native/packaging/windows/README.txt'));
   if (!crt) throw new Error('NATIVE_CRT_DIR is required');
   for (const name of ['vcruntime140.dll', 'msvcp140.dll']) {
     if (!fs.statSync(path.join(crt, name)).isFile()) throw new Error(`Missing CRT: ${name}`);

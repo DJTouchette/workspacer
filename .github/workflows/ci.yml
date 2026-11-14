@@ -32,6 +32,12 @@ jobs:
         run: python3 -B -m unittest discover -s scripts -p 'test_nightly_preview.py' -v
       - name: Nightly publication request and readback regressions
         run: python3 -B -m unittest discover -s scripts -p 'test_finalize_nightly.py' -v
+      - name: Electron nightly feed bridge regressions
+        run: python3 -B -m unittest discover -s scripts -p 'test_electron_feed_bridge.py' -v
+      - name: VERSION and the browser app's version agree
+        run: node scripts/check-version.mjs
+      - name: Native Windows payload and installer identity regressions
+        run: node --test apps/native/scripts/windows-payload.test.mjs
 
   # ---------------------------------------------------------------------------
   # Repo-root guard: unresolved git conflict markers. Every other job in this
