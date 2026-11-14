@@ -58,20 +58,27 @@ agents:
 Set `enabled: false` to disable automatic cleanup. Configuration is read each
 cycle; no restart is needed. Use an absolute worktreeRoot if customizing it.
 
-The Rust hub has no manual cleanup command. The original TypeScript
-implementation and its CLI remain in `apps/desktop` (run `make install-desktop`
-first). They apply the same rules and work against a running engine's API.
-From `apps/desktop`, preview cleanup without deleting anything:
+Run a pass by hand with the Rust hub's own command. It previews without
+deleting anything:
 
 ```sh
-npm run cleanup:agents
+workspacer cleanup-agents
 ```
 
 Apply the eligible removals explicitly:
 
 ```sh
-npm run cleanup:agents -- --apply
+workspacer cleanup-agents --apply
 ```
+
+The command asks a running engine which sessions are live, at `--daemon-url`
+(default `http://127.0.0.1:7891`). The native app's embedded engine listens on
+a port the OS hands out, so against it the command finds no engine at the
+default address and skips every worktree; the automatic pass inside the app
+covers that case. Cleanup does not run on Windows, automatic or manual: the
+rules need a directory identity the hub records only on Unix, and the command
+reports each worktree as skipped there. The original TypeScript CLI in
+`apps/desktop` (`npm run cleanup:agents`) applies the same rules.
 
 Both commands honor the configured worktree root and minimum age. Override with
 `--root /absolute/path`, `--min-age-hours 24`, or `--daemon-url http://127.0.0.1:7891`.

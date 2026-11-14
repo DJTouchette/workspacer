@@ -142,8 +142,7 @@ fn notification_event(params: &serde_json::Value) -> anyhow::Result<crate::proto
             Some(_) => anyhow::bail!("notification {key} must be true or false"),
         }
     }
-    data.entry("title")
-        .or_insert_with(|| "workspacer".into());
+    data.entry("title").or_insert_with(|| "workspacer".into());
     data.entry("body").or_insert_with(|| "".into());
     Ok(crate::protocol::Event::new(
         "notify.post",

@@ -32,9 +32,10 @@ product is Rust: `services/hub-rs/src/services/worktrees/artifact_cleanup.rs`
 The original TypeScript core, scheduler and CLI remain in `apps/desktop` for
 the deprecated Electron app and for manual runs. See
 [operator procedure](../../../docs/agent-artifact-cleanup.md) for configuration
-and CLI flags; `npm run cleanup:agents` from `apps/desktop` defaults to dry-run,
-with `-- --apply` explicitly enabling deletion. The Rust hub has no manual
-command.
+and CLI flags. `workspacer cleanup-agents` (`services/hub-rs/src/cli/cleanup.rs`)
+runs a pass by hand: dry-run by default, `--apply` enables deletion. Neither the
+automatic pass nor the command removes anything on Windows, where the hub does
+not record the directory identity the rules need.
 
 The Rust scheduler runs in every backend that owns its engine (native
 `--local`, `workspacer serve`), and never in a hub attached to someone else's
