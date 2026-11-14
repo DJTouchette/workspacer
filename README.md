@@ -74,31 +74,48 @@ rest of the fleet; clear approvals and questions from your phone.
   the [plugin catalog](https://github.com/DJTouchette/workspacer-plugins),
   installable from the command palette.
 
-For a full, honest feature-by-feature catalog with maturity levels, see
-[`docs/features.md`](docs/features.md).
+Not all of the above is in the native app yet: its New Agent starts Claude
+and Codex sessions only, it lists only the connected hub's own sessions (not a
+federated peer's), and plugin panes and the Agent Overview belong to the web
+client (`/app`). For a feature-by-feature catalog with maturity levels, see
+[`docs/features.md`](docs/features.md); for what the native app does today, see
+[`apps/native/README.md`](apps/native/README.md).
 
 ---
 
 ## Quick start
 
+Released builds are on the
+[releases page](https://github.com/DJTouchette/workspacer/releases): a Windows
+x64 installer, macOS `.dmg` files (Apple Silicon and Intel) and Linux
+`.tar.gz` archives (x64 and arm64). From source:
+
 ```bash
-make install          # install desktop JS deps (then `cd apps/desktop/src/renderer && npm install` for the renderer)
-make dev              # run the desktop app (Vite renderer + Electron, hot reload)
+make dev              # build and run the native app (debug) with its embedded backend
 ```
 
-`make dev` builds the daemons (`hub`, `brain`, `mcp`, `claudemon`), starts the
-Vite renderer, and launches Electron with hot reload; the app spawns and
-supervises the `claudemon` and `hub` daemons as child processes. `./dev` is a
-thin wrapper around the same npm script.
+`make dev` builds `apps/native` with Cargo and starts `wks-native --local`. The
+app runs the Rust hub, the MCP tool facade and the `claudemon` session engine in
+its own process, so nothing else has to be running and there are no JavaScript
+dependencies to install first. `./dev` does the same and passes its arguments
+through. See [`apps/native/README.md`](apps/native/README.md) for build
+prerequisites and everything the app does.
 
-The app wires Claude's hooks into `~/.claude/settings.json` automatically on
-launch (that's how it observes Claude Code agents); Codex, Copilot, and OpenCode
-agents are driven directly and need no hook wiring. For headless or custom
-setups the manual CLI still exists: `claudemon init` (`--dry-run` to preview).
+The Electron app in `apps/desktop` is deprecated; v0.170.0 was its last
+release. Its renderer still ships as the `/app` web client in the server
+bundle. To work on it, run `make install-desktop` and then `make dev-desktop`.
 
-Phone sharing is off by default and is a **runtime toggle** in the app (Phone
-access → Share this desktop with phone). To force it on at launch for testing, use
-`make dev-share` (sets `WORKSPACER_REMOTE_SHARE=1`).
+Claude sessions started from the app carry their hooks with each launch;
+nothing is merged into `~/.claude/settings.json` (entries an earlier version
+put there are removed at startup). Codex sessions are driven directly. The
+native app's New Agent starts Claude and Codex sessions only. For a standalone
+`claudemon`, the manual hook CLI still exists: `claudemon init` (`--dry-run`
+to preview).
+
+Phone access is off until you turn it on in **Settings → Remote**, which
+shares the hub over Tailscale and creates pairing links. `make dev-share`
+starts the Electron dev loop with sharing forced on
+(`WORKSPACER_REMOTE_SHARE=1`); the native app does not read that variable.
 
 ### Advanced clients and server mode
 
@@ -107,22 +124,26 @@ still exist when you need them:
 
 - `wks-tui` is a terminal client for the same hub bus.
 - `/remote` is the lightweight browser client.
-- `/app/` is the full web renderer served by a built web bundle.
+- `/app/` is the full web client (the former Electron renderer), served by
+  `workspacer serve` from the server bundle. The native app's packages do not
+  include it; its hub serves `/app` only when `WORKSPACER_WEBAPP_DIR` or a `web`
+  folder beside the binary holds a built web client.
 - `workspacer serve` runs the control plane without the desktop app.
 
 #### Headless server
 
 Every release also ships a standalone server bundle
-(`workspacer-server-<os>-<arch>.tar.gz`, zip on Windows) — the four binaries
-plus the built web app. Two lines and the fleet is up:
+(`workspacer-server-<os>-<arch>.tar.gz`, zip on Windows) — the Rust backend
+executable (`workspacer`, also present as `workspacer-rust`), `claudemon`,
+example plugins and the built web app. Two lines and the fleet is up:
 
 ```bash
 tar xzf workspacer-server-linux-x64.tar.gz
 ./workspacer-server/workspacer serve
 ```
 
-`workspacer serve` starts and supervises `claudemon` (sessions) and the `hub`
-(bus, with a full-scope `brain` provider standing in for the desktop app), and
+`workspacer serve` runs the session engine, the hub, the desktop services and
+the MCP facade in one process, and
 prints the client URLs + pairing token: the phone client at `/m`, the
 lightweight browser client at `/remote`, and the full web app at `/app`
 (served from the bundled `web/` directory). It binds loopback by default; `--host 0.0.0.0` (or a
@@ -130,24 +151,25 @@ tailnet IP) is the explicit remote opt-in — pair it with Tailscale, never the
 open internet. It runs in the foreground by design (systemd/tmux friendly).
 
 Also in the CLI: `workspacer status` (what's running), `workspacer install-cli`
-(put the binary on PATH — the desktop app exposes the same thing as "Install
-workspacer Command" in the palette), and `workspacer token create/list/revoke`
+(put the binary on PATH), and `workspacer token create/list/revoke`
 for capability-scoped bus tokens (`--scope view|triage|operator`). From source,
-`make build-cli` produces the same four sibling binaries.
+`make build-cli` builds the same backend executable.
 
-If you later open the desktop app on the same machine, it **adopts** the
-running server instead of spawning its own daemons; "Connect to Server…" in
-the command palette points it at a remote one.
+To use the native app as a client of a running server instead of its own
+backend, start `wks-native` without `--local` (it connects to
+`ws://127.0.0.1:7895/bus`) or pass `--bus <url>` with `--token-file`.
 
 ## Architecture at a glance
 
-You launch one thing — the desktop app — but it supervises a small set of
-processes so your sessions outlive any window:
+You launch one thing, the native app, and it owns the backend in its own
+process:
 
 ```
 apps/
-  desktop/     Electron + React desktop app — the primary GUI client
-  native/      GPUI native client with an embedded Rust backend
+  native/      Rust/GPUI app (wks-native) with an embedded Rust backend — the
+               standard client; what `make dev` and releases build
+  desktop/     Electron + React app — deprecated (final release v0.170.0);
+               its renderer is still built as the /app web client
   tui/         wks-tui — Rust terminal client over the hub bus
 services/
   claudemon/   Rust session daemon: owns sessions/PTYs, runs per-provider
@@ -155,19 +177,20 @@ services/
                handled by the clients)
   hub-rs/      Shared Rust backend: hub, MCP, plugins, desktop services and
                the standalone workspacer-rust launcher
-  hub/         Retiring reference implementation and bundled plugin examples
+plugins/       bundled plugin examples
 docs/          specs, design notes, and the feature catalog
 landing/       the marketing site + user docs (static HTML)
 ```
 
 The native GUI embeds the Rust backend and session
 engine; `workspacer-rust serve` runs the same services as a standalone process.
-Platform validation and legacy removal are still in progress (see
+The Go hub, `brain` and the Node companion are retired; the Go sources live
+only in the pinned historical checkout described by
+`scripts/reference/README.md`. Some hub tests, generators and contract
+fixtures still read files under `apps/desktop` (see
 [the migration gates](services/hub-rs/MIGRATION.md)).
 
-The Electron app spawns `claudemon` and the Rust control plane and restarts them if they crash —
-or, if a `workspacer serve` is already running on the machine, adopts it
-instead of spawning its own. The advanced clients (`wks-tui`, `/remote`,
+The advanced clients (`wks-tui`, `/remote`,
 `/app/`) and the phone client all connect to the same `hub` bus, so a session
 running on one client can be observed and driven from another.
 
@@ -175,9 +198,11 @@ running on one client can be observed and driven from another.
 
 | Command                | What it does                                          |
 | ---------------------- | ----------------------------------------------------- |
-| `make dev`             | Desktop app in dev mode (Vite + Electron)             |
-| `./dev`                | Same as `make dev` (wrapper around `npm run dev`)     |
-| `make dev-share`       | Desktop app in dev mode with remote sharing forced on |
+| `make dev`             | Native app (debug) with its embedded Rust backend     |
+| `./dev`                | Same as `make dev`; arguments pass through to `wks-native` |
+| `make dev-native`      | Native app against an already running hub             |
+| `make dev-desktop`     | Deprecated Electron app in dev mode (needs `make install-desktop`) |
+| `make dev-share`       | Electron dev loop with remote sharing forced on       |
 | `make dev-tui`         | Run wks-tui (debug); builds the Rust services first |
 | `make run-tui`         | Run wks-tui (release); builds the Rust services and TUI first |
 | `make build`           | Build all components                             |
@@ -185,18 +210,27 @@ running on one client can be observed and driven from another.
 | `make build-cli`       | Build `workspacer-rust` (backend and administration CLI) |
 | `make build-claudemon` | `cargo build --release` for claudemon                 |
 | `make build-tui`       | `cargo build --release` for wks-tui                   |
-| `make test`            | Desktop + hub + claudemon + tui test suites           |
-| `make package`         | Build daemons + produce desktop installers            |
+| `make test`            | Desktop + hub + claudemon + tui + native test suites  |
+| `make install`         | Linux: build the native app and install it under `~/.local` |
+| `make package`         | Native download for this OS, into `apps/native/target/package/` |
+| `make package-desktop` | Deprecated Electron installers (not part of a release) |
+| `make check-version`   | `VERSION` and `apps/desktop/package.json` must agree  |
 | `make clean`           | Remove build artifacts across all components          |
 
 Each component also builds independently from its own directory — see the
-per-component READMEs (`apps/desktop/README.md`, `apps/tui/README.md`,
+per-component READMEs (`apps/native/README.md`, `apps/desktop/README.md`, `apps/tui/README.md`,
 `services/claudemon/README.md`, `services/hub-rs/MIGRATION.md`).
 
 ## Toolchains
 
-Pinned via [`mise`](https://mise.jdx.dev) (`mise.toml`): Go 1.25, Node 22. Rust
-is via the standard `cargo`/`rustup` toolchain.
+Rust is via the standard `cargo`/`rustup` toolchain; the native app and the
+backend need nothing else. [`mise`](https://mise.jdx.dev) (`mise.toml`) pins
+Node 22 for repo scripts, native Windows packaging and the web client in
+`apps/desktop`, and Go 1.25 for the optional historical reference tooling only.
+
+The release version is the root `VERSION` file. `apps/desktop/package.json`
+carries a copy for the web client, and `scripts/check-version.mjs` fails when
+the two differ.
 
 ---
 
@@ -204,7 +238,7 @@ is via the standard `cargo`/`rustup` toolchain.
 
 Contributions are welcome. Start with **[CONTRIBUTING.md](CONTRIBUTING.md)** for
 the dev setup, how the codebase is laid out, the test/lint expectations, and the
-pull-request flow. TL;DR: fork or branch, `make install && make build`, make your
+pull-request flow. TL;DR: fork or branch, `make build`, make your
 change with tests, run `make test`, and open a PR against `main`.
 
 Found a security-sensitive issue? See [`SECURITY.md`](SECURITY.md) — please

@@ -1,151 +1,145 @@
 ---
-title: In-app auto-update (electron-updater, stable vs nightly channels)
-tags: [auto-update, electron-updater, release, nightly, distribution, electron-builder]
+title: Updates and release channels (native updater, stable vs nightly)
+tags: [auto-update, native, release, nightly, distribution, windows, signing]
 related_paths:
-  - "apps/desktop/src/main/services/updateService.ts"
-  - "apps/desktop/src/main/services/updateService.test.ts"
-  - "apps/desktop/src/renderer/src/components/settings/UpdatesSection.tsx"
-  - "apps/desktop/src/renderer/src/hooks/useAppVersion.ts"
-  - "apps/desktop/src/main/ipc.ts"
-  - "apps/desktop/src/main/shared/ipcChannels.ts"
-  - "apps/desktop/src/main/preload.ts"
-  - "apps/desktop/src/renderer/src/App.tsx"
-  - "apps/desktop/electron-builder.yml"
+  - "VERSION"
+  - "scripts/check-version.mjs"
+  - "apps/native/src/updates.rs"
+  - "apps/native/src/update_helper.ps1"
+  - "apps/native/src/ui/updater.rs"
+  - "apps/native/src/data_dir.rs"
+  - "apps/native/packaging/windows/installer.nsi"
+  - "apps/native/scripts/package-windows.mjs"
+  - "apps/native/scripts/resolve-nsis.mjs"
+  - "apps/native/scripts/sign-windows.ps1"
+  - "apps/native/scripts/windows-payload.mjs"
+  - "apps/native/scripts/test-windows-installer.ps1"
+  - "apps/native/scripts/package-macos.sh"
+  - "apps/native/scripts/package-linux.sh"
   - ".github/workflows/release.yml"
   - ".github/workflows/rust-native-preview.yml"
-  - "apps/desktop/scripts/build-rust-backend.mjs"
-  - "apps/native/scripts/windows-payload.mjs"
-  - "apps/native/scripts/package-windows.mjs"
-  - "apps/native/scripts/test-windows-installer.ps1"
-  - "apps/native/src/bin/native-harness.rs"
-  - "scripts/hub-migration.py"
+  - "scripts/electron-feed-bridge.py"
+  - "scripts/finalize-nightly.py"
   - "scripts/check-nightly-preview.py"
-  - "scripts/test_nightly_preview.py"
   - "scripts/smoke-server-bundle.py"
-  - "scripts/test_smoke_server_bundle.py"
+  - "scripts/hub-migration.py"
   - "services/hub-rs/migration.json"
+  - "apps/desktop/src/main/services/updateService.ts"
 owner: Damien Touchette
-last_reviewed: 2026-09-29
+last_reviewed: 2026-11-14
 ---
 
-# Desktop updates and release channels
+# Updates and release channels
 
-## Runtime ownership
+The released product is the native app. Its updater is
+`apps/native/src/updates.rs` with the Windows helper
+`apps/native/src/update_helper.ps1`. The Electron updater is covered only by
+the short note at the end.
 
-`apps/desktop/src/main/services/updateService.ts` owns the Electron updater.
-The main process starts it with its window and stops its timer during shutdown.
-Status is pulled through `updatesGetStatus` and pushed through `onUpdateStatus`;
-check/install use native IPC. Plain `webBackend.ts` reports unsupported.
-`bridgedBackend.ts` keeps all four operations in `HOST_ONLY`, so desktop bus
-mode still updates the local Electron distribution. This does not update an
-independently deployed headless server.
+## Version source
 
-The status states are `unsupported`, `manual`, `disabled`, `idle`, `checking`,
-`downloading`, `downloaded`, and `error`. Gates run in this order:
+The release version is the root `VERSION` file (one line). Native packaging
+scripts, `release.yml` and build stamps read it. `apps/desktop/package.json`
+carries a copy because the `/app` web client reports it;
+`scripts/check-version.mjs` fails CI and the release gate when they differ.
+Nightly builds rewrite both to `<version>-nightly.<stamp>` in the runner.
 
-1. Unpackaged builds remain unsupported.
-2. Packaged macOS reports manual; an explicit check opens the releases page.
-3. On supported platforms, `updates.enabled=false` disables automatic startup.
-4. Otherwise wire listeners, check immediately, and repeat every four hours.
+## Native updater
 
-An explicit `checkNow()` bypasses the config disable switch on supported
-packaged builds. `wire()` is guarded to run once, while `stop()` only clears the
-timer. Do not assume saving config dynamically rewires the service or changes
-its existing feed/timer; inspect the caller lifecycle before promising that.
+Channel follows the installed version: a version containing `-nightly` checks
+the rolling `nightly` tag, anything else checks `/releases/latest` (which
+excludes prereleases). There is no channel selector.
 
-Downloads start automatically; `autoInstallOnAppQuit=false`. On download,
-the dialog offers restart, release notes, or later. Reading notes returns to
-the decision dialog. `promptOpen` prevents overlapping dialogs while one is
-open; it is not a permanent version-based deduplication record. `installNow()`
-only acts in downloaded state and then invokes `quitAndInstall()` directly.
+`check_result` resolves the latest version from this platform's package name
+(`Workspacer-<v>-macos-<arch>.dmg`, `workspacer-<v>-linux-<arch>.tar.gz`), on
+Windows from the installer name, then from any other platform's package, then
+from the release tag. An update is offered only when that version compares
+newer. A development build (unparseable version) reports no comparison.
 
-Updater error events log and publish error state without an error dialog.
-The separate check rejection handler prevents an unhandled rejection; it
-relies on the updater's event for error-state publication. Status pushes can
-be lost during window teardown; the renderer pulls current state on mount.
+In-app install is **Windows-only** (`installable` is
+`cfg!(target_os = "windows") && asset.is_some()`). On macOS and Linux the
+Download button opens `download_url`, this platform's package on the release,
+which is offered only when its URL starts with this repository's
+`releases/download/` prefix; with no package it opens the release page.
+Installing is manual there.
 
-## Feed selection and input validation
+Windows download (`download`): the asset name must match
+`Workspacer-Setup-<v>-x64.exe` or the pre-0.170
+`Workspacer-Native-Rust-Preview-Setup-<v>-x64.exe`, with no path separator;
+the URL must start with the repository's release-download prefix; size must be
+1 byte to 256 MiB and match exactly; when the API supplies GitHub's
+`sha256:` asset digest it must match. Without a digest there is no checksum
+check. The app does not read the published `.sha256` file and does not verify
+an Authenticode signature.
 
-Stable builds use the GitHub provider configured in
-`apps/desktop/electron-builder.yml`. Versions containing `-nightly` explicitly
-switch to the generic rolling-nightly asset URL, force channel `latest`, and
-allow downgrades. Single-range download configuration is explicit through
-`useMultipleRangeRequest=false`; retain it when modifying the generic feed.
-These are the checked-in feed choices, not a live CDN availability test.
+Windows install: the constant PowerShell helper is run by the system
+`powershell.exe` with a JSON plan file. It must report `waiting` before the
+app quits. After the app exits and nothing else runs from the install folder,
+it runs the installer silently in place (`/S /D=<install folder>`), requires
+exit code 0 and the expected version in `build-stamp.json`, and relaunches the
+app with its original arguments either way. State and log are in
+`<data folder>/updates/last-update.{json,log}`; `state_dir` uses the preview
+folder name until the data folder has been renamed. There is no rollback.
 
-`sanitizeUpdateChannel` accepts a lowercase alphanumeric first character,
-then lowercase alphanumeric, dot, dash or underscore; invalid values fall
-back to `latest`. It validates spelling, not feed existence. Nightly ignores
-the configured channel because its assets use `latest*.yml`.
-`releaseNotesUrl` accepts the service's restricted version pattern, sends
-nightly versions to the rolling release, and falls back to the releases index
-for invalid values. Do not concatenate unchecked feed input into URLs.
+## Release pipeline
 
-`apps/desktop/src/renderer/src/components/settings/UpdatesSection.tsx` exposes
-the enabled toggle, running version, nightly badge and bundled release notes;
-there is no channel selector. Manual mode disables the toggle. Bundled notes
-come from the running build, so the offered update's dialog opens its release
-page rather than presenting the old bundled changelog as new release notes.
+`.github/workflows/release.yml` runs for `v*` tags, PRs, manual dispatches and
+a daily 08:00 UTC schedule. The gate checks `VERSION`, chooses nightly mode
+for schedule or the nightly input, skips an unchanged nightly SHA, and emits
+one timestamp for all legs. When `services/hub-rs/migration.json` exists,
+nightly mode also runs `python3 scripts/hub-migration.py ready`; failure
+defers the nightly unless a manual dispatch sets both `nightly=true` and
+`migration_preview=true`, which `scripts/check-nightly-preview.py` allows only
+on the default branch with a successful `ci.yml` push run for that exact SHA.
 
-## Packaging and publication
+Jobs and what they publish:
 
-`apps/desktop/electron-builder.yml` builds Windows NSIS/portable, Linux
-AppImage and macOS DMG packages. The workflow uses Windows x64, Linux x64 and
-macOS arm64 legs. macOS has no ZIP target, signing discovery is disabled, and
-the service explicitly gates automatic updates off. Changing packaging alone
-does not remove that runtime gate.
+- `build` (Windows x64, macOS arm64, Linux x64): the web client, the Rust
+  backend and claudemon; `workspacer-server-<os>-<arch>` and
+  `workspacer-claudemon-<os>-<arch>` bundles. The server bundle holds
+  `workspacer-rust` (and a `workspacer` copy), `claudemon`, `web/`,
+  `examples/`, a README and a build stamp. No Electron installer is built.
+- `native-windows-build` then `native-windows-package`:
+  `Workspacer-Setup-<v>-x64.exe` and its `.sha256`, written to
+  `apps/native/target/package/`.
+- `native-macos` (arm64 and x64 legs): `Workspacer-<v>-macos-arm64.dmg` and
+  `Workspacer-<v>-macos-x64.dmg`, ad-hoc signed, not notarized, each with a
+  `.sha256`.
+- `native-linux` (x64 and arm64 legs): `workspacer-<v>-linux-x64.tar.gz` and
+  `workspacer-<v>-linux-arm64.tar.gz`, each with a `.sha256`. No AppImage or
+  `.deb`.
 
-`.github/workflows/release.yml` runs for version tags, PRs, manual dispatches
-and a daily 08:00 UTC schedule. Its gate chooses nightly mode for schedule or
-nightly input, skips an unchanged nightly SHA, and emits one numeric timestamp
-for all build legs. When `services/hub-rs/migration.json` exists, nightly mode
-also runs `python3 scripts/hub-migration.py ready`. Failure normally sets
-`build=false` and defers publication. That command checks source hashes,
-replacement/test evidence and cutover gates; it does not execute tests.
-Ordinary non-nightly manual/PR/tag builds can still produce validation artifacts.
-
-An explicit manual dispatch with **both** `nightly=true` and
-`migration_preview=true` may publish a testing nightly before the audit is
-complete. `scripts/check-nightly-preview.py` requires the default branch and a
-completed successful push run of `ci.yml` for the exact candidate SHA. A newer
-failed or pending run cannot borrow an older success. The workflow checks this
-before building and again before changing the live release. This mode labels
-the release notes as a Rust migration testing nightly and does not change any
-migration evidence or cutover status. Scheduled runs and default manual nightly
-runs retain the completion gate. The testing nightly uses the existing rolling
-nightly feed; it is not a separate release channel.
-
-The normal release path does not enforce independent CI conclusions. The explicit
-migration-preview path enforces `ci.yml`, and all publication still waits for the
-release workflow's own build legs and installer smoke tests. Do not claim this
-checks every other workflow automatically.
-
-Builds use `--publish never`. `npm run package` builds the Electron frontend,
-Rust backend and standalone claudemon before electron-builder. Electron retains
-its own claudemon process and supplies UI capabilities to the Rust control plane;
-its packaged resources no longer contain Go services or `desktop-host.cjs`.
-
-Uploads include installers, update YAML, blockmaps, standalone server bundles
-and standalone claudemon bundles. The server bundle contains `workspacer-rust`
-(and the `workspacer` executable alias), standalone `claudemon`, `web/`, optional
-plugin `examples/`, a README and build stamp. `workspacer serve` owns the engine,
-bus, desktop services and MCP facade in one Rust process. No private Node
-companion or Node runtime is required for this core; external provider CLIs and
-optional plugin sidecars can have their own runtime requirements. Node remains
-build tooling, and Electron itself still includes its JavaScript runtime.
-
-Version-tag attachment uses a **draft** GitHub release, with notes cut from
+Version-tag attachment uses a **draft** GitHub release with notes cut from
 `CHANGELOG.md`; a missing tagged section fails the notes step. Building a tag
-is not equivalent to publishing its draft to clients.
+is not publishing: a draft is invisible to `/releases/latest`.
 
-Nightly packaging uses space-free Windows artifact names and bypasses the
-conditional Azure signing path. Stable Windows signing is conditional on the
-version-tag/profile gates; do not assert every built Windows artifact is signed.
+### Windows signing
+
+Signing is conditional. Three steps (Azure login, sign `wks-native.exe` and
+`workspacer-rust.exe` before packaging, sign the installer) run only when the
+ref is a `v*` tag, the run is not a nightly, and the `AZURE_CODESIGN_PROFILE`
+repository variable is non-empty (`apps/native/scripts/sign-windows.ps1`).
+Otherwise the installer is unsigned, as before. Do not assert that a given
+Windows artifact is signed without checking it.
+
+### Electron feed files on native releases
+
+v0.170.0 was the last Electron release. Installed copies still poll for
+`latest*.yml`.
+
+- Stable tags other than `v0.170.0` download v0.170.0's `latest*.yml` and
+  attach them **unchanged** to the new draft, so an Electron 0.170.0 install
+  asking `/releases/latest` reads "version 0.170.0" and reports up to date.
+- The nightly publishes copies rewritten by `scripts/electron-feed-bridge.py`
+  so each `url`/`path` is an absolute link to the v0.170.0 asset; the last
+  Electron nightly then updates itself to 0.170.0.
+
+Both are best effort: a missing v0.170.0 feed warns and the release proceeds.
 
 ## Nightly rollout failure boundary
 
-The publish job waits for all matrix build legs and the separate native Windows
-packaging/smoke job, serializes on a shared nightly lock,
+The publish job waits for all matrix build legs and the native Windows, macOS
+and Linux packaging/smoke jobs, serializes on a shared nightly lock,
 and checks expected assets before changing the live release. It removes stray
 drafts, uploads a new draft, deletes the old live release, deletes/polls the tag
 up to six times, then publishes the new draft. A build or pre-deletion upload
@@ -165,33 +159,49 @@ an absent tag by that shell condition. Avoid promising uninterrupted feed
 availability or automatic rollback. The workflow's own comments use stronger
 language than its executable sequence supports.
 
-## Validation scope
+## Native Windows installer
 
-The earlier updater audit ran 39 mocked lifecycle/input tests. The 2026-09-29
-packaging audit checked workflow and script source without rerunning that suite.
-Manual [release build 36566605909](https://github.com/DJTouchette/workspacer/actions/runs/36566605909)
-on `04322791` completed all three build legs and artifact uploads successfully,
-including the Windows native installer smoke; its nightly publication and tag
-attachment steps were skipped. This was a release-workflow build preview, not a
-nightly publication or proof of full service parity. The separately named
-[Rust backend/native preview 36534488797](https://github.com/DJTouchette/workspacer/actions/runs/36534488797)
-on the same revision failed its service-test legs. Build success therefore
-must not be reported as green independent CI.
+`native-windows-build` compiles `wks-native` and `native-harness` in release
+mode and uploads them with the x64 CRT DLLs from that runner, with file
+SHA-256s and provenance. `native-windows-package` downloads those and the
+Windows backend executable from the `build` leg, verifies every hash against
+the receipts, optionally signs, packages and smoke-tests. It does not compile
+Rust.
 
-No release publication, platform signing or external updater CDN was verified
-by this audit. See [deployment](../modules/fly-node-deploy.md) for artifact stamp validation and
-[serve CLI](../modules/workspacer-serve-cli.md) for headless bundle ownership.
+`apps/native/scripts/resolve-nsis.mjs` finds `makensis`: `MAKENSIS`, then
+`PATH`, then the standard Program Files folders, then the copy under
+`apps/desktop/node_modules`. The release job uses the runner's NSIS and no
+`node_modules`. Icons come from `apps/native/packaging/icons`.
 
-## Stable Windows metadata audit
+`windows-payload.mjs` stages `wks-native.exe`, standalone
+`workspacer-rust.exe`, Visual C++ runtime DLLs, licence/icon/README, optional
+examples and build stamp. It includes no Go services, `desktop-host.cjs` or
+Node runtime.
 
-The installed `electron-updater` GitHub provider replaces spaces with dashes in
-resolved filenames; it does not reconcile arbitrary dotted versus dashed asset
-names. The 2026-09-26 release learning records a stable metadata/asset mismatch.
-For Electron Windows artifacts, the workflow gives explicit space-free names
-only to nightlies. Verify
-each stable update YAML path/URL against the actual uploaded draft asset names
-before publication; do not assume the provider repairs them. This audit checked
-the local resolver and workflow, not the historical live release URLs.
+The NSIS product and identity are **"Workspacer Native"** / `Workspacer.Native`
+(`installer.nsi`). The earlier preview identity ("Workspacer Native Rust
+Preview", `Workspacer.Native.RustPreview`) is handled as legacy: with no
+`/D=`, the installer installs over this product's recorded folder, else a
+preview install's folder, else the default; a preview registration replaced in
+place is retired (uninstall key, registry key, shortcuts) so Windows lists one
+app; a preview in a different folder is left alone. The installer never
+touches `%LOCALAPPDATA%\Workspacer Native` or the preview data folder. The app
+itself renames the data folder on first launch (`apps/native/src/data_dir.rs`)
+when that is safe; device-local settings keep their preview-path scope key
+(`RustOptions::settings_scope`).
+
+Start menu and finish-page launches pass `--local`. Uninstall removes owned
+package files and preserves user data and unknown files.
+
+The Windows smoke (`test-windows-installer.ps1`) covers install, upgrade from
+a preview, payload hashes, shortcuts, registrations, the installed CLI's
+`--help`, and `native-harness rust-probe` with Node absent from PATH. The
+harness is not the installed GUI executable: this is backend/installer
+evidence, not visual launch verification.
+
+`.github/workflows/rust-native-preview.yml` separately runs Rust service tests
+and preview packaging/smoke on PRs and manual dispatch. It publishes nothing
+and is not a `needs` dependency of `release.yml`.
 
 ## Extracted standalone archive smoke
 
@@ -209,66 +219,20 @@ This guard exercises packaged binaries, including actual MCP catalog responses;
 it does not establish GUI behavior or every provider/tool operation. No production
 state, provider credentials or active daemon is used by the smoke.
 
-## Native Windows installer
+## Electron (final 0.170.0)
 
-`native-windows-build` depends only on the release gate and compiles `wks-native`
-and `native-harness` in release mode alongside the Electron/backend matrix, on
-an independent Windows runner. It uploads the two binaries and the x64 CRT DLLs
-from that compiler runner, with file SHA256s and source SHA, gate-derived version,
-platform, workflow run, rustc, runner image and CRT-source provenance.
+`apps/desktop/src/main/services/updateService.ts` (electron-updater) remains
+in the tree but no release builds an Electron installer. Installed Electron
+copies stay on 0.170.0: stable installs read the carried-forward
+`latest*.yml`; nightly installs are bridged to 0.170.0 as above. Electron
+packaging (`make package-desktop`, `apps/desktop/electron-builder.yml`) still
+works locally and is not part of a release.
 
-`native-windows-package` waits for the matrix and native compile jobs. It downloads
-those inputs and the existing Rust backend executable uploaded by the Windows
-Electron leg. It verifies both receipts against source SHA, version, platform,
-run ID and every file hash before restoring the canonical package paths. It does
-not compile Rust or rediscover CRT DLLs on the packaging runner. The captured CRT
-also travels beside the harness. Locked `npm ci --ignore-scripts` supplies the
-pinned NSIS toolchain without rebuilding Electron; the existing native payload
-regressions and install/backend/uninstall smoke remain mandatory.
+## Validation scope
 
-Each compilation job uses one `rust-cache` action, `cache-bin: false`, and a
-separate release cache key. Cache cleanup cannot compete over Cargo-bin on the
-same runner. Dependency caches do not replace explicit binary artifact transfers.
-Final installer/archive uploads use compression level zero to avoid recompressing
-existing compressed payloads; intermediate raw binaries retain normal compression.
-This changes scheduling and compression work; measured wall-time improvement still
-requires the nonpublishing validation run.
-
-Internal transfer artifacts deliberately lack the `workspacer-` prefix used by
-the nightly publisher. Only the final `workspacer-native-windows` artifact joins
-the release downloads, and stable tags attach the unsigned native installer to
-the existing draft. The nightly notes include its direct download link. The
-current separate unsigned artifact is
-`Workspacer-Native-Rust-Preview-Setup-<version>-x64.exe`; the nightly asset gate
-now requires that exact naming family. Native updates remain manual and emit no
-Electron update metadata. The Electron Windows download excludes native assets.
-
-`windows-payload.mjs` stages `wks-native.exe`, standalone `workspacer-rust.exe`,
-Visual C++ runtime DLLs, license/icon/README, optional examples and build stamp.
-It includes neither the four Go services nor `desktop-host.cjs`, `node.exe` or
-a Node license. The Windows packaging script requires Node 22.13+ within the
-Node 22 series as build tooling; that is not a runtime payload dependency.
-
-The per-user NSIS identity remains `Workspacer.Native.RustPreview`, separate
-from standard native and Electron installs. Its Start menu and finish-page
-launches pass `--local`, owning the embedded Rust backend. Bare executable
-launches still attach to an existing hub. State defaults to
-`%LOCALAPPDATA%\Workspacer Native Rust Preview`; `--rust-local-dir` selects another
-isolated directory. This isolates backend stores, not every integration with
-the owner's provider accounts/home. Uninstall enumerates owned package files
-and preserves user data and unknown files.
-
-The Windows smoke verifies installation/upgrade hashes, shortcuts, notification
-and uninstall registrations, absence of legacy payloads, and the installed
-standalone CLI's `--help`. With Node removed from PATH, the build-output
-`native-harness rust-probe` runs the same `NativeHost::Rust` implementation in
-isolated state, checks four actual owned listener receipts, catalog/controller
-connectivity, joined shutdown and released ports. The harness is not the
-installed GUI executable: this is backend/installer evidence, not visual GPUI
-launch verification. Linux-local NSIS fixture compilation alone proves neither.
-
-`.github/workflows/rust-native-preview.yml` separately runs Rust service tests
-on Linux/macOS and Windows contract/native tests plus preview packaging/smoke.
-It uploads a validation installer and has no release/tag publication steps.
-Neither that workflow nor the separate general CI workflow is a `needs`
-dependency of `release.yml`.
+Reviewed 2026-11-14 by reading `updates.rs`, `update_helper.ps1`,
+`installer.nsi`, the packaging scripts and `release.yml` in the working tree.
+No workflow run, signing, publication or installed update was exercised for
+this review. See [deployment](../modules/fly-node-deploy.md) for artifact
+stamp validation and [serve CLI](../modules/workspacer-serve-cli.md) for
+headless bundle ownership.

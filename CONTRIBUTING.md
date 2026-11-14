@@ -1,8 +1,8 @@
 # Contributing to Workspacer
 
-Thanks for wanting to help. Workspacer is a monorepo with an Electron/React
-desktop app, a shared Rust backend, a Rust session daemon, and native and terminal
-clients — so this guide gets you from a clean checkout to a green build and a
+Thanks for wanting to help. Workspacer is a monorepo with a native Rust/GPUI
+app, a shared Rust backend, a Rust session daemon, a terminal client, and the
+deprecated Electron/React app whose renderer is still the `/app` web client — so this guide gets you from a clean checkout to a green build and a
 mergeable pull request.
 
 By contributing, you agree to the terms in [Contributor terms](#contributor-terms)
@@ -22,12 +22,15 @@ at the bottom of this file.
 
 Toolchains are pinned with [`mise`](https://mise.jdx.dev) via `mise.toml`:
 
+- **Rust** (stable, via `rustup`) — the native app, the shared backend,
+  `claudemon` and `wks-tui`. This is all the native app needs; its Linux build
+  dependencies are listed in [`apps/native/README.md`](apps/native/README.md#run).
+- **Node 22** — repo scripts (`scripts/*.mjs`), native Windows packaging, and
+  the web client / deprecated Electron app in `apps/desktop`
 - **Go 1.25** — optional historical oracle tooling only; see
   [`scripts/reference/README.md`](scripts/reference/README.md)
-- **Node 22** — the desktop app (Electron + React + Vite)
-- **Rust** (stable, via `rustup`) — the shared backend, `claudemon`, native client and `wks-tui`
 
-If you use `mise`, run `mise install` to get Go and Node at the pinned
+If you use `mise`, run `mise install` to get Node and Go at the pinned
 versions. Install Rust separately with `rustup`.
 
 ## First build
@@ -35,19 +38,23 @@ versions. Install Rust separately with `rustup`.
 From the repo root:
 
 ```bash
-make install          # desktop JS deps (root + renderer workspaces)
-make build            # desktop, Rust hub, claudemon, TUI and native client
+make dev              # build and run the native app (debug) with its embedded backend
 ```
 
-Then run the app in dev mode:
+The native app runs the Rust hub, the MCP facade and the `claudemon` engine in
+its own process; you don't start them by hand, and there is nothing to
+install first.
+
+To build everything, including the web client and the deprecated Electron app:
 
 ```bash
-make build-claudemon  # required once before agents can spawn
-make dev              # Vite renderer + Electron with hot reload
+make install-desktop  # apps/desktop JS deps (root + renderer workspaces)
+make build            # Rust hub, claudemon, desktop, TUI and native app
+make dev-desktop      # only if you need the Electron dev loop
 ```
 
-The desktop app spawns and supervises `claudemon` and the Rust control plane for you — you don't
-start them by hand. See the [README](README.md#common-tasks-from-the-repo-root)
+`make install` no longer installs JS dependencies: on Linux it builds the
+native app and installs it under `~/.local`. See the [README](README.md#common-tasks-from-the-repo-root)
 for the full `make` target list, and the per-component READMEs
 (`apps/desktop/`, `apps/tui/`, `apps/native/`, `services/claudemon/`) and
 [`services/hub-rs/MIGRATION.md`](services/hub-rs/MIGRATION.md) for the shared backend.
@@ -56,11 +63,11 @@ for the full `make` target list, and the per-component READMEs
 
 | Path                 | What it is                                                        |
 | -------------------- | ---------------------------------------------------------------- |
-| `apps/desktop/`      | Electron + React desktop client (the primary GUI)                |
+| `apps/native/`       | Native GPUI app (`wks-native`), the standard client; embeds the Rust backend |
+| `apps/desktop/`      | Electron + React app, deprecated (final release v0.170.0); its renderer is the `/app` web client |
 | `apps/tui/`          | `wks-tui`, the Rust terminal client                              |
 | `services/claudemon/`| Rust session daemon: sessions, PTYs, provider adapters, git      |
 | `services/hub-rs/`   | Shared Rust backend: event bus, services, plugins, MCP facade      |
-| `apps/native/`      | Native GPUI client embedding that same backend                    |
 | `docs/`              | design notes, specs, and the feature catalog (`features.md`)     |
 | `landing/`           | the static marketing site + user docs                            |
 
@@ -70,21 +77,21 @@ then `landing/build.html` (the architecture and hub-bus protocol).
 
 ## Making a change
 
-1. **Branch** off `master` (or fork, if you're external):
+1. **Branch** off `main` (or fork, if you're external):
    `git checkout -b my-change`.
 2. **Write the change with tests.** Match the style and structure of the code
    around it. Add or update tests for anything with runtime behavior.
 3. **Format and lint** the components you touched (see below).
 4. **Run the tests:** `make test` runs desktop, Rust hub, claudemon, TUI and native suites.
 5. **Commit** in logical chunks with clear messages (see below).
-6. **Open a PR** against `master` describing what changed and why, with a note
+6. **Open a PR** against `main` describing what changed and why, with a note
    on how you verified it.
 
 ### Formatting & linting
 
 **The format gates are separate CI jobs and no test suite covers them.**
 `make test` can be entirely green on a tree that CI rejects on formatting
-alone — that is not hypothetical, it has reddened `master`. There is no
+alone — that is not hypothetical, it has reddened `main`. There is no
 `make fmt` target, so run the component checks below for whatever you touched:
 
 | Component | Check CI runs | Fix it with |
@@ -103,6 +110,8 @@ Also gated in CI, and also not covered by the tests:
 - `npm run typecheck` in `apps/desktop`.
 - `cargo clippy --locked --all-targets -- -D warnings` in `services/claudemon`
   and `apps/tui`; native CI adds `--features ui-tests`.
+- `node scripts/check-version.mjs` (`make check-version`): `VERSION` and
+  `apps/desktop/package.json` must agree.
 - `make check-hub-capability-parameters` and `make check-hub-rust-assets` from
   the repository root. Historical Go checks are explicitly pinned optional
   commands, not the shipping backend's CI path.
@@ -121,7 +130,9 @@ the commit hash to that file.
 
 ### Tests
 
-- `make test` runs desktop + hub + tui.
+- `make test` runs the desktop, hub, claudemon, TUI and native suites. The
+  desktop suite needs `make install-desktop` first; several hub-rs tests and
+  generators also read files under `apps/desktop`.
 - Prefer testing behavior end-to-end where a change has a runtime surface, not
   just the happy path.
 - If you're changing a daemon or the hub bus, exercise the affected flow, not
@@ -136,7 +147,7 @@ the commit hash to that file.
 
 ### Pull requests
 
-- Target `master`.
+- Target `main`.
 - Describe the change, the reasoning, and how you verified it.
 - Keep the diff scoped to one concern; split unrelated changes into separate PRs.
 - Expect review comments — that's the normal path to merge, not a rejection.
@@ -144,24 +155,29 @@ the commit hash to that file.
 ## Cutting a release
 
 Releases are cut by hand. **Nothing about the process is automatic on a push
-to `master`** — `.github/workflows/release.yml` triggers on `v*` tags,
+to `main`** — `.github/workflows/release.yml` triggers on `v*` tags,
 `pull_request`, `workflow_dispatch` and a nightly `schedule`, and on nothing
-else. Pushing to `master` runs `ci.yml` only, which never builds an installer.
+else. Pushing to `main` runs CI only, which never publishes a release.
 
 ### Versioning
 
-The release version is the desktop app's version in
-`apps/desktop/package.json`. The tag is that version with a `v` prefix
-(`0.160.0` → `v0.160.0`), and `scripts/changelog-section.mjs` looks the
-version up in `CHANGELOG.md` by that number, so the three have to agree.
+The release version is the root `VERSION` file: one line holding only the
+version. Native packaging, `release.yml` and the build stamps read it. The tag
+is that version with a `v` prefix (`0.170.1` → `v0.170.1`), and
+`scripts/changelog-section.mjs` looks the version up in `CHANGELOG.md` by that
+number.
 
-**Those are the only three places the product version is declared** —
-`npm version --no-git-tag-version X.Y.Z` in `apps/desktop` updates
-`package.json` and `package-lock.json` together, and the CHANGELOG heading you
-write by hand. Everything else derives it at build time and needs no edit:
-`app.getVersion()` reads the packaged `package.json`, `release.yml` reads it
-with `node -p` to stamp `WKS_STAMP_VERSION` into the server/claudemon bundles,
-and the nightly job appends its `-nightly.<stamp>` tail to it.
+`apps/desktop/package.json` carries a copy, because the web client built from
+it (served at `/app`) reports that version. `scripts/check-version.mjs` fails
+CI and the release gate when the two differ.
+
+**Those are the only places the product version is declared**: `VERSION`,
+which you edit by hand; `apps/desktop/package.json` and its lockfile, which
+`npm version --no-git-tag-version X.Y.Z` in `apps/desktop` updates together;
+and the CHANGELOG heading you write by hand. Everything else derives it at
+build time and needs no edit: the native packaging scripts and `release.yml`
+read `VERSION` (to name the downloads and stamp `WKS_STAMP_VERSION` into the
+bundles), and the nightly job appends its `-nightly.<stamp>` tail to it.
 
 **The component versions are deliberately independent and stay put.**
 `services/claudemon/Cargo.toml` and `apps/tui/Cargo.toml` have been `0.1.0` for
@@ -169,7 +185,7 @@ the life of the project — that is what `claudemon --version` prints, and
 `release.yml` says so in as many words where it explains why the build stamp
 exists. `services/hub-rs/Cargo.toml` and `apps/native/Cargo.toml` likewise
 have independent crate versions. Bumping any of them
-to match the desktop would be a new claim, not a fix. Version strings in tests
+to match the release version would be a new claim, not a fix. Version strings in tests
 (`manualUpdates.test.tsx`, `useWhatsNew.test.tsx`, `updateService.test.ts`,
 `deploy/fly/test-fetch-release.sh`) are fixtures — arbitrary by design — and
 must not be swept along with a bump.
@@ -194,8 +210,8 @@ Everything derives from it and nothing else is hand-maintained:
 
 - the **GitHub release body**, cut at tag time by
   `scripts/changelog-section.mjs`;
-- the app's **Settings → Updates** pane and its post-update "what's new"
-  notice, via `apps/desktop/src/renderer/src/lib/changelog.generated.ts`;
+- the web client's **Settings → Updates** pane and its post-update "what's
+  new" notice, via `apps/desktop/src/renderer/src/lib/changelog.generated.ts`;
 - the **nightly** release body, which is the `[Unreleased]` section — because
   that is exactly what a nightly is.
 
@@ -215,26 +231,32 @@ page.
 
 ### The steps
 
-1. **Get `master` green**, including the format gates above — `make test`
+1. **Get `main` green**, including the format gates above — `make test`
    does not cover them.
 2. **Write the `[Unreleased]` section** in `CHANGELOG.md`, then promote it by
    renaming the heading to `## [X.Y.Z] - YYYY-MM-DD`. Do **not** leave an
    empty `[Unreleased]` behind — the generator refuses a heading with nothing
    under it. Start the next one when the first entry exists, directly below
    the file's prose header.
-3. **Bump `apps/desktop/package.json`** (and its lockfile) to `X.Y.Z`, run
-   `npm run gen:changelog`, and commit both with the CHANGELOG edit.
+3. **Bump `VERSION`** to `X.Y.Z`, then `apps/desktop/package.json` (and its
+   lockfile) with `npm version --no-git-tag-version X.Y.Z` in `apps/desktop`.
+   Run `make check-version` and `npm run gen:changelog`, and commit them with
+   the CHANGELOG edit.
 4. **Tag and push the tag:** `git tag vX.Y.Z && git push origin vX.Y.Z`.
-5. **Wait for all three build legs** (macOS, Windows, Linux). Each attaches
-   its own installers, the `latest*.yml` + `.blockmap` updater metadata, and
-   the standalone `workspacer-server-*` / `workspacer-claudemon-*` bundles to
-   the same release.
+5. **Wait for every job.** The `build` legs (Windows, macOS, Linux) attach
+   the standalone `workspacer-server-*` / `workspacer-claudemon-*` bundles.
+   The native jobs attach `Workspacer-Setup-<v>-x64.exe`,
+   `Workspacer-<v>-macos-arm64.dmg`, `Workspacer-<v>-macos-x64.dmg`,
+   `workspacer-<v>-linux-x64.tar.gz` and `workspacer-<v>-linux-arm64.tar.gz`,
+   each with a `.sha256` beside it. No Electron installer is built. The
+   release also re-attaches v0.170.0's `latest*.yml` unchanged, so installed
+   Electron 0.170.0 copies report "up to date" instead of an update error.
 6. **Publish the draft by hand.** This is the step that is easy to miss:
    `release.yml` creates the GitHub Release with `draft: true`. A draft is
    invisible to `api.github.com/repos/.../releases/latest`, which is the
    endpoint the landing page's download button reads. Until a human hits
    **Publish release**, the site still offers the previous version and the
-   auto-updater sees nothing new.
+   native app's update check sees nothing new.
 
    Publishing the draft is not the whole story. Flipping `draft` to `false`
    does not by itself reassign `/releases/latest` to the new tag. During the
@@ -243,13 +265,14 @@ page.
    `make_latest=true`, was required before `/releases/latest` pointed at
    `0.160.0`. After publishing, re-query `/releases/latest` yourself and
    confirm it resolves to the new tag. Do not assume the publish step did it.
-7. **Check the release page** actually has every platform's installer and the
-   updater metadata before you announce it. `fail_on_unmatched_files: false`
-   means a leg that produced no artifact does not fail the run.
+7. **Check the release page** actually has every platform's download and its
+   `.sha256` before you announce it. The native attach step fails on a missing
+   file, but the server-bundle and Electron-feed steps use
+   `fail_on_unmatched_files: false`, so a missing bundle does not fail the run.
 
 ### Nightlies
 
-The rolling `nightly` prerelease rebuilds `master` on an 08:00 UTC cron, and
+The rolling `nightly` prerelease rebuilds `main` on an 08:00 UTC cron, and
 the gate job skips the build when nothing has landed since the last one. To
 force one, dispatch it manually:
 
@@ -262,19 +285,31 @@ or use **Actions → release → Run workflow** and tick `nightly`. A plain
 uploads artifacts and publishes nothing.
 
 Nightly is a prerelease on the fixed `nightly` tag, rolled publish-last so a
-failed build leaves yesterday's nightly live. It *does* ship updater metadata,
-so nightly installs self-update onto the next nightly — and never onto stable,
-since a stable install resolves `/releases/latest`, which excludes
-prereleases. Going back to stable means installing a release build by hand.
+failed build leaves yesterday's nightly live. A native nightly build (its
+version contains `-nightly`) checks the `nightly` tag for updates, and a stable
+build checks `/releases/latest`, which excludes prereleases, so neither moves
+onto the other channel. Going back to stable means installing a release build
+by hand. The nightly also carries a bridged copy of v0.170.0's `latest*.yml`
+(`scripts/electron-feed-bridge.py`) so the last Electron nightly updates itself
+to the final Electron release.
 
 ### Known gaps, so nobody rediscovers them
 
-- **macOS builds are unsigned and un-notarized** (`CSC_IDENTITY_AUTO_DISCOVERY:
-  false`), and there is no Intel leg — Apple Silicon only. Windows *is* signed
-  on tag builds via Azure Trusted Signing (see
-  [`docs/windows-code-signing.md`](docs/windows-code-signing.md)).
-- **macOS auto-update does not work.** No mac zip is published, which is what
-  `MacUpdater` needs, and it would not be trustworthy unsigned anyway.
+- **macOS builds are ad-hoc signed and not notarized.** A downloaded copy
+  needs `xattr -cr /Applications/Workspacer.app` once. Both Apple Silicon and
+  Intel `.dmg` files are built.
+- **Windows signing is conditional.** The installer and the executables in it
+  are signed with Azure Trusted Signing on `v*` tag builds only when the
+  `AZURE_CODESIGN_PROFILE` repository variable is set (see
+  [`docs/windows-code-signing.md`](docs/windows-code-signing.md)). Nightlies,
+  PR builds and tag builds without that variable are unsigned.
+- **In-app install of updates is Windows-only.** On macOS and Linux the app
+  reports a newer release and its Download button fetches that platform's
+  package; installing it is manual.
+- **Linux ships as a `.tar.gz` with a per-user installer.** There is no
+  AppImage or `.deb`.
+- **The native packages do not bundle the `/app` web client.** It ships in the
+  server bundle.
 - `scripts/check-doc-drift.sh` is informational unless `WKS_DOC_DRIFT_STRICT=1`
   and is **not wired into CI** — it runs via `make docs-drift`. It only greps
   four component READMEs for maturity words; it does not look at `landing/` or

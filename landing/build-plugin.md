@@ -106,7 +106,7 @@ Style the page with the injected `--wks-*` theme tokens (with fallbacks, e.g. `b
 
 Drop `my-hello/` into the hub's plugins directory: `<configDir>/plugins` for `workspacer serve` and the Electron app, or whatever you passed to `--plugins-dir`. The hub loads every folder that has a `plugin.json` when it starts, validates the manifest, and emits `plugin.loaded`. This one is a pane, so you need a client that draws panes: in the Electron app or the web app the renderer registers your pane and hotkey, and you open it with `Ctrl+Shift+H` or from the command palette.
 
-The native app keeps its own plugins directory, `config/plugins` inside its data folder (`Workspacer Native Rust Preview` in your platform's local-data directory). It has no plugin manager, so installing there is by hand: copy the plugin folder in, already built, and restart the app. An empty file named `.disabled` in the folder switches a plugin off. This hello pane would load there and have nowhere to open, which is why the rest of this section turns it into a sidecar.
+The native app keeps its own plugins directory, `config/plugins` inside its data folder (`Workspacer Native` in your platform's local-data directory; builds before the rename called it `Workspacer Native Rust Preview`, and the app renames it on first launch). It has no plugin manager, so installing there is by hand: copy the plugin folder in, already built, and restart the app. An empty file named `.disabled` in the folder switches a plugin off. This hello pane would load there and have nowhere to open, which is why the rest of this section turns it into a sidecar.
 
 ### make it a sidecar instead
 

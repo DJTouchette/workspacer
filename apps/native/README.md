@@ -1,6 +1,7 @@
 # Workspacer Native
 
-Experimental GPUI client with an existing-hub mode and an embedded local backend.
+The Workspacer app: a GPUI client with an embedded local backend and an
+existing-hub mode. It replaces the Electron app, whose final release was v0.170.0.
 Rust renders the interface directly; no Electron, browser, or webview is used. GPUI and
 GPUI Component are pinned together; the optional component webview feature is
 disabled. Local mode embeds both claudemon and the shared Rust hub/backend library.
@@ -24,10 +25,18 @@ Appearance → Window layout chooses Auto (follows the window's shape), Wide or 
 
 The release workflow builds `Workspacer-Setup-<version>-x64.exe` (named
 `Workspacer-Native-Rust-Preview-Setup-…` before 0.170.0; the updater accepts
-both). The unsigned installer updates in place from Settings → About and keeps
-its own Start menu shortcut, uninstall registration, notification identity and
-data directory (still registered as "Workspacer Native Rust Preview", so
-existing installations upgrade in place).
+both). The installer updates in place from Settings → About and keeps its own
+Start menu shortcut, uninstall registration, notification identity and data
+directory. It is signed with Azure Trusted Signing only on `v*` tag builds when
+the `AZURE_CODESIGN_PROFILE` repository variable is set; nightlies, PR builds
+and tag builds without that variable are unsigned. The release workflow writes
+a `.sha256` beside it.
+
+The product is registered as "Workspacer Native". It was "Workspacer Native
+Rust Preview" before: running this installer over a preview installation
+upgrades it in its existing folder and replaces the preview entry in Windows
+Settings → Apps, so Windows lists one app. A preview installed in a different
+folder is left alone. The installer never touches the data folder.
 
 The package contains the native application, standalone `workspacer-rust.exe`,
 plugin examples and Visual C++ runtime DLLs. It does not bundle Go services,
@@ -35,7 +44,7 @@ plugin examples and Visual C++ runtime DLLs. It does not bundle Go services,
 required by external providers/plugins remain separate prerequisites.
 
 The shortcut starts `--local`, which owns the backend in process and uses
-`%LOCALAPPDATA%\Workspacer Native Rust Preview`. `--rust-local-dir` selects
+`%LOCALAPPDATA%\Workspacer Native` (see [Data folder](#data-folder)). `--rust-local-dir` selects
 another isolated directory. Bare launches still connect to an existing hub;
 `--bus` explicitly selects one. Uninstall preserves application data.
 
@@ -47,12 +56,20 @@ cargo build --locked --release --manifest-path services/hub-rs/Cargo.toml --bin 
 # Install NSIS 3 and select Visual Studio's redistributable x64 CRT directory.
 $env:NATIVE_CRT_DIR = 'C:\path\to\Microsoft.VC143.CRT'
 node apps/native/scripts/package-windows.mjs
-$version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Setup-$version-x64.exe"
+$version = (Get-Content VERSION).Trim()
+./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/native/target/package/Workspacer-Setup-$version-x64.exe"
 ```
 
-Node 22 is a packaging tool dependency. CI resolves a checksum-verified NSIS
-compiler using `scripts/resolve-nsis.mjs`; manual builds can set `MAKENSIS`.
+`make package` (or `make package-native-windows`) runs the same build and
+packaging steps. The installer is written to `apps/native/target/package/`,
+beside the Linux and macOS packages; the version comes from the root `VERSION`
+file and the icons from `packaging/icons/`.
+
+Node 22 is a packaging tool dependency. `scripts/resolve-nsis.mjs` finds the
+NSIS compiler: `MAKENSIS` if set, then `makensis` on `PATH`, then the standard
+install folders under Program Files, and only then the copy electron-builder
+downloads under `apps/desktop/node_modules`. GitHub's Windows runners ship
+NSIS, so CI needs no `node_modules`.
 The smoke test requires a disposable Windows user. It checks install/upgrade,
 payload hashes, the shortcut, installed standalone CLI, embedded backend readiness,
 joined shutdown and uninstall/data retention with Node absent from PATH. It does
@@ -78,15 +95,24 @@ binary and its `build-stamp.json`, a launcher that starts it with `--local`,
 the icon and the licences. The installer records every file it writes, and
 `wks-native-uninstall` removes exactly those; sessions, settings and logs are
 kept. `--no-build` packs an existing `target/release/wks-native`, and
-`--version` overrides the release version read from
-`apps/desktop/package.json`.
+`--version` overrides the release version read from the root `VERSION` file.
+`make package` runs this script on Linux, and `make install` builds the
+archive and runs its `./install.sh`.
 
 The `native-client` workflow builds, installs, runs and uninstalls the archive
 on pushes to `main` and manual runs, and uploads it as the
-`workspacer-native-linux` artifact; the release workflow builds it on
-Ubuntu 22.04 and attaches it to tagged releases and the nightly. Updating is
-manual: the app says when a newer release exists; unpack the new archive and
+`workspacer-native-linux` artifact; the release workflow builds it for x64
+and arm64 and attaches both to tagged releases and the nightly. There is no
+AppImage or `.deb`. Updating is manual: the app says when a newer release
+exists and its Download button fetches the archive for this CPU; unpack it and
 run `./install.sh` again.
+
+Started from the desktop launcher (`--local`, no terminal on stdin), the app
+takes its `PATH` from your login shell (`$SHELL -ilc`), because a desktop
+session's `PATH` usually lacks what a shell profile adds (mise, asdf and nvm
+shims, `~/.local/bin`, `~/.cargo/bin`), and `claude`, `codex`, `node` and `git`
+would not resolve. A launch from a terminal keeps the `PATH` it has. Set
+`WKS_NATIVE_KEEP_PATH` to turn this off (`launcher_path` in `src/main.rs`).
 
 ## macOS package
 
@@ -99,9 +125,11 @@ ad hoc and wraps it in a `.dmg` with an Applications link and a checksum. It
 is not notarized: a downloaded copy needs `xattr -cr
 /Applications/Workspacer.app` once. Opened from Finder or the Dock (no
 arguments), the binary adds `--local` and imports the login shell's PATH
-(`macos_bundle_launch` in `src/main.rs`). The release workflow builds it on
-`macos-15` (Apple Silicon) and attaches it to tagged releases and the nightly.
-Updating is manual, as on Linux.
+(`macos_bundle_launch` in `src/main.rs`). The release workflow builds it for
+Apple Silicon (`-macos-arm64.dmg`) and Intel (`-macos-x64.dmg`) and attaches
+both to tagged releases and the nightly. `make package` runs this script on
+macOS. Updating is manual, as on Linux: Download fetches the `.dmg` for this
+CPU.
 
 ## Run
 
@@ -117,7 +145,10 @@ Visual Studio C++ build tools. Linux needs a working X11/Wayland display and
 Vulkan driver. The CI workflow builds/tests all three platforms; local validation
 results are recorded separately below.
 
-From the repository root (connects to the running desktop hub or `workspacer serve`):
+From the repository root, `make dev` (or `./dev`) builds and launches the debug
+GUI with its own embedded backend; see
+[Embedded local backend](#embedded-local-backend). To attach to a hub that is
+already running (`workspacer serve`, or another copy started with `--local`):
 
 ```sh
 make dev-native     # build and launch the debug GUI against an existing hub
@@ -296,6 +327,7 @@ The default Cargo build includes `rust-hub`. These repository targets build and
 start the native app with its owned Rust backend:
 
 ```sh
+make dev                    # same as dev-native-local; ./dev passes arguments through
 make dev-native-local       # debug build and launch
 make run-native-local       # release build and launch
 make build-native-local     # build without launching
@@ -311,11 +343,18 @@ Existing-hub connections remain the no-argument default. `--bus` and `--demo`
 do not start a local engine. `--rust-local-dir` selects another isolated owned
 backend; both local spellings exclude a remote bus or token file.
 
-Local state remains under **Workspacer Native Rust Preview** in the platform's
-local-data directory. The engine, bus and facade use allocated loopback ports;
-the bus keeps the port it first received (saved in `config/hub-port`) so
-Tailscale Serve keeps reaching it after a restart. If that port is busy, the
-bus takes another one for this run and sharing does not reach it.
+Local state is under **Workspacer Native** in the platform's local-data
+directory (see [Data folder](#data-folder)). The engine uses allocated loopback
+ports. On a first launch of the default install the bus tries port 7895 and
+the MCP facade 7897, the ports the Electron app used, so Tailscale sharing and
+paired devices set up there keep pointing at the right place; an instance
+started with `--rust-local-dir` takes any free port. The port a listener got
+is saved (`config/hub-port`, `config/mcp-port`) and reused, so Tailscale Serve
+and agents launched earlier keep reaching it after a restart. A stand-in port
+taken only because the preferred one was busy (the Electron app is still
+running) is not saved: the next launch tries the preferred port again. If a
+saved port is busy, the listener takes another one for this run and sharing
+does not reach it.
 Legacy service-bundle/database overrides and nondefault hub/MCP port flags are
 refused; use an isolated directory instead. Cooperating Rust backend owners hold
 an exclusive canonical database lease through joined shutdown. An unconfirmed
@@ -343,6 +382,72 @@ account polling, verifies controller/catalog readiness, joins shutdown, and
 checks the four actual listener receipts are released. `embedded-probe` is an
 alias for this Rust probe and takes the same `--directory` argument. It prints no
 credentials, launches no model provider, and does not verify visible GPU output.
+
+### Data folder
+
+The default install keeps everything in one folder under the platform's
+local-data directory: `%LOCALAPPDATA%\Workspacer Native` on Windows,
+`~/Library/Application Support/Workspacer Native` on macOS and
+`~/.local/share/Workspacer Native` on Linux (`$XDG_DATA_HOME` if set).
+
+Preview builds called it `Workspacer Native Rust Preview`. The first launch of
+a current build renames that folder (`src/data_dir.rs`):
+
+- If only the preview folder exists, it is renamed with its contents.
+- If the new folder exists but is an empty directory, it is removed and the
+  preview folder renamed over it.
+- If the new folder already holds `state.db` or `config/config.yaml`, or the
+  preview folder holds neither, nothing moves and the new folder is used.
+- If the new folder holds other files (logs written before the data could
+  move) or the rename fails (another copy of the app has the folder open), the
+  app keeps using the preview folder for this run.
+
+Nothing is merged and nothing is deleted. Device-local settings (session
+names, archives, bookmarks) are filed under a scope key that still contains
+the preview path, on purpose, so they stay attached to the same install after
+the rename (`RustOptions::settings_scope` in `src/host/rust_local.rs`).
+
+### One running copy
+
+One app runs per data folder (`src/instance.rs`). Starting it again brings the
+first window forward and exits, instead of failing on the session database's
+lock. The running copy listens on a loopback port and records it with a random
+token in `instance.json` in the data folder; the only thing a second launch can
+ask for is the window. A stale record (after a crash) is replaced.
+`--import-electron` refuses to run while another copy is open. Instances with
+different `--rust-local-dir` folders do not affect each other.
+
+### Importing from the Electron app
+
+A default install with no data imports the Electron app's `config.yaml`,
+profiles, library, jobs, hub state and session database on first launch, plus
+its usage history (from Electron's `workspacer.db` into
+`config/headless-analytics.sqlite`), so History and Usage keep earlier
+records. The Electron app's files are only read.
+
+For an install that already has its own data:
+
+- **Settings → About → Import from the Electron app → Import at next start**
+  writes `import-electron.requested` into the data folder. The next launch
+  imports and removes the marker first, so a failing import is not retried
+  every launch. **Cancel import** removes the marker. The row appears only
+  when this machine has Electron data and the app runs as the default
+  `--local` install (not `--rust-local-dir`, not attached to another hub).
+- `wks-native --local --import-electron` does the same immediately.
+
+Either way the current `config`, `hub` and `state.db` are first moved to a
+`…before-electron-import-<time>` folder beside the data folder. If putting the
+import in place fails, they are moved back and the app starts with the data it
+had. The backup folder is never deleted by the app.
+
+### The `/app` web client
+
+The native packages do not include the full web client. The embedded hub
+serves it at `/app` only when `WORKSPACER_WEBAPP_DIR` names a folder with a
+built web client (`index.html`), or a `web` folder sits beside the binary.
+Without one, `/app` answers 404 with a short explanation of where to get it;
+the phone client at `/m` works either way. `workspacer serve` from the server
+bundle includes the web client.
 
 ## Remote access over Tailscale
 
@@ -940,6 +1045,12 @@ be expanded, and attachment controls share the composer action row.
   alerts do not). A window pinned to another session only comes forward.
   OS settings still govern delivery. The Windows installer registers
   a dedicated Workspacer Native notification identity.
+- **Notices from agents and the hub.** An agent's `notify` call, and the hub's
+  own notices (a job that is proposed or fails), arrive as `notify.post` and
+  show as a notice in the window. When the window is in the background they
+  also raise an OS notification, unless the notice is `silent` or `inAppOnly`.
+  Clicking one opens the session it names, if any. A notice's `url` and pane
+  targets are not followed.
 - **Attach…** accepts images and PDFs up to 8 MiB. Ordinary Ctrl/Cmd+V in the
   composer accepts clipboard screenshots (there is no separate Paste image
   button). Before sending, image attachments show as thumbnails read back from
@@ -1061,9 +1172,11 @@ be expanded, and attachment controls share the composer action row.
   `-nightly`) checks the rolling `nightly` prerelease; a stable install checks the
   latest release. The app checks 8 seconds after launch and every 6 hours, shows
   an **Update** pill in the sidebar when a newer build exists, and Settings →
-  About shows channel, installed and latest versions. On Windows **Install and
-  restart** downloads the native installer and verifies its size and GitHub's
-  SHA-256 digest. Unsaved editor changes are saved or discarded first. A hidden
+  About shows channel, installed and latest versions. The version is read from this platform's
+  package name, and from another platform's package when a nightly lacks this
+  one. On Windows **Install and
+  restart** downloads the native installer and verifies its size and, when
+  GitHub's API supplies one, its SHA-256 digest. Unsaved editor changes are saved or discarded first. A hidden
   Windows PowerShell helper (`src/update_helper.ps1`, parameters from a JSON
   plan, never from script text) must report that it is waiting before the app
   quits; otherwise the app stays open and says why. It is started with
@@ -1077,9 +1190,12 @@ be expanded, and attachment controls share the composer action row.
   exits; the helper does not restart the app while files may be changing.
   Repeated clicks and unsaved-editor decisions recheck the same helper rather
   than starting another. Each step is recorded in
-  `%LOCALAPPDATA%\Workspacer Native Rust Preview\updates\last-update.{json,log}`;
-  the next launch reports the outcome under Settings → About. Other platforms
-  link to the release page.
+  `%LOCALAPPDATA%\Workspacer Native\updates\last-update.{json,log}` (the
+  preview folder until it has been renamed);
+  the next launch reports the outcome under Settings → About. In-app install
+  is Windows-only. On macOS and Linux **Download** fetches this platform's
+  package (`.dmg` or `.tar.gz` for this CPU) from the release, or opens the
+  release page when the release has none; installing it is manual.
 
 Normal-mode shortcuts: `g h` session history, `g d` changes, `g a` setup,
 `g e` session actions, `g m` model, `g f` files/editor and `g t` terminal. `Esc` returns from a secondary view;
@@ -1316,8 +1432,8 @@ test pass; run the complete native-client suites above.
 
 ## UI commands from the hub
 
-The controller subscribes to `facade.openTerminal` and the supported `command.*`
-topics. It retains up to 32 bounded display requests until a visible workspace
+The controller subscribes to `facade.openTerminal`, `notify.post` and the
+supported `command.*` topics. It retains up to 32 bounded display requests until a visible workspace
 consumes them. A headless controller never turns these events into a process,
 agent launch or claim that a pane opened. Foreign-hub commands are excluded;
 pending requests are discarded on disconnect rather than replayed on reconnect.
@@ -1336,6 +1452,7 @@ The native equivalents use existing screens:
 | `analytics` | Open the usage panel. |
 | `browser` with an `http(s)` URL | Offer the page: **Open in browser** opens it in the system browser. Nothing is opened on receipt, and other schemes are refused. |
 | `facade.openTerminal` | Offer the command: the notice shows it and where it is for, and **Run in terminal** types it into a session's terminal. Nothing runs on receipt. |
+| `notify.post` | Show the notice in the window; raise an OS notification when the window is in the background and the notice is not `silent`/`inAppOnly`. Never navigates. |
 | `command.run_action` | Apply supported session navigation, new-session form, settings, review and inspector actions. Decision and session-control verbs are refused. |
 
 The `new-terminal` / `toggle-terminal` actions show or toggle the selected
@@ -1357,7 +1474,9 @@ the command that was shown. **Copy request** still copies the whole request.
 Native has no plugin renderer, guide pane, library, board, Ask or context
 pane, and no in-app browser or editor pane a request can open. Requests for
 those show an explicit unsupported notice; guide requests offer a link to
-this document. These are native UI gaps, not substitutes for the Rust
+this document. The hub's MCP catalog no longer has `open_guide` or
+`open_plugin` tools, so agents cannot send those two; the client still parses
+the topics for hubs that do. These are native UI gaps, not substitutes for the Rust
 backend's working terminal or data APIs.
 
 UI commands retain their existing fire-and-forget bus contract. The native

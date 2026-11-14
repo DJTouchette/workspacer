@@ -1,7 +1,15 @@
 # Workspacer — Desktop app
 
+> **Deprecated.** v0.170.0 was the final release of the Electron app. The
+> standard client is the native app in [`apps/native`](../native/README.md),
+> which is what `make dev`, `make package` and releases build. This package is
+> kept because its renderer is still built as the `/app` web client served by
+> `workspacer serve`, and because hub-rs tests, generators and contract
+> fixtures read files under it. Its version in `package.json` must equal the
+> root `VERSION` file (`scripts/check-version.mjs`).
+
 The Electron + React GUI client. Part of the [Workspacer monorepo](../../README.md);
-sibling daemons (`claudemon`, `hub`) live in `../../services/` and are spawned by
+the Rust backend (`claudemon`, `hub-rs`) lives in `../../services/` and is spawned by
 this app at runtime unless it adopts or connects to an already-running
 `workspacer serve`.
 
@@ -66,14 +74,14 @@ and `workspacer serve`; it does not install or authenticate provider CLIs.
 
 - Node.js 22 (repo pins it via `mise`)
 - npm
-- Go 1.25 and Rust (to build the bundled hub and claudemon daemons)
+- Rust (to build the bundled Rust hub and claudemon). Go is not needed.
 
 ### Install dependencies
 
 From the repo root:
 
 ```bash
-make install            # == cd apps/desktop && npm install
+make install-desktop    # == cd apps/desktop && npm install
 cd apps/desktop/src/renderer && npm install
 ```
 
@@ -82,11 +90,10 @@ cd apps/desktop/src/renderer && npm install
 From the repo root:
 
 ```bash
-make dev                # or ./dev   (== cd apps/desktop && npm run dev)
+make dev-desktop        # == cd apps/desktop && npm run dev
 ```
 
-This builds the `hub` binary, starts the Vite dev server, and launches Electron
-with hot reload.
+This starts the Vite dev server and launches Electron with hot reload. `make dev` and `./dev` now start the native app instead.
 
 ### Remote / phone access
 
@@ -104,7 +111,7 @@ host-shell actions stay local to the Electron process.
 
 ```bash
 make build              # build this app (+ daemons via the root target)
-make package            # build daemons + electron-builder installers -> apps/desktop/release/
+make package-desktop    # build daemons + electron-builder installers -> apps/desktop/release/ (not part of a release)
 ```
 
 ## Architecture

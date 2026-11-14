@@ -16,6 +16,8 @@ last_reviewed: 2026-09-26
 
 # Browser and plugin guest boundaries
 
+> Scope: this describes the Electron renderer, which now ships only as the `/app` web client; the Electron app is deprecated (final release v0.170.0) and the native app (`apps/native`) does not use this code.
+
 ## Shared host implementation
 
 Electron uses `BrowserPane` for ordinary browsing and for the guest inside

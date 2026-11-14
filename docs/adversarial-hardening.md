@@ -7,6 +7,13 @@ re-deriving how it works or re-finding what it found.
 Two things live here: **the method**, which is reusable and is most of the value,
 and **the findings**, which are mostly closed but whose *shapes* keep recurring.
 
+> **Scope.** This pass was run against the Electron app and the Go/TypeScript
+> control plane (Go brain, Go bus, desktop TypeScript). Those are retired or
+> deprecated: the shipping product is the native app with the Rust hub. The
+> method below still applies, but the findings do not transfer, and the native
+> app has had no comparable pass. Its threat model, written from the code, is
+> [`native-threat-model.md`](native-threat-model.md).
+
 ---
 
 ## 1. The problem this addresses

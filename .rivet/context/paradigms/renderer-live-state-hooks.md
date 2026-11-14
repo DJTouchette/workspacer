@@ -14,6 +14,8 @@ last_reviewed: 2026-09-26
 
 # Renderer live-state hooks + context providers (electronAPI stream to React state)
 
+> Scope: this describes the Electron renderer, which now ships only as the `/app` web client; the Electron app is deprecated (final release v0.170.0) and the native app (`apps/native`) does not use this code.
+
 ## Overview
 React consumers use `window.electronAPI`. Its backend can be preload IPC, the renderer-owned hub client in `webBackend.ts`, or the `bridgedBackend.ts`/`remoteBackend.ts` compositions that retain native host methods. The renderer can therefore connect directly to the hub while components use the same API. See [the backend seam](../domains/renderer-backend-seam.md). A small family of hooks/providers owns the job of mirroring that push stream into React state: `ConfigProvider` for config, `useLayoutSync` for the shared window-manager doc, `useSessionLifecycle` for session save/restore, and `useUiMode` for the one config-driven rendering lens. `useHubReconnect` is available to consumers that must rehydrate after a connection drop; it is not automatically used by every provider.
 

@@ -2,21 +2,47 @@
 title: MCP Tool Facade
 tags: [hub, mcp, agents, authentication, plugins]
 related_paths:
-  - "services/hub/cmd/mcp/*.go"
-  - "services/hub/cmd/brain/facade*.go"
+  - "services/hub-rs/src/mcp.rs"
+  - "services/hub-rs/src/mcp/ui.rs"
+  - "services/hub-rs/assets/mcp-tools.json"
+  - "services/hub-rs/assets/mcp-help.json"
+  - "services/hub-rs/src/services/session_facade.rs"
+  - "services/hub-rs/tests/mcp.rs"
+  - "apps/native/src/ui_requests.rs"
+  - "scripts/mcp-catalog.py"
   - "apps/desktop/src/main/services/mcpFacadeDaemon.ts"
-  - "apps/desktop/src/main/services/mcpConfig.ts"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-11-14
 ---
 
 # MCP Tool Facade
 
 `services/hub-rs/src/mcp.rs` exposes the Rust hub capability bus over `/mcp`
-and `/sse`; `services/hub/cmd/mcp` is the retained Go migration reference.
-The facade is an adapter: tools forward calls to the desktop provider or the
-headless brain. `/health` reports the exact service, listen address, hub URL,
+and `/sse`. The Go facade (`services/hub/cmd/mcp`) is retired and exists only
+in the pinned historical checkout. The facade is an adapter: tools forward
+calls to the hub's own services, in the native app's embedded backend and
+under `workspacer serve` alike. `/health` reports the exact service, listen address, hub URL,
 hub connection, and initial plugin-catalog readiness.
+
+## Catalog
+
+The catalog is `services/hub-rs/assets/mcp-tools.json`, keyed by scope: 103
+operator tools, 18 triage, 10 view (`scripts/mcp-catalog.py --check`, `make
+check-hub-mcp-catalog`). Help text is `mcp-help.json`.
+
+`open_guide` and `open_plugin` were removed: the panes they opened do not
+exist in the native app. `mcp/ui.rs` maps the remaining UI tools to bus topics
+(`focus_agent`, `open_pane`/`open_browser`, `open_spawn_dialog`,
+`run_ui_action`) and forwards only each tool's documented keys. The
+descriptions of `open_pane`, `open_browser`, `run_ui_action` and `notify`
+describe native behaviour: `open_browser` offers an `http(s)` page that the
+person opens in their own browser; `open_pane` names the views the app has;
+unknown pane types and action ids show a notice and do nothing. What the
+native window does with each request is in `apps/native/src/ui_requests.rs`.
+
+`notify` reaches clients as a `notify.post` event when no host claims
+`notifications.post` (see
+[shared desktop services](headless-desktop-services.md)).
 
 ## Rust wire compatibility
 
@@ -56,7 +82,7 @@ service, bind, expected hub, `hubConnected`, and `pluginCatalogReady` on every
 launch; health probes carry no bearer and follow no redirects.
 
 A configured but unverified Rust facade refuses launch before minting. This is
-an explicit change from the retained Go brain's omit-and-continue fallback.
+an explicit change from the retired Go brain's omit-and-continue fallback.
 Deliberately disabled facade mode remains supported and does not invent a URL
 or credential. Failed checks are not cached, so later healthy preparation can
 recover. See `services/hub-rs/src/services/session_facade.rs` for these distinct
@@ -64,12 +90,13 @@ ownership modes.
 
 ## Supervision
 
-The desktop's `mcpFacadeDaemon.ts` adopts an exact healthy external facade or
-owns a local child. Owned-child restart timers carry a generation fence and are
-cancelled on adoption, stop, and newer startup, so a stale timer cannot kill or
-replace an adopted `workspacer serve` listener. The Rust standalone backend owns
-its shared services and listeners in one runtime; there is no separately started
-Go brain. Per-launch readiness and generation-bound credentials remain required
+The Rust backend owns the facade listener in the same runtime as the hub, in
+the native app and under `workspacer serve`; there is no separately started
+facade process or Go brain. The native default install prefers port 7897 for
+it and saves the port it got (`config/mcp-port`), because agents keep the MCP
+URL they were launched with and some outlive the app. In the deprecated
+Electron app, `mcpFacadeDaemon.ts` adopts an exact healthy external facade or
+owns a local child, with generation-fenced restart timers. Per-launch readiness and generation-bound credentials remain required
 after initial startup.
 
 ## Authentication and plugins
@@ -82,12 +109,15 @@ polls later changes; clients caching `tools/list` may need to reconnect.
 
 ## Key tests
 
-- `services/hub/cmd/brain/facade_test.go`: per-spawn healthy→down→healthy, identity/bind/hub
-  refusal, no token leak, pointer-only ordinary skills.
-- `mcpFacadeDaemon.test.ts`: exact adoption/readiness and stale-restart race.
-- `claudeSessionStore.test.ts`: retry-safe, once-per-lifecycle revocation.
-- `services/hub/cmd/mcp/auth_test.go`, `tiers_test.go`, `plugins_test.go`: manual credential
-  tiers, authentication, and plugin catalog behavior.
+- `services/hub-rs/tests/mcp.rs`: authenticated HTTP requests, protocol
+  revisions, scope filtering.
+- `services/hub-rs/src/mcp/ui.rs` unit tests: UI tool to topic mapping, and
+  that `open_guide`/`open_plugin` map to nothing.
+- `apps/native/src/ui_requests.rs` unit tests: what the native window accepts.
+- `mcpFacadeDaemon.test.ts` (Electron only): exact adoption/readiness and
+  stale-restart race.
+- The Go facade tests (`facade_test.go`, `auth_test.go`, `tiers_test.go`,
+  `plugins_test.go`) are in the historical checkout only.
 
 ## Outbound identity delegation
 

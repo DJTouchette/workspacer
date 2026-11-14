@@ -17,6 +17,8 @@ last_reviewed: 2026-09-26
 
 # Renderer cross-pane event buses (window CustomEvent request/open hops)
 
+> Scope: this describes the Electron renderer, which now ships only as the `/app` web client; the Electron app is deprecated (final release v0.170.0) and the native app (`apps/native`) does not use this code.
+
 ## Overview
 Panes render deep inside an agent's tab/pane tree and have no reference to the tab manager that lives in `apps/desktop/src/renderer/src/App.tsx`. Rather than threading callbacks down through every intermediate component, each pane fires a `window.dispatchEvent(new CustomEvent(...))`; `apps/desktop/src/renderer/src/App.tsx` (and a couple of dedicated overlay hosts) own matching `window.addEventListener` handlers that mutate the real tab/pane tree. This is a family of small, single-purpose "bus" modules under `apps/desktop/src/renderer/src/lib/*Bus.ts`, distinct from `apps/desktop/src/renderer/src/lib/uiEvents.ts`'s outbound publish to the hub bus for plugins/MCP.
 

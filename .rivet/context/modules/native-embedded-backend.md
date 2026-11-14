@@ -20,8 +20,11 @@ keeps the worker alive without a window; dropping a UI receiver is not shutdown.
 
 Existing-hub and demo modes remain independent from local embedding. Explicit
 `--local` or `--rust-local-dir` selects the shared Rust `Backend` (the `rust-hub`
-feature is required). The default directory is `Workspacer Native Rust Preview`
-in the platform data directory; an override owns its own config, hub data and
+feature is required). The default directory is `Workspacer Native` in the
+platform local-data directory; a folder left by a preview build
+(`Workspacer Native Rust Preview`) is renamed to it on first launch when that
+is safe (`apps/native/src/data_dir.rs`), and one app runs per data folder
+(`apps/native/src/instance.rs`). An override directory owns its own config, hub data and
 SQLite file. Old service-bundle/database overrides and custom hub/MCP ports are
 refused. Bare GUI startup still attaches to an existing hub.
 

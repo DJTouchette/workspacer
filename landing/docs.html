@@ -217,7 +217,7 @@
 <h3>how it starts</h3>
 <p>The installed shortcut (Windows), the app opened from Finder or the Dock (macOS) and the launcher (Linux) start the app with <code>--local</code>, which is what you want on your own machine. The flags, when you run the binary yourself:</p>
 <ul>
-<li><code>wks-native --local</code>: the app owns its backend. The hub, the MCP tools and the session engine run inside the app's process, with their state under <strong>Workspacer Native Rust Preview</strong> in the platform's local-data directory.</li>
+<li><code>wks-native --local</code>: the app owns its backend. The hub, the MCP tools and the session engine run inside the app's process, with their state under <strong>Workspacer Native</strong> (<strong>Workspacer Native Rust Preview</strong> in builds before the rename; the app renames the folder on first launch) in the platform's local-data directory.</li>
 <li><code>wks-native</code> with no flags: attach to a hub that is already running on this machine, at <code>ws://127.0.0.1:7895/bus</code>. That is a <code>workspacer serve</code>, or the Electron app's hub.</li>
 <li><code>wks-native --bus wss://host/bus --token-file /path/to/token</code>: attach to a hub on another machine. <code>WKS_HUB_BUS</code> can supply the URL. The credential comes from <code>--token-file</code>, then <code>HUB_TOKEN</code>, then the local <code>remote-token</code> file, and that last one is only ever used for a loopback URL: local credentials are never sent to a remote hub by default.</li>
 <li><code>wks-native --demo</code>: an isolated demo with a hundred fixture sessions and simulated streaming. It reads no credentials, launches no agent and calls no model. Starting agents is disabled there.</li>
@@ -849,7 +849,7 @@ workspacer jobs remove &lt;id&gt;</code></pre>
 <li><code>nodes.json</code>, the registry of remote worker nodes, mode <code>0600</code>. Read once at startup.</li>
 <li><code>plugins/</code> and <code>plugin-settings.json</code>, installed plugins and their settings.</li>
 </ul>
-<p><strong>The native app in local mode</strong> keeps its hub's state to itself, under <strong>Workspacer Native Rust Preview</strong> in the platform's local-data directory (<code>~/.local/share</code> on Linux, <code>%LOCALAPPDATA%</code> on Windows). Inside it:</p>
+<p><strong>The native app in local mode</strong> keeps its hub's state to itself, under <strong>Workspacer Native</strong> (formerly <strong>Workspacer Native Rust Preview</strong>) in the platform's local-data directory (<code>~/.local/share</code> on Linux, <code>%LOCALAPPDATA%</code> on Windows). Inside it:</p>
 <ul>
 <li><code>config/</code> is that hub's config directory: its own <code>config.yaml</code> and <code>peers.json</code>, and the ports it listens on.</li>
 <li><code>hub/</code> is that hub's state directory: <code>jobs.json</code> lives here.</li>

@@ -9,9 +9,12 @@ related_paths:
   - "apps/desktop/src/renderer/src/backend/desktopServices.ts"
   - "services/hub-rs/src/backend.rs"
   - "services/hub-rs/src/services/mod.rs"
+  - "services/hub-rs/src/services/host_chores.rs"
+  - "services/hub-rs/src/services/keep_warm.rs"
+  - "services/hub-rs/src/services/worktrees/artifact_cleanup_scheduler.rs"
   - "services/hub-rs/COMPANION_RETIREMENT.md"
 owner: Damien Touchette
-last_reviewed: 2026-09-30
+last_reviewed: 2026-11-14
 ---
 
 # Shared desktop services in the Rust backend
@@ -23,17 +26,35 @@ native client. Its owned Rust services replace the private Node companion. No
 `desktop-host.cjs`, private stdio host bridge, `build:desktop-host`, or
 `test:desktop-host` command is required by the current product.
 
-Electron retains `apps/desktop/src/main/services/nativeDesktopServices.ts`, the
+The native app (the standard client) and `workspacer serve` both install the
+Rust owners. The Electron app is deprecated (final release v0.170.0) but its
+code remains: `apps/desktop/src/main/services/nativeDesktopServices.ts`, the
 public dispatcher in `main/headless/desktopHost.ts`, and their shared JavaScript
-services. The `headless` directory name does not make those live implementations
-retired. In Electron's normal local composition, Rust owns the control plane and
-Electron registers its desktop services; standalone/native composition installs
-Rust owners. See [the companion retirement map](../../../services/hub-rs/COMPANION_RETIREMENT.md)
+services. In Electron's local composition, Rust owns the control plane and
+Electron registers its desktop services. No release ships that composition. See [the companion retirement map](../../../services/hub-rs/COMPANION_RETIREMENT.md)
 for the exact boundary.
 
 Enabled plugin sidecars and provider CLIs remain external programs. In particular,
 `plugins/examples/headroom` is a public trusted Node sidecar, not a replacement
 private backend process. Node also remains desktop/build/test tooling.
+
+## Host chores and notifications
+
+Keep-warm (`claude.keepWarm`) and worktree artifact cleanup
+(`agents.artifactCleanup`) were Electron main-process timers. They are now
+Rust: `services/hub-rs/src/services/host_chores.rs` starts both from
+`Backend::initialize` once the engine and hub are ready, and stops them first
+in `Backend::shutdown`. Only a backend that owns its engine runs them, so they
+run under the native app's `--local` mode and `workspacer serve`, and not in a
+native app attached to someone else's hub. Both read `config.yaml` each pass.
+Without a configuration directory neither starts.
+
+When no host has registered `notifications.post`, the Rust services install a
+handler that validates the documented fields and publishes them as a
+`notify.post` event (`notification_event` in `services/mod.rs`), the topic
+jobs already use. Attached clients decide how to show it; the native app shows
+a notice and, in the background, an OS notification. With no client attached
+the notification is only logged.
 
 ## Registry and authority
 
@@ -73,7 +94,8 @@ accepted work beyond its caller, and actual engine observations fence teardown.
 
 ## Persistence and retirement
 
-Current configuration has Rust and public Electron writers. The Rust runtime
+Current configuration has a Rust writer and, in the deprecated Electron app, a
+TypeScript writer. The Rust runtime
 owns its launch/replacement journals and standalone analytics store; it does not
 silently convert all Electron history. `PERSISTED_STATE_REVIEW.md` distinguishes
 per-family byte/reopen/failure evidence. Retired intent-workspace SQLite/artifact

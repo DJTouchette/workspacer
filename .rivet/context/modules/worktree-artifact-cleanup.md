@@ -2,6 +2,10 @@
 title: Worktree artifact cleanup and spawn admission fencing
 tags: [worktree, cleanup, artifacts, spawn, maintenance, leases, headless]
 related_paths:
+  - "services/hub-rs/src/services/worktrees/artifact_cleanup.rs"
+  - "services/hub-rs/src/services/worktrees/artifact_cleanup_scheduler.rs"
+  - "services/hub-rs/src/services/host_chores.rs"
+  - "services/hub-rs/src/backend.rs"
   - "apps/desktop/src/main/services/worktreeArtifactCleanup.ts"
   - "apps/desktop/src/main/services/worktreeArtifactCleanupScheduler.ts"
   - "apps/desktop/src/main/services/worktreeService.ts"
@@ -10,28 +14,42 @@ related_paths:
   - "services/claudemon/src/daemon/worktree_admission.rs"
   - "services/claudemon/src/daemon/spawn.rs"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-11-14
 ---
 
 # Worktree artifact cleanup and spawn admission
 
 ## Scope and scheduling
 
-The shared TypeScript cleanup core reclaims recognized ignored build/dependency
-artifacts in eligible managed linked worktrees. It does not remove worktrees,
-branches or source edits. This differs from explicit close-time worktree removal.
-See [operator procedure](../../../docs/agent-artifact-cleanup.md) for configuration
-and CLI flags; `npm run cleanup:agents` from `apps/desktop` defaults to dry-run,
-with `-- --apply` explicitly enabling deletion. This audit runs fixture tests,
-not cleanup against the user's real worktree root.
+The cleanup core reclaims recognized ignored build/dependency artifacts in
+eligible managed linked worktrees. It does not remove worktrees, branches or
+source edits. This differs from explicit close-time worktree removal.
 
-The scheduler starts 60 seconds after local desktop initialization or the
-headless companion's first valid request carrying `daemonURL`, then checks every
-15 minutes. Remote-client desktop skips it. Imports alone start nothing.
-Configuration is read each pass; default enabled/minimum age is true/one hour.
-A module-level in-flight guard prevents overlap within that process. Shutdown
-clears timers and refuses later state loads; it does not synchronously cancel
-an already executing filesystem operation.
+There are two implementations of the same rules. The one that runs in the
+product is Rust: `services/hub-rs/src/services/worktrees/artifact_cleanup.rs`
+(core) and `artifact_cleanup_scheduler.rs`, started by `HostChores`
+(`services/hub-rs/src/services/host_chores.rs`) from `Backend::initialize`.
+The original TypeScript core, scheduler and CLI remain in `apps/desktop` for
+the deprecated Electron app and for manual runs. See
+[operator procedure](../../../docs/agent-artifact-cleanup.md) for configuration
+and CLI flags; `npm run cleanup:agents` from `apps/desktop` defaults to dry-run,
+with `-- --apply` explicitly enabling deletion. The Rust hub has no manual
+command.
+
+The Rust scheduler runs in every backend that owns its engine (native
+`--local`, `workspacer serve`), and never in a hub attached to someone else's
+engine. The first pass is 60 seconds after backend readiness, then every 15
+minutes. Without a configuration directory it does not start. Configuration is
+read each pass; default enabled/minimum age is true/one hour. A process-wide
+in-flight flag prevents overlap. Each pass runs on its own thread because the
+filesystem walks block. `Backend::shutdown` stops chores first: the scheduler
+stops scheduling, a running pass loads no further state and removes nothing
+more, and shutdown waits up to 10 seconds for it to release its maintenance
+lease. It cannot interrupt a removal already in the kernel.
+
+The Rust core needs a directory's device and inode to recheck identity before
+removal. On non-Unix platforms it bails with a reported reason, so the Rust
+cleanup removes nothing on Windows.
 
 ## Eligibility and deletion boundary
 
@@ -77,8 +95,10 @@ an abandoned `.workspacer-maintenance.lock` from the relevant Git directory.
 
 ## Validation
 
-Use cleanup core/scheduler fixture tests, CLI argument/config tests and daemon
-`worktree_admission` tests. The concurrent-admission regression covers shared
+Use the Rust core/scheduler fixture tests (`artifact_cleanup_tests.rs`, the
+scheduler's own tests; `make test-hub`), the TypeScript core/CLI tests in
+`apps/desktop`, and daemon `worktree_admission` tests. The 2026-11-14 review
+read the Rust sources and their wiring; it did not run them. The concurrent-admission regression covers shared
 ownership and exclusion, not actual provider readiness or sustained fleet load.
 A successful spawn acknowledgement/`launch_total` timing ends before first
 provider output; benchmark those separately. See [agent spawn](../domains/agent-spawn.md).

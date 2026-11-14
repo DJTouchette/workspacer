@@ -13,6 +13,8 @@ last_reviewed: 2026-09-26
 
 # IPC Boundary
 
+> Scope: this describes the Electron renderer, which now ships only as the `/app` web client; the Electron app is deprecated (final release v0.170.0) and the native app (`apps/native`) does not use this code.
+
 ## Overview
 The IPC boundary is a typed request–response + push channel system between the Electron main process and renderer. Channel names are centralized in `ipcChannels.ts` as constants; shared payload types live in `ipcTypes.ts` (importable by both sides). Handlers are registered in `ipc.ts` using `ipcMain.handle()` or `ipcMain.on()`; the preload bridge in `preload.ts` exposes a `window.electronAPI` object that mirrors those handlers as TypeScript-typed functions, so components normally use the API rather than raw Electron channels. The selected renderer backend can replace that API with bus/composed implementations. Push updates (main → renderer) flow via `mainWindow.webContents.send()` with the same channel constants, coalescing session snapshots when needed.
 

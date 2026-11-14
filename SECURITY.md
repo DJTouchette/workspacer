@@ -21,19 +21,30 @@ guaranteed response window — but reports get read, and a real one gets a fix.
 Workspacer runs a local control plane, and everything below is **loopback-only
 by default**:
 
-- `services/hub` (Go) — the event bus and capability broker, plus `brain` (the
-  default capability provider), `mcp` (an MCP facade over the bus), and the
-  `workspacer` CLI.
-- `services/claudemon` (Rust) — the agent session daemon; REST + SSE.
-- `apps/desktop` (Electron) — the app itself; the main process is a bus
-  capability provider, and the renderer displays untrusted agent output.
+- `apps/native` (Rust/GPUI, binary `wks-native`) — the app. With `--local` it
+  runs the hub, the MCP facade and the session engine in its own process and
+  displays untrusted agent output. Its threat model is
+  [`docs/native-threat-model.md`](docs/native-threat-model.md).
+- `services/hub-rs` (Rust) — the event bus and capability broker, the desktop
+  services behind it, the MCP facade over the bus, the web clients (`/m`,
+  `/remote`, `/app`) and the `workspacer` / `workspacer-rust` CLI. The same
+  library is embedded in the native app and runs standalone as
+  `workspacer serve`.
+- `services/claudemon` (Rust) — the agent session engine; REST + SSE when run
+  as its own daemon.
+- `apps/desktop` — the deprecated Electron app (final release v0.170.0). Its
+  renderer is still built as the `/app` web client and displays untrusted agent
+  output; its main process is no longer part of a release.
+
+The Go hub and `brain` are retired and are not in this tree.
 
 Positions worth reasoning from:
 
 - **A web page the user visits** while the daemons run — cross-origin requests
   and DNS rebinding against loopback ports.
-- **A remote-share client** — the opt-in `WORKSPACER_REMOTE_SHARE` path, usually
-  over Tailscale, where the bus is reachable off-host with a token.
+- **A remote-share client** — the opt-in sharing path (Settings → Remote in
+  the native app, `--host` for `workspacer serve`), usually over Tailscale,
+  where the bus is reachable off-host with a token.
 - **An installed plugin** — trusted local code running with the Workspacer
   user's machine access. Its identity preserves provenance and lifecycle;
   manifest methods/paths are advisory, not a sandbox.
@@ -71,3 +82,8 @@ an index rather than a register: the findings themselves live in the commit
 messages, and most of its value is the METHOD, which is reusable and worth reading
 before attacking this codebase. It also lists what is still open, and the traps in
 the guard machinery itself.
+
+That pass covered the Electron app and the Go/TypeScript control plane of the
+time. The native app has had no comparable adversarial pass yet;
+[`docs/native-threat-model.md`](docs/native-threat-model.md) describes its
+trust boundaries from the code and lists what has not been reviewed.

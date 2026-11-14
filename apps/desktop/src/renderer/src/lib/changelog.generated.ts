@@ -23,6 +23,45 @@ export interface ChangelogRelease {
 /** Newest first, exactly as CHANGELOG.md orders them. */
 export const CHANGELOG: readonly ChangelogRelease[] = [
   {
+    version: 'Unreleased',
+    date: '',
+    unreleased: true,
+    sections: [
+      {
+        title: 'Added',
+        items: [
+          'Downloads for Intel Macs (`Workspacer-<version>-macos-x64.dmg`) and Linux arm64 (`workspacer-<version>-linux-arm64.tar.gz`), and a `.sha256` beside the Windows installer as the other downloads already had.',
+          'Starting Workspacer while it is already running brings the open window forward instead of failing on the session database.',
+          "An agent's `notify` call, and a job that is proposed or fails, now shows as a notice in the window, and as an OS notification when the window is in the background. Silent and in-app-only notices stay in the window.",
+          'Settings → About offers "Import from the Electron app" on a machine that has the Electron app\'s data. "Import at next start" replaces this app\'s sessions and settings with the Electron app\'s at the next launch, after moving the current ones to a backup folder beside the data.',
+          'The Electron import also carries usage history, so History and Usage keep what was recorded before the switch.',
+          'Keep-warm (`claude.keepWarm`) and automatic cleanup of build artifacts in stopped agent worktrees (`agents.artifactCleanup`) now run in the native app and under `workspacer serve`. Both were Electron main-process features until now. Keep-warm stays off unless enabled; cleanup is on by default, and on Windows it reports what it would skip and removes nothing.',
+        ],
+      },
+      {
+        title: 'Changed',
+        items: [
+          'The Windows app is named "Workspacer Native" instead of "Workspacer Native Rust Preview". Installing over a preview upgrades it in place and leaves one entry in Windows Settings → Apps.',
+          "The app's data folder is renamed from `Workspacer Native Rust Preview` to `Workspacer Native` on every platform. It is moved on first launch; if the new folder already holds data or the old one is in use, nothing is moved and the app keeps using the folder it had. Names, archives and bookmarks saved on this device are kept.",
+          "On macOS and Linux, the update card's Download button fetches this platform's package directly. Installing an update from inside the app is still Windows-only.",
+          "On Linux, launched from the desktop menu, the app uses your login shell's PATH, so `claude`, `codex`, `node` and `git` resolve as they do in a terminal. Set `WKS_NATIVE_KEEP_PATH` to keep the session's PATH.",
+          'A first launch uses ports 7895 (hub) and 7897 (agent tools) when they are free, the ports the Electron app used, so Tailscale sharing and paired devices set up there keep working. If one is busy the app uses another port for that run and tries the preferred one again next time.',
+          'Windows release installers are code signed when signing is configured for the release; nightlies remain unsigned.',
+          'Agents can no longer open the Workspacer Guide or a plugin pane (the `open_guide` and `open_plugin` tools are gone, as those panes do not exist in the native app). The descriptions of `open_pane`, `open_browser`, `run_ui_action` and `notify` now describe what the native app does.',
+        ],
+      },
+      {
+        title: 'Fixed',
+        items: [
+          "The update check reads the new version from any platform's package, so a nightly that lacks the Windows installer or this platform's package still reports that an update exists.",
+          'An Electron import that fails while replacing existing data puts that data back instead of leaving the app with a partial store.',
+          "`/app` on the native app's hub explains that the full web client is not installed and where to get it, instead of answering with a bare 404. It is served when `WORKSPACER_WEBAPP_DIR` or a `web` folder beside the binary holds a built web client.",
+          'An installed Electron 0.170.0 no longer reports an update error after newer releases are published, and the last Electron nightly updates itself to 0.170.0.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.170.1',
     date: '2026-11-13',
     unreleased: false,

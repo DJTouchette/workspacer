@@ -2,25 +2,42 @@
 title: Remote Control & Mobile
 tags: [remote, mobile, hub-bus, pwa, push]
 related_paths:
-  - "services/hub/**"
-  - "apps/desktop/src/main/services/remoteServer.ts"
-  - "apps/desktop/src/main/index.ts"
+  - "services/hub-rs/src/server.rs"
+  - "services/hub-rs/src/server/policy.rs"
+  - "services/hub-rs/assets/web/**"
+  - "apps/native/src/remote.rs"
+  - "apps/native/src/ui/remote.rs"
+  - "apps/native/src/host/rust_local.rs"
   - "services/hub-rs/assets/web/m-next/**"
   - "services/hub-rs/src/server/web.rs"
   - "services/hub-rs/src/services/kept_sessions.rs"
 owner: Damien Touchette
-last_reviewed: 2026-10-22
+last_reviewed: 2026-11-14
 ---
 
 # Remote and mobile clients
 
 ## Surfaces and authentication
 
-`services/hub/cmd/hub/main.go` serves authenticated `/bus`, HTTP-guarded
-`/remote`, public `/m` and PWA assets, plus the separately built full renderer
-at `/app` when configured. `remote.html`, `mobile.html` and `sw.js` are embedded
-at Go build time. Rebuild with `go build -o hub ./cmd/hub` to update the executable;
-a multi-package build does not refresh that output artifact.
+The Rust hub (`services/hub-rs/src/server.rs`, `server/web.rs`) serves
+authenticated `/bus`, HTTP-guarded `/remote`, public `/m` and PWA assets, and
+the separately built full web client at `/app` when a web directory is
+configured. `remote.html`, `mobile.html` and `sw.js` under
+`services/hub-rs/assets/web/` are compiled into the hub binary; rebuild the hub
+(or the native app, which embeds it) to update them. The Go hub that used to
+serve these is retired.
+
+`/app` availability differs by host. `workspacer serve` from the server bundle
+serves it from the bundled `web/` directory. The native app's packages do not
+include the web client: its embedded hub serves `/app` only when
+`WORKSPACER_WEBAPP_DIR` or a `web` folder beside the binary holds a built
+client (`webapp_directory` in `apps/native/src/host/rust_local.rs`). Without
+one, `/app` returns 404 with an explanation and `/m` still works.
+
+In the native app, sharing is set up from Settings → Remote: Tailscale Serve
+in front of the hub's loopback port, plus pairing links per access level. The
+default install's hub prefers port 7895, the Electron app's port, so sharing
+and paired devices set up under Electron keep pointing at it.
 
 The mobile shell contains no session data or credentials and can load from
 cache without a token. Data/control requires an authenticated bus connection.
@@ -99,7 +116,7 @@ is claimed by a mock/browser test.
 
 ## Desktop and test ownership
 
-Desktop full-client mode skips local daemon startup and uses a selected server;
+This section describes the deprecated Electron app. Desktop full-client mode skips local daemon startup and uses a selected server;
 workers-only pairing preserves local ownership. Corrupt/missing sidecar input
 falls back to local mode at boot; a later connection failure does not authorize
 an unrelated local stack. See [desktop connection mode](desktop-remote-client-mode.md).

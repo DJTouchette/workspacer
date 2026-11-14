@@ -1,7 +1,7 @@
 # Isolated Linux release checks
 
 Run each release command through `scripts/release-check.py` when working alongside
-a live desktop app. A worktree and separate build caches do not isolate resources:
+a live Workspacer app (the native app, or the deprecated Electron one). A worktree and separate build caches do not isolate resources:
 ordinary child processes inherit the launching app's cgroup. This utility launches
 a unique `workspacer-release-check-<uuid>.service` under the user manager's
 `app.slice`, alongside application scopes. It changes no app, provider, lifecycle,
@@ -99,13 +99,22 @@ explicit coverage accounting; an OOM, link failure or timeout is not a pass.
 The optional Go oracle uses a separate pinned checkout through
 [the historical reference workflow](../scripts/reference/README.md).
 
-After the Go checks finish, run other explicit checks one at a time, for example:
+The shipping backend and the native app are Rust; the Go settings in the table
+above matter only for that optional oracle.
+
+After those finish, run other explicit checks one at a time, for example:
 
 ```bash
 python3 scripts/release-check.py --cwd services/claudemon -- \
   cargo clippy -j 1 --all-targets -- -D warnings
+python3 scripts/release-check.py -- \
+  cargo test --locked --manifest-path apps/native/Cargo.toml -j1
+python3 scripts/release-check.py -- node scripts/check-version.mjs
 python3 scripts/release-check.py --cwd apps/desktop -- npm run typecheck
 ```
+
+The last one covers the web client and the deprecated Electron app and needs
+`make install-desktop` first.
 
 On a memory-constrained host, full Rust debug symbols can make the linker spend
 minutes reclaiming memory at `MemoryHigh`. Keep the cap and use per-command

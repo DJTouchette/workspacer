@@ -116,18 +116,24 @@ When a caveat applies, say so rather than reporting the number as settled, and r
 
 # Using Rivet & Recon in this repo
 
-This is a polyglot monorepo. Recon understands the production Rust/TypeScript
-stacks and the optional Go reference tools:
+This is a polyglot monorepo. The shipping product is Rust: the native app
+(`apps/native`, binary `wks-native`) embeds the Rust hub (`services/hub-rs`) and
+the claudemon engine. `apps/desktop` is the deprecated Electron app (final
+release v0.170.0); its renderer still ships as the `/app` web client, and hub-rs
+tests, generators and contract fixtures still read files under it. Recon
+understands the Rust/TypeScript stacks and the optional Go reference tools:
 
 | Stack | Where | `symbols` / `callers` / `tests` |
 |-------|-------|--------------------------------|
-| TypeScript / TSX | `apps/desktop`, plus some web | ✅ interfaces, functions, classes, methods |
-| Rust | `services/hub-rs`, `services/claudemon`, `apps/native`, `apps/tui` | ✅ enums, structs, methods, consts |
+| Rust | `apps/native`, `services/hub-rs`, `services/claudemon`, `apps/tui` | ✅ enums, structs, methods, consts |
+| TypeScript / TSX | `apps/desktop` (web client, deprecated Electron host), plus some web | ✅ interfaces, functions, classes, methods |
 | Go | Optional historical capture tools under `tools/go-*` | ✅ structs, interfaces, methods, consts |
 
-The retired `services/hub` implementation is available in the pinned historical
-checkout described by `scripts/reference/README.md`. It is not a current runtime
-owner. HTML and CSS do not have language symbols to parse.
+The retired Go `services/hub` implementation (hub, `brain`, and the Node
+companion that served it) is available only in the pinned historical checkout
+described by `scripts/reference/README.md`. It is not a current runtime owner.
+The release version is the root `VERSION` file; `scripts/check-version.mjs`
+keeps `apps/desktop/package.json` equal to it. HTML and CSS do not have language symbols to parse.
 
 ## The one feature to reach for first here
 
@@ -137,8 +143,8 @@ owners, then inspect the concrete implementations.
 
 For configuration, review `services/hub-rs/src/services/config.rs`,
 `apps/desktop/src/main/services/configService.ts` and the TUI config consumer.
-The shared config file has Rust and public Electron TypeScript writers; keep their
-locking, defaults and persistence semantics aligned. Historical Go symbols belong
+The shared config file has a Rust writer and, in the deprecated Electron app, a
+TypeScript writer; keep their locking, defaults and persistence semantics aligned. Historical Go symbols belong
 to the explicit reference checkout, not an expected missing production file.
 
 ## Gotchas (learned by testing, not documented elsewhere)
@@ -160,15 +166,15 @@ to the explicit reference checkout, not an expected missing production file.
 
 ## Workflow recipes for this codebase
 
-- **"Where is X across the stacks?"** → `recon.search X` (or `symbols X`) — hits TS+Go+Rust.
+- **"Where is X across the stacks?"** → `recon.search X` (or `symbols X`) — hits Rust+TS (and the Go reference tools).
 - **About to change a hotspot** (see `paradigms/hotspots.md`) → `recon.related <file>` then
   `recon.context <file>` for fan-in/churn before editing; config + session-snapshot files
   ripple widely.
-- **Before committing** → `witness.select` (or `witness.since master`) to get the exact test
-  command for what changed — spans `go test`, `cargo test`, and the desktop test runner.
+- **Before committing** → `witness.select` (or `witness.since main`) to get the exact test
+  command for what changed — spans `cargo test` and the desktop test runner.
 - **Found something non-obvious** → `rivet.learn` it, or promote into a context doc; keep
   hand-authored notes below the rivet markers, never inside them.
-- **Touching renderer UI** → follow `apps/desktop/DESIGN_LANGUAGE.md` (icon system, color
+- **Touching renderer (web client) UI** → follow `apps/desktop/DESIGN_LANGUAGE.md` (icon system, color
   tokens, type scale, intentional exceptions) before styling anything.
 - **Touching native (GPUI) UI** → follow `apps/native/DESIGN_SYSTEM.md`: palette roles via
   `self.palette()`, sizes from `src/ui/tokens.rs` (a test rejects raw literals), shared

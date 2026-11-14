@@ -1,6 +1,15 @@
 # Workspacer — Feature Assessment
 
-> Current-state catalog of what the app does, as of 2026-07-12.
+> Catalog of what the product does. Most rows were written on 2026-07-12
+> against the Electron app, which is now deprecated (final release v0.170.0).
+> Its renderer is still the `/app` web client, so rows about panes, the
+> sidebar, the palette and settings describe that client. The standard client
+> is the native app (`apps/native`); what it does is documented in
+> [`apps/native/README.md`](../apps/native/README.md). Known differences: native
+> New Agent starts Claude and Codex sessions only, native lists only the
+> connected hub's own sessions (not a federated peer's), and it has no plugin,
+> browser, library or board panes. Rows updated on 2026-11-14 say "native"
+> where they describe it.
 
 **Maturity legend**
 
@@ -13,11 +22,14 @@
 ## What Workspacer is
 
 A local-first cockpit for running **many long-lived coding agents side by
-side** — Claude Code, Codex, GitHub Copilot, and OpenCode. An Electron + React
-desktop app is the primary client; a Rust daemon (`claudemon`) owns the
-sessions/PTYs and runs the per-provider managed adapters; a Go control-plane
-(`hub`) is an event bus + MCP facade that lets plugins, a Rust TUI, and
-remote/web/phone clients all view and drive the same fleet.
+side** — Claude Code, Codex, GitHub Copilot, and OpenCode. A native Rust/GPUI
+app (`wks-native`) is the standard client and embeds the backend in its own
+process; a Rust session engine (`claudemon`) owns the sessions/PTYs and runs
+the per-provider managed adapters; a Rust control plane (`services/hub-rs`) is
+an event bus + MCP facade that lets plugins, a Rust TUI, and remote/web/phone
+clients all view and drive the same fleet. The Go hub and its `brain` provider
+are retired. The Electron + React app is deprecated; its renderer ships as the
+`/app` web client.
 
 ---
 
@@ -123,10 +135,10 @@ remote/web/phone clients all view and drive the same fleet.
 | Layout mirroring (tmux-style) | Hub-owned shared layout doc; desktop ⇄ web/phone mirror cards, tabs, active tab | 🔵 Working |
 | Mobile PWA (`/m`) | Phone-first decision client, redesigned 2026-07: Needs You queue, full fleet list (needs-you → working → idle → stopped, same visibility rule as the desktop sidebar), per-agent chat with history (fetched over the bus under headless serve), spawn; installable PWA, the default QR target (push: see §5) | 🔵 Working |
 | Terminal-mirror client (`/remote`) | Lightweight client: agent list, chat, approvals, live xterm terminal mirror | 🔵 Working |
-| Full web app (`/app/`) | Serves the real renderer bundle over the bus (desktop: when sharing is on + web build present; `workspacer serve` auto-serves a sibling `web/` — bundled in the server archive) | 🔵 Working |
-| Headless server (`workspacer serve`) | One command starts + supervises claudemon, the hub with a full-scope brain provider, and the loopback authenticated MCP facade used by spawned agents (restart backoff, parentwatch); prints the /m + /remote (plus bus + claudemon) URLs and pairing token (`--json` for machines; `/app` is auto-served when the bundled `web/` build is present but gets no banner line); loopback by default, `--host` is the remote opt-in; `workspacer status` probes the control plane | 🔵 Working |
-| Headless spawn parity | The brain's `agents.spawn` dispatches every backend like the desktop does (managed providers via spawn-managed, codex stream transport, resume), with a drift guard against the desktop's param surface | 🔵 Working |
-| Desktop app as a client | Adopt-don't-kill: the app attaches to a healthy already-running `workspacer serve` on the same machine instead of spawning daemons; "Connect to Server…" (palette / Remote Control dialog) points the whole app at a remote server, disconnect relaunches local | 🔵 Working |
+| Full web app (`/app/`) | Serves the real renderer bundle over the bus. `workspacer serve` auto-serves a sibling `web/` (bundled in the server archive). The native app's packages do not include it: its hub serves `/app` only when `WORKSPACER_WEBAPP_DIR` or a `web` folder beside the binary holds a built client, and otherwise answers with an explanation | 🔵 Working |
+| Headless server (`workspacer serve`) | One command runs the session engine, the Rust hub with its desktop services, and the loopback authenticated MCP facade used by spawned agents, in one process (parentwatch); prints the /m + /remote (plus bus + claudemon) URLs and pairing token (`--json` for machines; `/app` is auto-served when the bundled `web/` build is present but gets no banner line); loopback by default, `--host` is the remote opt-in; `workspacer status` probes the control plane | 🔵 Working |
+| Headless spawn parity | The Rust hub's `agents.spawn` dispatches every backend like the Electron desktop did (managed providers via spawn-managed, codex stream transport, resume), with a drift guard against the desktop's param surface | 🔵 Working |
+| Desktop app as a client | Native: `wks-native` without `--local` attaches to a running hub (`--bus`, `--token-file`). Electron (deprecated): adopt-don't-kill, the app attaches to a healthy already-running `workspacer serve` on the same machine instead of spawning daemons; "Connect to Server…" (palette / Remote Control dialog) points the whole app at a remote server, disconnect relaunches local | 🔵 Working |
 | Capability-scoped tokens | `workspacer token create --scope view` / `triage` / `operator` (+ `list` / `revoke`), enforced at the hub's single dispatch path; scoped tokens fail closed on unknown methods; hot-reloaded from `tokens.json`; the legacy remote-token stays implicit operator | 🟢 Solid |
 | Remote sharing | Runtime toggle (Start sharing) or `WORKSPACER_REMOTE_SHARE`; binds off-loopback with a bearer token; QR share dialog | 🔵 Working |
 | Tailscale HTTPS | One-tap `tailscale serve` fronting the hub at `https://<node>.ts.net` (secure context for the PWA + push) | 🔵 Working |
@@ -217,15 +229,17 @@ remote/web/phone clients all view and drive the same fleet.
 
 | Feature | What it does | Maturity |
 |---|---|---|
-| Daemon supervision | Electron spawns claudemon + hub; **auto-restart on crash with backoff** | 🟢 Solid |
-| Binary resolution + packaging | Dev/packaged paths; electron-builder bundles daemons | 🔵 Working |
+| Backend ownership | Native runs the hub, MCP facade and claudemon engine in its own process (`--local`); one app per data folder, a second launch raises the first window. Electron (deprecated) spawned claudemon + hub as children with auto-restart | 🔵 Working |
+| Packaging | Native: Windows x64 NSIS installer (signed only on tagged releases when signing is configured), macOS `.dmg` for Apple Silicon and Intel (ad-hoc signed, not notarized), Linux `.tar.gz` for x64 and arm64 with a per-user installer (no AppImage/deb). Version from the root `VERSION` file. Electron installers (`make package-desktop`) are no longer released | 🔵 Working |
+| Updates | Native checks the build's channel (stable or nightly). In-app install is Windows-only; on macOS and Linux Download fetches the platform's package | 🟡 Partial |
+| Host chores | Keep-warm (`claude.keepWarm`) and worktree artifact cleanup (`agents.artifactCleanup`) run in every Rust backend that owns its engine (native `--local`, `workspacer serve`) | 🔵 Working |
 | Bundled `workspacer` CLI | Headless-server launcher ships in the app; "Install workspacer Command" (palette / Settings → Command Line) puts it on PATH | 🔵 Working |
-| Standalone server bundle | Releases include `workspacer-server-<os>-<arch>.tar.gz` (zip on Windows): the four binaries + the web build (served at `/app`) + README — extract, `./workspacer serve` | 🔵 Working |
+| Standalone server bundle | Releases include `workspacer-server-<os>-<arch>.tar.gz` (zip on Windows): the Rust backend executable (`workspacer` / `workspacer-rust`), `claudemon`, example plugins + the web build (served at `/app`) + README — extract, `./workspacer serve` | 🔵 Working |
 | GPU escape hatch | `WORKSPACER_DISABLE_GPU` for broken Wayland GPU rendering | 🔵 Working |
 | Font discovery | Nerd Font scan + custom protocol serving | 🔵 Working |
 | Chrome UA spoofing | Strips Electron UA for webviews | 🔵 Working |
 | Chrome cookie import | Windows (CDP + direct); macOS/Linux not implemented | 🟡 Partial |
-| Toolchains | Pinned via mise (Go 1.25, Node 22) + cargo | 🔵 Working |
+| Toolchains | cargo for everything that ships; mise pins Node 22 (repo scripts, Windows packaging, the web client) and Go 1.25 (optional historical reference tooling only) | 🔵 Working |
 
 ---
 
@@ -255,16 +269,17 @@ inbox history or supervisor-authored review actions.
 
 ## Overall assessment
 
-The **substrate is strong**: the Go hub (bus, RPC, plugins, MCP facade,
-supervisor) and the Rust claudemon (hooks, sessions, PTY, transcripts, git) are
-complete and well-tested. The **desktop app is feature-rich and cohesive** —
-~30 working UI surfaces over a fully-wired main process with solid session-store
-test coverage. Recent hardening closed the biggest production risks: daemon
+The **substrate is strong**: the Rust hub (bus, RPC, plugins, MCP facade,
+desktop services) and the Rust claudemon (hooks, sessions, PTY, transcripts, git) are
+complete and well-tested. The **Electron desktop app was feature-rich and
+cohesive** — ~30 working UI surfaces — and its renderer lives on as the web
+client; the native app that replaced it covers the core workflows but not
+every one of those surfaces. Recent hardening closed the biggest production risks: daemon
 auto-restart, real terminate/kill signals, the cross-client agent-duplication
 fix, and — with capability-scoped tokens now enforced at the bus — the last
 authorization gap. The app also stands on its own without a desktop: the
-`workspacer serve` CLI runs the whole control plane headless, and the Electron
-app doubles as a client of it (local adopt or remote connect).
+`workspacer serve` CLI runs the whole control plane headless, and the native
+app can attach to it as a client instead of owning its own backend.
 
 The main *product* ambiguity is resolved: the app is a **per-agent workspace**,
 not the abandoned v2 "inbox of decisions" — the leftover classifier/items stack
