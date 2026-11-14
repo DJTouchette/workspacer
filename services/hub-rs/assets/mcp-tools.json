@@ -1274,12 +1274,12 @@
       "name": "notify_when"
     },
     {
-      "description": "Open workspacer's built-in browser pane on a URL, shown to the user in the desktop UI. A file:// URL works too when it points at a file under the user's home or a configured project directory; a markdown file opens in the preview pane instead.",
+      "description": "Offer the user a web page: the app shows the URL and opens it in their own browser when they accept. http(s) only; the app has no built-in browser pane and never opens files.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "url": {
-            "description": "the URL to open in the built-in browser pane",
+            "description": "the http(s) URL to offer",
             "type": "string"
           }
         },
@@ -1291,28 +1291,20 @@
       "name": "open_browser"
     },
     {
-      "description": "Open the Workspacer Guide pane in the desktop UI — the built-in tour/help chat. Use to hand the user to the in-app guide instead of explaining workspacer yourself.",
-      "inputSchema": {
-        "additionalProperties": false,
-        "type": "object"
-      },
-      "name": "open_guide"
-    },
-    {
-      "description": "Open a workspacer pane in the desktop UI by type — e.g. settings, analytics, library, overview, sessions, review, terminal, browser.",
+      "description": "Show one of the app's views to the user by type: settings, analytics (usage), sessions (recent sessions), review (a project's changes), inspector (the selected session's details), terminal (the selected agent's shell) or overview (the conversation). The app has no library, editor, board, plugin or built-in browser panes; an unknown type shows the user a notice and does nothing.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "cwd": {
-            "description": "working directory for panes that take one (e.g. terminal)",
+            "description": "project directory for views that take one (review)",
             "type": "string"
           },
           "paneType": {
-            "description": "the pane type to open: settings, analytics, library, overview, sessions, review, terminal, or browser",
+            "description": "the view to show: settings, analytics, sessions, review, inspector, terminal or overview",
             "type": "string"
           },
           "url": {
-            "description": "browser pane only: the URL to open",
+            "description": "unused; open a web page with open_browser",
             "type": "string"
           }
         },
@@ -1322,23 +1314,6 @@
         "type": "object"
       },
       "name": "open_pane"
-    },
-    {
-      "description": "Open an installed plugin's pane in the desktop UI by its pane type (e.g. djtouchette.jira).",
-      "inputSchema": {
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "description": "the plugin pane type, e.g. djtouchette.jira",
-            "type": "string"
-          }
-        },
-        "required": [
-          "type"
-        ],
-        "type": "object"
-      },
-      "name": "open_plugin"
     },
     {
       "description": "Open the New Agent dialog in the desktop UI, optionally pre-filled with a directory — shows the user how to start an agent WITHOUT spawning one.",
@@ -2516,16 +2491,16 @@
       "name": "run_job"
     },
     {
-      "description": "Run one desktop keyboard action by registry id — the command layer's vocabulary as a tool: pane zoom/swap (zoom-pane, swap-pane-left), tab/agent navigation (next-tab, next-attention, alternate-agent, jump-pinned + digit), panel toggles (toggle-sidebar, toggle-fleet), chat paging (chat-scroll-down). The desktop validates the id and REFUSES the decision verbs (approve/deny) — approvals ride their own scoped tools.",
+      "description": "Run one of the app's navigation actions by id: prev-agent, next-agent, next-attention, spawn-agent, new-claude, settings, open-review, toggle-inspector, new-terminal, toggle-terminal. Any other id shows the user a notice and does nothing. Approvals are never actions; they ride their own scoped tools.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "action": {
-            "description": "the registry action id, e.g. zoom-pane, next-tab, toggle-sidebar, chat-scroll-down",
+            "description": "the action id, e.g. next-attention, open-review, toggle-terminal",
             "type": "string"
           },
           "digit": {
-            "description": "slot for digit-taking actions (jump-pinned, 1-9)",
+            "description": "unused",
             "type": "integer"
           }
         },
@@ -3563,12 +3538,12 @@
       "name": "list_snapshots"
     },
     {
-      "description": "Open workspacer's built-in browser pane on a URL, shown to the user in the desktop UI. A file:// URL works too when it points at a file under the user's home or a configured project directory; a markdown file opens in the preview pane instead.",
+      "description": "Offer the user a web page: the app shows the URL and opens it in their own browser when they accept. http(s) only; the app has no built-in browser pane and never opens files.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "url": {
-            "description": "the URL to open in the built-in browser pane",
+            "description": "the http(s) URL to offer",
             "type": "string"
           }
         },
@@ -3580,28 +3555,20 @@
       "name": "open_browser"
     },
     {
-      "description": "Open the Workspacer Guide pane in the desktop UI — the built-in tour/help chat. Use to hand the user to the in-app guide instead of explaining workspacer yourself.",
-      "inputSchema": {
-        "additionalProperties": false,
-        "type": "object"
-      },
-      "name": "open_guide"
-    },
-    {
-      "description": "Open a workspacer pane in the desktop UI by type — e.g. settings, analytics, library, overview, sessions, review, terminal, browser.",
+      "description": "Show one of the app's views to the user by type: settings, analytics (usage), sessions (recent sessions), review (a project's changes), inspector (the selected session's details), terminal (the selected agent's shell) or overview (the conversation). The app has no library, editor, board, plugin or built-in browser panes; an unknown type shows the user a notice and does nothing.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "cwd": {
-            "description": "working directory for panes that take one (e.g. terminal)",
+            "description": "project directory for views that take one (review)",
             "type": "string"
           },
           "paneType": {
-            "description": "the pane type to open: settings, analytics, library, overview, sessions, review, terminal, or browser",
+            "description": "the view to show: settings, analytics, sessions, review, inspector, terminal or overview",
             "type": "string"
           },
           "url": {
-            "description": "browser pane only: the URL to open",
+            "description": "unused; open a web page with open_browser",
             "type": "string"
           }
         },
@@ -3611,23 +3578,6 @@
         "type": "object"
       },
       "name": "open_pane"
-    },
-    {
-      "description": "Open an installed plugin's pane in the desktop UI by its pane type (e.g. djtouchette.jira).",
-      "inputSchema": {
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "description": "the plugin pane type, e.g. djtouchette.jira",
-            "type": "string"
-          }
-        },
-        "required": [
-          "type"
-        ],
-        "type": "object"
-      },
-      "name": "open_plugin"
     },
     {
       "description": "Open the New Agent dialog in the desktop UI, optionally pre-filled with a directory — shows the user how to start an agent WITHOUT spawning one.",
@@ -3665,16 +3615,16 @@
       "name": "report_progress"
     },
     {
-      "description": "Run one desktop keyboard action by registry id — the command layer's vocabulary as a tool: pane zoom/swap (zoom-pane, swap-pane-left), tab/agent navigation (next-tab, next-attention, alternate-agent, jump-pinned + digit), panel toggles (toggle-sidebar, toggle-fleet), chat paging (chat-scroll-down). The desktop validates the id and REFUSES the decision verbs (approve/deny) — approvals ride their own scoped tools.",
+      "description": "Run one of the app's navigation actions by id: prev-agent, next-agent, next-attention, spawn-agent, new-claude, settings, open-review, toggle-inspector, new-terminal, toggle-terminal. Any other id shows the user a notice and does nothing. Approvals are never actions; they ride their own scoped tools.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "action": {
-            "description": "the registry action id, e.g. zoom-pane, next-tab, toggle-sidebar, chat-scroll-down",
+            "description": "the action id, e.g. next-attention, open-review, toggle-terminal",
             "type": "string"
           },
           "digit": {
-            "description": "slot for digit-taking actions (jump-pinned, 1-9)",
+            "description": "unused",
             "type": "integer"
           }
         },

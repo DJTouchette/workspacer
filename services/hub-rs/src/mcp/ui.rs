@@ -5,9 +5,7 @@ pub(super) fn topic(name: &str) -> Option<&'static str> {
     Some(match name {
         "focus_agent" => "command.focus_agent",
         "open_pane" | "open_browser" => "command.open_pane",
-        "open_plugin" => "command.open_plugin",
         "open_spawn_dialog" => "command.open_spawn_dialog",
-        "open_guide" => "command.open_guide",
         "run_ui_action" => "command.run_action",
         _ => return None,
     })
@@ -19,7 +17,6 @@ pub(super) fn event(name: &str, params: &Value) -> Option<Event> {
         "focus_agent" => &["sessionId"],
         "open_pane" => &["paneType", "cwd", "url"],
         "open_browser" => &["url"],
-        "open_plugin" => &["type"],
         "open_spawn_dialog" => &["cwd"],
         "run_ui_action" => &["action", "digit"],
         _ => &[],
@@ -54,11 +51,14 @@ mod tests {
         );
         assert!(event.hub.is_empty());
         assert_eq!(
-            self::event("open_guide", &json!({"source":"forged"}))
+            self::event("open_spawn_dialog", &json!({"source":"forged"}))
                 .unwrap()
                 .data,
             Some(json!({}))
         );
+        // The guide and plugin panes are gone, and their tools with them.
+        assert!(self::event("open_guide", &json!({})).is_none());
+        assert!(self::event("open_plugin", &json!({"type":"x"})).is_none());
         assert!(self::event("unknown", &json!({})).is_none());
     }
 }

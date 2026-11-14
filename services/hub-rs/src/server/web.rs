@@ -97,6 +97,12 @@ fn mime(path: &str) -> &'static str {
         _ => "application/octet-stream",
     }
 }
+const APP_NOT_INSTALLED: &str = "The full web client (/app) is not installed with this hub.\n\
+\n\
+The phone client at /m works from here. For /app, run `workspacer serve` from\n\
+the server bundle, which includes it, or point WORKSPACER_WEBAPP_DIR at a\n\
+built web client before starting the app.\n";
+
 async fn serve_app(
     state: Web,
     path: String,
@@ -104,6 +110,10 @@ async fn serve_app(
     query: BTreeMap<String, String>,
 ) -> Response {
     let Some(root) = state.root else {
+        // Say why, on the page a person lands on, instead of a bare 404.
+        if path == "index.html" {
+            return (StatusCode::NOT_FOUND, APP_NOT_INSTALLED).into_response();
+        }
         return StatusCode::NOT_FOUND.into_response();
     };
     let relative = std::path::Path::new(&path);

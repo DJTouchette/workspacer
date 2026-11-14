@@ -1414,12 +1414,6 @@
         }
       }
     },
-    "open_guide": {
-      "type": "openGuideIn",
-      "rule": {
-        "kind": "object"
-      }
-    },
     "open_pane": {
       "type": "openPaneIn",
       "rule": {
@@ -1435,17 +1429,6 @@
           "url": {
             "kind": "string",
             "omit": "zero"
-          }
-        }
-      }
-    },
-    "open_plugin": {
-      "type": "openPluginIn",
-      "rule": {
-        "kind": "object",
-        "fields": {
-          "type": {
-            "kind": "string"
           }
         }
       }
