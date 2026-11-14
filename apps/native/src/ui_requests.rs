@@ -10,6 +10,7 @@ pub const TOPICS: &[&str] = &[
     "command.open_guide",
     "command.run_action",
     "command.open_plugin",
+    "notify.post",
 ];
 pub const MAX_PENDING: usize = 32;
 pub const MAX_BYTES: usize = 64 * 1024;
@@ -30,6 +31,16 @@ pub enum Intent {
         digit: Option<u8>,
     },
     OpenPlugin(String),
+    /// An agent's `notify` call, or a hub service's own notice (a proposed
+    /// or failed job).
+    Notify {
+        title: String,
+        body: String,
+        /// The session a click should open, when the notice is about one.
+        session_id: String,
+        /// Shown in the window only: `silent` or `inAppOnly` was set.
+        quiet: bool,
+    },
     Terminal {
         cwd: String,
         command: String,
@@ -52,6 +63,7 @@ fn string(data: &Value, key: &str) -> Result<String> {
                 .with_context(|| format!("UI request {key} must be text"))?;
             let limit = match key {
                 "command" => MAX_BYTES,
+                "body" => 4 * 1024,
                 "cwd" | "url" => 16 * 1024,
                 "action" | "paneType" | "type" => 128,
                 _ => 512,
@@ -109,6 +121,26 @@ pub fn parse(topic: &str, data: &Value) -> Result<Option<(Intent, Value)>> {
             },
             vec!["cwd"],
         ),
+        "notify.post" => {
+            let flag = |key: &str| match data.get(key) {
+                None | Some(Value::Null) => Ok(false),
+                Some(Value::Bool(flag)) => Ok(*flag),
+                Some(_) => Err(anyhow::anyhow!("Notification {key} must be true or false")),
+            };
+            let (title, body) = (string(data, "title")?, string(data, "body")?);
+            if title.trim().is_empty() && body.trim().is_empty() {
+                bail!("Notification has no text");
+            }
+            (
+                Intent::Notify {
+                    title,
+                    body,
+                    session_id: string(data, "sessionId")?,
+                    quiet: flag("silent")? || flag("inAppOnly")?,
+                },
+                vec!["title", "body", "sessionId", "level", "url"],
+            )
+        }
         "command.open_guide" => (Intent::OpenGuide, vec![]),
         "command.open_plugin" => (Intent::OpenPlugin(string(data, "type")?), vec!["type"]),
         "command.run_action" => {
@@ -160,6 +192,27 @@ mod tests {
         assert_eq!(payload["command"], "echo hello\n");
     }
     #[test]
+    fn a_notification_is_shown_never_applied_as_navigation() {
+        let data = json!({"title":"Job failed: nightly","body":"exit 2","level":"error","key":"job-1","sessionId":"abc","paneType":"settings","inAppOnly":true});
+        let (intent, payload) = parse("notify.post", &data).unwrap().unwrap();
+        assert_eq!(
+            intent,
+            Intent::Notify {
+                title: "Job failed: nightly".into(),
+                body: "exit 2".into(),
+                session_id: "abc".into(),
+                quiet: true
+            }
+        );
+        assert!(payload.get("paneType").is_none());
+        assert!(matches!(
+            effect(&intent),
+            Effect::Notify { quiet: true, .. }
+        ));
+        assert!(parse("notify.post", &json!({"title":" ","body":""})).is_err());
+        assert!(parse("notify.post", &json!({"title":"x","silent":"yes"})).is_err());
+    }
+    #[test]
     fn bounded_typed_intents_do_not_accept_privileged_action_envelopes() {
         assert!(parse("command.focus_agent", &json!({"sessionId":4})).is_err());
         assert!(
@@ -206,6 +259,14 @@ pub enum Effect {
     /// a requested command.
     Terminal {
         toggle: bool,
+    },
+    /// A notice to show in the window, and as an OS notification while the
+    /// window is in the background unless it is `quiet`.
+    Notify {
+        title: String,
+        body: String,
+        session: String,
+        quiet: bool,
     },
     /// A command the hub asks to run in a terminal. Receiving it starts
     /// nothing: the window shows it and the person runs it, or does not.
@@ -349,6 +410,7 @@ pub fn effect(intent: &Intent) -> Effect {
    other=>Effect::Unsupported(format!("The native client does not support the {other} pane.")),
   },
   Intent::Terminal{cwd,command,label,parent_session_id}=>Effect::OfferCommand(TerminalRequest{cwd:cwd.clone(),command:command.clone(),label:label.clone(),parent_session_id:parent_session_id.clone()}),
+  Intent::Notify{title,body,session_id,quiet}=>Effect::Notify{title:title.clone(),body:body.clone(),session:session_id.clone(),quiet:*quiet},
   Intent::OpenGuide=>Effect::Unsupported("The native client has no Workspacer Guide pane. Read native guide opens documentation for its supported controls.".into()),
   Intent::OpenPlugin(name)=>Effect::Unsupported(format!("The native client cannot render plugin pane {name}.")),
   Intent::RunAction{action,..}=>match action.as_str(){

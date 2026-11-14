@@ -109,6 +109,13 @@ pub(super) struct Extras {
     pub confirm_end: Option<String>,
     pub resume: Option<String>,
     pub local_paths: bool,
+    /// The data folder and whether an import is already recorded there, when
+    /// this install owns its data and the Electron app's data is on this
+    /// machine. `None` hides Settings → About's import row.
+    pub electron_import: Option<(std::path::PathBuf, bool)>,
+    /// An import was asked for and runs at the next launch.
+    pub electron_import_requested: bool,
+    pub electron_import_error: String,
     pub keep_running: std::rc::Rc<std::cell::Cell<bool>>,
     pub upload_receipt: u64,
     pub attachments: HashMap<String, Vec<(String, String)>>,
@@ -299,6 +306,9 @@ impl Extras {
             confirm_end: None,
             resume: None,
             local_paths: false,
+            electron_import: None,
+            electron_import_requested: false,
+            electron_import_error: String::new(),
             keep_running: Default::default(),
             upload_receipt: 0,
             attachments: HashMap::new(),
@@ -373,7 +383,7 @@ pub(super) struct Alert {
 /// waits on its own thread until it is clicked or closed, and a click opens
 /// its session in this window.
 #[cfg(not(all(test, feature = "ui-tests")))]
-fn post_attention_alerts(
+pub(super) fn post_attention_alerts(
     alerts: Vec<Alert>,
     clicks: async_channel::Sender<String>,
     _: &mut Context<Workspace>,
@@ -391,11 +401,7 @@ fn post_attention_alerts(
                 #[cfg(all(unix, not(target_os = "macos")))]
                 notification.action("default", "Open");
                 #[cfg(target_os = "windows")]
-                notification.app_id(if cfg!(feature = "rust-hub") {
-                    "Workspacer.Native.RustPreview"
-                } else {
-                    "Workspacer.Native"
-                });
+                notification.app_id("Workspacer.Native");
                 let handle = match notification.show() {
                     Ok(handle) => handle,
                     Err(error) => {
@@ -435,7 +441,7 @@ fn post_attention_alerts(
 /// serial Windows suite died with an access violation starting the second
 /// test to raise one, on a fresh thread), D-Bus on the developer's desktop.
 #[cfg(all(test, feature = "ui-tests"))]
-fn post_attention_alerts(
+pub(super) fn post_attention_alerts(
     alerts: Vec<Alert>,
     _: async_channel::Sender<String>,
     _: &mut Context<Workspace>,
@@ -465,6 +471,43 @@ impl Workspace {
         self.extras.local_paths = local_paths;
         self.settings.keep_running = keep_running.get();
         self.extras.keep_running = keep_running;
+    }
+    /// Offer Settings → About's "Import from the Electron app" for the data
+    /// folder this install owns.
+    pub fn configure_electron_import(&mut self, offer: Option<(std::path::PathBuf, bool)>) {
+        self.extras.electron_import_requested = offer.as_ref().is_some_and(|(directory, _)| {
+            directory
+                .join(wks_native::data_dir::IMPORT_REQUEST_FILE)
+                .is_file()
+        });
+        self.extras.electron_import = offer;
+    }
+    /// Ask the next launch to import (or cancel that). The import replaces
+    /// the store's data, so it cannot run under the live backend.
+    pub(super) fn request_electron_import(&mut self, wanted: bool, cx: &mut Context<Self>) {
+        let Some((directory, _)) = &self.extras.electron_import else {
+            return;
+        };
+        let request = directory.join(wks_native::data_dir::IMPORT_REQUEST_FILE);
+        let result = if wanted {
+            std::fs::write(&request, "")
+        } else {
+            match std::fs::remove_file(&request) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+                _ => Ok(()),
+            }
+        };
+        match result {
+            Ok(()) => {
+                self.extras.electron_import_requested = wanted;
+                self.extras.electron_import_error.clear();
+            }
+            Err(error) => {
+                self.extras.electron_import_error =
+                    format!("Could not record the request: {error}");
+            }
+        }
+        cx.notify();
     }
     pub(super) fn selected_session(&self) -> Option<&Session> {
         self.view

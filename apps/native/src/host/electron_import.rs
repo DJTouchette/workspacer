@@ -30,7 +30,34 @@ pub enum ElectronImport {
     /// `--import-electron`: import over existing native data, after moving it
     /// into a backup directory beside the store.
     Force,
+    /// The same, asked for in Settings → About on the previous run. A failure
+    /// is logged and the app starts with the data it had.
+    Requested,
 }
+
+impl ElectronImport {
+    fn replaces(self) -> bool {
+        matches!(self, Self::Force | Self::Requested)
+    }
+}
+
+/// What Settings → About can offer for the store in `target`: `None` when
+/// this machine has no Electron app data, otherwise whether an import has
+/// already been recorded there.
+pub fn offer(target: &Path) -> Option<bool> {
+    Sources::detect()
+        .filter(Sources::present)
+        .map(|_| target.join(IMPORTED_FILE).is_file())
+}
+
+/// Take the request Settings left for this launch, if any. It is removed
+/// first, so an import that cannot finish is not retried on every launch.
+pub fn take_request(target: &Path) -> bool {
+    let request = target.join(crate::data_dir::IMPORT_REQUEST_FILE);
+    request.is_file() && std::fs::remove_file(request).is_ok()
+}
+
+const IMPORTED_FILE: &str = "imported-from-electron.json";
 
 /// Where the Electron app keeps its state on this machine.
 #[derive(Clone, Debug)]
@@ -75,6 +102,9 @@ impl Sources {
 pub struct Report {
     pub files: usize,
     pub database: bool,
+    /// Sessions of usage history carried over from the Electron app's own
+    /// database.
+    pub usage_sessions: usize,
     pub backup: Option<PathBuf>,
 }
 
@@ -91,7 +121,7 @@ pub fn run(mode: ElectronImport, sources: &Sources, target: &Path) -> Result<Opt
         _ => {}
     }
     if !sources.present() {
-        if mode == ElectronImport::Force {
+        if mode.replaces() {
             bail!(
                 "No Electron app data found (looked for {} and {})",
                 sources.config.join("config.yaml").display(),
@@ -100,7 +130,7 @@ pub fn run(mode: ElectronImport, sources: &Sources, target: &Path) -> Result<Opt
         }
         return Ok(None);
     }
-    import(sources, target, mode == ElectronImport::Force).map(Some)
+    import(sources, target, mode.replaces()).map(Some)
 }
 
 fn import(sources: &Sources, target: &Path, replace: bool) -> Result<Report> {
@@ -127,6 +157,11 @@ fn import(sources: &Sources, target: &Path, replace: bool) -> Result<Report> {
                 .context("Copy the session database")?;
             report.database = true;
         }
+        // Usage history is worth having but never worth failing an import.
+        match import_analytics(&sources.config, &staging) {
+            Ok(rows) => report.usage_sessions = rows,
+            Err(error) => tracing::warn!("Electron usage history was not imported: {error:#}"),
+        }
         Ok(())
     })();
     if let Err(error) = result {
@@ -135,46 +170,74 @@ fn import(sources: &Sources, target: &Path, replace: bool) -> Result<Report> {
     }
 
     std::fs::create_dir_all(target)?;
-    if replace {
-        let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-        let backup = parent.join(format!(
-            "{}.before-electron-import-{stamp}",
-            name.to_string_lossy()
-        ));
-        std::fs::create_dir_all(&backup)?;
-        for entry in ["config", "hub", "state.db", "state.db-wal", "state.db-shm"] {
-            let from = target.join(entry);
-            if from.exists() {
-                std::fs::rename(&from, backup.join(entry))
-                    .with_context(|| format!("Back up {}", from.display()))?;
+    const STORE: [&str; 5] = ["config", "hub", "state.db", "state.db-wal", "state.db-shm"];
+    let placed = (|| -> Result<()> {
+        if replace {
+            let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+            let backup = parent.join(format!(
+                "{}.before-electron-import-{stamp}",
+                name.to_string_lossy()
+            ));
+            std::fs::create_dir_all(&backup)?;
+            report.backup = Some(backup.clone());
+            for entry in STORE {
+                let from = target.join(entry);
+                if from.exists() {
+                    std::fs::rename(&from, backup.join(entry))
+                        .with_context(|| format!("Back up {}", from.display()))?;
+                }
             }
         }
-        report.backup = Some(backup);
-    }
-    for entry in ["config", "hub", "state.db"] {
-        let from = staging.join(entry);
-        if !from.exists() {
-            continue;
+        for entry in ["config", "hub", "state.db"] {
+            let from = staging.join(entry);
+            if !from.exists() {
+                continue;
+            }
+            let to = target.join(entry);
+            if to.exists() {
+                // IfFresh: a store with only logs or caches. Keep anything the
+                // native app already wrote that the import did not bring.
+                merge_into(&from, &to)?;
+            } else {
+                std::fs::rename(&from, &to)
+                    .with_context(|| format!("Move imported {entry} into place"))?;
+            }
         }
-        let to = target.join(entry);
-        if to.exists() {
-            // IfFresh: a store with only logs or caches. Keep anything the
-            // native app already wrote that the import did not bring.
-            merge_into(&from, &to)?;
-        } else {
-            std::fs::rename(&from, &to)
-                .with_context(|| format!("Move imported {entry} into place"))?;
+        Ok(())
+    })();
+    if let Err(error) = placed {
+        // Put back what was set aside, so a failed import over existing data
+        // leaves that data in use. Whatever cannot go back stays in the
+        // backup directory, which is never deleted.
+        if let Some(backup) = &report.backup {
+            for entry in STORE {
+                let (saved, home) = (backup.join(entry), target.join(entry));
+                if !saved.exists() {
+                    continue;
+                }
+                if home.exists() {
+                    let _ = if home.is_dir() {
+                        std::fs::remove_dir_all(&home)
+                    } else {
+                        std::fs::remove_file(&home)
+                    };
+                }
+                let _ = std::fs::rename(&saved, &home);
+            }
         }
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(error);
     }
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::write(
-        target.join("imported-from-electron.json"),
+        target.join(IMPORTED_FILE),
         serde_json::to_vec_pretty(&serde_json::json!({
             "at": chrono::Utc::now().to_rfc3339(),
             "config": sources.config,
             "hub": sources.hub,
             "database": sources.database,
             "files": report.files,
+            "usageSessions": report.usage_sessions,
             "backup": report.backup,
         }))?,
     )?;
@@ -295,6 +358,77 @@ fn snapshot_sqlite(from: &Path, to: &Path) -> Result<()> {
     let destination = to.to_str().context("Database path is not UTF-8")?;
     source.execute("VACUUM INTO ?1", [destination])?;
     Ok(())
+}
+
+/// The Electron app's own database (`workspacer.db`) holds its usage
+/// history; the native app keeps the same two tables in
+/// `config/headless-analytics.sqlite`. Rows the staged store does not have
+/// are added, so History and Usage keep what was recorded before the switch.
+/// The source is snapshotted first and only ever read.
+fn import_analytics(electron_config: &Path, staging: &Path) -> Result<usize> {
+    let source = electron_config.join("workspacer.db");
+    if !source.is_file() {
+        return Ok(0);
+    }
+    let snapshot = staging.join("electron-analytics.snapshot");
+    let _ = std::fs::remove_file(&snapshot);
+    snapshot_sqlite(&source, &snapshot).context("Snapshot the Electron app's database")?;
+    let result = (|| -> Result<usize> {
+        let db = rusqlite::Connection::open(staging.join("config/headless-analytics.sqlite"))?;
+        db.execute_batch(include_str!(
+            "../../../../services/hub-rs/src/services/analytics/schema.sql"
+        ))?;
+        // The hub adds this column when it first opens the store; adding it
+        // here keeps each imported row's provider.
+        let has_provider = db
+            .prepare("PRAGMA main.table_info(session_history)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .any(|name| name.is_ok_and(|name| name == "provider"));
+        if !has_provider {
+            db.execute_batch("ALTER TABLE session_history ADD COLUMN provider TEXT DEFAULT '';")?;
+        }
+        db.execute(
+            "ATTACH DATABASE ?1 AS electron",
+            [snapshot.to_str().context("Database path is not UTF-8")?],
+        )?;
+        let columns = |schema: &str, table: &str| -> Result<Vec<String>> {
+            let mut statement = db.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
+            let names = statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(names)
+        };
+        let mut sessions = 0;
+        for table in ["session_history", "session_model_usage"] {
+            let theirs = columns("electron", table)?;
+            // Only columns both sides have; names come from the schemas, and
+            // anything that is not a plain identifier is left out.
+            let shared: Vec<String> = columns("main", table)?
+                .into_iter()
+                .filter(|name| theirs.contains(name))
+                .filter(|name| name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+                .collect();
+            if shared.is_empty() {
+                continue;
+            }
+            let list = shared.join(",");
+            let added = db.execute(
+                &format!(
+                    "INSERT OR IGNORE INTO main.{table}({list}) SELECT {list} FROM electron.{table}"
+                ),
+                [],
+            )?;
+            if table == "session_history" {
+                sessions = added;
+            }
+        }
+        db.execute("DETACH DATABASE electron", [])?;
+        Ok(sessions)
+    })();
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(staging.join(format!("electron-analytics.snapshot{suffix}")));
+    }
+    result
 }
 
 /// Move everything in `from` into `to`, keeping files `to` already has.
@@ -434,6 +568,92 @@ mod tests {
         );
         assert_eq!(read(&backup.join("state.db")), "native sessions");
         assert_eq!(read(&target.join("state.db")), "sessions");
+        assert_eq!(
+            std::fs::read_to_string(target.join("config/config.yaml")).unwrap(),
+            "theme: dark\n"
+        );
+    }
+
+    #[test]
+    fn usage_history_from_the_electron_database_joins_the_native_store() {
+        let root = temp("usage");
+        let sources = electron(&root);
+        // The Electron app's own database, open as under a running app, with
+        // a column the native store does not have.
+        let electron_db = rusqlite::Connection::open(sources.config.join("workspacer.db")).unwrap();
+        electron_db
+            .execute_batch(
+                "PRAGMA journal_mode=WAL;
+                 CREATE TABLE session_history(session_id TEXT PRIMARY KEY, cwd TEXT, provider TEXT,
+                   cost_usd REAL, updated_at TEXT NOT NULL, electron_only TEXT);
+                 CREATE TABLE session_model_usage(session_id TEXT NOT NULL, model TEXT NOT NULL,
+                   input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL, updated_at TEXT NOT NULL,
+                   PRIMARY KEY(session_id, model));
+                 CREATE TABLE issues(id TEXT);
+                 INSERT INTO session_history VALUES('a','/work','codex',1.5,'2026-10-01','x');
+                 INSERT INTO session_history VALUES('b','/work','claude',2.5,'2026-10-02','x');
+                 INSERT INTO session_model_usage VALUES('a','gpt',10,20,1.5,'2026-10-01');",
+            )
+            .unwrap();
+        let target = root.join("native");
+        let report = run(ElectronImport::IfFresh, &sources, &target)
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.usage_sessions, 2);
+        let db =
+            rusqlite::Connection::open(target.join("config/headless-analytics.sqlite")).unwrap();
+        let row: (String, f64) = db
+            .query_row(
+                "SELECT provider, cost_usd FROM session_history WHERE session_id='a'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("codex".to_owned(), 1.5));
+        let models: i64 = db
+            .query_row("SELECT COUNT(*) FROM session_model_usage", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(models, 1);
+        // The Electron database itself is never copied, and no snapshot is left.
+        assert!(!target.join("config/workspacer.db").exists());
+        assert!(!target.join("electron-analytics.snapshot").exists());
+        assert!(!target.join("config/electron-analytics.snapshot").exists());
+        drop(electron_db);
+    }
+
+    #[test]
+    fn a_database_without_usage_tables_imports_nothing_and_fails_nothing() {
+        let root = temp("usage-none");
+        let sources = electron(&root);
+        sqlite(&sources.config.join("workspacer.db"), "issues only");
+        let target = root.join("native");
+        let report = run(ElectronImport::IfFresh, &sources, &target)
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.usage_sessions, 0);
+        assert!(target.join("config/config.yaml").is_file());
+    }
+
+    #[test]
+    fn a_request_from_settings_is_taken_once_and_imports_over_a_backup() {
+        let root = temp("requested");
+        let sources = electron(&root);
+        let target = root.join("native");
+        std::fs::create_dir_all(target.join("config")).unwrap();
+        std::fs::write(target.join("config/config.yaml"), "native: true\n").unwrap();
+        assert!(!take_request(&target));
+        std::fs::write(target.join(crate::data_dir::IMPORT_REQUEST_FILE), "").unwrap();
+        assert!(take_request(&target));
+        assert!(!take_request(&target), "a request is not repeated");
+        let report = run(ElectronImport::Requested, &sources, &target)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(report.backup.unwrap().join("config/config.yaml")).unwrap(),
+            "native: true\n"
+        );
         assert_eq!(
             std::fs::read_to_string(target.join("config/config.yaml")).unwrap(),
             "theme: dark\n"

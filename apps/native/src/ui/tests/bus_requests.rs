@@ -183,6 +183,40 @@ fn spawn_dialog_bus_request_only_prefills_and_decision_actions_are_refused(
     }
 }
 
+// An agent's `notify` (or a hub notice such as a failed job) is shown in the
+// window, pinned or not, and never navigates. A quiet one posts no OS alert.
+#[gpui::test]
+fn a_notification_is_shown_in_a_pinned_window_and_a_quiet_one_posts_no_alert(
+    cx: &mut TestAppContext,
+) {
+    features::POSTED_ALERTS.take();
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.requested_session = Some("a".into());
+            let screen = this.screen;
+            let (intent, payload) = wks_native::ui_requests::parse(
+                "notify.post",
+                &serde_json::json!({"title":"Job failed: nightly","body":"exit 2","sessionId":"b","inAppOnly":true}),
+            )
+            .unwrap()
+            .unwrap();
+            let mut next = state("a");
+            next.ui_requests.push(wks_native::ui_requests::Request {
+                number: 1,
+                intent,
+                payload,
+            });
+            this.update_view(Arc::new(next), window, cx);
+            assert_eq!(this.ui_bus.notice, "Job failed: nightly: exit 2");
+            assert_eq!(this.screen, screen);
+            assert_eq!(this.view.selected.as_deref(), Some("a"));
+        })
+    });
+    visual.run_until_parked();
+    assert!(features::POSTED_ALERTS.take().is_empty());
+}
+
 #[gpui::test]
 fn focus_bus_request_preserves_pinned_window_and_reviews_keep_explicit_cwd(
     cx: &mut TestAppContext,

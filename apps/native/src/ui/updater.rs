@@ -192,6 +192,12 @@ impl Workspace {
             .as_ref()
             .and_then(|s| s["release_url"].as_str().map(str::to_owned))
             .unwrap_or_else(|| wks_native::features::RELEASES_URL.to_owned());
+        // Where the app cannot install the update itself, Download fetches
+        // this platform's package directly.
+        let download_url = status
+            .as_ref()
+            .and_then(|s| s["download_url"].as_str().map(str::to_owned))
+            .filter(|_| available && !installable);
         let asset = status.as_ref().map(|s| s["asset"].clone());
         let (line, tone) = match (&status, latest.as_deref()) {
             (_, _) if checking => ("Checking…".to_owned(), p.muted),
@@ -298,7 +304,9 @@ impl Workspace {
                             IconName::ExternalLink,
                             true,
                         )
-                        .on_click(move |_, _, cx| cx.open_url(&release_url)),
+                        .on_click(move |_, _, cx| {
+                            cx.open_url(download_url.as_deref().unwrap_or(&release_url))
+                        }),
                     ),
             )
             .child(self.feature_message("updates"))

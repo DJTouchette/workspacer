@@ -909,7 +909,77 @@ impl Workspace {
             Layout::Block,
             self.render_update_card(cx),
         ));
+        if self.extras.electron_import.is_some() {
+            entries.push(Entry::new(
+                S::About,
+                "electron-import",
+                "Import from the Electron app",
+                "Copies the Electron app's settings, sessions, jobs, library and usage history into this app. The Electron app's own data is left untouched.",
+                "import electron migrate desktop old app sessions settings history restore",
+                Layout::Block,
+                self.render_electron_import(cx),
+            ));
+        }
         entries
+    }
+
+    fn render_electron_import(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let imported = self
+            .extras
+            .electron_import
+            .as_ref()
+            .is_some_and(|(_, imported)| *imported);
+        let requested = self.extras.electron_import_requested;
+        let (status, tone) = if !self.extras.electron_import_error.is_empty() {
+            (
+                self.extras.electron_import_error.clone(),
+                chrome::Tone::Error,
+            )
+        } else if requested {
+            (
+                "The import runs the next time Workspacer starts. What this app holds now is moved to a backup folder beside its data first."
+                    .to_owned(),
+                chrome::Tone::Warning,
+            )
+        } else if imported {
+            (
+                "Already imported once. Importing again replaces this app's sessions and settings with the Electron app's current ones."
+                    .to_owned(),
+                chrome::Tone::Info,
+            )
+        } else {
+            (
+                "This app started with its own data, so the Electron app's was not imported."
+                    .to_owned(),
+                chrome::Tone::Info,
+            )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                chrome::notice_line(status, tone, p)
+                    .debug_selector(|| "electron-import-status".into()),
+            )
+            .child(
+                div().flex().child(
+                    self.button(
+                        "electron-import",
+                        if requested {
+                            "Cancel import"
+                        } else {
+                            "Import at next start"
+                        },
+                        true,
+                    )
+                    .debug_selector(|| "electron-import-button".into())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.request_electron_import(!requested, cx)
+                    })),
+                ),
+            )
     }
 
     fn render_child_access(&self, cx: &mut Context<Self>) -> Div {

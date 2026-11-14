@@ -254,10 +254,38 @@ fn macos_bundle_launch(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsStr
     args
 }
 
-#[cfg(target_os = "macos")]
+/// A desktop launcher starts the app with the session's PATH, which on most
+/// Linux desktops lacks what the user's shell profile adds: mise, asdf and
+/// nvm shims, `~/.local/bin`, `~/.cargo/bin`. Started with `--local` and no
+/// terminal, the app takes the login shell's PATH, so `claude`, `codex`,
+/// `node` and `git` resolve the same as in a terminal. A launch from a
+/// terminal already has that PATH and keeps it.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn launcher_path() {
+    use std::io::IsTerminal;
+    let local = std::env::args_os().any(|arg| arg == "--local");
+    if !local
+        || std::io::stdin().is_terminal()
+        || std::env::var_os("WKS_NATIVE_KEEP_PATH").is_some()
+    {
+        return;
+    }
+    if let Some(path) = login_shell_path() {
+        // SAFETY: called first thing in main, before any thread is spawned.
+        unsafe { std::env::set_var("PATH", path) };
+    }
+}
+
+#[cfg(unix)]
 fn login_shell_path() -> Option<String> {
     use std::{process::Command, time::Duration};
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| {
+        if cfg!(target_os = "macos") {
+            "/bin/zsh".into()
+        } else {
+            "/bin/sh".into()
+        }
+    });
     let mut child = Command::new(shell)
         .args(["-ilc", "printf '\\n__WKS_PATH__%s\\n' \"$PATH\""])
         .stdin(std::process::Stdio::null())
@@ -289,6 +317,8 @@ fn main() -> Result<()> {
     #[cfg(target_os = "macos")]
     let args = Args::parse_from(macos_bundle_launch(std::env::args_os().collect()));
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    launcher_path();
     #[cfg(not(target_os = "macos"))]
     let args = Args::parse();
     #[cfg(feature = "rust-hub")]
@@ -328,10 +358,16 @@ fn main() -> Result<()> {
         let mut options = wks_native::host::RustOptions::isolated(directory)?;
         options.claude_hooks = !args.no_claude_hooks;
         options.preferred_mcp_port = default_install.then_some(wks_native::host::DEFAULT_MCP_PORT);
+        options.preferred_hub_port = default_install.then_some(wks_native::host::DEFAULT_HUB_PORT);
         options.electron_import = {
             use wks_native::host::electron_import::ElectronImport;
             match (args.import_electron, default_install) {
                 (true, _) => ElectronImport::Force,
+                (false, true)
+                    if wks_native::host::electron_import::take_request(&options.directory) =>
+                {
+                    ElectronImport::Requested
+                }
                 (false, true) => ElectronImport::IfFresh,
                 (false, false) => ElectronImport::Off,
             }
@@ -393,7 +429,7 @@ fn main() -> Result<()> {
             let Mode::Rust(options) = &mode else {
                 unreachable!("local mode has a Rust owner")
             };
-            format!("rust-local:{}", options.config_dir.display())
+            options.settings_scope(args.rust_local_dir.is_none())
         }
         #[cfg(not(feature = "rust-hub"))]
         {
@@ -409,9 +445,37 @@ fn main() -> Result<()> {
             url.path()
         )
     };
+    // Settings → About offers the Electron import for the default install.
+    #[cfg(feature = "rust-hub")]
+    let electron_offer = match &mode {
+        Mode::Rust(options) if args.rust_local_dir.is_none() => {
+            wks_native::host::electron_import::offer(&options.directory)
+                .map(|imported| (options.directory.clone(), imported))
+        }
+        _ => None,
+    };
+    #[cfg(not(feature = "rust-hub"))]
+    let electron_offer: Option<(PathBuf, bool)> = None;
     let keep_running = Rc::new(std::cell::Cell::new(
         args.keep_running || settings.keep_running,
     ));
+    // One app per data folder: a second launch brings the first forward.
+    #[cfg(feature = "rust-hub")]
+    let raise_requests = match &mode {
+        Mode::Rust(options) => match wks_native::instance::claim(&options.directory) {
+            wks_native::instance::Claim::Running if args.import_electron => anyhow::bail!(
+                "Workspacer is already running. Quit it, then run --import-electron again."
+            ),
+            wks_native::instance::Claim::Running => {
+                eprintln!("Workspacer is already running; its window was brought forward.");
+                return Ok(());
+            }
+            wks_native::instance::Claim::Owner(requests) => Some(requests),
+        },
+        _ => None,
+    };
+    #[cfg(not(feature = "rust-hub"))]
+    let raise_requests: Option<async_channel::Receiver<()>> = None;
     let host = NativeHost::start(mode)?;
     let controller = host.controller();
     let backend = Rc::new(RefCell::new(BackendLifetime {
@@ -464,6 +528,7 @@ fn main() -> Result<()> {
                         let mut view = ui::Workspace::new(controller, args.demo, window, cx);
                         view.configure_settings(settings, settings_path, project_scope, window, cx);
                         view.configure_local(local_requested, keep_running.clone());
+                        view.configure_electron_import(electron_offer);
                         view.set_appearance(appearance, window, cx);
                         view.load_custom_themes(window, cx);
                         view.follow_system(window, cx);
@@ -476,6 +541,20 @@ fn main() -> Result<()> {
                 },
             )
             .expect("open native window");
+        if let Some(requests) = raise_requests {
+            cx.spawn(async move |cx| {
+                while requests.recv().await.is_ok() {
+                    let raised = cx.update(|cx| {
+                        cx.activate(true);
+                        main.update(cx, |_, window, _| window.activate_window())
+                    });
+                    if raised.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
         // A popped-out file viewer never keeps the app running on its own.
         cx.on_window_closed(move |cx| {
             if !cx

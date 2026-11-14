@@ -65,7 +65,7 @@ impl Workspace {
                 || matches!(&request.intent,Intent::RunAction{action,..} if action=="toggle-help");
             let action = effect(&request.intent);
             if self.requested_session.is_some()
-                && !matches!(action, Effect::Unsupported(_))
+                && !matches!(action, Effect::Unsupported(_) | Effect::Notify { .. })
                 && !matches!(&action,Effect::FocusAgent(id) if Some(id)==self.requested_session.as_ref())
             {
                 self.ui_bus.notice =
@@ -76,6 +76,31 @@ impl Workspace {
             self.ui_bus.notice.clear();
             match action {
                 Effect::Unsupported(message) => self.ui_bus.notice = message,
+                Effect::Notify {
+                    title,
+                    body,
+                    session,
+                    quiet,
+                } => {
+                    self.ui_bus.notice = match (title.trim(), body.trim()) {
+                        (title, "") => title.to_owned(),
+                        ("", body) => body.to_owned(),
+                        (title, body) => format!("{title}: {body}"),
+                    };
+                    // The window already shows it while it has the user's
+                    // attention; an OS notification is for when it does not.
+                    if !quiet && !window.is_window_active() {
+                        super::features::post_attention_alerts(
+                            vec![super::features::Alert {
+                                title,
+                                body,
+                                session,
+                            }],
+                            self.extras.alert_clicks.clone(),
+                            cx,
+                        );
+                    }
+                }
                 Effect::OfferCommand(request) => {
                     let what = if request.label.is_empty() {
                         "The hub asks to run a command in a terminal".to_owned()

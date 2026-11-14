@@ -13,7 +13,7 @@ pub mod electron_import;
 #[cfg(feature = "rust-hub")]
 mod rust_local;
 #[cfg(feature = "rust-hub")]
-pub use rust_local::{DEFAULT_MCP_PORT, RustOptions};
+pub use rust_local::{DEFAULT_HUB_PORT, DEFAULT_MCP_PORT, RustOptions};
 
 pub enum Mode {
     Remote(Config),
@@ -297,6 +297,7 @@ mod tests {
             usage_poll_on_boot: Some(false),
             claude_hooks: true,
             preferred_mcp_port: None,
+            preferred_hub_port: None,
             directory: path.with_extension("store"),
             electron_import: Default::default(),
         }))

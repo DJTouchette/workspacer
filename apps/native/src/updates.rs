@@ -11,6 +11,7 @@ use sha2::Digest;
 use std::{cmp::Ordering, path::PathBuf};
 
 const REPO_API: &str = "https://api.github.com/repos/DJTouchette/workspacer/releases";
+const RELEASE_DOWNLOADS: &str = "https://github.com/DJTouchette/workspacer/releases/download/";
 /// Current installer name first; the pre-0.170 preview name stays accepted so
 /// a release or nightly built before the rename still offers its installer.
 const INSTALLER_PREFIXES: [&str; 2] =
@@ -116,13 +117,58 @@ pub fn installer_asset(release: &Value) -> Option<Value> {
     })
 }
 
+/// This platform's package in a release: the `.dmg` on macOS, the `.tar.gz`
+/// on Linux, for this CPU. `os`/`arch` are `std::env::consts` values.
+pub fn package_asset(release: &Value, os: &str, arch: &str) -> Option<Value> {
+    let arch = match arch {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        _ => return None,
+    };
+    let (prefix, suffix) = match os {
+        "macos" => ("Workspacer-", format!("-macos-{arch}.dmg")),
+        "linux" => ("workspacer-", format!("-linux-{arch}.tar.gz")),
+        _ => return None,
+    };
+    release["assets"].as_array()?.iter().find_map(|asset| {
+        let name = asset["name"].as_str()?;
+        let version = name.strip_prefix(prefix)?.strip_suffix(&suffix)?;
+        compare(version, version)?;
+        // Only a download from this project's releases is ever opened.
+        let url = asset["browser_download_url"]
+            .as_str()
+            .filter(|url| url.starts_with(RELEASE_DOWNLOADS))?;
+        Some(json!({"name": name, "version": version, "url": url}))
+    })
+}
+
+/// The version any native package in the release carries, for a rolling
+/// nightly whose own platform's package is missing.
+fn any_package_version(release: &Value) -> Option<String> {
+    [
+        ("macos", "aarch64"),
+        ("macos", "x86_64"),
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+    ]
+    .into_iter()
+    .find_map(|(os, arch)| package_asset(release, os, arch))
+    .and_then(|asset| asset["version"].as_str().map(str::to_owned))
+}
+
 /// What the Settings → About card shows.
 pub fn check_result(installed: &str, release: &Value) -> Value {
     let channel = Channel::of(installed);
     let asset = installer_asset(release);
-    let latest = asset
+    let package = package_asset(release, std::env::consts::OS, std::env::consts::ARCH);
+    // This platform's own package names the version; the Windows installer
+    // and the other platforms' packages stand in when it is missing.
+    let latest = package
         .as_ref()
+        .filter(|_| !cfg!(target_os = "windows"))
+        .or(asset.as_ref())
         .and_then(|a| a["version"].as_str().map(str::to_owned))
+        .or_else(|| any_package_version(release))
         .or_else(|| {
             release["tag_name"]
                 .as_str()
@@ -141,6 +187,9 @@ pub fn check_result(installed: &str, release: &Value) -> Value {
         "update_available": newer,
         "installable": cfg!(target_os = "windows") && asset.is_some(),
         "asset": asset,
+        // Where the platform's package downloads from when the app cannot
+        // install it itself (macOS and Linux).
+        "download_url": package.as_ref().map(|p| p["url"].clone()),
         "release_url": release["html_url"],
     })
 }
@@ -179,7 +228,7 @@ pub async fn download(asset: &Value) -> Result<PathBuf> {
     );
     let url = asset["url"].as_str().context("Installer has no URL")?;
     ensure!(
-        url.starts_with("https://github.com/DJTouchette/workspacer/releases/download/"),
+        url.starts_with(RELEASE_DOWNLOADS),
         "Installer is not hosted on the Workspacer release page"
     );
     let size = asset["size"].as_u64().context("Installer has no size")?;
@@ -226,10 +275,10 @@ pub async fn download(asset: &Value) -> Result<PathBuf> {
 /// launch can report what happened.
 pub fn state_dir() -> Result<PathBuf> {
     let base = directories::BaseDirs::new().context("Cannot locate the local data directory")?;
-    Ok(base
-        .data_local_dir()
-        .join("Workspacer Native Rust Preview")
-        .join("updates"))
+    // Updates are recorded wherever the app's data lives: the preview
+    // folder until the app has been able to rename it.
+    let root = crate::data_dir::located(base.data_local_dir());
+    Ok(root.join("updates"))
 }
 
 const STATE_FILE: &str = "last-update.json";
@@ -776,6 +825,41 @@ mod tests {
         assert_eq!(stable["installable"], false);
         let dev = check_result("0.169.0 (development build)", &release);
         assert!(dev["update_available"].is_null());
+    }
+
+    #[test]
+    fn each_platform_finds_its_own_package_and_any_package_names_the_version() {
+        let base = "https://github.com/DJTouchette/workspacer/releases/download/v0.171.0";
+        let release = json!({
+            "tag_name": "nightly",
+            "assets": [
+                {"name":"workspacer-0.171.0-linux-x64.tar.gz","browser_download_url":format!("{base}/workspacer-0.171.0-linux-x64.tar.gz")},
+                {"name":"workspacer-0.171.0-linux-x64.tar.gz.sha256","browser_download_url":format!("{base}/x.sha256")},
+                {"name":"workspacer-0.171.0-linux-arm64.tar.gz","browser_download_url":format!("{base}/workspacer-0.171.0-linux-arm64.tar.gz")},
+                {"name":"Workspacer-0.171.0-macos-arm64.dmg","browser_download_url":format!("{base}/Workspacer-0.171.0-macos-arm64.dmg")},
+                {"name":"Workspacer-0.171.0-macos-x64.dmg","browser_download_url":"https://example.invalid/elsewhere.dmg"},
+                {"name":"workspacer-server-0.171.0-linux-x64.tar.gz","browser_download_url":format!("{base}/server.tar.gz")}
+            ]
+        });
+        let linux = package_asset(&release, "linux", "x86_64").unwrap();
+        assert_eq!(linux["name"], "workspacer-0.171.0-linux-x64.tar.gz");
+        assert_eq!(linux["version"], "0.171.0");
+        assert_eq!(
+            package_asset(&release, "linux", "aarch64").unwrap()["name"],
+            "workspacer-0.171.0-linux-arm64.tar.gz"
+        );
+        assert_eq!(
+            package_asset(&release, "macos", "aarch64").unwrap()["version"],
+            "0.171.0"
+        );
+        // A download outside this project's releases is never offered.
+        assert!(package_asset(&release, "macos", "x86_64").is_none());
+        assert!(package_asset(&release, "windows", "x86_64").is_none());
+        assert!(package_asset(&release, "linux", "riscv64").is_none());
+        // No Windows installer in this nightly: the version still resolves.
+        let result = check_result("0.170.1", &release);
+        assert_eq!(result["latest"], "0.171.0");
+        assert_eq!(result["update_available"], true);
     }
 
     #[test]
