@@ -13,6 +13,10 @@ use std::{
     time::Duration,
 };
 
+#[path = "worktrees/artifact_cleanup.rs"]
+pub mod artifact_cleanup;
+#[path = "worktrees/artifact_cleanup_scheduler.rs"]
+pub mod artifact_cleanup_scheduler;
 #[cfg(windows)]
 #[path = "worktrees/dependency_junctions.rs"]
 mod dependency_junctions;

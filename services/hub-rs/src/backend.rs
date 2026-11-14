@@ -106,6 +106,8 @@ fn usage_poll_setting(raw: &str, explicit_environment: bool) -> Option<bool> {
 pub struct Backend {
     hub: Option<Hub>,
     engine: Option<EmbeddedDaemon>,
+    /// Keep-warm and worktree artifact cleanup; only an engine owner runs them.
+    chores: Option<crate::services::host_chores::HostChores>,
     database_lease: Option<ownership::DatabaseLease>,
 }
 impl Backend {
@@ -134,6 +136,7 @@ impl Backend {
         }
         Ok(Self {
             hub: None,
+            chores: None,
             engine: Some(EmbeddedDaemon::start_with_options(config, engine_options)?),
             database_lease,
         })
@@ -161,6 +164,8 @@ impl Backend {
             stage("hooks");
         });
         options.engine = Some(engine.client());
+        let chores_engine = engine.client();
+        let (chores_config, chores_home) = (options.config_dir.clone(), options.home_dir.clone());
         let wait_for_facade = options.mcp_listen.is_some();
         self.hub = Some(Hub::start(options)?);
         let hub = self.hub.as_ref().unwrap();
@@ -185,6 +190,13 @@ impl Backend {
             .map_err(|_| anyhow::anyhow!("owned MCP facade catalog readiness timed out"))??;
             stage("facade");
         }
+        // Readiness is the starting line: keep-warm checks now, and the first
+        // artifact cleanup pass runs a minute from here.
+        self.chores = Some(crate::services::host_chores::HostChores::start(
+            chores_engine,
+            chores_config.as_deref(),
+            chores_home,
+        ));
         Ok(())
     }
     pub fn handle(&self) -> Handle {
@@ -199,7 +211,22 @@ impl Backend {
             _ => None,
         }
     }
+    #[cfg(test)]
+    pub(crate) fn engine_client(&self) -> claudemon::daemon::embedded::EmbeddedClient {
+        self.engine.as_ref().expect("engine owner present").client()
+    }
+    #[cfg(test)]
+    pub(crate) fn chores_started(&self) -> bool {
+        self.chores
+            .as_ref()
+            .is_some_and(crate::services::host_chores::HostChores::started)
+    }
     pub async fn shutdown(mut self) -> Result<()> {
+        // Chores stop first: they call into the engine and hold worktree
+        // maintenance leases that must be released before the process exits.
+        if let Some(chores) = self.chores.take() {
+            chores.shutdown().await;
+        }
         let hub_result = if let Some(hub) = self.hub.take() {
             match tokio::task::spawn_blocking(move || hub.shutdown()).await {
                 Ok(result) => result,
@@ -225,6 +252,7 @@ impl Drop for Backend {
     fn drop(&mut self) {
         // Admission must close before stopping the engine. GUI quit should use
         // explicit shutdown to await the daemon's PTY reaper as well.
+        drop(self.chores.take());
         drop(self.hub.take());
         if let Some(engine) = self.engine.as_mut() {
             engine.request_shutdown();

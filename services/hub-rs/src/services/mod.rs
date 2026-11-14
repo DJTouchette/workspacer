@@ -17,11 +17,13 @@ pub mod filewatch;
 pub mod fleet_messages;
 pub mod fleet_review;
 pub mod git;
+pub(crate) mod host_chores;
 pub mod host_resources;
 pub mod host_status;
 pub mod html_card;
 pub mod image_preview;
 pub mod jobs;
+pub(crate) mod keep_warm;
 pub mod kept_sessions;
 pub mod launch_instructions;
 pub mod layout;
@@ -107,6 +109,49 @@ pub(crate) fn idle_shutdown_after(config: &serde_json::Value) -> Option<std::tim
     (minutes > 0).then(|| std::time::Duration::from_secs(minutes.saturating_mul(60)))
 }
 
+/// An agent's `notify` call as the `notify.post` event clients show. Only
+/// the documented fields are carried, each with its documented type.
+fn notification_event(params: &serde_json::Value) -> anyhow::Result<crate::protocol::Event> {
+    let mut data = serde_json::Map::new();
+    for key in [
+        "title",
+        "body",
+        "level",
+        "key",
+        "sessionId",
+        "paneType",
+        "paneSection",
+        "url",
+    ] {
+        match params.get(key) {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::String(text)) => {
+                if !text.is_empty() {
+                    data.insert(key.into(), text.as_str().into());
+                }
+            }
+            Some(_) => anyhow::bail!("notification {key} must be text"),
+        }
+    }
+    for key in ["silent", "inAppOnly"] {
+        match params.get(key) {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::Bool(flag)) => {
+                data.insert(key.into(), (*flag).into());
+            }
+            Some(_) => anyhow::bail!("notification {key} must be true or false"),
+        }
+    }
+    data.entry("title")
+        .or_insert_with(|| "workspacer".into());
+    data.entry("body").or_insert_with(|| "".into());
+    Ok(crate::protocol::Event::new(
+        "notify.post",
+        "notifications",
+        serde_json::Value::Object(data),
+    ))
+}
+
 pub(crate) fn install_config(
     mut options: Options,
     directory: PathBuf,
@@ -140,24 +185,23 @@ pub(crate) fn install_config(
         }
     });
     if !options.has_handler("notifications.post") {
-        options = options.handler("notifications.post", |_, params| async move {
-            let field = |key: &str| -> anyhow::Result<&str> {
-                match params.get(key) {
-                    None | Some(serde_json::Value::Null) => Ok(""),
-                    Some(value) => value
-                        .as_str()
-                        .ok_or_else(|| anyhow::anyhow!("notification {key} must be text")),
-                }
-            };
-            let title = field("title")?;
-            let title = if title.is_empty() {
-                "workspacer"
-            } else {
-                title
-            };
-            let body = field("body")?;
-            eprintln!("hub: notification: {title} — {body}");
-            Ok(serde_json::json!({"ok":true}))
+        // No host claimed the notification, so it goes to every attached
+        // client as `notify.post` (the topic jobs already use). A client
+        // decides how to show it; with none attached it is only logged.
+        let notifier = handle.clone();
+        options = options.handler("notifications.post", move |_, params| {
+            let notifier = notifier.clone();
+            async move {
+                let event = notification_event(&params)?;
+                let data = event.data.clone().unwrap_or_default();
+                eprintln!(
+                    "hub: notification: {} — {}",
+                    data["title"].as_str().unwrap_or_default(),
+                    data["body"].as_str().unwrap_or_default()
+                );
+                notifier.publish(event)?;
+                Ok(serde_json::json!({"ok":true}))
+            }
         });
     }
     options = library::install(options, directory.clone(), handle.clone());
@@ -612,5 +656,29 @@ mod idle_shutdown_tests {
             idle_shutdown_after(&json!({"sessions":{"idleShutdownMinutes":-3}})),
             minutes(DEFAULT_IDLE_SHUTDOWN_MINUTES)
         );
+    }
+
+    #[test]
+    fn an_agent_notification_becomes_a_notify_post_event_with_only_documented_fields() {
+        let event = notification_event(&json!({
+            "title":"Build finished","body":"All green","level":"success",
+            "sessionId":"abc","silent":true,"topic":"agent.snapshot","hub":"forged"
+        }))
+        .unwrap();
+        assert_eq!(event.topic, "notify.post");
+        assert!(event.hub.is_empty());
+        assert_eq!(
+            event.data,
+            Some(json!({
+                "title":"Build finished","body":"All green","level":"success",
+                "sessionId":"abc","silent":true
+            }))
+        );
+        assert_eq!(
+            notification_event(&json!({})).unwrap().data,
+            Some(json!({"title":"workspacer","body":""}))
+        );
+        assert!(notification_event(&json!({"title":4})).is_err());
+        assert!(notification_event(&json!({"silent":"yes"})).is_err());
     }
 }

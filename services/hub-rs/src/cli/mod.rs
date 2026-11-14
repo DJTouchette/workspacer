@@ -1,5 +1,6 @@
 //! Standalone administration and the in-process Rust launcher.
 mod admin;
+mod cleanup;
 mod compat;
 mod dev_watch;
 mod identity;
@@ -40,6 +41,9 @@ pub struct CommandLine {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     Serve(ServeArgs),
+    /// Reclaim generated artifacts from stopped agent worktrees (dry run
+    /// unless --apply); prints a JSON report.
+    CleanupAgents(cleanup::CleanupArgs),
     Status {
         #[arg(long, default_value_t = 7891)]
         claudemon_api_port: u16,
@@ -344,6 +348,20 @@ pub async fn execute(args: &CommandLine, out: &mut dyn Write, err: &mut dyn Writ
             )
             .await
         }
+        Command::CleanupAgents(cleanup) => match cleanup::run(
+            args,
+            cleanup,
+            identity::home_directory().ok().as_deref(),
+            out,
+        )
+        .await
+        {
+            Ok(code) => Ok(code),
+            Err(error) => {
+                writeln!(err, "workspacer cleanup-agents: {error:#}")?;
+                Ok(1)
+            }
+        },
         Command::Token { command } => identity::token(args, command, out),
         Command::Status { claudemon_api_port } => {
             admin::status(args, *claudemon_api_port, out).await
