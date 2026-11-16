@@ -16,6 +16,7 @@ mod fleet_card;
 mod gauge;
 mod handoff;
 mod hosts;
+mod hub_settings;
 mod island;
 mod jobs;
 mod kept;

@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::{path::Path, sync::Arc, time::Duration};
 use wks_native::{
     controller::{Command, Controller, View},
-    features::{Request, RequestState},
+    features::{HubChange, Request, RequestState},
     host::{Mode, NativeHost, RustOptions},
     projects::{self, Inspection, Patch},
 };
@@ -601,6 +601,56 @@ async fn child_access_setting_round_trips_through_the_hub() {
     let off = run(&controller, Request::ChildAccess { set: Some(false) }).await;
     assert!(off.error.is_none(), "{:?}", off.error);
     assert_eq!(off.value["childFullAccess"], false);
+
+    // Settings → Background: every path a bus `config.save` must keep (none
+    // is host-trusted), each verified on readback and persisted.
+    let read = run(&controller, Request::HubSettings { set: None }).await;
+    assert!(read.error.is_none(), "{:?}", read.error);
+    assert_eq!(read.value["keepWarm"]["enabled"], false, "off by default");
+    for change in [
+        HubChange::new("/claude/keepWarm/enabled", true),
+        HubChange::new(
+            "/claude/keepWarm/providers",
+            serde_json::json!(["claude", "codex"]),
+        ),
+        HubChange::new("/claude/keepWarm/mode", "daily"),
+        HubChange::new("/claude/keepWarm/dailyAt", "06:30"),
+        HubChange::new("/claude/keepWarm/intervalHours", 8.0),
+        HubChange::new("/agents/artifactCleanup/enabled", false),
+        HubChange::new("/agents/artifactCleanup/minAgeHours", 6.0),
+        HubChange::new("/agents/fleetFullAccess", true),
+        HubChange::new("/agents/managerProvider", "codex"),
+        HubChange::new("/agents/checkProviderOnStartup", false),
+        HubChange::new("/usage/pollOnBoot", false),
+    ] {
+        let pointer = change.pointer;
+        let saved = run(&controller, Request::HubSettings { set: Some(change) }).await;
+        assert!(saved.error.is_none(), "{pointer}: {:?}", saved.error);
+    }
+    let reread = run(&controller, Request::HubSettings { set: None }).await;
+    let v = &reread.value;
+    assert_eq!(v["keepWarm"]["enabled"], true);
+    assert_eq!(
+        v["keepWarm"]["providers"],
+        serde_json::json!(["claude", "codex"])
+    );
+    assert_eq!(v["keepWarm"]["mode"], "daily");
+    assert_eq!(v["keepWarm"]["dailyAt"], "06:30");
+    assert_eq!(v["keepWarm"]["intervalHours"], 8.0);
+    assert_eq!(v["artifactCleanup"]["enabled"], false);
+    assert_eq!(v["artifactCleanup"]["minAgeHours"], 6.0);
+    assert_eq!(v["fleetFullAccess"], true);
+    assert_eq!(v["managerProvider"], "codex");
+    assert_eq!(v["checkProviderOnStartup"], false);
+    assert_eq!(v["pollUsageOnBoot"], false);
+    let text = std::fs::read_to_string(&config_file).unwrap();
+    assert!(
+        text.contains("dailyAt: 06:30") || text.contains("dailyAt: '06:30'"),
+        "{text}"
+    );
+    // Siblings in `agents` survived the nested patches.
+    let still = run(&controller, Request::JobAccess { set: None }).await;
+    assert_eq!(still.value["jobFullAccess"], true);
     drop(views);
     drop(controller);
     host.shutdown().await.unwrap();

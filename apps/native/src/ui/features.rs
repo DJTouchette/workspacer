@@ -182,6 +182,10 @@ pub(super) struct Extras {
     /// until read. Never assumed from a pending toggle.
     pub external_mcp: Option<bool>,
     pub external_mcp_receipt: u64,
+    /// The hub's keep-warm, artifact cleanup, Fleet and startup settings as
+    /// last read or saved (see `features::hub_settings`); `None` until read.
+    pub hub_settings: Option<Value>,
+    pub hub_settings_receipt: u64,
     /// The hub's `agents.autoTitle` as last read or saved (see
     /// `features::title_settings`); `None` until read.
     pub titles: Option<Value>,
@@ -345,6 +349,8 @@ impl Extras {
             job_access_receipt: 0,
             external_mcp: None,
             external_mcp_receipt: 0,
+            hub_settings: None,
+            hub_settings_receipt: 0,
             titles: None,
             titles_receipt: 0,
             terminal_shell: None,
@@ -699,6 +705,16 @@ impl Workspace {
             self.extras.external_mcp_receipt = state.number;
             if state.error.is_none() {
                 self.extras.external_mcp = Some(state.value["ignoreExternalMcp"] == true);
+            }
+        }
+        if let Some(state) = next.requests.get("hub-settings")
+            && !state.loading
+            && state.number > self.extras.hub_settings_receipt
+        {
+            self.extras.hub_settings_receipt = state.number;
+            // A failed write leaves the last verified state, never the guess.
+            if state.error.is_none() {
+                self.extras.hub_settings = Some((*state.value).clone());
             }
         }
         if let Some(state) = next.requests.get("titles")

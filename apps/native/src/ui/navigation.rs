@@ -202,6 +202,17 @@ impl Workspace {
         {
             self.request(wks_native::features::Request::ExternalMcp { set: None }, cx);
         }
+        if screen == Screen::Settings
+            && !self.demo
+            && self.view.connected
+            && !self
+                .view
+                .requests
+                .get("hub-settings")
+                .is_some_and(|s| s.loading)
+        {
+            self.request(wks_native::features::Request::HubSettings { set: None }, cx);
+        }
         if screen == Screen::Settings {
             self.load_terminal_shell(cx);
             self.fonts.fill(&self.settings, window, cx);

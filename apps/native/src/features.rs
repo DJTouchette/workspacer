@@ -304,6 +304,13 @@ pub enum Request {
     ExternalMcp {
         set: Option<bool>,
     },
+    /// The hub's shared background and fleet settings that had no control:
+    /// keep-warm, worktree artifact cleanup, Fleet workers' access, the
+    /// manager's provider and the startup checks. Read (`None`) or change one
+    /// path and verify it on readback (see [`hub_settings`]).
+    HubSettings {
+        set: Option<HubChange>,
+    },
     /// The hub's shared `agents.autoTitle` (automatic session names): read
     /// (`None`) or change one field and verify it on readback. The owning hub
     /// writes the titles, so this is hub configuration, not a device setting.
@@ -567,6 +574,97 @@ pub fn title_settings(config: &Value) -> Value {
     })
 }
 
+/// One hub setting the native Settings change, by JSON pointer into the
+/// shared config. Saved as a nested patch, so the rest of its section stays.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HubChange {
+    pub pointer: &'static str,
+    pub value: Value,
+}
+
+impl HubChange {
+    pub fn new(pointer: &'static str, value: impl Into<Value>) -> Self {
+        Self {
+            pointer,
+            value: value.into(),
+        }
+    }
+
+    fn patch(&self) -> Value {
+        self.pointer
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .rev()
+            .fold(self.value.clone(), |inner, key| json!({ key: inner }))
+    }
+
+    /// Whether the saved config holds the value; numbers compare by value so
+    /// a writer that stores 5 for 5.0 still counts.
+    fn kept(&self, saved: &Value) -> bool {
+        match (saved.pointer(self.pointer), &self.value) {
+            (Some(Value::Number(saved)), Value::Number(sent)) => saved.as_f64() == sent.as_f64(),
+            (Some(saved), sent) => saved == sent,
+            (None, _) => false,
+        }
+    }
+}
+
+/// Providers keep-warm can warm (the hub's `WARMABLE_PROVIDERS`).
+pub const KEEP_WARM_PROVIDERS: [&str; 2] = ["claude", "codex"];
+/// Providers the hub accepts as `agents.managerProvider` for a Fleet Manager.
+pub const MANAGER_PROVIDERS: [&str; 4] = ["claude", "codex", "copilot", "opencode"];
+
+/// The hub settings native shows in Settings → Background and Agents, with
+/// the hub's own defaults applied so a missing key reads as what it does.
+pub fn hub_settings(config: &Value) -> Value {
+    let warm = &config["claude"]["keepWarm"];
+    let providers: Vec<String> = match &warm["providers"] {
+        Value::Null => vec!["claude".into()],
+        Value::Array(list) => list
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+        _ => vec![],
+    };
+    let cleanup = &config["agents"]["artifactCleanup"];
+    let manager = config["agents"]["managerProvider"]
+        .as_str()
+        .map(str::trim)
+        .filter(|p| MANAGER_PROVIDERS.contains(p))
+        .unwrap_or("claude");
+    json!({
+        "keepWarm": {
+            "enabled": warm["enabled"] == true,
+            "providers": providers,
+            "mode": warm["mode"].as_str().unwrap_or("auto"),
+            "intervalHours": warm["intervalHours"].as_f64().unwrap_or(5.0),
+            "dailyAt": warm["dailyAt"].as_str().unwrap_or("08:00"),
+        },
+        "artifactCleanup": {
+            // The scheduler runs unless `enabled` is present and not true.
+            "enabled": cleanup.get("enabled").is_none_or(|e| *e == Value::Bool(true)),
+            "minAgeHours": cleanup["minAgeHours"].as_f64().unwrap_or(1.0),
+            "worktreeRoot": config["agents"]["worktreeRoot"].as_str().map(str::trim).unwrap_or(""),
+        },
+        "fleetFullAccess": config["agents"]["fleetFullAccess"] == true,
+        "managerProvider": manager,
+        "pollUsageOnBoot": config["usage"]["pollOnBoot"] != false,
+        "checkProviderOnStartup": config["agents"]["checkProviderOnStartup"] != false,
+    })
+}
+
+/// `dailyAt` moved by whole hours, wrapping at midnight; minutes are kept.
+/// An unparseable time starts from 08:00.
+pub fn shift_daily_at(at: &str, hours: i32) -> String {
+    let (h, m) = at
+        .split_once(':')
+        .and_then(|(h, m)| Some((h.trim().parse::<i32>().ok()?, m.trim().parse::<i32>().ok()?)))
+        .filter(|(h, m)| (0..24).contains(h) && (0..60).contains(m))
+        .unwrap_or((8, 0));
+    format!("{:02}:{:02}", (h + hours).rem_euclid(24), m)
+}
+
 #[derive(Clone, Debug)]
 pub enum AttachmentSource {
     File(PathBuf),
@@ -617,6 +715,7 @@ impl Request {
             Self::ChildAccess { .. } => "child-access",
             Self::JobAccess { .. } => "job-access",
             Self::ExternalMcp { .. } => "external-mcp",
+            Self::HubSettings { .. } => "hub-settings",
             Self::Titles { .. } => "titles",
             Self::TerminalShell { .. } => "terminal-shell",
             Self::Jobs => "jobs",
@@ -1101,6 +1200,21 @@ impl Request {
                     None => backend.call("config.get", json!({})).await?,
                 };
                 Ok(json!({"ignoreExternalMcp": config["agents"]["ignoreExternalMcp"] == true}))
+            }
+            Self::HubSettings { set } => {
+                let config = match set {
+                    // Objects deep-merge on save, so only this path changes.
+                    Some(change) => {
+                        let saved = backend.call("config.save", change.patch()).await?;
+                        ensure!(
+                            change.kept(&saved),
+                            "The hub did not save the setting (its config may be busy); try again"
+                        );
+                        saved
+                    }
+                    None => backend.call("config.get", json!({})).await?,
+                };
+                Ok(hub_settings(&config))
             }
             Self::Titles { set } => {
                 let config = match set {
@@ -1783,6 +1897,65 @@ mod tests {
                 json!({"sessionId":"s1","signal":"SIGTERM"})
             )
         );
+    }
+
+    #[test]
+    fn hub_settings_read_missing_keys_as_the_hubs_defaults() {
+        let read = hub_settings(&json!({}));
+        assert_eq!(
+            read,
+            json!({
+                "keepWarm": {
+                    "enabled": false,
+                    "providers": ["claude"],
+                    "mode": "auto",
+                    "intervalHours": 5.0,
+                    "dailyAt": "08:00",
+                },
+                "artifactCleanup": {"enabled": true, "minAgeHours": 1.0, "worktreeRoot": ""},
+                "fleetFullAccess": false,
+                "managerProvider": "claude",
+                "pollUsageOnBoot": true,
+                "checkProviderOnStartup": true,
+            })
+        );
+        let set = hub_settings(&json!({
+            "claude": {"keepWarm": {"enabled": true, "providers": ["claude", "codex"],
+                "mode": "daily", "intervalHours": 3, "dailyAt": "06:30"}},
+            "agents": {"artifactCleanup": {"enabled": "yes", "minAgeHours": 6},
+                "fleetFullAccess": true, "managerProvider": " codex ",
+                "checkProviderOnStartup": false},
+            "usage": {"pollOnBoot": false},
+        }));
+        assert_eq!(set["keepWarm"]["providers"], json!(["claude", "codex"]));
+        assert_eq!(set["keepWarm"]["intervalHours"], json!(3.0));
+        // Anything but `true` turns the scheduler off, like the hub's policy.
+        assert_eq!(set["artifactCleanup"]["enabled"], false);
+        assert_eq!(set["managerProvider"], "codex");
+        assert_eq!(set["pollUsageOnBoot"], false);
+        assert_eq!(set["checkProviderOnStartup"], false);
+        assert_eq!(
+            hub_settings(&json!({"agents": {"managerProvider": "pi"}}))["managerProvider"],
+            "claude"
+        );
+    }
+
+    #[test]
+    fn hub_change_patches_one_path_and_verifies_it_on_readback() {
+        let change = HubChange::new("/claude/keepWarm/intervalHours", 8.0);
+        assert_eq!(
+            change.patch(),
+            json!({"claude": {"keepWarm": {"intervalHours": 8.0}}})
+        );
+        assert!(change.kept(&json!({"claude": {"keepWarm": {"intervalHours": 8}}})));
+        assert!(!change.kept(&json!({"claude": {"keepWarm": {"intervalHours": 5}}})));
+        assert!(!change.kept(&json!({})));
+        let providers = HubChange::new("/claude/keepWarm/providers", json!(["codex"]));
+        assert!(providers.kept(&json!({"claude": {"keepWarm": {"providers": ["codex"]}}})));
+        assert_eq!(shift_daily_at("08:30", 1), "09:30");
+        assert_eq!(shift_daily_at("23:00", 1), "00:00");
+        assert_eq!(shift_daily_at("00:15", -1), "23:15");
+        assert_eq!(shift_daily_at("noon", 1), "09:00");
     }
 
     #[test]

@@ -641,6 +641,30 @@ impl Fixture {
                 self.config["agents"][key] = enabled.clone();
             }
         }
+        // Settings → Background and the Fleet rows (`features::HubChange`).
+        for (section, key) in [
+            ("agents", "fleetFullAccess"),
+            ("agents", "managerProvider"),
+            ("agents", "checkProviderOnStartup"),
+            ("usage", "pollOnBoot"),
+        ] {
+            if let Some(value) = params.pointer(&format!("/{section}/{key}")) {
+                self.config[section][key] = value.clone();
+            }
+        }
+        for (pointer, section, key) in [
+            ("/claude/keepWarm", "claude", "keepWarm"),
+            ("/agents/artifactCleanup", "agents", "artifactCleanup"),
+        ] {
+            for (field, value) in params
+                .pointer(pointer)
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+            {
+                self.config[section][key][field] = value.clone();
+            }
+        }
         let auto = params
             .pointer("/agents/autoTitle")
             .and_then(Value::as_object);

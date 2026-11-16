@@ -15,19 +15,21 @@ pub(super) enum SettingsSection {
     Workspace,
     Remote,
     Agents,
+    Background,
     Chat,
     Keyboard,
     About,
 }
 
 impl SettingsSection {
-    pub(super) const ALL: [Self; 9] = [
+    pub(super) const ALL: [Self; 10] = [
         Self::Appearance,
         Self::Themes,
         Self::Typography,
         Self::Workspace,
         Self::Remote,
         Self::Agents,
+        Self::Background,
         Self::Chat,
         Self::Keyboard,
         Self::About,
@@ -41,6 +43,7 @@ impl SettingsSection {
             Self::Workspace => "Workspace",
             Self::Remote => "Remote",
             Self::Agents => "Agents",
+            Self::Background => "Background",
             Self::Chat => "Chat",
             Self::Keyboard => "Keyboard",
             Self::About => "About",
@@ -55,6 +58,7 @@ impl SettingsSection {
             Self::Workspace => "How the app fits into your day.",
             Self::Remote => "Reach this machine from your phone over Tailscale.",
             Self::Agents => "Defaults for new sessions. Existing sessions keep theirs.",
+            Self::Background => "What the hub does on its own. Saved in the hub's shared settings.",
             Self::Chat => "How conversations and tool calls read.",
             Self::Keyboard => "Move around your workspace at your own pace.",
             Self::About => "Version and updates.",
@@ -69,6 +73,7 @@ impl SettingsSection {
             Self::Workspace => IconName::LayoutDashboard,
             Self::Remote => IconName::Globe,
             Self::Agents => IconName::Bot,
+            Self::Background => IconName::Calendar,
             Self::Chat => IconName::Inbox,
             Self::Keyboard => IconName::SquareTerminal,
             Self::About => IconName::Info,
@@ -749,6 +754,52 @@ impl Workspace {
             "mcp servers failed disable ignore skip strict .mcp.json external tools",
             Layout::Block,
             self.render_external_mcp(cx),
+        ));
+        entries.push(Entry::new(
+            S::Agents,
+            "fleet-access",
+            "Fleet workers start with full access",
+            "The Fleet Manager and the workers it dispatches skip the provider's own approval prompts, whatever Child agents start with full access says. Saved in the hub's shared settings; it applies to the next launch.",
+            "fleet manager worker dispatch full access bypass permissions yolo approvals prompts",
+            Layout::Block,
+            self.render_fleet_access(cx),
+        ));
+        entries.push(Entry::new(
+            S::Agents,
+            "manager-provider",
+            "Fleet Manager provider",
+            "Which agent a new Fleet Manager runs on. Saved in the hub's shared settings.",
+            "fleet manager provider claude codex copilot opencode harness",
+            Layout::Block,
+            self.render_manager_provider(cx),
+        ));
+
+        entries.push(Entry::new(
+            S::Background,
+            "keep-warm",
+            "Keep usage windows warm",
+            "Claude and Codex subscriptions meter usage in 5-hour windows that start with the first message. When a window has lapsed, the hub sends one tiny turn so a fresh one is already running; it never sends one while a window is active. Runs on the hub that owns the agents.",
+            "keep warm keepwarm usage window 5 hour five rate limit subscription ping heartbeat claude codex schedule daily interval",
+            Layout::Block,
+            self.render_keep_warm(cx),
+        ));
+        entries.push(Entry::new(
+            S::Background,
+            "artifact-cleanup",
+            "Clean up agent worktrees",
+            "Reclaims disk from build and dependency output in stopped agents' worktrees. A worktree with a running agent is skipped.",
+            "artifact cleanup worktree disk space node_modules target build dist delete reclaim prune cleanup-agents",
+            Layout::Block,
+            self.render_artifact_cleanup(cx),
+        ));
+        entries.push(Entry::new(
+            S::Background,
+            "startup-checks",
+            "At startup",
+            "Reading usage fills the usage gauges before any session runs. The provider check sends one disposable turn to the Fleet Manager's provider, so a broken sign-in shows before you need it.",
+            "startup boot usage poll gauges provider check login sign in manager",
+            Layout::Block,
+            self.render_startup_checks(cx),
         ));
         entries.push(Entry::new(
             S::Chat,
