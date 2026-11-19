@@ -1350,10 +1350,17 @@ impl Workspace {
             // One segmented control, like the Model page's live Access: the
             // chosen mode is the filled segment (Full access in the warning
             // tone), not blue text on a row of look-alike buttons.
+            //
+            // It spans the column and its segments share the width. Sized to
+            // its own content, the group was exactly as wide as its segments,
+            // and Taffy wraps on `line_length > available` with no epsilon: a
+            // sub-pixel difference in real text measurement put Codex's
+            // "Full access" on a second, clipped line under "Ask to approve".
             .child(
                 div().flex().child(
                     div()
                         .debug_selector(|| "launch-access".into())
+                        .w_full()
                         .flex()
                         .flex_wrap()
                         .gap_1()
@@ -1370,10 +1377,12 @@ impl Workspace {
                                         format!("access-{}", permission.label())
                                     })
                                     .h(px(28.))
+                                    .flex_1()
                                     .px_3()
                                     .flex()
                                     .items_center()
                                     .justify_center()
+                                    .whitespace_nowrap()
                                     .rounded_full()
                                     .text_size(px(chrome::scale::META))
                                     .font_weight(FontWeight::MEDIUM)

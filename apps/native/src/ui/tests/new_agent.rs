@@ -162,6 +162,61 @@ fn guided_launch_keeps_options_and_start_action_accessible(cx: &mut TestAppConte
     assert!(commands.try_recv().is_err());
 }
 
+/// The launch Access control is one row for every provider: Codex's two
+/// choices once wrapped "Full access" under "Ask to approve" and clipped it.
+/// The group spans the column, so the row is never an exact fit that a
+/// sub-pixel text measurement can tip into wrapping (Taffy breaks lines on a
+/// strict `>`). The test text system measures whole pixels, so it pins the
+/// layout that prevents the wrap, not the wrap itself.
+#[gpui::test]
+fn launch_access_choices_are_one_row_for_every_provider(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _, _) = fixture(cx);
+    visual.simulate_resize(size(px(1000.), px(1100.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            this.update_view(Arc::new(state("a")), window, cx);
+            this.show_new_session(window, cx);
+        });
+    });
+    visual.run_until_parked();
+    let customize = visual.debug_bounds("launch-customize").unwrap();
+    visual.simulate_click(customize.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    for (provider, selector) in [
+        ("claude", "launch-provider-claude"),
+        ("codex", "launch-provider-codex"),
+    ] {
+        let tab = visual.debug_bounds(selector).unwrap();
+        visual.simulate_click(tab.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        let ask = visual.debug_bounds("access-Ask to approve").unwrap();
+        let full = visual.debug_bounds("access-Full access").unwrap();
+        let group = visual.debug_bounds("launch-access").unwrap();
+        assert_eq!(ask.top(), full.top(), "{provider}: {ask:?} {full:?}");
+        assert!(full.left() > ask.right(), "{provider}: {ask:?} {full:?}");
+        assert!(group.size.height <= px(40.), "{provider}: {group:?}");
+        assert!(
+            full.right() <= group.right(),
+            "{provider}: {full:?} {group:?}"
+        );
+    }
+    // Codex at the column's full measure: its two segments share the row and
+    // fill it, leaving no exact-fit edge.
+    let ask = visual.debug_bounds("access-Ask to approve").unwrap();
+    let full = visual.debug_bounds("access-Full access").unwrap();
+    let group = visual.debug_bounds("launch-access").unwrap();
+    assert!(group.size.width >= px(400.), "{group:?}");
+    assert!(full.right() + px(8.) >= group.right(), "{full:?} {group:?}");
+    assert!(ask.size.width > px(150.), "{ask:?}");
+    // The smallest supported window keeps Codex on one row too.
+    visual.simulate_resize(size(px(720.), px(480.)));
+    visual.run_until_parked();
+    let ask = visual.debug_bounds("access-Ask to approve").unwrap();
+    let full = visual.debug_bounds("access-Full access").unwrap();
+    assert_eq!(ask.top(), full.top(), "{ask:?} {full:?}");
+}
+
 /// The hub's outcome-unknown launch failure at the smallest supported
 /// window: the recovery step is a whole, unclipped line above a visible
 /// Start action, and every word of the hub's text can be scrolled to.
