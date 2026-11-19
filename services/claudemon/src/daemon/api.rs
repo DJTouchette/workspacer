@@ -2271,19 +2271,84 @@ async fn get_task_output(
         Some("redirect") => true,
         Some(_) => return (StatusCode::BAD_REQUEST, "unknown output source").into_response(),
     };
+    // A shell's log that is not there YET (not announced, not created, the
+    // redirect target not written) is a wait, not a failure, while the task
+    // runs: the reply says why and the client keeps reading. Once the task
+    // has ended the same condition is final and answers 404.
+    let waiting = |task: &bg::BackgroundTask, reason: &str| -> Response {
+        if !task.is_running() {
+            return task_not_found(reason);
+        }
+        Json(json!({
+            "session_id": id,
+            "task_id": task_id,
+            "source": if redirect { "redirect" } else { "task" },
+            "status": task.status,
+            "running": true,
+            "offset": q.offset.unwrap_or(0),
+            "next_offset": q.offset,
+            "size": 0,
+            "text": "",
+            "reset": false,
+            "done": false,
+            "waiting": reason,
+        }))
+        .into_response()
+    };
     let path = if redirect {
-        match crate::session::task_redirect::redirect_file(&task, state.cwd.as_deref()) {
-            Ok(path) => path,
-            Err(bg::OutputError::NoOutput) => {
+        let cwd = state.cwd.clone();
+        let probe = task.clone();
+        match tokio::task::spawn_blocking(move || {
+            crate::session::task_redirect::redirect_file(&probe, cwd.as_deref())
+        })
+        .await
+        {
+            Ok(Ok(path)) => path,
+            Ok(Err(bg::OutputError::NoOutput)) => {
                 return task_not_found("this task's command redirects its output nowhere known")
             }
-            Err(bg::OutputError::Unavailable(error)) => return task_not_found(&error),
+            Ok(Err(bg::OutputError::Unavailable(error))) => return waiting(&task, &error),
+            Err(error) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
+            }
         }
     } else {
-        let Some(path) = task.output_file.clone().filter(|_| task.has_output) else {
+        if task.task_type == "local_agent" {
             return task_not_found("this task has no log (agents open their own transcript)");
+        }
+        // No frame named the file (a subagent's shell, or a read that beat
+        // the launch result): find it by session and id in the CLI's layout.
+        let known = task.output_file.clone().filter(|_| task.has_output);
+        let needs_lookup = known
+            .as_deref()
+            .is_none_or(|p| std::fs::symlink_metadata(p).is_err());
+        let found = match (needs_lookup, task.claude_session.clone()) {
+            (true, Some(session)) => {
+                let tid = task_id.clone();
+                tokio::task::spawn_blocking(move || bg::discover_output_file(&session, &tid))
+                    .await
+                    .ok()
+                    .flatten()
+            }
+            _ => None,
         };
-        path
+        if let Some(path) = &found {
+            let path = path.clone();
+            let tid = task_id.clone();
+            store.update_background_task_list(&id, |tasks| {
+                let Some(t) = tasks.iter_mut().find(|t| t.id == tid) else {
+                    return false;
+                };
+                let changed = !t.has_output || t.output_file.as_ref() != Some(&path);
+                t.output_file = Some(path);
+                t.has_output = true;
+                changed
+            });
+        }
+        match found.or(known) {
+            Some(path) => path,
+            None => return waiting(&task, "the CLI has not named this task's log file yet"),
+        }
     };
     let max = q.max.unwrap_or(bg::DEFAULT_READ_BYTES);
     let offset = q.offset;
@@ -2291,7 +2356,12 @@ async fn get_task_output(
     {
         Ok(Ok(chunk)) => chunk,
         Ok(Err(bg::OutputError::NoOutput)) => return task_not_found("no log for this task"),
-        Ok(Err(bg::OutputError::Unavailable(error))) => return task_not_found(&error),
+        Ok(Err(bg::OutputError::Unavailable(error))) => {
+            return waiting(
+                &task,
+                &format!("the log file is not readable yet ({error})"),
+            )
+        }
         Err(error) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
         }
@@ -4200,12 +4270,49 @@ mod tests {
                 tasks,
                 TaskEvent::Output {
                     id: "sh1".into(),
-                    output_file: out,
+                    tool_use_id: None,
+                    output_file: Some(out),
+                    create: false,
                 },
                 2,
             )
         });
         file
+    }
+
+    /// A running shell whose log is not known yet is a wait the client keeps
+    /// polling through, with the reason; the same shell once ended is a 404.
+    #[tokio::test]
+    async fn task_output_waits_for_a_running_shells_log_and_404s_once_it_ends() {
+        use crate::session::background_tasks::{apply, TaskEvent};
+        let state = test_state();
+        let sid = "s-wait";
+        state.store.register_managed(sid, "/project", "claude");
+        state.store.update_background_task_list(sid, |tasks| {
+            apply(
+                tasks,
+                TaskEvent::LiveSet(vec![(
+                    "shw".into(),
+                    "local_bash".into(),
+                    Some("Run tests".into()),
+                    false,
+                )]),
+                1,
+            )
+        });
+        let (status, body) = request(state.clone(), get("/sessions/s-wait/tasks/shw/output")).await;
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        let reply: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(reply["text"], "");
+        assert_eq!(reply["done"], false);
+        assert!(reply["waiting"].as_str().unwrap().contains("not named"));
+
+        state.store.update_background_task_list(sid, |tasks| {
+            tasks[0].status = "completed".into();
+            true
+        });
+        let (status, _) = request(state.clone(), get("/sessions/s-wait/tasks/shw/output")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

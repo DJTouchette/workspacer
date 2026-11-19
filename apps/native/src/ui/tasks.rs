@@ -709,7 +709,27 @@ impl Workspace {
                                         .truncate()
                                         .child(process_line(&process)),
                                 )
-                            }),
+                            })
+                            // The title is often the agent's summary of the
+                            // command; the command itself says where output goes.
+                            .when_some(
+                                task.as_ref()
+                                    .filter(|t| !t.command.is_empty() && t.command != t.description)
+                                    .map(|t| t.command.clone()),
+                                |d, command| {
+                                    d.child(
+                                        div()
+                                            .debug_selector(|| "task-log-command".into())
+                                            .truncate()
+                                            .font_family(
+                                                gpui_component::Theme::global(cx)
+                                                    .mono_font_family
+                                                    .clone(),
+                                            )
+                                            .child(command),
+                                    )
+                                },
+                            ),
                     )
                     .when(running, |d| {
                         d.child(self.render_stop_control(
@@ -722,8 +742,12 @@ impl Workspace {
                     }),
             )
             .when_some(
-                task.as_ref()
-                    .and_then(|t| Some((t.redirect_file.clone()?, t.has_output))),
+                task.as_ref().and_then(|t| {
+                    Some((
+                        t.redirect_file.clone()?,
+                        t.has_output || t.kind == bg::Kind::Shell,
+                    ))
+                }),
                 |d, (file, has_task_file)| {
                     d.child(self.render_log_source(&log.task, log.source, file, has_task_file, cx))
                 },
@@ -755,11 +779,14 @@ impl Workspace {
                             .text_size(px(chrome::scale::META))
                             .text_color(rgb(p.muted))
                             .child(if self.tasks.failed.is_some() {
-                                ""
+                                SharedString::default()
+                            } else if let Some(reason) = &log.waiting {
+                                // Still polling: say what the daemon is waiting on.
+                                format!("Waiting for output: {reason}.").into()
                             } else if reading || log.next_offset.is_none() {
-                                "Reading the log…"
+                                "Reading the log…".into()
                             } else {
-                                "No output yet."
+                                "No output yet.".into()
                             })
                             .into_any_element()
                     } else {

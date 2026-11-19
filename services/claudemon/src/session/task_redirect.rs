@@ -259,6 +259,28 @@ fn expand(raw: &str, vars: &Vars) -> Option<String> {
     (!out.is_empty()).then_some(out)
 }
 
+/// A variable bound to a fresh temp file whose name the command never
+/// spells: `log=$(mktemp)` (bash: `$TMPDIR/tmp.XXXXXXXXXX`) or
+/// `$log = New-TemporaryFile` (PowerShell: `%TEMP%\tmpXXXX.tmp`). The value
+/// is a marker that [`redirect_file`] resolves by looking for the one file of
+/// that shape the task created.
+const MKTEMP: &str = "\u{1}mktemp\u{1}";
+const PS_TEMP: &str = "\u{1}pstemp\u{1}";
+
+fn temp_marker(value: &str) -> Option<&'static str> {
+    let v = value.trim_matches(['"', '\'']);
+    if v == "$(mktemp)" || v == "`mktemp`" {
+        return Some(MKTEMP);
+    }
+    let lower = v.to_ascii_lowercase();
+    (lower == "new-temporaryfile"
+        || lower == "(new-temporaryfile)"
+        || lower == "(new-temporaryfile).fullname"
+        || lower == "[system.io.path]::gettempfilename()"
+        || lower == "[io.path]::gettempfilename()")
+        .then_some(PS_TEMP)
+}
+
 /// `name=value` / `$name=value` as one word (bash or PowerShell).
 fn inline_assignment(word: &str) -> Option<(String, &str)> {
     let (name, value) = word.split_once('=')?;
@@ -373,7 +395,10 @@ pub fn redirect_target(command: &str) -> Option<String> {
                         (word.strip_prefix('$'), toks.get(i + 1), toks.get(i + 2))
                     {
                         if eq == "=" && ends(i + 3) {
-                            if let Some(value) = expand(value, &vars) {
+                            if let Some(value) = temp_marker(value)
+                                .map(str::to_string)
+                                .or_else(|| expand(value, &vars))
+                            {
                                 vars.0.insert(name.to_string(), value);
                             }
                             i += 3;
@@ -381,7 +406,10 @@ pub fn redirect_target(command: &str) -> Option<String> {
                         }
                     }
                     if let Some((name, value)) = inline_assignment(word) {
-                        if let Some(value) = expand(value, &vars) {
+                        if let Some(value) = temp_marker(value)
+                            .map(str::to_string)
+                            .or_else(|| expand(value, &vars))
+                        {
                             vars.0.insert(name, value);
                         }
                     }
@@ -404,7 +432,9 @@ pub fn redirect_target(command: &str) -> Option<String> {
         }
         i += 1;
     }
-    found
+    // A temp-file variable used as part of a longer path (`"$log.txt"`) is
+    // not the temp file: nothing to follow.
+    found.filter(|t| !t.contains('\u{1}') || t == MKTEMP || t == PS_TEMP)
 }
 
 /// `/c/Users/…` (Git Bash on Windows) as `C:\Users\…`.
@@ -438,7 +468,13 @@ pub fn resolve(target: &str, cwd: Option<&str>) -> Option<PathBuf> {
 
 /// The file name shown on the wire (`redirectFile`): never a directory.
 pub fn display_name(command: &str) -> Option<String> {
-    let target = native_spelling(&redirect_target(command)?);
+    let target = redirect_target(command)?;
+    match target.as_str() {
+        MKTEMP => return Some("mktemp file".into()),
+        PS_TEMP => return Some("temp file".into()),
+        _ => {}
+    }
+    let target = native_spelling(&target);
     Path::new(&target)
         .file_name()
         .and_then(|n| n.to_str())
@@ -451,12 +487,23 @@ pub fn redirect_file(task: &BackgroundTask, cwd: Option<&str>) -> Result<PathBuf
     if task.task_type == "local_agent" {
         return Err(OutputError::NoOutput);
     }
-    let path = task
-        .description
-        .as_deref()
+    let target = task
+        .command_line()
         .and_then(redirect_target)
-        .and_then(|t| resolve(&t, cwd))
         .ok_or(OutputError::NoOutput)?;
+    let path = match target.as_str() {
+        MKTEMP => created_temp_file(task.started_at, |name| {
+            name.strip_prefix("tmp.").is_some_and(|rest| {
+                rest.len() >= 6 && rest.chars().all(|c| c.is_ascii_alphanumeric())
+            })
+        })?,
+        PS_TEMP => created_temp_file(task.started_at, |name| {
+            name.len() > 7
+                && name[..3].eq_ignore_ascii_case("tmp")
+                && name[name.len() - 4..].eq_ignore_ascii_case(".tmp")
+        })?,
+        _ => resolve(&target, cwd).ok_or(OutputError::NoOutput)?,
+    };
     let meta = std::fs::symlink_metadata(&path).map_err(|_| {
         OutputError::Unavailable("the redirected log has not been written yet".into())
     })?;
@@ -478,9 +525,110 @@ pub fn redirect_file(task: &BackgroundTask, cwd: Option<&str>) -> Result<PathBuf
     Ok(path)
 }
 
+/// How far a temp file's creation may sit from the task's recorded start
+/// (the daemon stamps `started_at` when it first sees the task, which is
+/// about when the shell begins; `mktemp` runs in its first statement).
+const TEMP_BEFORE_MS: i64 = 10_000;
+const TEMP_AFTER_MS: i64 = 30_000;
+
+/// The one temp file of the given shape created around the task's start.
+/// The temp directory is shared by every agent on the machine, so two
+/// candidates are refused rather than guessed between.
+fn created_temp_file(
+    started_at: i64,
+    shape: impl Fn(&str) -> bool,
+) -> Result<PathBuf, OutputError> {
+    let dir = std::env::temp_dir();
+    let entries = std::fs::read_dir(&dir)
+        .map_err(|e| OutputError::Unavailable(format!("cannot list the temp directory: {e}")))?;
+    let ms = |t: std::io::Result<std::time::SystemTime>| {
+        t.ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+    };
+    let mut found: Vec<PathBuf> = Vec::new();
+    for entry in entries.flatten().take(50_000) {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !shape(name) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.file_type().is_file() {
+            continue;
+        }
+        // Creation time where the platform keeps one; else last write.
+        let Some(born) = ms(meta.created()).or_else(|| ms(meta.modified())) else {
+            continue;
+        };
+        if born + TEMP_BEFORE_MS >= started_at && born <= started_at + TEMP_AFTER_MS {
+            found.push(entry.path());
+        }
+    }
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err(OutputError::Unavailable(
+            "the command logs to a temp file that has not been created yet".into(),
+        )),
+        n => Err(OutputError::Unavailable(format!(
+            "the command logs to a temp file, and {n} were created when it started \
+             (other agents share the temp folder), so it is unclear which one is this task's"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temp_file_variables_are_markers() {
+        assert_eq!(
+            redirect_target("log=$(mktemp); cargo test > \"$log\" 2>&1; tail -5 \"$log\"")
+                .as_deref(),
+            Some(MKTEMP)
+        );
+        assert_eq!(
+            redirect_target("$log = New-TemporaryFile; & cmd *> $log").as_deref(),
+            Some(PS_TEMP)
+        );
+        assert_eq!(redirect_target("log=$(mktemp); make > \"$log.txt\""), None);
+        assert_eq!(
+            display_name("log=$(mktemp); make > \"$log\"").as_deref(),
+            Some("mktemp file")
+        );
+    }
+
+    #[test]
+    fn the_one_temp_file_born_with_the_task_is_followed() {
+        let dir = std::env::temp_dir();
+        let tag: String = format!("{:x}", std::process::id() ^ 0x5a5a)
+            .chars()
+            .take(8)
+            .collect();
+        let name = format!("tmp.wkst{tag}");
+        let path = dir.join(&name);
+        std::fs::write(&path, "line\n").unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let only = |n: &str| n == name;
+        assert_eq!(created_temp_file(now, only).unwrap(), path);
+        assert!(
+            created_temp_file(now + 3_600_000, only).is_err(),
+            "a file from long before the task is not its log"
+        );
+        let twin = dir.join(format!("{name}b"));
+        std::fs::write(&twin, "x").unwrap();
+        let both = |n: &str| n.starts_with(&name);
+        assert!(matches!(
+            created_temp_file(now, both),
+            Err(OutputError::Unavailable(msg)) if msg.contains("2 were created")
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&twin);
+    }
 
     fn target(cmd: &str) -> Option<String> {
         redirect_target(cmd)

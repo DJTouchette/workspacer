@@ -94,6 +94,9 @@ pub struct Task {
     /// The file name the command redirects its output into, which the
     /// daemon serves as the `redirect` source. A name, never a path.
     pub redirect_file: Option<String>,
+    /// A shell's command line (the description is often the agent's human
+    /// summary of it).
+    pub command: String,
     /// The provider-native child this task is (async agents).
     pub subagent_id: Option<String>,
     pub tool_use_id: Option<String>,
@@ -144,6 +147,7 @@ impl Task {
                 .as_str()
                 .filter(|s| !s.is_empty())
                 .map(|s| crate::transcript::head(s, 200)),
+            command: text(value, "command"),
             subagent_id: id(value, "subagentId"),
             tool_use_id: id(value, "toolUseId"),
             ambient: value["ambient"].as_bool().unwrap_or(false),
@@ -189,9 +193,12 @@ impl Task {
         Some((end - start).max(0))
     }
 
-    /// Opens a log in the panel (agents open their own conversation).
+    /// Opens a log in the panel (agents open their own conversation). A
+    /// shell always does: before its file is known the daemon answers with
+    /// what it is waiting for, and finds the file once it exists.
     pub fn shows_log(&self) -> bool {
-        (self.has_output || self.redirect_file.is_some()) && self.kind != Kind::Agent
+        (self.has_output || self.redirect_file.is_some() || self.kind == Kind::Shell)
+            && self.kind != Kind::Agent
     }
 
     /// Which log opens first: the redirected file when the command names
@@ -297,6 +304,10 @@ pub struct Log {
     pub running: bool,
     pub status: String,
     pub process: Option<Process>,
+    /// The daemon has no output to give yet, and why (the log file is not
+    /// named or created yet, the redirect target is not written yet, the
+    /// temp file is ambiguous). Reading continues while it is set.
+    pub waiting: Option<String>,
 }
 
 impl Log {
@@ -329,10 +340,18 @@ impl Log {
         {
             return false;
         }
+        if let Some(reason) = reply["waiting"].as_str().filter(|r| !r.is_empty()) {
+            let before = (self.waiting.clone(), self.running, self.status.clone());
+            self.waiting = Some(crate::transcript::head(reason, 400));
+            self.running = reply["running"].as_bool().unwrap_or(true);
+            self.status = reply["status"].as_str().unwrap_or("").to_owned();
+            return (self.waiting.clone(), self.running, self.status.clone()) != before;
+        }
         let (Some(offset), Some(next)) = (reply["offset"].as_u64(), reply["next_offset"].as_u64())
         else {
             return false;
         };
+        let was_waiting = self.waiting.take().is_some();
         let chunk = reply["text"].as_str().unwrap_or("");
         let reset = reply["reset"].as_bool().unwrap_or(false);
         let before = self.clone();
@@ -368,7 +387,7 @@ impl Log {
             self.text.drain(..cut);
             self.truncated = true;
         }
-        *self != before
+        was_waiting || *self != before
     }
 
     /// Display lines (a trailing newline does not add an empty last line).
@@ -403,6 +422,47 @@ pub fn bytes_label(bytes: u64) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A wait keeps the log open and readable, says why, and the first real
+    /// chunk clears it.
+    #[test]
+    fn a_waiting_reply_keeps_reading_and_the_first_chunk_clears_it() {
+        let mut log = Log::new("s", "b1", Source::Task);
+        assert!(
+            log.apply(&json!({"session_id":"s","task_id":"b1","source":"task",
+            "status":"running","running":true,"offset":0,"next_offset":null,"size":0,
+            "text":"","done":false,"waiting":"the CLI has not named this task's log file yet"}))
+        );
+        assert_eq!(
+            log.waiting.as_deref(),
+            Some("the CLI has not named this task's log file yet")
+        );
+        assert!(
+            !log.done && log.next_offset.is_none(),
+            "the next read still asks for the tail"
+        );
+        assert!(
+            log.apply(&json!({"session_id":"s","task_id":"b1","source":"task",
+            "status":"running","running":true,"offset":0,"next_offset":3,"size":3,
+            "text":"ok\n","done":false}))
+        );
+        assert_eq!(log.waiting, None);
+        assert_eq!(log.text, "ok\n");
+    }
+
+    #[test]
+    fn a_shell_opens_its_log_before_the_file_is_known() {
+        let shell = Task::from_value(
+            &json!({"id":"b1","taskType":"local_bash","status":"running",
+            "description":"Run tests","command":"cargo test"}),
+        )
+        .unwrap();
+        assert!(shell.shows_log());
+        assert_eq!(shell.command, "cargo test");
+        let agent = Task::from_value(&json!({"id":"a1","taskType":"local_agent","hasOutput":true}))
+            .unwrap();
+        assert!(!agent.shows_log());
+    }
 
     fn row(id: &str, kind: &str, status: &str, started: i64, ended: Option<i64>) -> Value {
         json!({"id":id,"taskType":kind,"status":status,"startedAt":started,"endedAt":ended,

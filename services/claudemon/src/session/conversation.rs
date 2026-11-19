@@ -931,11 +931,31 @@ async fn tail_one(
     // across the whole file on a reset/rebuild — so a resync replays the current
     // plan, not every historical revision).
     let mut latest_plan: Option<Plan> = None;
+    // PTY sessions have no `task_*` frames: their background shells come
+    // from the transcript's launch results and task notifications.
+    let mut task_rows: Vec<(i64, String, Vec<super::background_tasks::TaskEvent>)> = Vec::new();
+    let ingest_tasks = marking == ApiErrorMarking::Tailer
+        && store
+            .get(session_id)
+            .is_some_and(|s| s.provider == "claude");
     for line in complete.lines() {
         if line.trim().is_empty() {
             continue;
         }
         if let Ok(value) = serde_json::from_str::<Value>(line) {
+            if ingest_tasks {
+                let events = super::background_tasks::parse_transcript_row(&value);
+                if !events.is_empty() {
+                    let at = super::background_tasks::row_time_ms(&value)
+                        .unwrap_or_else(super::background_tasks::now_ms);
+                    let session = value
+                        .get("sessionId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    task_rows.push((at, session, events));
+                }
+            }
             items.extend(items_from_row(&value, marking));
             // Task tools and TodoWrite feed the same last-write-wins plan, in
             // row order — whichever the agent used most recently wins.
@@ -950,6 +970,15 @@ async fn tail_one(
                 latest_plan = Some(plan);
             }
         }
+    }
+
+    if ingest_tasks && (!task_rows.is_empty() || reset) {
+        let stopped = store
+            .get(session_id)
+            .is_some_and(|s| s.mode == SessionMode::Stopped);
+        store.update_background_task_list(session_id, |tasks| {
+            super::background_tasks::apply_transcript(tasks, task_rows, stopped)
+        });
     }
 
     let delta = {

@@ -107,6 +107,16 @@ pub struct BackgroundTask {
     /// only: the path is resolved daemon-side at read time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redirect_file: Option<String>,
+    /// A shell's command line, from the launching `tool_use`'s
+    /// `input.command`. Current CLIs report the Bash tool's human
+    /// `description` ("Run the tests") as the task description, so this is
+    /// the only place the command (and any redirect in it) appears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// The Claude session id the CLI reported for this task (the directory
+    /// its log lives under). Daemon-side only.
+    #[serde(skip)]
+    pub claude_session: Option<String>,
     /// The task's root process, only when proven (see [`discover_process`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
@@ -140,6 +150,8 @@ impl BackgroundTask {
             subagent_id: (task_type == "local_agent").then(|| id.to_string()),
             has_output: false,
             redirect_file: None,
+            command: None,
+            claude_session: None,
             pid: None,
             output_file: None,
             process: None,
@@ -148,6 +160,65 @@ impl BackgroundTask {
 
     pub fn is_running(&self) -> bool {
         !is_terminal(&self.status)
+    }
+
+    /// The text a redirect is read from: the real command when known, else
+    /// the description (older CLIs, and Bash calls without a description,
+    /// report the command there).
+    pub fn command_line(&self) -> Option<&str> {
+        self.command.as_deref().or(self.description.as_deref())
+    }
+}
+
+/// Background `tool_use` commands by tool-use id, remembered from the
+/// assistant frame until the task that tool launched shows up (the
+/// `tool_use` always arrives first). Tool-use ids are globally unique, so one
+/// bounded process-wide cache serves every session.
+static LAUNCHES: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::VecDeque<(String, Launch)>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::VecDeque::new()));
+const MAX_LAUNCHES: usize = 512;
+
+/// What the launching `tool_use` said about a background command.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Launch {
+    pub command: Option<String>,
+    pub description: Option<String>,
+}
+
+fn remember_launch(tool_use_id: &str, launch: Launch) {
+    let Ok(mut cache) = LAUNCHES.lock() else {
+        return;
+    };
+    if let Some(slot) = cache.iter_mut().find(|(id, _)| id == tool_use_id) {
+        slot.1 = launch;
+        return;
+    }
+    if cache.len() >= MAX_LAUNCHES {
+        cache.pop_front();
+    }
+    cache.push_back((tool_use_id.to_string(), launch));
+}
+
+fn launch_for(tool_use_id: &str) -> Option<Launch> {
+    LAUNCHES
+        .lock()
+        .ok()?
+        .iter()
+        .find(|(id, _)| id == tool_use_id)
+        .map(|(_, l)| l.clone())
+}
+
+/// Attach what the launching `tool_use` said to a task that names it.
+fn adopt_launch(task: &mut BackgroundTask) {
+    let Some(launch) = task.tool_use_id.as_deref().and_then(launch_for) else {
+        return;
+    };
+    if task.command.is_none() {
+        task.command = launch.command;
+    }
+    if task.description.is_none() {
+        task.description = launch.description;
     }
 }
 
@@ -193,8 +264,19 @@ pub enum TaskEvent {
         reason: Option<String>,
         output_file: Option<PathBuf>,
     },
-    /// The output file of a task, learned from its launch `tool_result`.
-    Output { id: String, output_file: PathBuf },
+    /// A task's launch `tool_result`: the tool-use that started it and, when
+    /// the text names one, its output file. `create` adds a shell row for a
+    /// task no `task_started` announced (transcript ingestion, where launch
+    /// results are the only start signal).
+    Output {
+        id: String,
+        tool_use_id: Option<String>,
+        output_file: Option<PathBuf>,
+        create: bool,
+    },
+    /// A background `tool_use` in an assistant frame: its command, before
+    /// any task exists for it.
+    Launch { tool_use_id: String, launch: Launch },
 }
 
 fn text(v: &Value, key: &str) -> Option<String> {
@@ -286,30 +368,74 @@ fn launch_output_path(frame: &Value) -> Option<String> {
     None
 }
 
+/// Background `tool_use` blocks of an assistant message (stream frame or
+/// transcript row: both carry `message.content`).
+fn launches(v: &Value) -> Vec<TaskEvent> {
+    let Some(content) = v.pointer("/message/content").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    content
+        .iter()
+        .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_use"))
+        .filter(|b| {
+            b.pointer("/input/run_in_background")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter_map(|b| {
+            let tool_use_id = b.get("id").and_then(Value::as_str)?.to_string();
+            let input = b.get("input")?;
+            Some(TaskEvent::Launch {
+                tool_use_id,
+                launch: Launch {
+                    command: text(input, "command"),
+                    description: text(input, "description"),
+                },
+            })
+        })
+        .collect()
+}
+
+/// The launch result of a background shell: `tool_use_result` on the
+/// stream, `toolUseResult` in the transcript.
+fn launch_result(v: &Value, session: &str, create: bool) -> Vec<TaskEvent> {
+    let Some(id) = v
+        .pointer("/tool_use_result/backgroundTaskId")
+        .or_else(|| v.pointer("/toolUseResult/backgroundTaskId"))
+        .and_then(Value::as_str)
+        .filter(|id| valid_task_id(id))
+    else {
+        return Vec::new();
+    };
+    let tool_use_id = v
+        .pointer("/message/content")
+        .and_then(Value::as_array)
+        .and_then(|blocks| {
+            blocks
+                .iter()
+                .find_map(|b| b.get("tool_use_id").and_then(Value::as_str))
+        })
+        .map(str::to_string);
+    let output_file = launch_output_path(v).and_then(|raw| confined_output_path(&raw, id, session));
+    if output_file.is_none() && tool_use_id.is_none() && !create {
+        return Vec::new();
+    }
+    vec![TaskEvent::Output {
+        id: id.to_string(),
+        tool_use_id,
+        output_file,
+        create,
+    }]
+}
+
 /// Parse one stdout frame into task facts. Pure; unrelated frames yield none.
 pub fn parse_frame(v: &Value) -> Vec<TaskEvent> {
     let session = v.get("session_id").and_then(Value::as_str).unwrap_or("");
     match v.get("type").and_then(Value::as_str) {
         Some("system") => {}
-        Some("user") => {
-            // A background Bash launch result: names the task and its file.
-            let Some(id) = v
-                .pointer("/tool_use_result/backgroundTaskId")
-                .and_then(Value::as_str)
-                .filter(|id| valid_task_id(id))
-            else {
-                return Vec::new();
-            };
-            return launch_output_path(v)
-                .and_then(|raw| confined_output_path(&raw, id, session))
-                .map(|output_file| {
-                    vec![TaskEvent::Output {
-                        id: id.to_string(),
-                        output_file,
-                    }]
-                })
-                .unwrap_or_default();
-        }
+        Some("assistant") => return launches(v),
+        // A background Bash launch result: names the task and its file.
+        Some("user") => return launch_result(v, session, false),
         _ => return Vec::new(),
     }
     let id = || {
@@ -404,6 +530,78 @@ pub fn parse_frame(v: &Value) -> Vec<TaskEvent> {
     }
 }
 
+/// Parse one TRANSCRIPT row (PTY sessions, whose CLI writes no `task_*`
+/// frames anywhere we can read) into task facts. A shell starts at its
+/// launch result (`toolUseResult.backgroundTaskId`) and ends at the
+/// `<task-notification>` the CLI queues for the model, which the transcript
+/// records as a `queue-operation`, a `queued_command` attachment, or (older
+/// CLIs) a user message. Agents are left to the child view.
+pub fn parse_transcript_row(v: &Value) -> Vec<TaskEvent> {
+    let session = v.get("sessionId").and_then(Value::as_str).unwrap_or("");
+    match v.get("type").and_then(Value::as_str) {
+        Some("assistant") => launches(v),
+        Some("user") => {
+            let mut events = launch_result(v, session, true);
+            if let Some(Value::String(body)) = v.pointer("/message/content") {
+                events.extend(task_notification(body, session));
+            }
+            events
+        }
+        Some("queue-operation")
+            if v.get("operation").and_then(Value::as_str) == Some("enqueue") =>
+        {
+            v.get("content")
+                .and_then(Value::as_str)
+                .map(|body| task_notification(body, session))
+                .unwrap_or_default()
+        }
+        Some("attachment") => v
+            .pointer("/attachment/prompt")
+            .and_then(Value::as_str)
+            .map(|body| task_notification(body, session))
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// `<task-notification><task-id>…</task-id><output-file>…</output-file>
+/// <status>…</status><summary>…</summary></task-notification>`.
+fn task_notification(body: &str, session: &str) -> Vec<TaskEvent> {
+    let Some(start) = body.find("<task-notification>") else {
+        return Vec::new();
+    };
+    let body = &body[start..];
+    let tag = |name: &str| -> Option<String> {
+        let open = format!("<{name}>");
+        let close = format!("</{name}>");
+        let from = body.find(&open)? + open.len();
+        let to = from + body[from..].find(&close)?;
+        Some(body[from..to].trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| bounded(s, MAX_TEXT))
+    };
+    let Some(id) = tag("task-id").filter(|id| valid_task_id(id)) else {
+        return Vec::new();
+    };
+    let output_file = tag("output-file").and_then(|raw| confined_output_path(&raw, &id, session));
+    vec![TaskEvent::Notification {
+        status: tag("status"),
+        summary: tag("summary"),
+        usage: None,
+        reason: None,
+        output_file,
+        id,
+    }]
+}
+
+/// The row's `timestamp` as unix ms, so a transcript replayed from the top
+/// dates its tasks when they ran, not when they were read.
+pub fn row_time_ms(v: &Value) -> Option<i64> {
+    let ts = v.get("timestamp")?.as_str()?;
+    let t = time::OffsetDateTime::parse(ts, &time::format_description::well_known::Rfc3339).ok()?;
+    Some((t.unix_timestamp_nanos() / 1_000_000) as i64)
+}
+
 /// Fold one event into a session's task list. Returns whether anything a
 /// client can see changed. `now` is unix ms.
 pub fn apply(tasks: &mut Vec<BackgroundTask>, event: TaskEvent, now: i64) -> bool {
@@ -461,6 +659,7 @@ pub fn apply(tasks: &mut Vec<BackgroundTask>, event: TaskEvent, now: i64) -> boo
             task.workflow_name = workflow_name.or(task.workflow_name.take());
             task.owned_by_subagent |= owned_by_subagent;
             task.ambient |= ambient;
+            adopt_launch(task);
             *task != before
         }
         TaskEvent::Progress {
@@ -534,25 +733,145 @@ pub fn apply(tasks: &mut Vec<BackgroundTask>, event: TaskEvent, now: i64) -> boo
             }
             *task != before
         }
-        TaskEvent::Output { id, output_file } => {
+        TaskEvent::Output {
+            id,
+            tool_use_id,
+            output_file,
+            create,
+        } => {
+            let mut created = false;
+            if create && !tasks.iter().any(|t| t.id == id) {
+                tasks.push(BackgroundTask::new(&id, "local_bash", now));
+                created = true;
+            }
             let Some(task) = tasks.iter_mut().find(|t| t.id == id) else {
                 return false;
             };
             let before = task.clone();
-            set_output(task, output_file);
-            *task != before || before.output_file != task.output_file
+            if task.tool_use_id.is_none() {
+                task.tool_use_id = tool_use_id;
+            }
+            adopt_launch(task);
+            if let Some(path) = output_file {
+                set_output(task, path);
+            }
+            created || *task != before || before.output_file != task.output_file
+        }
+        TaskEvent::Launch {
+            tool_use_id,
+            launch,
+        } => {
+            remember_launch(&tool_use_id, launch);
+            // Normally no task names this tool use yet; if one does (a
+            // replayed or reordered stream), it learns its command now.
+            let mut changed = false;
+            for task in tasks
+                .iter_mut()
+                .filter(|t| t.tool_use_id.as_deref() == Some(tool_use_id.as_str()))
+            {
+                let before = task.clone();
+                adopt_launch(task);
+                changed |= *task != before;
+            }
+            changed
         }
     };
     if changed {
         share_tasks_dir(tasks);
         for task in tasks.iter_mut().filter(|t| t.task_type != "local_agent") {
             task.redirect_file = task
-                .description
-                .as_deref()
+                .command_line()
                 .and_then(super::task_redirect::display_name);
         }
     }
     retain_bounded(tasks, now) || changed
+}
+
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
+}
+
+/// Fold a batch of transcript rows (`(row time, claude session, events)`)
+/// into a PTY session's list. A stopped session has nothing still running.
+/// Returns whether anything a client can see changed.
+pub fn apply_transcript(
+    tasks: &mut Vec<BackgroundTask>,
+    rows: Vec<(i64, String, Vec<TaskEvent>)>,
+    stopped: bool,
+) -> bool {
+    let mut changed = false;
+    for (at, session, events) in rows {
+        for event in events {
+            changed |= apply(tasks, event, at);
+        }
+        stamp_session(tasks, &session);
+    }
+    let now = now_ms();
+    if stopped {
+        changed |= end_all(tasks, now);
+    }
+    changed | retain_bounded(tasks, now)
+}
+
+/// Record which Claude session the tasks belong to (the frame's or row's
+/// session id). Returns whether a row learned it.
+pub fn stamp_session(tasks: &mut [BackgroundTask], session: &str) -> bool {
+    if session.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    for task in tasks.iter_mut().filter(|t| t.claude_session.is_none()) {
+        task.claude_session = Some(session.to_string());
+        changed = true;
+    }
+    changed
+}
+
+/// Where the CLI keeps task logs: `<tmp>/claude/<project>/<session>/tasks/`.
+fn task_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(dir) = std::env::var_os("CLAUDE_CODE_TMPDIR").filter(|d| !d.is_empty()) {
+        roots.push(PathBuf::from(dir).join("claude"));
+    }
+    let tmp = std::env::temp_dir().join("claude");
+    if !roots.contains(&tmp) {
+        roots.push(tmp);
+    }
+    roots
+}
+
+/// Find a task's log by its session and id when no frame named the file (a
+/// subagent's shell, whose launch result the parent stream never carries,
+/// or a read before the launch result arrived). Only the CLI's own layout
+/// is accepted, and only an existing regular file.
+pub fn discover_output_file(claude_session: &str, task_id: &str) -> Option<PathBuf> {
+    if !valid_task_id(task_id) || !valid_task_id(claude_session) {
+        return None;
+    }
+    for root in task_roots() {
+        let Ok(projects) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for project in projects.flatten().take(2_000) {
+            let path = project
+                .path()
+                .join(claude_session)
+                .join("tasks")
+                .join(format!("{task_id}.output"));
+            let Some(path) = path
+                .to_str()
+                .and_then(|raw| confined_output_path(raw, task_id, claude_session))
+            else {
+                continue;
+            };
+            if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_file()) {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 fn set_output(task: &mut BackgroundTask, path: PathBuf) {
@@ -1018,6 +1337,132 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// An absolute CLI-layout tasks dir on every platform.
+    fn cli_tasks_dir(session: &str) -> PathBuf {
+        std::env::temp_dir()
+            .join("claude")
+            .join("wks-test-project")
+            .join(session)
+            .join("tasks")
+    }
+
+    /// Row shapes from a real 2.1.326 PTY transcript: the Bash call carries a
+    /// human `description` beside the `command`, and the task is announced
+    /// only by its launch result and ended by a queued `<task-notification>`.
+    #[test]
+    fn transcript_rows_build_a_pty_shell_with_its_real_command() {
+        let sid = "10d35271-e9c5-426a-ae2b-28971ee5bdac";
+        let out = cli_tasks_dir(sid).join("b5j12cowk.output");
+        let out_s = out.to_str().unwrap();
+        let command = "log=$(mktemp); cargo test > \"$log\" 2>&1; tail -5 \"$log\"";
+        let rows = [
+            json!({"type":"assistant","sessionId":sid,"timestamp":"2026-11-17T23:34:37.000Z",
+                "message":{"content":[{"type":"tool_use","id":"toolu_tx1","name":"Bash",
+                "input":{"command":command,"description":"Build and run tests",
+                "run_in_background":true}}]}}),
+            json!({"type":"user","sessionId":sid,"timestamp":"2026-11-17T23:34:37.332Z",
+                "message":{"role":"user","content":[{"tool_use_id":"toolu_tx1","type":"tool_result",
+                "content":format!("Command running in background with ID: b5j12cowk. Output is being written to: {out_s}. You will be notified when it completes."),
+                "is_error":false}]},
+                "toolUseResult":{"stdout":"","stderr":"","interrupted":false,"backgroundTaskId":"b5j12cowk"}}),
+        ];
+        let mut tasks = Vec::new();
+        let batch = rows
+            .iter()
+            .map(|r| {
+                (
+                    row_time_ms(r).unwrap(),
+                    sid.to_string(),
+                    parse_transcript_row(r),
+                )
+            })
+            .collect();
+        assert!(apply_transcript(&mut tasks, batch, false));
+        let t = &tasks[0];
+        assert_eq!(t.id, "b5j12cowk");
+        assert_eq!(t.task_type, "local_bash");
+        assert!(t.is_running());
+        assert_eq!(t.command.as_deref(), Some(command));
+        assert_eq!(t.description.as_deref(), Some("Build and run tests"));
+        assert_eq!(t.output_file.as_deref(), Some(out.as_path()));
+        assert!(t.has_output);
+        assert_eq!(t.redirect_file.as_deref(), Some("mktemp file"));
+        assert_eq!(t.claude_session.as_deref(), Some(sid));
+        assert_eq!(t.started_at, row_time_ms(&rows[1]).unwrap());
+
+        let done = json!({"type":"queue-operation","operation":"enqueue","sessionId":sid,
+            "timestamp":"2026-11-17T23:35:10.000Z",
+            "content":format!("<task-notification>\n<task-id>b5j12cowk</task-id>\n<tool-use-id>toolu_tx1</tool-use-id>\n<output-file>{out_s}</output-file>\n<status>failed</status>\n<summary>Background command \"Build and run tests\" failed with exit code 1</summary>\n</task-notification>")});
+        // Dated now: a finish replayed from days ago is past retention.
+        let batch = vec![(now_ms(), sid.to_string(), parse_transcript_row(&done))];
+        assert!(apply_transcript(&mut tasks, batch, false));
+        assert_eq!(tasks[0].status, "failed");
+        assert!(tasks[0].summary.as_deref().unwrap().contains("exit code 1"));
+        let old = vec![(row_time_ms(&done).unwrap(), sid.to_string(), Vec::new())];
+        tasks[0].ended_at = row_time_ms(&done);
+        apply_transcript(&mut tasks, old, false);
+        assert!(
+            tasks.is_empty(),
+            "a replayed finish from days ago is not kept"
+        );
+    }
+
+    #[test]
+    fn a_stopped_pty_session_has_nothing_running() {
+        let sid = "stopped-session";
+        let row = json!({"type":"user","sessionId":sid,
+            "message":{"content":[{"tool_use_id":"toolu_s1","type":"tool_result","content":"Command running in background with ID: bstop1."}]},
+            "toolUseResult":{"backgroundTaskId":"bstop1"}});
+        let mut tasks = Vec::new();
+        apply_transcript(
+            &mut tasks,
+            vec![(now_ms(), sid.into(), parse_transcript_row(&row))],
+            true,
+        );
+        assert_eq!(tasks[0].status, "stopped");
+    }
+
+    /// Stream: the assistant `tool_use` names the command before
+    /// `task_started` (whose description is the human one) arrives.
+    #[test]
+    fn stream_tasks_adopt_the_command_of_their_tool_use() {
+        let mut tasks = Vec::new();
+        let launch = json!({"type":"assistant","session_id":"s","message":{"content":[
+            {"type":"tool_use","id":"toolu_st1","name":"Bash","input":{
+                "command":"npm test | tee test.log","description":"Run tests","run_in_background":true}},
+            {"type":"tool_use","id":"toolu_fg","name":"Bash","input":{"command":"ls"}}]}});
+        let events = parse_frame(&launch);
+        assert_eq!(events.len(), 1, "foreground calls are not launches");
+        for e in events {
+            apply(&mut tasks, e, 1);
+        }
+        let started = json!({"type":"system","subtype":"task_started","task_id":"bst1",
+            "tool_use_id":"toolu_st1","description":"Run tests","is_backgrounded":true,
+            "task_type":"local_bash","session_id":"s"});
+        for e in parse_frame(&started) {
+            apply(&mut tasks, e, 2);
+        }
+        assert_eq!(tasks[0].command.as_deref(), Some("npm test | tee test.log"));
+        assert_eq!(tasks[0].description.as_deref(), Some("Run tests"));
+        assert_eq!(tasks[0].redirect_file.as_deref(), Some("test.log"));
+    }
+
+    #[test]
+    fn a_log_no_frame_named_is_found_by_session_and_id() {
+        let sid = format!("disc-{}", std::process::id());
+        let dir = cli_tasks_dir(&sid);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("bdisc1.output");
+        std::fs::write(&file, "hello\n").unwrap();
+        assert_eq!(
+            discover_output_file(&sid, "bdisc1").as_deref(),
+            Some(file.as_path())
+        );
+        assert_eq!(discover_output_file(&sid, "bmissing"), None);
+        assert_eq!(discover_output_file("../x", "bdisc1"), None);
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+    }
+
     const CAPTURE: &str =
         include_str!("../providers/testdata/claude-stream-bg-tasks-capture.jsonl");
     const FAILED: &str =
@@ -1232,7 +1677,9 @@ mod tests {
             &mut tasks,
             TaskEvent::Output {
                 id: "sh1".into(),
-                output_file: "/t/s/tasks/sh1.output".into(),
+                tool_use_id: None,
+                output_file: Some("/t/s/tasks/sh1.output".into()),
+                create: false,
             },
             2,
         );

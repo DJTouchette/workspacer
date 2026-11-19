@@ -2618,11 +2618,16 @@ fn observe_background_tasks(store: &SessionStore, session_id: &str, value: &Valu
     let provider_pid = store
         .managed_task_control(session_id)
         .and_then(|c| c.provider_pid);
+    let claude_session = value
+        .get("session_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     store.update_background_task_list(session_id, |tasks| {
         let mut changed = false;
         for event in events {
             changed |= background_tasks::apply(tasks, event, now);
         }
+        background_tasks::stamp_session(tasks, claude_session);
         if let Some(pid) = provider_pid {
             changed |= prove_task_processes(pid, tasks);
         }
