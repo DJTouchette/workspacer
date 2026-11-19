@@ -304,3 +304,105 @@ fn narrow_windows_show_the_panel_as_a_sheet(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("tasks-sheet").is_some());
     assert!(visual.debug_bounds("tasks-panel").is_none());
 }
+
+/// The answer to a diagnosis, folded into the view.
+fn diagnosis_answer(
+    workspace: &Entity<Workspace>,
+    visual: &mut VisualTestContext,
+    subject: wks_native::diagnose::Subject,
+    value: serde_json::Value,
+) {
+    let mut view = (*workspace.read_with(visual, |this, _| this.view.clone())).clone();
+    view.requests.insert(
+        "diagnose",
+        RequestState {
+            number: 9,
+            request: Request::Diagnose(subject),
+            loading: false,
+            value: Arc::new(value),
+            error: None,
+        },
+    );
+    show(workspace, visual, view);
+}
+
+#[gpui::test]
+fn diagnose_sends_the_open_log_and_offers_an_issue_for_our_bugs(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    // Demo workspaces never call the hub, so Diagnose stays hidden there.
+    visual.update(|_, cx| workspace.update(cx, |this, _| this.demo = false));
+    visual.simulate_resize(gpui::size(px(1400.), px(800.)));
+    show(
+        &workspace,
+        &mut visual,
+        with_tasks(serde_json::json!({"background_tasks":2,"background_task_list":task_rows()})),
+    );
+    click(&mut visual, "title-tasks");
+    click(&mut visual, "task-row-sh1");
+    log_answer(
+        &workspace,
+        &mut visual,
+        5,
+        None,
+        serde_json::json!({"session_id":"a","task_id":"sh1","offset":0,"next_offset":0,
+            "size":0,"text":"","running":true,"status":"running","done":false,
+            "waiting":"the CLI has not named this task's log file yet"}),
+    );
+    drain(&mut commands);
+    click(&mut visual, "task-log-diagnose");
+    let subject = drain(&mut commands)
+        .into_iter()
+        .find_map(|c| match c {
+            Command::Request(Request::Diagnose(subject)) => Some(subject),
+            _ => None,
+        })
+        .expect("Diagnose asks the hub");
+    assert!(subject.title.contains("npm run dev"), "{}", subject.title);
+    assert!(
+        subject
+            .details
+            .contains("Daemon is waiting because: the CLI has not named this task's log file yet"),
+        "{}",
+        subject.details
+    );
+    assert!(visual.debug_bounds("diagnosis-card").is_some());
+    assert!(visual.debug_bounds("diagnosis-loading").is_some());
+
+    diagnosis_answer(
+        &workspace,
+        &mut visual,
+        subject.clone(),
+        serde_json::json!({"ok":true,"provider":"claude","model":"sonnet",
+            "text":"## What happened\nNo log yet.\n## Likely cause\nThe CLI never named it.\n## What to try\n1. Wait.",
+            "workspacerBug":true,"issueTitle":"Task log never named"}),
+    );
+    assert!(visual.debug_bounds("diagnosis-loading").is_none());
+    assert!(visual.debug_bounds("diagnosis-copy").is_some());
+    assert!(
+        visual.debug_bounds("diagnosis-report").is_some(),
+        "our bug: offer the issue"
+    );
+
+    diagnosis_answer(
+        &workspace,
+        &mut visual,
+        subject.clone(),
+        serde_json::json!({"ok":true,"provider":"claude","model":"sonnet",
+            "text":"## What happened\nYour test failed.\n## Likely cause\nAn assertion.\n## What to try\n1. Fix it.",
+            "workspacerBug":false}),
+    );
+    assert!(
+        visual.debug_bounds("diagnosis-report").is_none(),
+        "not ours: no issue"
+    );
+
+    diagnosis_answer(
+        &workspace,
+        &mut visual,
+        subject,
+        serde_json::json!({"ok":false,"provider":"claude","model":"sonnet","error":"limited"}),
+    );
+    assert!(visual.debug_bounds("diagnosis-error").is_some());
+    click(&mut visual, "diagnosis-close");
+    assert!(workspace.read_with(&visual, |this, _| this.extras.diagnosis.is_none()));
+}

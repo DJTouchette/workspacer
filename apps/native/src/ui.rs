@@ -9,6 +9,7 @@ mod cleanup;
 mod conversation;
 mod default_shell;
 mod design_system;
+mod diagnose;
 mod explorer;
 mod features;
 mod file_viewer;
@@ -2105,6 +2106,7 @@ impl Workspace {
             .flex()
             .child(sidebar)
             .children(flyout);
+        let diagnosis = self.render_diagnosis(window, cx);
         if portrait {
             // Panels dock below the conversation, which keeps the width.
             main.child(
@@ -2120,6 +2122,7 @@ impl Workspace {
         } else {
             main.child(content).children(docked)
         }
+        .children(diagnosis)
         .into_any_element()
     }
 }

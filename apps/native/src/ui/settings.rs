@@ -773,6 +773,15 @@ impl Workspace {
             Layout::Block,
             self.render_manager_provider(cx),
         ));
+        entries.push(Entry::new(
+            S::Agents,
+            "diagnose",
+            "Diagnose errors",
+            "Diagnose, on an error or a background task's log, sends what the screen shows to one disposable turn with no tools, after credentials are masked. By default it uses the harness the error came from, with Sonnet on Claude. When the answer says the fault is Workspacer's own, you can open a pre-filled GitHub issue to review and submit. Saved in the hub's shared settings.",
+            "diagnose diagnosis error explain debug troubleshoot ai model harness sonnet haiku opus codex issue bug report github",
+            Layout::Block,
+            self.render_diagnose_settings(cx),
+        ));
 
         entries.push(Entry::new(
             S::Background,

@@ -7,7 +7,8 @@ use super::*;
 use gpui_component::{Disableable, switch::Switch};
 use serde_json::{Value, json};
 use wks_native::features::{
-    HubChange, KEEP_WARM_PROVIDERS, MANAGER_PROVIDERS, Request, shift_daily_at,
+    DIAGNOSE_CLAUDE_MODELS, DIAGNOSE_PROVIDERS, HubChange, KEEP_WARM_PROVIDERS, MANAGER_PROVIDERS,
+    Request, shift_daily_at,
 };
 
 const INTERVALS: [f64; 6] = [1., 2., 3., 5., 8., 12.];
@@ -518,6 +519,80 @@ impl Workspace {
                 ),
             )
             .children(self.hub_note(&["/agents/managerProvider"], None))
+    }
+
+    /// Which harness and Claude model explain errors (`agents.diagnose`).
+    /// A configured value the presets do not list is shown too, so it is
+    /// never silently replaced.
+    pub(super) fn render_diagnose_settings(&self, cx: &mut Context<Self>) -> Div {
+        let read = |key: &str| {
+            self.hub_value()
+                .and_then(|v| v["diagnose"][key].as_str())
+                .unwrap_or("")
+                .to_owned()
+        };
+        let (provider, model) = (read("provider"), read("claudeModel"));
+        let writable = self.hub_writable();
+        let control = |id: &'static str,
+                       pointer: &'static str,
+                       presets: &[&'static str],
+                       current: String,
+                       label: fn(&str) -> String,
+                       cx: &mut Context<Self>| {
+            let mut ids: Vec<String> = presets.iter().map(|p| (*p).to_owned()).collect();
+            if !ids.contains(&current) {
+                ids.push(current.clone());
+            }
+            let selected = ids.iter().position(|i| *i == current).unwrap_or(0);
+            let options = ids
+                .iter()
+                .enumerate()
+                .map(|(ix, id)| (ix, label(id)))
+                .collect();
+            self.segmented_enabled(
+                id,
+                options,
+                selected,
+                writable,
+                move |this, ix: usize, _, cx| {
+                    if let Some(value) = ids.get(ix) {
+                        this.change_hub(HubChange::new(pointer, value.clone()), cx)
+                    }
+                },
+                cx,
+            )
+        };
+        let harness = control(
+            "diagnose-provider",
+            "/agents/diagnose/provider",
+            &DIAGNOSE_PROVIDERS,
+            provider,
+            |id| match id {
+                "" => "Same as the error".into(),
+                id => provider_label(id).into(),
+            },
+            cx,
+        );
+        let claude = control(
+            "diagnose-claude-model",
+            "/agents/diagnose/models/claude",
+            &DIAGNOSE_CLAUDE_MODELS,
+            model,
+            |id| match id {
+                "" => "Sonnet (default)".into(),
+                "haiku" => "Haiku".into(),
+                "opus" => "Opus".into(),
+                id => id.to_owned(),
+            },
+            cx,
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(self.labelled("Harness", harness))
+            .child(self.labelled("Claude model", claude))
+            .children(self.hub_note(&["/agents/diagnose"], None))
     }
 
     pub(super) fn render_startup_checks(&self, cx: &mut Context<Self>) -> Div {

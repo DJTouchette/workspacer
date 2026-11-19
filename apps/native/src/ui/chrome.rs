@@ -445,14 +445,16 @@ impl Workspace {
             rows.push((notice, self.render_connection_banner(cx).into_any_element()));
         }
         if show_status {
-            let action = retry.then(|| {
-                self.quiet_button("retry-conversation", "Retry", IconName::Redo, true)
-                    .debug_selector(|| "retry-conversation".into())
-                    .py_1()
-                    .on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
-                    .into_any_element()
-            });
             let tone = notice_tone(&status);
+            let action = retry
+                .then(|| {
+                    self.quiet_button("retry-conversation", "Retry", IconName::Redo, true)
+                        .debug_selector(|| "retry-conversation".into())
+                        .py_1()
+                        .on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
+                        .into_any_element()
+                })
+                .or_else(|| self.diagnose_notice("diagnose-status", &status, tone, cx));
             let dismiss = (!retry).then(|| status.clone());
             let row =
                 self.island_notice("status", status.clone(), tone, action, dismiss, compact, cx);
@@ -468,8 +470,16 @@ impl Workspace {
         if show_feature {
             let tone = notice_tone(&feature);
             let dismiss = Some(feature.clone());
-            let row =
-                self.island_notice("feature", feature.clone(), tone, None, dismiss, compact, cx);
+            let action = self.diagnose_notice("diagnose-feature", &feature, tone, cx);
+            let row = self.island_notice(
+                "feature",
+                feature.clone(),
+                tone,
+                action,
+                dismiss,
+                compact,
+                cx,
+            );
             let notice = Notice {
                 slot: "feature",
                 key: feature.clone(),

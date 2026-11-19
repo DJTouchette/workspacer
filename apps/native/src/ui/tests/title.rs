@@ -1258,3 +1258,41 @@ fn wide_windows_float_the_tools_at_the_chats_right_edge(cx: &mut TestAppContext)
         );
     }
 }
+
+/// An error in the island can be diagnosed; other tones carry no action.
+#[gpui::test]
+fn an_error_notice_offers_diagnose(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    let show = |visual: &mut VisualTestContext, notice: &str| {
+        let mut view = state("a");
+        view.notice = notice.into();
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(view), window, cx)
+            })
+        });
+        visual.run_until_parked();
+    };
+    show(&mut visual, "Settings saved");
+    assert!(visual.debug_bounds("diagnose-status").is_none());
+    show(&mut visual, "Couldn't send the message: the hub refused it");
+    let at = visual
+        .debug_bounds("diagnose-status")
+        .expect("an error carries Diagnose")
+        .center();
+    while commands.try_recv().is_ok() {}
+    visual.simulate_click(at, gpui::Modifiers::default());
+    visual.run_until_parked();
+    let sent = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+        Command::Request(wks_native::features::Request::Diagnose(subject)) => Some(subject),
+        _ => None,
+    });
+    let subject = sent.expect("the notice is sent to the hub");
+    assert!(
+        subject
+            .details
+            .contains("Notice: Couldn't send the message")
+    );
+    assert!(visual.debug_bounds("diagnosis-card").is_some());
+}

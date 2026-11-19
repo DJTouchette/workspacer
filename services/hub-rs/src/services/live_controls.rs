@@ -1,7 +1,7 @@
 //! Live switches and handoff/history adapters over the owned daemon.
 mod confirmation;
 mod handoff;
-mod summary;
+pub(crate) mod summary;
 use super::agent_lifecycle::Lifecycle;
 use crate::{Handle, Options, protocol::Event};
 use anyhow::{Result, bail};

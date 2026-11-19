@@ -170,6 +170,7 @@ pub fn provider_timeout(method: &str, base: std::time::Duration) -> std::time::D
         "agents.spawn" | "desktop.worktreeCreate" => 360,
         "claude.handoffAgentBrief" => 180,
         "claude.handoffSummaryBrief" => 150,
+        "desktop.diagnose" => 120,
         "desktop.managerRequestSend" | "desktop.worktreeRemove" => 60,
         _ => 0,
     };

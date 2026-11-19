@@ -26,6 +26,7 @@ const methods = {
     'desktop.claudeProfilesRemove',
     'desktop.saveConfig',
     'desktop.agentSuggestTitle',
+    'desktop.diagnose',
     'desktop.providerReadiness',
     'desktop.agentRuntimeStatus',
     'desktop.keepWarmHeartbeats',

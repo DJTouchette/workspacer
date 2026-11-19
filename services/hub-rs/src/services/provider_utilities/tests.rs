@@ -541,3 +541,34 @@ fn brief_limits_are_wider_than_titles_but_bounded() {
     assert!(brief.timeout > title.timeout && brief.timeout.as_secs() <= 120);
     assert!(brief.chars > 4_000 && brief.output <= 1024 * 1024);
 }
+#[tokio::test]
+async fn diagnose_asks_the_errors_harness_and_strips_the_markers() {
+    let (_root, service, fake) = titled(
+        json!({}),
+        Ok("## What happened\nThe log stayed empty.\n## Likely cause\nThe command wrote elsewhere.\n## What to try\n1. Tail the file.\nWORKSPACER_BUG: yes\nISSUE_TITLE: Blank task log".into()),
+    );
+    let reply = service
+        .diagnose(&json!({"subject":"Task log is blank","details":"cmd: npm test > out.log","provider":"codex"}))
+        .await
+        .unwrap();
+    assert_eq!(reply["ok"], true);
+    assert_eq!(reply["provider"], "codex");
+    assert_eq!(reply["workspacerBug"], true);
+    assert_eq!(reply["issueTitle"], "Blank task log");
+    assert!(!reply["text"].as_str().unwrap().contains("WORKSPACER_BUG"));
+    let calls = fake.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1);
+    assert!(calls[0].2.contains("npm test > out.log"));
+
+    let (_root, service, _) = titled(json!({}), Err(text::Failure::Limited));
+    let failed = service.diagnose(&json!({"subject":"x"})).await.unwrap();
+    assert_eq!(
+        (
+            failed["ok"].clone(),
+            failed["error"].clone(),
+            failed["model"].clone()
+        ),
+        (json!(false), json!("limited"), json!("sonnet"))
+    );
+    assert!(service.diagnose(&json!({})).await.is_err());
+}

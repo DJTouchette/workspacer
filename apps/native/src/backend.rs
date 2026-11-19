@@ -98,6 +98,13 @@ impl Backend {
             ),
         }
     }
+    /// `desktop.diagnose`: the raw reply, `{ok:false}` included, so the
+    /// caller can say which harness and model failed. The hub allows 120 s.
+    pub async fn diagnose(&self, params: Value) -> Result<Value> {
+        self.hub
+            .call_with_timeout("desktop.diagnose", params, Duration::from_secs(125))
+            .await
+    }
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
         let value = self
             .hub

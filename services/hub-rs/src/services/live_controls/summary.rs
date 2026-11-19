@@ -137,7 +137,7 @@ pub(super) fn tail(items: &[Value], budget: usize) -> (String, bool) {
 
 /// Mask credential-shaped strings. Deliberately narrow: well-known token
 /// prefixes and PEM private keys, never ordinary prose or code.
-pub(super) fn redact(text: &str) -> String {
+pub(crate) fn redact(text: &str) -> String {
     static KEYS: OnceLock<regex::Regex> = OnceLock::new();
     static TOKENS: OnceLock<regex::Regex> = OnceLock::new();
     let keys = KEYS.get_or_init(|| {

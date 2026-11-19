@@ -223,6 +223,7 @@ fn operation_budgets_match_the_legacy_provider_contract() {
         ("desktop.worktreeCreate", 360),
         ("claude.handoffAgentBrief", 180),
         ("claude.handoffSummaryBrief", 150),
+        ("desktop.diagnose", 120),
         ("desktop.managerRequestSend", 60),
         ("desktop.worktreeRemove", 60),
         ("sessions.snapshots", 30),

@@ -1,6 +1,7 @@
 //! Small provider-derived UI facts: owned disposable inference, never agent sessions.
 mod codex;
 mod completion;
+pub(crate) mod diagnose;
 mod text;
 pub(crate) mod tools;
 use crate::{
@@ -471,6 +472,49 @@ impl Service {
             Err(failure) => outcome(Err(failure.reason())),
         }
     }
+    /// Explain an error the user is looking at (see [`diagnose`]). Shares
+    /// the briefs' two slots and tool-less limits; the reply always names the
+    /// harness and model that were asked, so the client can say who answered.
+    pub async fn diagnose(&self, params: &Value) -> Result<Value> {
+        let subject = params["subject"].as_str().unwrap_or("").trim();
+        let details = params["details"].as_str().unwrap_or("").trim();
+        anyhow::ensure!(
+            !subject.is_empty() || !details.is_empty(),
+            "nothing to diagnose"
+        );
+        let config = self.config.get();
+        let target = diagnose::target(&config, params["provider"].as_str());
+        let reply = |fields: Value| {
+            let mut value = json!({"provider":target.provider,"model":target.model});
+            if let (Some(value), Some(fields)) = (value.as_object_mut(), fields.as_object()) {
+                value.extend(fields.clone());
+            }
+            value
+        };
+        let prompt = diagnose::prompt(subject, details);
+        let Ok(_permit) = self.briefs.acquire().await else {
+            return Ok(reply(json!({"ok":false,"error":"busy"})));
+        };
+        let answer = tokio::time::timeout(
+            Duration::from_secs(100),
+            self.generator
+                .brief(&target.provider, target.model.as_deref(), &config, &prompt),
+        )
+        .await;
+        Ok(match answer {
+            Err(_) => reply(json!({"ok":false,"error":"timeout"})),
+            Ok(Err(failure)) => reply(json!({"ok":false,"error":failure.reason()})),
+            Ok(Ok(raw)) => match diagnose::parse(&raw) {
+                Some(answer) => reply(json!({
+                    "ok": true,
+                    "text": answer.text,
+                    "workspacerBug": answer.workspacer_bug,
+                    "issueTitle": answer.issue_title,
+                })),
+                None => reply(json!({"ok":false,"error":"empty"})),
+            },
+        })
+    }
     async fn title(&self, request: &Value) -> Result<Value> {
         anyhow::ensure!(request.is_object(), "title request must be an object");
         if !self.titles_enabled() {
@@ -503,6 +547,7 @@ pub(crate) fn install(mut options: Options, config: Arc<Config>, home: PathBuf) 
     let service = Service::new(config, home, options.engine.clone());
     for method in [
         "desktop.agentSuggestTitle",
+        "desktop.diagnose",
         "desktop.providerReadiness",
         "desktop.toolsStatus",
     ] {
@@ -516,6 +561,7 @@ pub(crate) fn install(mut options: Options, config: Arc<Config>, home: PathBuf) 
                 );
                 match method {
                     "desktop.agentSuggestTitle" => service.title(&params["request"]).await,
+                    "desktop.diagnose" => service.diagnose(&params).await,
                     "desktop.providerReadiness" => {
                         let provider = params["provider"]
                             .as_str()

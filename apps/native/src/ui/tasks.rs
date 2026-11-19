@@ -731,6 +731,19 @@ impl Workspace {
                                 },
                             ),
                     )
+                    .when(self.can_diagnose() && !confirming, |d| {
+                        d.child(
+                            self.quiet_button(
+                                "task-log-diagnose",
+                                "Diagnose",
+                                IconName::Search,
+                                true,
+                            )
+                            .debug_selector(|| "task-log-diagnose".into())
+                            .flex_shrink_0()
+                            .on_click(cx.listener(|this, _, _, cx| this.diagnose_task_log(cx))),
+                        )
+                    })
                     .when(running, |d| {
                         d.child(self.render_stop_control(
                             &log.task,
@@ -865,6 +878,26 @@ impl Workspace {
                 )
             })
             .into_any_element()
+    }
+
+    /// Diagnose the open log as it stands now: the task row, the command,
+    /// what the daemon is waiting on and the tail of the output.
+    fn diagnose_task_log(&mut self, cx: &mut Context<Self>) {
+        let Some(log) = self.tasks.log.as_ref() else {
+            return;
+        };
+        let task = self
+            .task_session()
+            .and_then(|s| s.tasks.iter().find(|t| t.id == log.task));
+        let subject = wks_native::diagnose::Subject::task(
+            task,
+            log,
+            &self.tasks.lines,
+            self.tasks.failed.as_deref(),
+            self.task_session().map(|s| s.provider_id()),
+            env!("CARGO_PKG_VERSION"),
+        );
+        self.start_diagnosis(subject, cx);
     }
 
     /// Which file the log follows, and the switch to the other one: the

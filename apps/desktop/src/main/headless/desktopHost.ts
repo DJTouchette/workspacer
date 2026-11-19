@@ -254,6 +254,9 @@ export async function desktopHostCall(
     }
     case 'desktop.agentSuggestTitle':
       return generateAgentTitle(params.request as unknown as TitleRequest);
+    case 'desktop.diagnose':
+      // Native-only: the Rust hub writes diagnoses; Electron is retired.
+      return { ok: false, error: 'unsupported' };
     case 'desktop.providerReadiness': {
       if (!readinessStarted) {
         readinessStarted = true;

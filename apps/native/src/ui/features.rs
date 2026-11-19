@@ -227,6 +227,8 @@ pub(super) struct Extras {
     pub handoff_seen: u64,
     /// Session history's search, groups and keyboard cursor.
     pub recent: super::recent::RecentUi,
+    /// The error the Diagnose panel is open on (see `super::diagnose`).
+    pub diagnosis: Option<wks_native::diagnose::Subject>,
 }
 impl Extras {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
@@ -372,6 +374,7 @@ impl Extras {
             handoff_sent: false,
             handoff_seen: 0,
             recent: super::recent::RecentUi::new(window, cx),
+            diagnosis: None,
         }
     }
 }

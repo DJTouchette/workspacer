@@ -1259,6 +1259,16 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'desktop.diagnose': {
+    reason:
+      'authenticatedDesktopUser preserves native owner authority before shared desktop services run. The hub runs one tool-less completion with its own configured diagnose harness and model (agents.diagnose) over the bounded caller-supplied, credential-masked error text; the caller chooses no path, argv, model or provider, and nothing is posted anywhere.',
+    witnesses: [
+      {
+        kind: 'guard',
+        guard: 'authenticatedDesktopUser',
+      },
+    ],
+  },
   'desktop.toolsStatus': {
     reason:
       'authenticatedDesktopUser preserves native owner authority before shared desktop services run. Writes can produce account configuration, worktrees, rates and evidence, but only the actual local host may access this dispatcher; caller parameters supply neither filesystem roots nor session identity.',
@@ -2146,6 +2156,7 @@ export const actors: string[] = [
   'desktop.claudeProfilesLoginStatus',
   'desktop.claudeProfilesRemove',
   'desktop.claudeProfilesUpdate',
+  'desktop.diagnose',
   'desktop.dispatchHistoryRead',
   'desktop.downloadProjectIcon',
   'desktop.filePickerList',

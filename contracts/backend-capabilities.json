@@ -130,6 +130,7 @@
     "desktop.claudeProfilesLoginStatus",
     "desktop.claudeProfilesRemove",
     "desktop.claudeProfilesUpdate",
+    "desktop.diagnose",
     "desktop.dispatchHistoryRead",
     "desktop.downloadProjectIcon",
     "desktop.filePickerList",

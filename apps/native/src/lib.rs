@@ -7,6 +7,7 @@ pub mod child_agents;
 pub mod codex_extras;
 pub mod controller;
 pub mod data_dir;
+pub mod diagnose;
 pub mod diff;
 pub mod document;
 pub mod elicitation;

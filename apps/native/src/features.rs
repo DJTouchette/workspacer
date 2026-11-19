@@ -251,6 +251,9 @@ pub enum Request {
         session: String,
         task: String,
     },
+    /// Ask the hub's diagnose harness to explain an error on screen
+    /// (`desktop.diagnose`, see `crate::diagnose`).
+    Diagnose(crate::diagnose::Subject),
     Upload {
         session: String,
         source: AttachmentSource,
@@ -651,8 +654,19 @@ pub fn hub_settings(config: &Value) -> Value {
         "managerProvider": manager,
         "pollUsageOnBoot": config["usage"]["pollOnBoot"] != false,
         "checkProviderOnStartup": config["agents"]["checkProviderOnStartup"] != false,
+        // Blank provider: the harness the error came from. Blank Claude
+        // model: Sonnet (the hub's `diagnose::target`).
+        "diagnose": {
+            "provider": config["agents"]["diagnose"]["provider"].as_str().map(str::trim).unwrap_or(""),
+            "claudeModel": config["agents"]["diagnose"]["models"]["claude"].as_str().map(str::trim).unwrap_or(""),
+        },
     })
 }
+
+/// Harnesses Settings offers for Diagnose ("" = the error's own).
+pub const DIAGNOSE_PROVIDERS: [&str; 3] = ["", "claude", "codex"];
+/// Claude models Settings offers for Diagnose ("" = the hub's default, Sonnet).
+pub const DIAGNOSE_CLAUDE_MODELS: [&str; 3] = ["", "haiku", "opus"];
 
 /// `dailyAt` moved by whole hours, wrapping at midnight; minutes are kept.
 /// An unparseable time starts from 08:00.
@@ -701,6 +715,7 @@ impl Request {
             Self::SubagentHistory { .. } => "subagent-history",
             Self::TaskOutput { .. } => "task-output",
             Self::TaskStop { .. } => "task-stop",
+            Self::Diagnose(_) => "diagnose",
             Self::Upload { .. } => "upload",
             Self::Updates => "updates",
             Self::DownloadUpdate { .. } => "update-download",
@@ -773,6 +788,7 @@ impl Request {
             Self::ForgetSession { .. } => Some("sessions.forget"),
             Self::EndSession { .. } => Some("claude.signal"),
             Self::ProjectGroups => Some("projectGroups.list"),
+            Self::Diagnose(_) => Some("desktop.diagnose"),
             Self::SaveProjectGroup { .. } => Some("projectGroups.save"),
             Self::RemoveProjectGroup { .. } => Some("projectGroups.remove"),
             _ => None,
@@ -1375,6 +1391,7 @@ impl Request {
                 );
                 Ok(value)
             }
+            Self::Diagnose(subject) => backend.diagnose(subject.params()).await,
             Self::TaskStop { session, task } => {
                 backend
                     .call(
@@ -1917,7 +1934,13 @@ mod tests {
                 "managerProvider": "claude",
                 "pollUsageOnBoot": true,
                 "checkProviderOnStartup": true,
+                "diagnose": {"provider": "", "claudeModel": ""},
             })
+        );
+        assert_eq!(
+            hub_settings(&json!({"agents": {"diagnose": {"provider": " codex ",
+                "models": {"claude": "haiku"}}}}))["diagnose"],
+            json!({"provider": "codex", "claudeModel": "haiku"})
         );
         let set = hub_settings(&json!({
             "claude": {"keepWarm": {"enabled": true, "providers": ["claude", "codex"],
