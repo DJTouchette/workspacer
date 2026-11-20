@@ -96,8 +96,13 @@ fn completion_output_never_uses_json_bookkeeping_as_title() {
 #[test]
 fn tools_status_is_discovery_not_inference() {
     let rows = tools::status();
-    assert_eq!(rows.as_array().unwrap().len(), 7);
-    for row in rows.as_array().unwrap() {
+    let list = rows.as_array().unwrap();
+    assert_eq!(list.len(), 8);
+    assert!(
+        list.iter()
+            .any(|row| row["id"] == "antigravity" && row["bin"] == "agy")
+    );
+    for row in list {
         assert!(row["available"].is_boolean());
         assert!(row.get("responding").is_none());
         assert!(row["features"].is_array());

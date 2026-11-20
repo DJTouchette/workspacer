@@ -741,9 +741,9 @@ impl Workspace {
                     // ("Denied …: note"). Other providers have no field for it.
                     .when(
                         !self.extras.deny_open
-                            && self
-                                .selected_session()
-                                .is_some_and(|s| matches!(s.provider_id(), "claude" | "codex")),
+                            && self.selected_session().is_some_and(|s| {
+                                matches!(s.provider_id(), "claude" | "codex" | "antigravity")
+                            }),
                         |d| {
                             d.child(
                                 self.button("deny-with-note", "Deny with note…", enabled)
@@ -898,6 +898,7 @@ impl Workspace {
         }
         let provider = match session.provider_id() {
             "codex" => "Codex",
+            "antigravity" => "Antigravity",
             _ => "Claude",
         };
         let when = resets_at

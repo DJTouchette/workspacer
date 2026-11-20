@@ -641,13 +641,14 @@ impl Workspace {
             "default-agent",
             "Default agent",
             "Provider for new sessions. Press a in Normal mode to switch.",
-            "provider claude codex new session",
+            "provider claude codex antigravity agy new session",
             Layout::Row,
             self.segmented(
                 "default-agent",
                 vec![
                     (Provider::Claude, "Claude".into()),
                     (Provider::Codex, "Codex".into()),
+                    (Provider::Antigravity, "Antigravity".into()),
                 ],
                 self.settings.default_provider,
                 |this, provider, _, cx| {
@@ -657,21 +658,33 @@ impl Workspace {
                 cx,
             ),
         ));
-        for (provider, label, title, id) in [
-            ("claude", "Claude", "Claude access mode", "claude-access"),
-            ("codex", "Codex", "Codex access mode", "codex-access"),
+        for (provider, title, description, id) in [
+            (
+                "claude",
+                "Claude access mode",
+                "Used when starting a Claude agent. Override it per session.",
+                "claude-access",
+            ),
+            (
+                "codex",
+                "Codex access mode",
+                "Used when starting a Codex agent. Override it per session.",
+                "codex-access",
+            ),
+            (
+                "antigravity",
+                "Antigravity access mode",
+                "Used when starting an Antigravity agent. Override it per session.",
+                "antigravity-access",
+            ),
         ] {
             let selected = self.settings.default_access(provider);
             entries.push(Entry::new(
                 S::Agents,
                 id,
                 title,
-                if label == "Claude" {
-                    "Used when starting a Claude agent. Override it per session."
-                } else {
-                    "Used when starting a Codex agent. Override it per session."
-                },
-                "permission approval access bypass full yolo ask plan",
+                description,
+                "permission approval access bypass full yolo ask auto plan antigravity agy",
                 Layout::Block,
                 div()
                     .flex()
@@ -687,10 +700,12 @@ impl Workspace {
                                 .collect(),
                             selected,
                             move |this, access, _, cx| {
-                                if provider == "claude" {
-                                    this.settings.default_claude_access = access;
-                                } else {
-                                    this.settings.default_codex_access = access;
+                                match provider {
+                                    "claude" => this.settings.default_claude_access = access,
+                                    "antigravity" => {
+                                        this.settings.default_antigravity_access = access
+                                    }
+                                    _ => this.settings.default_codex_access = access,
                                 }
                                 this.save_settings(cx);
                             },

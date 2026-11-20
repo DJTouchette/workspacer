@@ -57,7 +57,7 @@ pub enum Loading {
 pub fn loading(provider: &str) -> Loading {
     match provider {
         "" | "claude" => Loading::PluginDir,
-        "codex" => Loading::SkillRoots,
+        "codex" | "antigravity" => Loading::SkillRoots,
         _ => Loading::Pointer,
     }
 }

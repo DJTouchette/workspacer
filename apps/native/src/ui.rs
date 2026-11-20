@@ -158,6 +158,7 @@ macro_rules! bundled_icons {
 bundled_icons!(
     "brand/claude.svg",
     "brand/openai.svg",
+    "brand/antigravity.svg",
     "lucide/file-diff.svg",
     "lucide/message-square-plus.svg",
     "lucide/user-round.svg",

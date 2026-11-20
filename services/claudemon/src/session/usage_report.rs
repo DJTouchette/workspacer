@@ -48,7 +48,7 @@ use serde::Serialize;
 use super::account_usage::{self, RootAttribution};
 use super::state::SessionState;
 use super::store::SessionStore;
-use crate::providers::{codex_usage, copilot_usage};
+use crate::providers::{antigravity_usage, codex_usage, copilot_usage};
 
 /// A scalar that can be genuinely zero, temporarily unknown, or structurally
 /// unavailable. See the module note — the three are not interchangeable and
@@ -278,6 +278,7 @@ pub fn build(store: &SessionStore) -> UsageReport {
             claude_report(store, now),
             codex_report(store),
             copilot_report(store),
+            antigravity_report(store),
         ],
     }
 }
@@ -857,6 +858,86 @@ fn copilot_report(store: &SessionStore) -> ProviderReport {
     }
 }
 
+// ── Antigravity ──────────────────────────────────────────────────────
+
+fn antigravity_report(store: &SessionStore) -> ProviderReport {
+    const NO_COST: &str = "Antigravity CLI records no per-request dollar cost on disk";
+    let live = live_sessions_for(store, "antigravity");
+    let u = match antigravity_usage::read_from_disk() {
+        Ok(u) => u,
+        Err(err) => {
+            return ProviderReport {
+                provider: "antigravity".to_string(),
+                accounts: vec![],
+                note: Some(format!("{err}")),
+            }
+        }
+    };
+    let unavailable =
+        || WindowReport::missing(Measured::unavailable(antigravity_usage::QUOTA_UNAVAILABLE));
+    let tokens = |m: &antigravity_usage::AntigravityModelUsage| TokensReport {
+        input: Measured::Ok {
+            value: m.input_tokens,
+        },
+        cache_read: Measured::Ok {
+            value: m.cache_read_tokens,
+        },
+        cache_write: Measured::unavailable(
+            "Antigravity transcripts do not separate cache-write tokens",
+        ),
+        output: Measured::Ok {
+            value: m.output_tokens,
+        },
+        reasoning: Measured::unavailable(
+            "Antigravity transcripts do not separate reasoning tokens",
+        ),
+        total: Measured::Ok {
+            value: m.total_tokens(),
+        },
+    };
+    let spend = || SpendReport {
+        cost_usd: Measured::unavailable(NO_COST),
+        nano_aiu: Measured::unavailable("Antigravity does not bill in AIU"),
+        basis: CostBasis::None,
+    };
+    let account = AccountReport {
+        account: Some(u.source.to_string_lossy().into_owned()),
+        label: "antigravity".to_string(),
+        is_default: true,
+        source: ReportSource::Disk,
+        observed_at: u.last_event_at.as_deref().and_then(parse_iso),
+        fresh: None,
+        failure: None,
+        windows: WindowsReport {
+            five_hour: unavailable(),
+            seven_day: unavailable(),
+            monthly: unavailable(),
+        },
+        model_windows: Vec::new(),
+        spend: spend(),
+        tokens: tokens(&u.totals),
+        models: u
+            .by_model
+            .iter()
+            .map(|m| ModelReport {
+                model: m.model.clone(),
+                requests: Measured::Ok { value: m.requests },
+                tokens: tokens(m),
+                spend: spend(),
+            })
+            .collect(),
+        live_sessions: live,
+    };
+    ProviderReport {
+        provider: "antigravity".to_string(),
+        accounts: vec![account],
+        note: Some(format!(
+            "{} requests over {} sessions, recorded by Antigravity CLI",
+            u.totals.requests, u.sessions
+        )),
+    }
+}
+
 fn parse_iso(s: &str) -> Option<i64> {
     time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
         .ok()
@@ -1047,7 +1128,7 @@ mod tests {
         let store = SessionStore::new();
         let r = build(&store);
         let names: Vec<&str> = r.providers.iter().map(|p| p.provider.as_str()).collect();
-        assert_eq!(names, vec!["claude", "codex", "copilot"]);
+        assert_eq!(names, vec!["claude", "codex", "copilot", "antigravity"]);
         // Claude always has at least the default account row, even cold.
         let claude = &r.providers[0];
         assert!(
@@ -1227,6 +1308,34 @@ mod tests {
         assert_eq!(account.spend.basis, CostBasis::VendorRecorded);
     }
 
+    #[test]
+    fn antigravity_quota_is_unavailable_and_reports_disk_tokens_when_present() {
+        let store = SessionStore::new();
+        let r = build(&store);
+        let agy = r
+            .providers
+            .iter()
+            .find(|p| p.provider == "antigravity")
+            .unwrap();
+        let Some(account) = agy.accounts.first() else {
+            assert!(agy.note.is_some(), "an empty provider must say why");
+            return;
+        };
+        for w in [
+            &account.windows.five_hour,
+            &account.windows.seven_day,
+            &account.windows.monthly,
+        ] {
+            assert!(
+                matches!(w.used_percent, Measured::Unavailable { .. }),
+                "antigravity quota must be unavailable, not {:?}",
+                w.used_percent
+            );
+        }
+        assert_eq!(account.spend.basis, CostBasis::None);
+        assert!(matches!(account.tokens.total, Measured::Ok { .. }));
+    }
+
     /// The whole document round-trips to JSON. Cheap, and it is the only thing
     /// that proves a sibling can actually build against the shape.
     #[test]
@@ -1234,7 +1343,7 @@ mod tests {
         let store = SessionStore::new();
         let v = serde_json::to_value(build(&store)).unwrap();
         assert!(v.get("generated_at").is_some());
-        assert_eq!(v["providers"].as_array().unwrap().len(), 3);
+        assert_eq!(v["providers"].as_array().unwrap().len(), 4);
         assert_eq!(v["providers"][0]["provider"], "claude");
     }
 }

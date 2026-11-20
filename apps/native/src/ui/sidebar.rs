@@ -1305,6 +1305,7 @@ impl Workspace {
                                 let provider = match session.provider.as_str() {
                                     "claude" => "Claude",
                                     "codex" => "Codex",
+                                    "antigravity" => "Antigravity",
                                     "" => "Agent",
                                     other => other,
                                 };

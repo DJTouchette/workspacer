@@ -34,14 +34,15 @@ pub fn status() -> Value {
         "Install git with your package manager (e.g. `pacman -S git`, `apt install git`)"
     };
     Value::Array([
-        ("git","Git",vec!["Review changes pane","Per-turn changed-files cards","Branch display in the status bar","Worktree isolation"],git),
-        ("claude","Claude Code",vec!["Claude agents"],"Install with `npm install -g @anthropic-ai/claude-code`"),
-        ("codex","Codex CLI",vec!["Codex agents"],"Install with `npm install -g @openai/codex`"),
-        ("copilot","GitHub Copilot CLI",vec!["GitHub Copilot agents"],"Install with `npm install -g @github/copilot`"),
-        ("opencode","OpenCode",vec!["OpenCode agents"],"Install from https://opencode.ai"),
-        ("pi","Pi",vec!["Pi agents"],"Install with `npm install -g @earendil-works/pi-coding-agent`"),
-        ("tailscale","Tailscale",vec!["Remote share (HTTPS via tailscale serve)"],"Install from https://tailscale.com/download"),
-    ].into_iter().map(|(id,label,features,install)|{let path=on_path(id);let mut value=json!({"id":id,"label":label,"bin":id,"features":features,"install":install,"available":path.is_some()});if let Some(path)=path{value["path"]=path.to_string_lossy().as_ref().into();}value}).collect())
+        ("git","Git","git",vec!["Review changes pane","Per-turn changed-files cards","Branch display in the status bar","Worktree isolation"],git),
+        ("claude","Claude Code","claude",vec!["Claude agents"],"Install with `npm install -g @anthropic-ai/claude-code`"),
+        ("codex","Codex CLI","codex",vec!["Codex agents"],"Install with `npm install -g @openai/codex`"),
+        ("antigravity","Antigravity CLI","agy",vec!["Antigravity agents"],"Install Antigravity CLI from https://antigravity.google"),
+        ("copilot","GitHub Copilot CLI","copilot",vec!["GitHub Copilot agents"],"Install with `npm install -g @github/copilot`"),
+        ("opencode","OpenCode","opencode",vec!["OpenCode agents"],"Install from https://opencode.ai"),
+        ("pi","Pi","pi",vec!["Pi agents"],"Install with `npm install -g @earendil-works/pi-coding-agent`"),
+        ("tailscale","Tailscale","tailscale",vec!["Remote share (HTTPS via tailscale serve)"],"Install from https://tailscale.com/download"),
+    ].into_iter().map(|(id,label,bin,features,install)|{let path=on_path(bin);let mut value=json!({"id":id,"label":label,"bin":bin,"features":features,"install":install,"available":path.is_some()});if let Some(path)=path{value["path"]=path.to_string_lossy().as_ref().into();}value}).collect())
 }
 /// npm's Windows command shim is never a shell boundary for prompt/model text.
 /// Resolve only the provider's declared package entrypoint in that installation.

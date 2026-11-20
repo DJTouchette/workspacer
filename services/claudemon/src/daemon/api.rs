@@ -1527,7 +1527,8 @@ async fn post_permission_mode(
 /// in 2.1.x). Validated here so an obvious typo 400s instead of riding to the
 /// CLI; the CLI still gets the final say via its control response.
 fn stream_permission_mode_valid(mode: &str) -> bool {
-    PermissionMode::parse(mode).is_some() || matches!(mode, "auto" | "manual" | "dontAsk")
+    PermissionMode::parse(mode).is_some()
+        || matches!(mode, "auto" | "manual" | "dontAsk" | "accept-edits")
 }
 
 #[derive(Debug, Deserialize)]
@@ -2188,7 +2189,7 @@ async fn get_subagent_conversation(
         )
             .into_response();
     };
-    if !matches!(state.provider.as_str(), "codex" | "claude") {
+    if !matches!(state.provider.as_str(), "codex" | "claude" | "antigravity") {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({
@@ -2207,6 +2208,12 @@ async fn get_subagent_conversation(
     }
     if state.provider == "claude" {
         match crate::session::claude_subagents::replay(&state, &agent_id).await {
+            Ok(replay) => return Json(json!({"session_id":id,"agent_id":agent_id,"seq":replay.seq,"first_seq":replay.first_seq,"items":replay.items})).into_response(),
+            Err(error) => return (StatusCode::NOT_FOUND, Json(json!({"ok":false,"error":error.to_string()}))).into_response(),
+        }
+    }
+    if state.provider == "antigravity" {
+        match crate::providers::antigravity_artifacts::replay_subagent(&agent_id).await {
             Ok(replay) => return Json(json!({"session_id":id,"agent_id":agent_id,"seq":replay.seq,"first_seq":replay.first_seq,"items":replay.items})).into_response(),
             Err(error) => return (StatusCode::NOT_FOUND, Json(json!({"ok":false,"error":error.to_string()}))).into_response(),
         }
@@ -2868,7 +2875,7 @@ mod tests {
             .iter()
             .map(|p| p["provider"].as_str().unwrap())
             .collect();
-        assert_eq!(providers, vec!["claude", "codex", "copilot"]);
+        assert_eq!(providers, vec!["claude", "codex", "copilot", "antigravity"]);
         assert!(v["generated_at"].as_i64().unwrap() > 0);
     }
 

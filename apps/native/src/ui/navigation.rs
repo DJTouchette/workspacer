@@ -519,12 +519,7 @@ impl Workspace {
             }))
             .on_action(cx.listener(|this, _: &CycleProvider, _, cx| {
                 if this.screen == Screen::Settings {
-                    this.settings.default_provider =
-                        if this.settings.default_provider == Provider::Claude {
-                            Provider::Codex
-                        } else {
-                            Provider::Claude
-                        };
+                    this.settings.default_provider = this.settings.default_provider.next();
                     this.save_settings(cx);
                 }
             }))

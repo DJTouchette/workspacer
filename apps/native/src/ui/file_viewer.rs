@@ -2742,8 +2742,11 @@ pub(super) fn output_link_handler(
 }
 
 pub(super) fn tool_link(cwd: &str, input: &serde_json::Value, path: &str) -> Link {
-    // A Read tool's `offset` is the first line it read.
-    let line = input["offset"].as_u64().and_then(|l| u32::try_from(l).ok());
+    // A Read tool's `offset` (Claude) or `StartLine` (Antigravity) is the first line it read.
+    let line = input["offset"]
+        .as_u64()
+        .or_else(|| input["StartLine"].as_u64())
+        .and_then(|l| u32::try_from(l).ok());
     links::tool_file(cwd, path, line)
 }
 

@@ -130,6 +130,23 @@ pub fn from_codex_skills(result: &Value) -> Vec<SlashCommand> {
     out
 }
 
+/// ACP (Antigravity CLI): an `available_commands_update` payload
+/// (`{availableCommands: [{name, description?}]}`). Invoked with `/name`.
+pub fn from_acp_commands(update: &Value) -> Vec<SlashCommand> {
+    let mut out = Vec::new();
+    let Some(entries) = update.get("availableCommands").and_then(Value::as_array) else {
+        return out;
+    };
+    for entry in entries {
+        let Some(name) = entry.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let description = entry.get("description").and_then(Value::as_str);
+        push(&mut out, name, '/', "command", description);
+    }
+    out
+}
+
 /// The Codex request that lists this session's skills (`cwds` empty: the
 /// app-server's own working directory, which is the session's), as ask
 /// number `ask` — its id is `workspacer-skills-list-<ask>`. `force_reload`
@@ -226,5 +243,27 @@ mod tests {
         assert_eq!(codex_skills_request(1, false)["params"], json!({}));
         assert_eq!(codex_skills_answer(CODEX_SKILLS_RPC_ID), None);
         assert_eq!(codex_skills_answer("workspacer-skill-roots"), None);
+    }
+
+    #[test]
+    fn acp_commands_insert_slash_and_deduplicate() {
+        let update = json!({
+            "sessionUpdate": "available_commands_update",
+            "availableCommands": [
+                { "name": "compact", "description": "Compact the conversation now\nmore" },
+                { "name": "goal", "description": "Run until finished." },
+                { "name": "compact", "description": "dup" },
+                { "name": "/already-slashed", "description": "skip" }
+            ]
+        });
+        let got = from_acp_commands(&update);
+        assert_eq!(
+            serde_json::to_value(&got).unwrap(),
+            json!([
+                { "name": "compact", "insert": "/compact", "description": "Compact the conversation now", "kind": "command" },
+                { "name": "goal", "insert": "/goal", "description": "Run until finished.", "kind": "command" }
+            ])
+        );
+        assert!(from_acp_commands(&json!({})).is_empty());
     }
 }

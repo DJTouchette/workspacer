@@ -8,16 +8,23 @@ pub enum Permission {
     #[default]
     Ask,
     AcceptEdits,
+    Auto,
     Plan,
     FullAccess,
 }
 
 impl Permission {
     pub fn choices(provider: &str) -> &'static [Self] {
-        if provider == "claude" {
-            &[Self::Ask, Self::AcceptEdits, Self::Plan, Self::FullAccess]
-        } else {
-            &[Self::Ask, Self::FullAccess]
+        match provider {
+            "claude" => &[Self::Ask, Self::AcceptEdits, Self::Plan, Self::FullAccess],
+            "antigravity" => &[
+                Self::Ask,
+                Self::AcceptEdits,
+                Self::Auto,
+                Self::Plan,
+                Self::FullAccess,
+            ],
+            _ => &[Self::Ask, Self::FullAccess],
         }
     }
 
@@ -25,6 +32,7 @@ impl Permission {
         match self {
             Self::Ask => "Ask to approve",
             Self::AcceptEdits => "Accept edits",
+            Self::Auto => "Auto",
             Self::Plan => "Plan mode",
             Self::FullAccess => "Full access",
         }
@@ -34,6 +42,7 @@ impl Permission {
         match self {
             Self::Ask => "The agent asks when a tool needs approval.",
             Self::AcceptEdits => "Allow file edits; other tools may still need approval.",
+            Self::Auto => "Approve edits and safe commands; ask before irreversible actions.",
             Self::Plan => "Explore and plan before making changes.",
             Self::FullAccess => "Run tools without approval prompts.",
         }
@@ -42,10 +51,14 @@ impl Permission {
     /// The choice a session's reported mode (`livePermissionMode` or its
     /// launch setting) names, if it is one this client offers.
     pub fn from_wire(provider: &str, mode: &str) -> Option<Self> {
+        let normalized = match mode {
+            "accept-edits" => "acceptEdits",
+            other => other,
+        };
         Self::choices(provider)
             .iter()
             .copied()
-            .find(|choice| choice.wire(provider).is_ok_and(|wire| wire == mode))
+            .find(|choice| choice.wire(provider).is_ok_and(|wire| wire == normalized))
     }
 
     pub fn wire(self, provider: &str) -> Result<&'static str> {
@@ -54,11 +67,12 @@ impl Permission {
             "Permission mode is unavailable for this provider"
         );
         Ok(match (provider, self) {
-            ("claude", Self::Ask) => "default",
-            ("claude", Self::FullAccess) => "bypassPermissions",
+            ("claude" | "antigravity", Self::Ask) => "default",
+            ("claude" | "antigravity", Self::FullAccess) => "bypassPermissions",
             (_, Self::Ask) => "ask",
             (_, Self::FullAccess) => "yolo",
             (_, Self::AcceptEdits) => "acceptEdits",
+            (_, Self::Auto) => "auto",
             (_, Self::Plan) => "plan",
         })
     }
@@ -384,6 +398,27 @@ mod tests {
         }
         assert!(Permission::Plan.wire("codex").is_err());
         assert!(Permission::AcceptEdits.wire("claude").is_ok());
+        assert!(Permission::Auto.wire("claude").is_err());
+        assert!(Permission::Auto.wire("codex").is_err());
+        assert_eq!(Permission::Ask.wire("antigravity").unwrap(), "default");
+        assert_eq!(
+            Permission::AcceptEdits.wire("antigravity").unwrap(),
+            "acceptEdits"
+        );
+        assert_eq!(Permission::Auto.wire("antigravity").unwrap(), "auto");
+        assert_eq!(Permission::Plan.wire("antigravity").unwrap(), "plan");
+        assert_eq!(
+            Permission::FullAccess.wire("antigravity").unwrap(),
+            "bypassPermissions"
+        );
+        assert_eq!(
+            Permission::from_wire("antigravity", "accept-edits"),
+            Some(Permission::AcceptEdits)
+        );
+        assert_eq!(
+            Permission::from_wire("antigravity", "auto"),
+            Some(Permission::Auto)
+        );
     }
 
     #[test]

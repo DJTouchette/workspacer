@@ -5,7 +5,9 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 fn tool_name(name: &str) -> &str {
+    let name = name.strip_prefix("mcp_workspacer_").unwrap_or(name);
     let name = name.rsplit("__").next().unwrap_or(name);
+    let name = name.rsplit(':').next().unwrap_or(name);
     name.rsplit('.').next().unwrap_or(name)
 }
 
@@ -56,13 +58,13 @@ impl Tool {
         let name = tool_name(&normalized);
         match name {
             "skill" => "Skill",
-            "agent" | "task" | "spawn_agent" | "spawn-agent" => "Subagent",
+            "agent" | "task" | "spawn_agent" | "spawn-agent" | "invoke_subagent" => "Subagent",
             "workflow" | "run_workflow" | "workflow_run" => "Workflow",
-            "edit" | "multiedit" | "str_replace_editor" | "write" | "write_file"
+            "edit" | "edit_file" | "multiedit" | "str_replace_editor" | "write" | "write_file"
             | "create_file" | "notebookedit" | "apply_patch" | "patch" => "Edit",
             "read" | "read_file" => "Read",
             "bash" | "shell" | "exec_command" | "run_command" | "terminal" => "Command",
-            "grep" | "glob" | "search" => "Search",
+            "grep" | "glob" | "search" | "search_web" | "grep_search" | "find_by_name" => "Search",
             _ => "Tool",
         }
     }
@@ -70,17 +72,27 @@ impl Tool {
         let v = self.value();
         let keys: &[&str] = match self.category() {
             "Skill" => &["skill", "name"],
-            "Subagent" | "Workflow" => {
-                &["description", "label", "name", "task", "prompt", "message"]
-            }
-            "Command" => &["command", "cmd"],
+            "Subagent" | "Workflow" => &[
+                "description",
+                "Role",
+                "label",
+                "name",
+                "TypeName",
+                "task",
+                "prompt",
+                "Prompt",
+                "message",
+            ],
+            "Command" => &["command", "cmd", "CommandLine"],
             _ => &[
                 "file_path",
                 "filePath",
                 "path",
+                "Path",
                 "filename",
                 "pattern",
                 "query",
+                "Query",
             ],
         };
         keys.iter()
@@ -137,7 +149,7 @@ impl Tool {
         } else if v["edits"].is_array() {
             for edit in v["edits"].as_array().unwrap().iter().take(100) {
                 let mut edit = edit.clone();
-                edit["file_path"] = ["file_path", "filePath", "path", "filename"]
+                edit["file_path"] = ["file_path", "filePath", "path", "Path", "filename"]
                     .iter()
                     .find_map(|key| v.get(*key))
                     .cloned()
@@ -162,6 +174,7 @@ fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str, include_diff: bo
         .as_str()
         .or_else(|| v["path"].as_str())
         .or_else(|| v["filePath"].as_str())
+        .or_else(|| v["Path"].as_str())
         .or_else(|| v["filename"].as_str())
         .unwrap_or("");
     let patch = v["diff"]
@@ -248,12 +261,14 @@ fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str, include_diff: bo
             .or_else(|| v["oldString"].as_str())
             .or_else(|| v["old_str"].as_str())
             .or_else(|| v["oldText"].as_str())
+            .or_else(|| v["Target"].as_str())
             .unwrap_or("");
         let new = v["new_string"]
             .as_str()
             .or_else(|| v["newString"].as_str())
             .or_else(|| v["new_str"].as_str())
             .or_else(|| v["newText"].as_str())
+            .or_else(|| v["Replacement"].as_str())
             .or_else(|| {
                 if matches!(
                     tool_name(&name.to_ascii_lowercase()),
@@ -261,6 +276,7 @@ fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str, include_diff: bo
                 ) {
                     v["content"]
                         .as_str()
+                        .or_else(|| v["Content"].as_str())
                         .or_else(|| v["text"].as_str())
                         .or_else(|| v["file_text"].as_str())
                 } else {
@@ -1500,5 +1516,60 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(tool.target(), "review");
+    }
+
+    #[test]
+    fn antigravity_tools_categorize_target_and_compute_file_changes() {
+        let edit = Tool {
+            complete: true,
+            ..Tool::from_item(&Item {
+                name: "edit_file".into(),
+                input: json!({
+                    "Path": "src/app.rs",
+                    "Target": "old1\nold2",
+                    "Replacement": "new1\nnew2\nnew3"
+                }),
+                ..Default::default()
+            })
+        };
+        assert_eq!(edit.category(), "Edit");
+        assert_eq!(edit.target(), "src/app.rs");
+        let changes = edit.changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, "src/app.rs");
+        assert_eq!((changes[0].added, changes[0].removed), (3, 2));
+
+        let write = Tool {
+            complete: true,
+            ..Tool::from_item(&Item {
+                name: "write_file".into(),
+                input: json!({"Path": "README.md", "Content": "line1\nline2"}),
+                ..Default::default()
+            })
+        };
+        assert_eq!(write.category(), "Edit");
+        let wchanges = write.changes();
+        assert_eq!(wchanges.len(), 1);
+        assert_eq!((wchanges[0].added, wchanges[0].removed), (2, 0));
+
+        let cmd = Tool::from_item(&Item {
+            name: "run_command".into(),
+            input: json!({"CommandLine": "git status"}),
+            ..Default::default()
+        });
+        assert_eq!(cmd.category(), "Command");
+        assert_eq!(cmd.target(), "git status");
+
+        let sub = Tool::from_item(&Item {
+            name: "invoke_subagent".into(),
+            input: json!({"Role": "Codebase Researcher", "Prompt": "inspect foo"}),
+            ..Default::default()
+        });
+        assert_eq!(sub.category(), "Subagent");
+        assert_eq!(sub.target(), "Codebase Researcher");
+        assert_eq!(
+            crate::child_agents::tool_kind(&sub),
+            Some(crate::child_agents::ChildKind::Provider)
+        );
     }
 }

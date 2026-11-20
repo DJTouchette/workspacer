@@ -291,7 +291,9 @@ impl UsageSampler {
                                 .update_catalog(&p, result.ok().as_ref().and_then(claude_models));
                             return;
                         }
-                        if !["codex", "copilot", "opencode", "pi"].contains(&p.as_str()) {
+                        if !["codex", "antigravity", "copilot", "opencode", "pi"]
+                            .contains(&p.as_str())
+                        {
                             return;
                         }
                         let result = tokio::time::timeout(Duration::from_secs(20), async {

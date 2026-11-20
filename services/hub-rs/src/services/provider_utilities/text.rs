@@ -98,6 +98,7 @@ pub fn serves(provider: &str, model: &str) -> bool {
             static RE: OnceLock<regex::Regex> = OnceLock::new();
             re(&RE, r"^(gpt-|o\d|codex-|gpt\d)").is_match(&model)
         }
+        "antigravity" => !model.is_empty(),
         "copilot" => model == "auto",
         "opencode" | "pi" => {
             static RE: OnceLock<regex::Regex> = OnceLock::new();
@@ -107,7 +108,14 @@ pub fn serves(provider: &str, model: &str) -> bool {
     }
 }
 /// Providers with a one-shot title adapter (see `completion::title`).
-pub const TITLE_PROVIDERS: &[&str] = &["claude", "codex", "opencode", "copilot", "pi"];
+pub const TITLE_PROVIDERS: &[&str] = &[
+    "claude",
+    "codex",
+    "antigravity",
+    "opencode",
+    "copilot",
+    "pi",
+];
 
 /// Which harness writes a title, and with which model.
 ///

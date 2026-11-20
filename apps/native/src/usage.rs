@@ -77,6 +77,7 @@ fn provider_name(provider: &str) -> String {
     match provider {
         "claude" => "Claude".into(),
         "codex" => "Codex".into(),
+        "antigravity" => "Antigravity".into(),
         "copilot" => "Copilot".into(),
         other => {
             let mut chars = other.chars();

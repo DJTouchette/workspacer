@@ -11,7 +11,11 @@ use serde_json::Value;
 use wks_native::features::{Request, TitleChange};
 
 /// Native catalogs (and the provider choices) cover these harnesses.
-const HARNESSES: [(&str, &str); 2] = [("claude", "Claude"), ("codex", "Codex")];
+const HARNESSES: [(&str, &str); 3] = [
+    ("claude", "Claude"),
+    ("codex", "Codex"),
+    ("antigravity", "Antigravity"),
+];
 
 pub(super) fn harness_label(id: &str) -> String {
     HARNESSES

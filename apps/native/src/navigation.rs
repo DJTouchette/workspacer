@@ -12,12 +12,22 @@ pub enum Provider {
     #[default]
     Claude,
     Codex,
+    Antigravity,
 }
 impl Provider {
     pub fn id(self) -> &'static str {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Antigravity => "antigravity",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Claude => Self::Codex,
+            Self::Codex => Self::Antigravity,
+            Self::Antigravity => Self::Claude,
         }
     }
 }
@@ -114,6 +124,7 @@ pub struct Settings {
     pub default_provider: Provider,
     pub default_claude_access: crate::launch::Permission,
     pub default_codex_access: crate::launch::Permission,
+    pub default_antigravity_access: crate::launch::Permission,
     /// Bookmarks are scoped to the hub endpoint so remote paths do not cross hosts.
     pub projects: BTreeMap<String, Vec<String>>,
 }
@@ -146,6 +157,7 @@ impl Default for Settings {
             default_provider: Provider::Claude,
             default_claude_access: crate::launch::Permission::Ask,
             default_codex_access: crate::launch::Permission::Ask,
+            default_antigravity_access: crate::launch::Permission::Ask,
             projects: BTreeMap::new(),
         }
     }
@@ -153,10 +165,10 @@ impl Default for Settings {
 impl Settings {
     pub fn default_access(&self, provider: &str) -> crate::launch::Permission {
         use crate::launch::Permission;
-        let access = if provider == "claude" {
-            self.default_claude_access
-        } else {
-            self.default_codex_access
+        let access = match provider {
+            "claude" => self.default_claude_access,
+            "antigravity" => self.default_antigravity_access,
+            _ => self.default_codex_access,
         };
         if Permission::choices(provider).contains(&access) {
             access

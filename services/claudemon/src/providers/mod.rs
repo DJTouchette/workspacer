@@ -13,6 +13,9 @@
 //! that drives the stores. The live process/transport clients live in each
 //! provider module.
 
+pub mod antigravity;
+pub mod antigravity_artifacts;
+pub mod antigravity_usage;
 pub(crate) mod claude_status;
 pub mod claude_stream;
 pub mod codex;

@@ -392,7 +392,15 @@ fn secure(base: &Value, next: &Value) -> Result<()> {
                 bail!("host freshness floor cannot be lowered for {p}.{c}");
             }
             for a in candidates(row) {
-                if !["claude", "codex", "copilot", "opencode", "pi"].contains(&word(&a["provider"]))
+                if ![
+                    "claude",
+                    "codex",
+                    "antigravity",
+                    "copilot",
+                    "opencode",
+                    "pi",
+                ]
+                .contains(&word(&a["provider"]))
                     || word(&a["model"]).is_empty()
                 {
                     bail!("invalid provider/model in {p}.{c}");

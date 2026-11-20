@@ -180,7 +180,16 @@ pub fn resolve(
         text(params, "provider").to_owned()
     } else if manager {
         let configured = text(&config["agents"], "managerProvider").trim();
-        if ["claude", "codex", "copilot", "opencode", "pi"].contains(&configured) {
+        if [
+            "claude",
+            "codex",
+            "antigravity",
+            "copilot",
+            "opencode",
+            "pi",
+        ]
+        .contains(&configured)
+        {
             configured.into()
         } else {
             "claude".into()
@@ -193,7 +202,7 @@ pub fn resolve(
             "Pi is not supported for Workspacer agent spawning: Pi has no MCP bridge, so it cannot receive the required Workspacer tools"
         );
     }
-    if !["claude", "codex", "copilot", "opencode"].contains(&provider.as_str()) {
+    if !["claude", "codex", "antigravity", "copilot", "opencode"].contains(&provider.as_str()) {
         bail!("unknown provider");
     }
     let requested_cwd = text(params, "cwd").trim_matches([' ', '\t', '\n', '\r', '\x0b', '\x0c']);
@@ -329,7 +338,7 @@ pub fn resolve(
     let mut request = if managed {
         let mut request =
             json!({"provider":provider,"cwd":cwd,"bin":binary,"session_id":session_id,"yolo":skip});
-        if provider == "claude" {
+        if matches!(provider.as_str(), "claude" | "antigravity") {
             request["permission_mode"] = json!(if mode.is_empty() { "default" } else { &mode });
         }
         if provider == "codex" {
@@ -343,7 +352,7 @@ pub fn resolve(
                 extras.extend(["-p".into(), profile.preset.clone()]);
             }
         }
-        if matches!(provider.as_str(), "claude" | "codex") && !resume.is_empty() {
+        if matches!(provider.as_str(), "claude" | "codex" | "antigravity") && !resume.is_empty() {
             request["resume"] = json!(resume);
         }
         if !effort.is_empty() {
@@ -395,7 +404,7 @@ pub fn resolve(
     if !text(params, "message").is_empty() {
         request["first_message"] = params["message"].clone();
     }
-    let permission = if provider == "claude" {
+    let permission = if matches!(provider.as_str(), "claude" | "antigravity") {
         if skip {
             "bypassPermissions"
         } else if mode.is_empty() {
@@ -561,5 +570,34 @@ mod codex_experimental_tests {
                 .get("codex_experimental_api")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn antigravity_spawn_plan_uses_stream_and_passes_permission_mode_and_resume() {
+        let root = tempfile::tempdir().unwrap();
+        let plan = resolve(
+            &json!({
+                "provider": "antigravity",
+                "cwd": root.path(),
+                "model": "gemini-4-neon",
+                "effort": "xhigh",
+                "permissionMode": "auto",
+                "resumeSessionId": "prev-1"
+            }),
+            &json!({}),
+            None,
+            root.path(),
+            "new-1",
+            false,
+        )
+        .unwrap();
+        assert_eq!(plan.provider, "antigravity");
+        assert_eq!(plan.endpoint, "/sessions/spawn-managed");
+        assert_eq!(plan.request["provider"], "antigravity");
+        assert_eq!(plan.request["permission_mode"], "auto");
+        assert_eq!(plan.request["model"], "gemini-4-neon");
+        assert_eq!(plan.request["effort"], "xhigh");
+        assert_eq!(plan.request["resume"], "prev-1");
+        assert_eq!(plan.metadata["settings"]["permissionMode"], "auto");
     }
 }

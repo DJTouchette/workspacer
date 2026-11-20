@@ -597,14 +597,15 @@ impl Workspace {
             Screen::Model => {
                 if !self.supported_session() {
                     self.extras.notice =
-                        "Model controls are available for Claude and Codex sessions.".into();
+                        "Model controls are available for Claude, Codex, and Antigravity sessions."
+                            .into();
                     return;
                 }
                 if let Some(s) = self.selected_session().cloned() {
-                    let provider = if s.provider == "codex" {
-                        "codex"
-                    } else {
-                        "claude"
+                    let provider = match s.provider.as_str() {
+                        "codex" => "codex",
+                        "antigravity" => "antigravity",
+                        _ => "claude",
                     };
                     self.choose_provider(provider, window, cx);
                     // The catalog is scoped to the session's own folder.
@@ -649,7 +650,7 @@ impl Workspace {
     }
     pub(super) fn supported_session(&self) -> bool {
         self.selected_session()
-            .is_some_and(|s| matches!(s.provider.as_str(), "claude" | "codex" | ""))
+            .is_some_and(|s| matches!(s.provider.as_str(), "claude" | "codex" | "antigravity" | ""))
     }
     pub(super) fn sync_features(
         &mut self,
@@ -990,7 +991,10 @@ impl Workspace {
         if self.requested_session.is_some() {
             return;
         }
-        if !matches!(session.provider.as_str(), "claude" | "codex" | "") {
+        if !matches!(
+            session.provider.as_str(),
+            "claude" | "codex" | "antigravity" | ""
+        ) {
             self.extras.notice = "This provider cannot be resumed by the native client yet.".into();
             cx.notify();
             return;
@@ -998,10 +1002,10 @@ impl Workspace {
         self.show_new_session(window, cx);
         self.extras.resume = Some(session.id.clone());
         self.choose_provider(
-            if session.provider == "codex" {
-                "codex"
-            } else {
-                "claude"
+            match session.provider.as_str() {
+                "codex" => "codex",
+                "antigravity" => "antigravity",
+                _ => "claude",
             },
             window,
             cx,
@@ -1624,7 +1628,7 @@ impl Workspace {
             .flex_col()
             .gap_4()
             .children(
-                ["claude", "codex"]
+                ["claude", "codex", "antigravity"]
                     .into_iter()
                     .map(|provider| self.render_setup_card(provider, cx)),
             )
@@ -1642,7 +1646,26 @@ impl Workspace {
         let busy = state.is_some_and(|s| s.loading);
         let can_check = !busy && self.view.connected;
         let value = state.map(|s| s.value.as_ref()).unwrap_or(&Value::Null);
-        let claude = provider == "claude";
+        let (title, subtitle, install, command) = match provider {
+            "claude" => (
+                "Claude",
+                "Claude Code",
+                "Install Claude Code, then sign in by running",
+                "claude",
+            ),
+            "antigravity" => (
+                "Antigravity",
+                "Antigravity CLI",
+                "Install Antigravity CLI, then sign in by running",
+                "agy",
+            ),
+            _ => (
+                "Codex",
+                "Codex CLI",
+                "Install Codex CLI, then sign in by running",
+                "codex login",
+            ),
+        };
         let found = value["installed"]
             .as_array()
             .and_then(|rows| rows.iter().find(|r| r["provider"] == provider))
@@ -1698,13 +1721,13 @@ impl Workspace {
                         div()
                             .text_size(px(chrome::scale::HEADING))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(if claude { "Claude" } else { "Codex" }),
+                            .child(title),
                     )
                     .child(
                         div()
                             .text_size(px(chrome::scale::CAPTION))
                             .text_color(rgb(p.muted))
-                            .child(if claude { "Claude Code" } else { "Codex CLI" }),
+                            .child(subtitle),
                     ),
             )
             .child(
@@ -1729,11 +1752,6 @@ impl Workspace {
                     }),
             );
         // How to install and sign in, with the terminal command set apart.
-        let (install, command) = if claude {
-            ("Install Claude Code, then sign in by running", "claude")
-        } else {
-            ("Install Codex CLI, then sign in by running", "codex login")
-        };
         let instructions = div()
             .pl(px(52.))
             .flex()
@@ -1781,10 +1799,10 @@ impl Workspace {
             )
             .child(
                 self.button(
-                    if claude {
-                        "setup-claude"
-                    } else {
-                        "setup-codex"
+                    match provider {
+                        "claude" => "setup-claude",
+                        "antigravity" => "setup-antigravity",
+                        _ => "setup-codex",
                     },
                     if checking {
                         "Checking…"
@@ -1838,7 +1856,7 @@ impl Workspace {
         let p = self.palette();
         if !self.supported_session() {
             return empty_note(
-                "Model switching is available for Claude and Codex sessions.",
+                "Model switching is available for Claude, Codex, and Antigravity sessions.",
                 p,
             );
         }

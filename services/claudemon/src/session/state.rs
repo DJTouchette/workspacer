@@ -1210,7 +1210,14 @@ impl SessionState {
         let tasks = self
             .background_task_list
             .iter()
-            .filter(|t| t.is_running())
+            .filter(|t| {
+                t.is_running()
+                    && !t.subagent_id.as_deref().is_some_and(|sid| {
+                        self.subagents
+                            .iter()
+                            .any(|s| s.id == sid && s.status == SubagentStatus::Running)
+                    })
+            })
             .count();
         (subagents + tasks) as u32
     }

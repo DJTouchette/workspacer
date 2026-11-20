@@ -912,7 +912,7 @@ impl Workspace {
                     })),
             );
         }
-        if s.stopped() && matches!(s.provider.as_str(), "claude" | "codex") {
+        if s.stopped() && matches!(s.provider.as_str(), "claude" | "codex" | "antigravity") {
             actions.push(
                 self.row_action("resume-recent", "Resume…", connected, false)
                     .when(connected, |d| {

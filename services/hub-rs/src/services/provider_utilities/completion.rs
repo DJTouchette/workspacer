@@ -43,11 +43,15 @@ pub async fn run(
     Ok(stdout)
 }
 pub fn binary(provider: &str, config: &Value) -> Option<PathBuf> {
+    let default_bin = match provider {
+        "antigravity" => "agy",
+        other => other,
+    };
     let requested = config["agents"]["binaries"][provider]
         .as_str()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or(provider);
+        .unwrap_or(default_bin);
     tools::on_path(requested)
 }
 /// How long a one-shot may run and how much of its answer is kept.
@@ -177,6 +181,19 @@ pub async fn oneshot(
             command.args(["--prompt", prompt]);
             ""
         }
+        "antigravity" => {
+            command.args([
+                "--print",
+                "--output-format",
+                "text",
+                "--disable-slash-commands",
+            ]);
+            if let Some(model) = &model {
+                command.args(["--model", model]);
+            }
+            command.arg(prompt);
+            ""
+        }
         _ => return Err(Failure::Unsupported),
     };
     // Launcher never uses cmd.exe: Pi/Copilot positional text has no shell grammar.
@@ -207,6 +224,25 @@ pub fn native(path: &Path) -> bool {
             | [0xfe, 0xed, 0xfa, 0xcf]
             | [0xca, 0xfe, 0xba, 0xbe]
     )
+}
+pub async fn antigravity_ping(binary: &Path, home: &Path) -> Outcome<()> {
+    let mut command = Command::new(binary);
+    command.current_dir(home).args([
+        "--print",
+        "--output-format",
+        "text",
+        "--disable-slash-commands",
+        "--effort",
+        "low",
+        "--print-timeout",
+        "15s",
+        "Reply with OK",
+    ]);
+    let raw = run(&mut command, "", 16 * 1024, Duration::from_secs(20)).await?;
+    if raw.trim().is_empty() {
+        return Err(Failure::Empty);
+    }
+    Ok(())
 }
 pub async fn claude_ping(binary: &Path) -> Outcome<()> {
     if cfg!(windows) || !native(binary) {

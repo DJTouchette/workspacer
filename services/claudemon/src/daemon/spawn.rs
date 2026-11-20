@@ -756,7 +756,7 @@ pub async fn handle_managed(
 ) -> impl IntoResponse {
     if !matches!(
         payload.provider.as_str(),
-        "opencode" | "codex" | "copilot" | "pi" | "claude"
+        "opencode" | "codex" | "copilot" | "pi" | "claude" | "antigravity"
     ) {
         return (
             StatusCode::BAD_REQUEST,
@@ -834,7 +834,7 @@ pub async fn handle_managed(
     let bin = payload
         .bin
         .clone()
-        .unwrap_or_else(|| payload.provider.clone());
+        .unwrap_or_else(|| provider_binary_stem(&payload.provider).to_string());
     // Same as the PTY path: a profile config dir relocates the transcript root.
     crate::session::transcript::allow_spawn_env(&payload.env);
 
@@ -1250,6 +1250,27 @@ pub(crate) fn start_native_managed(
                     },
                 },
             ),
+            "antigravity" => {
+                store.set_transport(&session_id, crate::session::state::Transport::Stream);
+                crate::providers::antigravity::spawn_session(
+                    store.clone(),
+                    conv.clone(),
+                    crate::providers::antigravity::SpawnConfig {
+                        session_id: session_id.clone(),
+                        cwd: payload.cwd.clone(),
+                        bin,
+                        model: payload.model.clone(),
+                        effort: payload.effort.clone(),
+                        permission_mode: payload.permission_mode.clone(),
+                        resume: payload.resume.clone(),
+                        extra_args: payload.extra_args.clone(),
+                        skill_roots: payload.skill_roots.clone(),
+                        env: payload.env.clone(),
+                        yolo: payload.yolo,
+                        facade,
+                    },
+                );
+            }
             "pi" => crate::providers::pi::spawn_session(
                 store.clone(),
                 conv.clone(),
@@ -1291,17 +1312,26 @@ pub struct ProviderModelsQuery {
     pub bin: Option<String>,
 }
 
+/// Executable stem for a provider ID (`"antigravity"` launches `agy`).
+fn provider_binary_stem(provider: &str) -> &str {
+    match provider {
+        "antigravity" => "agy",
+        other => other,
+    }
+}
+
 /// Candidate binary names for a provider, platform-aware — the Rust twin of the
 /// brain's `binNames` / the desktop's `agentProviders.binNames`.
 fn bin_names(provider: &str) -> Vec<String> {
+    let stem = provider_binary_stem(provider);
     if cfg!(windows) {
         vec![
-            format!("{provider}.cmd"),
-            format!("{provider}.exe"),
-            provider.to_string(),
+            format!("{stem}.cmd"),
+            format!("{stem}.exe"),
+            stem.to_string(),
         ]
     } else {
-        vec![provider.to_string()]
+        vec![stem.to_string()]
     }
 }
 
@@ -1344,7 +1374,7 @@ pub(crate) fn resolve_provider_bin(provider: &str) -> String {
             }
         }
     }
-    provider.to_string()
+    provider_binary_stem(provider).to_string()
 }
 
 /// `GET /providers/:provider/models` — list the models a managed provider can
@@ -1357,8 +1387,11 @@ pub async fn handle_provider_models(
     Query(q): Query<ProviderModelsQuery>,
 ) -> impl IntoResponse {
     // Validate the provider *before* resolving anything: the name is a path
-    // segment and feeds a PATH probe, so only the three known ids get that far.
-    if !matches!(provider.as_str(), "opencode" | "codex" | "copilot" | "pi") {
+    // segment and feeds a PATH probe, so only the known ids get that far.
+    if !matches!(
+        provider.as_str(),
+        "opencode" | "codex" | "copilot" | "pi" | "antigravity"
+    ) {
         return (
             StatusCode::BAD_REQUEST,
             format!("unsupported managed provider: {provider}"),
@@ -1374,6 +1407,7 @@ pub async fn handle_provider_models(
         "opencode" => crate::providers::opencode::list_models(&bin, &cwd).await,
         "codex" => crate::providers::codex::list_models(&bin, &cwd).await,
         "copilot" => crate::providers::copilot::list_models(&bin, &cwd).await,
+        "antigravity" => crate::providers::antigravity::list_models(&bin, &cwd).await,
         _ => crate::providers::pi::list_models(&bin, &cwd).await,
     };
     match result {

@@ -90,7 +90,7 @@ impl ExternalDaemon {
         self.json("usage/report").await
     }
     pub async fn models(&self, provider: &str) -> Result<Value> {
-        if !["codex", "copilot", "opencode", "pi"].contains(&provider) {
+        if !["codex", "copilot", "opencode", "pi", "antigravity"].contains(&provider) {
             bail!("unsupported external catalog provider");
         }
         self.json(&format!("providers/{provider}/models")).await

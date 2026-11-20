@@ -185,6 +185,7 @@ fn launch_access_choices_are_one_row_for_every_provider(cx: &mut TestAppContext)
     visual.run_until_parked();
     for (provider, selector) in [
         ("claude", "launch-provider-claude"),
+        ("antigravity", "launch-provider-antigravity"),
         ("codex", "launch-provider-codex"),
     ] {
         let tab = visual.debug_bounds(selector).unwrap();
@@ -1381,4 +1382,102 @@ fn model_page_switches_a_running_sessions_access_live(cx: &mut TestAppContext) {
     click(&mut visual, "live-access-Full access");
     assert!(matches!(effects(&mut commands).as_slice(),
         [Command::Act { action: Action::SetPermission { mode, .. }, .. }] if mode == "yolo"));
+    // Antigravity offers all five modes, including Auto.
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = (*this.view).clone();
+            Arc::make_mut(&mut view.sessions)[0].provider = "antigravity".into();
+            Arc::make_mut(&mut view.sessions)[0].permission_mode = "default".into();
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    click(&mut visual, "live-access-Auto");
+    assert!(matches!(effects(&mut commands).as_slice(),
+        [Command::Act { action: Action::SetPermission { mode, label }, .. }]
+        if mode == "auto" && label == "Auto"));
+}
+
+#[gpui::test]
+fn antigravity_launch_selects_provider_model_effort_and_auto_mode(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(900.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            this.update_view(Arc::new(state("a")), window, cx);
+            this.show_new_session(window, cx);
+            this.select_project("/work/api", window, cx);
+            this.launch_details_open = true;
+            cx.notify();
+        });
+    });
+    visual.run_until_parked();
+    while commands.try_recv().is_ok() {}
+
+    click(&mut visual, "launch-provider-antigravity");
+    visual.run_until_parked();
+    assert!(
+        std::iter::from_fn(|| commands.try_recv().ok()).any(|c| matches!(
+            c,
+            Command::LoadModels { key, .. } if key.provider == "antigravity"
+        )),
+        "choosing Antigravity should request its model catalog"
+    );
+
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = (*this.view).clone();
+            view.catalog = wks_native::launch::Catalog {
+                key: wks_native::launch::CatalogKey {
+                    provider: "antigravity".into(),
+                    cwd: "/work/api".into(),
+                },
+                loading: false,
+                models: wks_native::launch::parse_models(
+                    "antigravity",
+                    serde_json::json!([
+                        {
+                            "id": "gemini-4-neon",
+                            "label": "Gemini 4 Neon",
+                            "default": true,
+                            "effortLevels": ["low", "medium", "high", "xhigh"],
+                            "defaultEffort": "high"
+                        },
+                        {
+                            "id": "gemini-3.8-flash",
+                            "label": "Gemini 3.8 Flash",
+                            "effortLevels": ["low", "medium", "high"]
+                        }
+                    ]),
+                )
+                .unwrap(),
+                error: None,
+            };
+            this.update_view(Arc::new(view), window, cx);
+            this.model_choice = "gemini-3.8-flash".into();
+            this.effort = "medium".into();
+            cx.notify();
+        });
+    });
+    visual.run_until_parked();
+
+    click(&mut visual, "access-Auto");
+    visual.run_until_parked();
+    click(&mut visual, "launch-start");
+    visual.run_until_parked();
+
+    let created = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+        Command::Create(req) => Some(req),
+        _ => None,
+    });
+    let req = created.expect("expected Antigravity create command");
+    assert_eq!(req.provider, "antigravity");
+    assert_eq!(req.model, "gemini-3.8-flash");
+    assert_eq!(req.effort, "medium");
+    assert_eq!(req.permission, Permission::Auto);
+    let params = req.params().unwrap();
+    assert_eq!(params["provider"], "antigravity");
+    assert_eq!(params["permissionMode"], "auto");
+    assert_eq!(params["skipPermissions"], false);
 }

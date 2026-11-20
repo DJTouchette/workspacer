@@ -64,8 +64,8 @@ pub fn target(session: &Session) -> Result<&'static str> {
     }
     let target = match session.provider.as_str() {
         "claude" | "" => "codex",
-        "codex" => "claude",
-        _ => bail!("Continue with… is available for Claude and Codex sessions."),
+        "codex" | "antigravity" => "claude",
+        _ => bail!("Continue with… is available for Claude, Codex, and Antigravity sessions."),
     };
     ensure!(
         crate::launch::absolute_directory(&session.cwd),
@@ -84,10 +84,10 @@ pub fn targets(session: &Session) -> Result<[&'static str; 2]> {
 
 /// The session's own provider, as a launch target.
 pub fn same(session: &Session) -> &'static str {
-    if session.provider == "codex" {
-        "codex"
-    } else {
-        "claude"
+    match session.provider.as_str() {
+        "codex" => "codex",
+        "antigravity" => "antigravity",
+        _ => "claude",
     }
 }
 
@@ -97,10 +97,10 @@ pub fn fresh(session: &Session, provider: &str) -> bool {
 }
 
 pub fn provider_name(provider: &str) -> &'static str {
-    if provider == "codex" {
-        "Codex"
-    } else {
-        "Claude"
+    match provider {
+        "codex" => "Codex",
+        "antigravity" => "Antigravity",
+        _ => "Claude",
     }
 }
 
@@ -123,7 +123,8 @@ pub fn source_mode(session: &Session) -> &str {
 pub fn carry_permission(target: &str, source_mode: &str) -> Permission {
     let carried = match source_mode.trim() {
         "bypassPermissions" | "yolo" => Permission::FullAccess,
-        "acceptEdits" => Permission::AcceptEdits,
+        "acceptEdits" | "accept-edits" => Permission::AcceptEdits,
+        "auto" => Permission::Auto,
         "plan" => Permission::Plan,
         _ => Permission::Ask,
     };

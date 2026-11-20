@@ -18,7 +18,10 @@ impl Workspace {
     /// been read yet, pauses nothing.
     pub(super) fn paused(&self, session: &Session) -> bool {
         session.stopped()
-            && matches!(session.provider.as_str(), "claude" | "codex" | "")
+            && matches!(
+                session.provider.as_str(),
+                "claude" | "codex" | "antigravity" | ""
+            )
             && self
                 .view
                 .session_open
@@ -79,15 +82,20 @@ impl Workspace {
     /// session continues (same id, same conversation) on its provider, model
     /// and access. Errors come back on the spawn receipt.
     pub(super) fn resume_with(&mut self, session: &Session, text: String, cx: &mut Context<Self>) {
-        let provider = if session.provider == "codex" {
-            "codex"
-        } else {
-            "claude"
+        let provider = match session.provider.as_str() {
+            "codex" => "codex",
+            "antigravity" => "antigravity",
+            _ => "claude",
         };
         let permission = match session.access_mode() {
             "bypassPermissions" | "yolo" | "full" => wks_native::launch::Permission::FullAccess,
-            "acceptEdits" if provider == "claude" => wks_native::launch::Permission::AcceptEdits,
-            "plan" if provider == "claude" => wks_native::launch::Permission::Plan,
+            "acceptEdits" | "accept-edits" if matches!(provider, "claude" | "antigravity") => {
+                wks_native::launch::Permission::AcceptEdits
+            }
+            "auto" if provider == "antigravity" => wks_native::launch::Permission::Auto,
+            "plan" if matches!(provider, "claude" | "antigravity") => {
+                wks_native::launch::Permission::Plan
+            }
             _ => wks_native::launch::Permission::Ask,
         };
         let request = NewSession {

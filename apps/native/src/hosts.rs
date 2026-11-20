@@ -1109,8 +1109,8 @@ pub struct SpawnSubmit {
 impl SpawnSubmit {
     /// `queue.submit` params, `kind: "spawn"`, source `prompt`.
     pub fn params(&self) -> Result<Value, String> {
-        if !matches!(self.provider.as_str(), "claude" | "codex") {
-            return Err("Choose Claude or Codex.".into());
+        if !matches!(self.provider.as_str(), "claude" | "codex" | "antigravity") {
+            return Err("Choose Claude, Codex, or Antigravity.".into());
         }
         let cwd = self.cwd.trim();
         if !crate::launch::absolute_directory(cwd) {

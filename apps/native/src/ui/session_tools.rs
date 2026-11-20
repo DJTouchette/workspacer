@@ -691,9 +691,10 @@ impl Workspace {
     /// Session page: compaction and forking for a managed session.
     pub(super) fn render_context_card(&self, s: &Session, cx: &mut Context<Self>) -> Option<Div> {
         let p = self.palette();
-        let managed = matches!(s.provider_id(), "claude" | "codex");
-        let compact = managed && self.view.may_call("claude.compact");
-        let fork = managed && self.view.may_call("agents.fork");
+        let compact = matches!(s.provider_id(), "claude" | "codex" | "antigravity")
+            && self.view.may_call("claude.compact");
+        let fork =
+            matches!(s.provider_id(), "claude" | "codex") && self.view.may_call("agents.fork");
         if !compact && !fork {
             return None;
         }

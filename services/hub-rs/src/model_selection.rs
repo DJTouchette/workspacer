@@ -5,7 +5,14 @@ pub use claudemon::session::windows::*;
 use anyhow::{Result, bail};
 use serde_json::{Map, Value, json};
 
-const PROVIDERS: &[&str] = &["claude", "codex", "copilot", "opencode", "pi"];
+const PROVIDERS: &[&str] = &[
+    "claude",
+    "codex",
+    "antigravity",
+    "copilot",
+    "opencode",
+    "pi",
+];
 
 /// Generic JSON/YAML config maps may represent an integral number as a float.
 /// Match the existing config writers without accepting fractions or zero.
@@ -50,6 +57,7 @@ pub fn foreign_manager_model(provider: &str, model: &str) -> bool {
         && !match provider {
             "claude" => claude,
             "codex" => codex,
+            "antigravity" => true,
             "copilot" => copilot,
             "opencode" | "pi" => slash,
             _ => false,

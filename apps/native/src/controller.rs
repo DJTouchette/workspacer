@@ -285,8 +285,8 @@ pub struct NewSession {
 impl NewSession {
     pub fn params(&self) -> Result<Value> {
         anyhow::ensure!(
-            matches!(self.provider.as_str(), "claude" | "codex"),
-            "Choose Claude or Codex"
+            matches!(self.provider.as_str(), "claude" | "codex" | "antigravity"),
+            "Choose Claude, Codex, or Antigravity"
         );
         let cwd = self.cwd.trim();
         anyhow::ensure!(
@@ -1323,7 +1323,7 @@ impl Worker {
     }
 
     fn load_models(&mut self, key: CatalogKey, refresh: bool) {
-        if !matches!(key.provider.as_str(), "claude" | "codex") {
+        if !matches!(key.provider.as_str(), "claude" | "codex" | "antigravity") {
             return;
         }
         if self.view.catalog.key != key {

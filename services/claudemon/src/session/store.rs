@@ -3832,7 +3832,7 @@ impl SessionStore {
             .map(|s| s.provider.clone())
             .as_deref()
         {
-            Some("claude") => ImageUse::Inline,
+            Some("claude") | Some("antigravity") => ImageUse::Inline,
             Some("codex") => ImageUse::Copy,
             _ => ImageUse::Markers,
         }

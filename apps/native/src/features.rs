@@ -508,6 +508,7 @@ pub fn title_model_serves(provider: &str, model: &str) -> bool {
                     .or_else(|| model.strip_prefix("gpt"))
                     .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
         }
+        "antigravity" => !model.is_empty(),
         _ => false,
     }
 }
@@ -615,7 +616,7 @@ impl HubChange {
 /// Providers keep-warm can warm (the hub's `WARMABLE_PROVIDERS`).
 pub const KEEP_WARM_PROVIDERS: [&str; 2] = ["claude", "codex"];
 /// Providers the hub accepts as `agents.managerProvider` for a Fleet Manager.
-pub const MANAGER_PROVIDERS: [&str; 4] = ["claude", "codex", "copilot", "opencode"];
+pub const MANAGER_PROVIDERS: [&str; 5] = ["claude", "codex", "antigravity", "copilot", "opencode"];
 
 /// The hub settings native shows in Settings → Background and Agents, with
 /// the hub's own defaults applied so a missing key reads as what it does.

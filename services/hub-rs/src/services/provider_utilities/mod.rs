@@ -50,6 +50,7 @@ impl Ping for NativePing {
             Ok(match context.provider.as_str() {
                 "claude" => completion::claude_ping(&binary).await,
                 "codex" => codex::ping(&binary, &home).await,
+                "antigravity" => completion::antigravity_ping(&binary, &home).await,
                 _ => Err(text::Failure::Unsupported),
             })
         })

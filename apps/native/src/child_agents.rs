@@ -12,12 +12,16 @@ pub enum ChildKind {
 pub fn tool_kind(tool: &crate::transcript::Tool) -> Option<ChildKind> {
     let name = tool.name.to_ascii_lowercase();
     if tool.spawned_session_id().is_some()
-        || name.starts_with("mcp__workspacer__") && tool.category() == "Subagent"
+        || (name.starts_with("mcp__workspacer__")
+            || name.starts_with("mcp_workspacer_")
+            || name.starts_with("workspacer:")
+            || name.starts_with("workspacer__"))
+            && tool.category() == "Subagent"
     {
         Some(ChildKind::Workspacer)
     } else if matches!(
         name.as_str(),
-        "agent" | "task" | "codex_agent" | "functions.spawn_agent"
+        "agent" | "task" | "codex_agent" | "functions.spawn_agent" | "invoke_subagent"
     ) {
         Some(ChildKind::Provider)
     } else {

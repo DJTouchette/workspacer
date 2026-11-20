@@ -484,7 +484,7 @@ impl Workspace {
             )
     }
 
-    /// Claude or Codex, as one two-way switch.
+    /// Claude, Codex, or Antigravity, as a segmented switch.
     fn render_provider_choice(&self, busy: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
         div()
@@ -496,8 +496,14 @@ impl Workspace {
             .bg(rgb(p.base))
             .border_1()
             .border_color(rgb(p.border))
-            .children([("claude", "Claude"), ("codex", "Codex")].into_iter().map(
-                |(provider, name)| {
+            .children(
+                [
+                    ("claude", "Claude"),
+                    ("codex", "Codex"),
+                    ("antigravity", "Antigravity"),
+                ]
+                .into_iter()
+                .map(|(provider, name)| {
                     let selected = self.provider == provider;
                     chrome::interactive_control(div().id(provider), p, !busy)
                         .debug_selector(move || format!("launch-provider-{provider}"))
@@ -526,8 +532,8 @@ impl Workspace {
                         })
                         .child(chrome::provider_glyph(provider, icon_size::LG, p))
                         .child(name)
-                },
-            ))
+                }),
+            )
     }
 
     /// Non-default options, readable without opening the fold.
@@ -685,8 +691,12 @@ impl Workspace {
                 true,
             )
         } else if !current && self.provider != "claude" && self.projects.cwd.is_empty() {
+            let name = match self.provider {
+                "antigravity" => "Antigravity",
+                _ => "Codex",
+            };
             (
-                "Codex lists models for the chosen project.".to_owned(),
+                format!("{name} lists models for the chosen project."),
                 p.muted,
                 false,
                 true,
@@ -709,8 +719,15 @@ impl Workspace {
                 false,
             )
         } else {
+            let name = match self.provider {
+                "antigravity" => "Antigravity",
+                _ => "Codex",
+            };
             (
-                format!("{} models from Codex on the hub", self.catalog_models.len()),
+                format!(
+                    "{} models from {name} on the hub",
+                    self.catalog_models.len()
+                ),
                 p.muted,
                 false,
                 false,
@@ -722,10 +739,10 @@ impl Workspace {
     /// what is still missing. Nothing when it is simply ready.
     fn launch_status(&self, busy: bool, detailed: bool) -> Option<(Option<IconName>, u32, String)> {
         let p = self.palette();
-        let provider = if self.provider == "codex" {
-            "Codex"
-        } else {
-            "Claude"
+        let provider = match self.provider {
+            "codex" => "Codex",
+            "antigravity" => "Antigravity",
+            _ => "Claude",
         };
         let project = match self.launch_peer() {
             Some(peer) => (!self.extras.launch_host_cwd.is_empty()).then(|| {
@@ -795,10 +812,10 @@ impl Workspace {
         let detailed = uncertain || self.spawn_error.chars().count() > 72;
         let queued = self.queued_launch().is_some();
         let status = self.launch_status(busy, detailed);
-        let provider = if self.provider == "codex" {
-            "Codex"
-        } else {
-            "Claude"
+        let provider = match self.provider {
+            "codex" => "Codex",
+            "antigravity" => "Antigravity",
+            _ => "Claude",
         };
         let effort =
             (!self.effort.is_empty()).then(|| wks_native::launch::effort_label(&self.effort));

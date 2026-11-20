@@ -367,7 +367,7 @@ impl Backend {
             (
                 "providers.listModels",
                 json!({"provider":key.provider,"cwd":key.cwd,
-                    "useHomeDirectory": key.provider == "codex" && key.cwd.is_empty()}),
+                    "useHomeDirectory": matches!(key.provider.as_str(), "codex" | "antigravity") && key.cwd.is_empty()}),
             )
         };
         self.hub

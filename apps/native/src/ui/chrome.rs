@@ -99,6 +99,7 @@ pub(super) fn provider_glyph(provider: &str, size: f32, p: Palette) -> AnyElemen
     let (mark, color) = match provider {
         "claude" => (Some("brand/claude.svg"), CLAUDE_CLAY),
         "codex" => (Some("brand/openai.svg"), p.text),
+        "antigravity" => (Some("brand/antigravity.svg"), p.accent),
         _ => (None, p.accent),
     };
     match mark {
@@ -119,12 +120,14 @@ pub(super) fn brand_badge(provider: &str, name: String, p: Palette, size: f32) -
     let (mark, color) = match provider {
         "claude" => (Some("brand/claude.svg"), CLAUDE_CLAY),
         "codex" => (Some("brand/openai.svg"), p.text),
+        "antigravity" => (Some("brand/antigravity.svg"), p.accent),
         _ => (None, p.accent),
     };
     let name = if name.is_empty() {
         match provider {
             "claude" => "Claude".to_owned(),
             "codex" => "Codex".to_owned(),
+            "antigravity" => "Antigravity".to_owned(),
             "" => "Agent".to_owned(),
             other => other.to_owned(),
         }
@@ -497,7 +500,9 @@ impl Workspace {
                 && !self.view.busy
                 && self.view.may_call("claude.compact")
                 && self.selected_session().is_some_and(|s| {
-                    !s.stopped() && !s.compacting && matches!(s.provider_id(), "claude" | "codex")
+                    !s.stopped()
+                        && !s.compacting
+                        && matches!(s.provider_id(), "claude" | "codex" | "antigravity")
                 });
             let action = can_compact.then(|| {
                 self.quiet_button("context-compact", "Compact now", IconName::Minimize, true)
@@ -1167,7 +1172,7 @@ impl Workspace {
     /// why ordinary handoff is not offered.
     fn handoff_action(&self, floating: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let label = match self.selected_session().map(|s| s.provider.as_str()) {
-            Some("codex") => "Continue with Claude…",
+            Some("codex" | "antigravity") => "Continue with Claude…",
             Some("claude" | "") => "Continue with Codex…",
             _ => "Continue with another agent…",
         };

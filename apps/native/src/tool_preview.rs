@@ -34,7 +34,10 @@ fn field<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
 /// Decode argv or an unambiguous shell launcher for display only. The retained
 /// arguments (and Copy all) stay exact; nothing here is evaluated or executed.
 fn command_text(input: &Value) -> String {
-    let command = input.get("command").or_else(|| input.get("cmd"));
+    let command = input
+        .get("command")
+        .or_else(|| input.get("cmd"))
+        .or_else(|| input.get("CommandLine"));
     let Some(command) = command else {
         return String::new();
     };
@@ -197,10 +200,21 @@ pub fn parse(name: &str, raw: &str, output: Option<&str>) -> ToolPreview {
     let short = name.rsplit("__").next().unwrap_or(name);
     let short = short.rsplit('.').next().unwrap_or(short);
     let normalized = short.to_ascii_lowercase();
-    let path = field(&input, &["file_path", "filePath", "path", "filename"]);
+    let path = field(
+        &input,
+        &[
+            "file_path",
+            "filePath",
+            "path",
+            "Path",
+            "filename",
+            "TargetFile",
+            "AbsolutePath",
+        ],
+    );
     let mut preview = ToolPreview {
         title: short.into(),
-        description: field(&input, &["description", "title", "summary"])
+        description: field(&input, &["description", "toolSummary", "title", "summary"])
             .trim()
             .into(),
         target: path.into(),
@@ -208,7 +222,7 @@ pub fn parse(name: &str, raw: &str, output: Option<&str>) -> ToolPreview {
         ..Default::default()
     };
     match normalized.as_str() {
-        "edit" | "multiedit" | "str_replace_editor" => {
+        "edit" | "edit_file" | "multiedit" | "str_replace_editor" => {
             preview.title = "Edit file".into();
             preview.file_edit = true;
             let edits = input.get("edits").and_then(Value::as_array);
@@ -216,8 +230,20 @@ pub fn parse(name: &str, raw: &str, output: Option<&str>) -> ToolPreview {
                 .map(|v| v.as_slice())
                 .unwrap_or(std::slice::from_ref(&input))
             {
-                let old = field(edit, &["old_string", "oldString", "old_str", "oldText"]);
-                let new = field(edit, &["new_string", "newString", "new_str", "newText"]);
+                let old = field(
+                    edit,
+                    &["old_string", "oldString", "old_str", "oldText", "Target"],
+                );
+                let new = field(
+                    edit,
+                    &[
+                        "new_string",
+                        "newString",
+                        "new_str",
+                        "newText",
+                        "Replacement",
+                    ],
+                );
                 preview.removed += old.lines().count();
                 preview.added += new.lines().count();
                 preview.block("Before", language(path), old);
@@ -227,7 +253,7 @@ pub fn parse(name: &str, raw: &str, output: Option<&str>) -> ToolPreview {
         "write" | "write_file" | "create_file" => {
             preview.title = "Write file".into();
             preview.file_edit = true;
-            let content = field(&input, &["content", "text", "file_text"]);
+            let content = field(&input, &["content", "Content", "text", "file_text"]);
             preview.block(path, language(path), content);
         }
         "apply_patch" | "patch" => {
@@ -281,9 +307,9 @@ pub fn parse(name: &str, raw: &str, output: Option<&str>) -> ToolPreview {
                 .join(" ↵ ");
             preview.block("Command", "bash", &command);
         }
-        "grep" | "search" | "recon_grep" | "recon_search" => {
+        "grep" | "search" | "search_web" | "grep_search" | "recon_grep" | "recon_search" => {
             preview.title = "Search".into();
-            let query = field(&input, &["pattern", "query"]);
+            let query = field(&input, &["pattern", "query", "Query"]);
             if !query.is_empty() {
                 preview.target = if path.is_empty() {
                     one_line(query)
@@ -292,8 +318,8 @@ pub fn parse(name: &str, raw: &str, output: Option<&str>) -> ToolPreview {
                 };
             }
         }
-        "glob" => preview.title = "Find files".into(),
-        "list" | "list_directory" => preview.title = "List directory".into(),
+        "glob" | "find_by_name" => preview.title = "Find files".into(),
+        "list" | "list_directory" | "list_dir" => preview.title = "List directory".into(),
         _ => {}
     }
     if !preview.description.is_empty() {
@@ -302,7 +328,9 @@ pub fn parse(name: &str, raw: &str, output: Option<&str>) -> ToolPreview {
     if preview.target.is_empty() {
         preview.target = one_line(field(
             &input,
-            &["query", "pattern", "url", "symbol", "name", "prompt"],
+            &[
+                "query", "Query", "pattern", "url", "symbol", "name", "Role", "prompt", "Prompt",
+            ],
         ));
     }
     if preview.target.is_empty() {
@@ -763,5 +791,57 @@ mod tests {
         assert_eq!(p.blocks[0].text, "before");
         assert_eq!(p.blocks[1].text, "after");
         assert_eq!(p.blocks[0].language, "rust");
+    }
+
+    #[test]
+    fn antigravity_pascal_case_tools_render_clean_previews() {
+        let cmd = parse(
+            "run_command",
+            &json!({"CommandLine":"cargo test --lib","toolSummary":"Run unit tests"}).to_string(),
+            Some("ok"),
+        );
+        assert_eq!(cmd.title, "Run unit tests");
+        assert_eq!(cmd.target, "cargo test --lib");
+        assert_eq!(cmd.blocks[0].language, "bash");
+        assert_eq!(cmd.blocks[0].text, "cargo test --lib");
+
+        let edit = parse(
+            "edit_file",
+            &json!({"Path":"src/lib.rs","Target":"let a = 1;","Replacement":"let a = 2;\nlet b = 3;"}).to_string(),
+            None,
+        );
+        assert!(edit.file_edit);
+        assert_eq!(edit.target, "src/lib.rs");
+        assert_eq!((edit.added, edit.removed), (2, 1));
+        assert_eq!(edit.blocks[0].language, "rust");
+        assert_eq!(edit.blocks[0].text, "let a = 1;");
+        assert_eq!(edit.blocks[1].text, "let a = 2;\nlet b = 3;");
+
+        let write = parse(
+            "write_file",
+            &json!({"Path":"notes.md","Content":"# Hello\nworld"}).to_string(),
+            None,
+        );
+        assert!(write.file_edit);
+        assert_eq!(write.target, "notes.md");
+        assert_eq!(write.blocks[0].language, "markdown");
+        assert_eq!(write.blocks[0].text, "# Hello\nworld");
+
+        let read = parse(
+            "read_file",
+            &json!({"Path":"src/main.rs","StartLine":10}).to_string(),
+            Some("fn main() {}"),
+        );
+        assert_eq!(read.title, "Read file");
+        assert_eq!(read.target, "src/main.rs");
+        assert_eq!(read.blocks[0].language, "rust");
+
+        let web = parse(
+            "search_web",
+            &json!({"query":"rust gpui"}).to_string(),
+            None,
+        );
+        assert_eq!(web.title, "Search");
+        assert_eq!(web.target, "rust gpui");
     }
 }

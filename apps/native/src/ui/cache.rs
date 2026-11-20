@@ -223,7 +223,10 @@ impl Workspace {
         session: &Session,
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
-        if !matches!(session.provider.as_str(), "claude" | "codex" | "") {
+        if !matches!(
+            session.provider.as_str(),
+            "claude" | "codex" | "antigravity" | ""
+        ) {
             return Vec::new();
         }
         let session = session.clone();

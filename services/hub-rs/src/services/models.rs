@@ -99,23 +99,30 @@ pub fn catalog(config: &Value, live: &[String]) -> Value {
     json!({"defaultModel":selection.as_ref().map(|s|s.model.as_str()).unwrap_or(""),"contextWindow":selection.as_ref().and_then(|s|s.context_window),
         "skipPermissionsDefault":config["skipPermissionsDefault"].as_bool().unwrap_or(false),"defaultPermissionMode":config["defaultPermissionMode"].as_str().unwrap_or(""),"aliases":aliases,"seen":seen})
 }
+fn binary_name(provider: &str) -> &str {
+    match provider {
+        "antigravity" => "agy",
+        other => other,
+    }
+}
 fn find_binary_on_path(
     provider: &str,
     search_path: &std::ffi::OsStr,
     windows: bool,
 ) -> Option<PathBuf> {
+    let binary = binary_name(provider);
     for directory in std::env::split_paths(search_path) {
         if directory.as_os_str().is_empty() {
             continue;
         }
         let names = if windows {
             vec![
-                format!("{provider}.cmd"),
-                format!("{provider}.exe"),
-                provider.into(),
+                format!("{binary}.cmd"),
+                format!("{binary}.exe"),
+                binary.into(),
             ]
         } else {
-            vec![provider.into()]
+            vec![binary.into()]
         };
         for name in names {
             let path = directory.join(name);
@@ -143,7 +150,7 @@ pub fn resolve_binary(provider: &str, config: &Value) -> String {
     }
     find_binary(provider)
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or(provider.into())
+        .unwrap_or_else(|| binary_name(provider).into())
 }
 /// The legacy Claude escape hatch affects spawning, not provider detection.
 pub fn resolve_spawn_binary(provider: &str, config: &Value) -> String {
@@ -167,15 +174,15 @@ fn provider_request(
     home: Option<&Path>,
 ) -> anyhow::Result<(String, Command)> {
     let provider = params["provider"].as_str().unwrap_or("");
-    if !["codex", "copilot", "opencode", "pi"].contains(&provider) {
+    if !["codex", "copilot", "opencode", "pi", "antigravity"].contains(&provider) {
         anyhow::bail!(
-            "providers.listModels requires {{ provider: 'codex'|'copilot'|'opencode'|'pi' }}"
+            "providers.listModels requires {{ provider: 'codex'|'copilot'|'opencode'|'pi'|'antigravity' }}"
         );
     }
     let requested = params["cwd"].as_str().unwrap_or("");
-    // The initial Codex picker has no project yet. Resolve this explicit
+    // The initial Codex/Antigravity picker has no project yet. Resolve this explicit
     // discovery request on the hub, never against the client's filesystem.
-    let cwd = if provider == "codex"
+    let cwd = if matches!(provider, "codex" | "antigravity")
         && requested.is_empty()
         && params["useHomeDirectory"].as_bool() == Some(true)
     {
@@ -215,6 +222,10 @@ fn provider_rows(value: Value) -> Option<Vec<Value>> {
         id: Option<String>,
         label: Option<String>,
         default: Option<bool>,
+        #[serde(rename = "effortLevels")]
+        effort_levels: Option<Vec<String>>,
+        #[serde(rename = "defaultEffort")]
+        default_effort: Option<String>,
     }
     #[derive(Default, serde::Deserialize)]
     #[serde(default)]
@@ -228,11 +239,18 @@ fn provider_rows(value: Value) -> Option<Vec<Value>> {
         .unwrap_or_default();
     Some(response.models.unwrap_or_default().into_iter().map(|row| {
         let row = row.unwrap_or_default();
-        json!({"id":row.id.unwrap_or_default(),"label":row.label.unwrap_or_default(),"default":row.default.unwrap_or_default()})
+        let mut out = json!({"id":row.id.unwrap_or_default(),"label":row.label.unwrap_or_default(),"default":row.default.unwrap_or_default()});
+        if let Some(levels) = row.effort_levels.filter(|l| !l.is_empty()) {
+            out["effortLevels"] = json!(levels);
+        }
+        if let Some(default_effort) = row.default_effort.filter(|s| !s.is_empty()) {
+            out["defaultEffort"] = json!(default_effort);
+        }
+        out
     }).collect())
 }
 pub fn check_all(config: &Value) -> Value {
-    Value::Array(["claude","codex","copilot","opencode","pi"].iter().map(|provider|{
+    Value::Array(["claude","codex","antigravity","copilot","opencode","pi"].iter().map(|provider|{
         let custom=config["agents"]["binaries"][provider].as_str().unwrap_or("").trim();
         let resolved=if custom.is_empty(){find_binary(provider)}else{Path::new(custom).is_file().then(||PathBuf::from(custom))};
         json!({"provider":provider,"found":resolved.is_some(),"resolvedPath":resolved,"customBin":custom})
@@ -388,6 +406,11 @@ mod tests {
             Some(first.join("codex.cmd"))
         );
         assert_eq!(find_binary_on_path("absent", &path, false), None);
+        std::fs::write(first.join("agy.exe"), "fixture").unwrap();
+        assert_eq!(
+            find_binary_on_path("antigravity", &path, true),
+            Some(first.join("agy.exe"))
+        );
     }
     #[test]
     fn provider_relay_preserves_typed_response_defaults_and_rejects_invalid_shapes() {

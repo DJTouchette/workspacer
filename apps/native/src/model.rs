@@ -384,7 +384,7 @@ impl Session {
     pub fn takes_images(&self) -> bool {
         match self.provider_id() {
             "claude" => self.transport == "stream",
-            "codex" => true,
+            "codex" | "antigravity" => true,
             _ => false,
         }
     }
@@ -1563,6 +1563,8 @@ pub fn model_provider(id: &str) -> Option<&'static str> {
         Some("claude")
     } else if lower.starts_with("gpt") || lower.contains("codex") {
         Some("codex")
+    } else if lower.starts_with("gemini") {
+        Some("antigravity")
     } else {
         None
     }

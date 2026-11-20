@@ -182,7 +182,10 @@ impl ExecutionEngineV1 for ClaudemonEngine {
         } else if path.components().count() > 1 {
             executable(&std::path::Path::new(&request.cwd).join(path))
         } else {
-            let search = matches!(request.provider.as_str(), "claude" | "codex" | "copilot")
+            let search = matches!(
+                request.provider.as_str(),
+                "claude" | "codex" | "copilot" | "antigravity"
+            )
                 .then(|| request.env.get("PATH").cloned())
                 .flatten()
                 .or_else(|| std::env::var("PATH").ok())

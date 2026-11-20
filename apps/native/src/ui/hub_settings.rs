@@ -38,6 +38,7 @@ fn provider_label(id: &str) -> &'static str {
     match id {
         "claude" => "Claude",
         "codex" => "Codex",
+        "antigravity" => "Antigravity",
         "copilot" => "Copilot",
         "opencode" => "OpenCode",
         _ => "Other",
