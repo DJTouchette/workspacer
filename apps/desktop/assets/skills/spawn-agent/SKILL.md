@@ -19,10 +19,22 @@ summary. Set `cwd` to the project that owns the work. Use `worktree:true` for
 code changes that need isolation; use the current checkout for read-only work or
 when the user explicitly wants shared edits.
 
-Honor an explicit provider or model choice. Pass an explicitly named model with
-its provider and `exactModel:true`; otherwise let the configured default apply
-or use `select_model` when role-based routing materially helps. Never broaden
-the child's task or external authority beyond the user's request.
+Honor an explicit provider or model choice. Supported providers are `claude`
+(default), `codex`, `antigravity`, `copilot`, and `opencode` — check
+`list_providers` before spawning on a non-default harness. Pass an explicitly
+named model with its provider and `exactModel:true`; otherwise let the
+configured default apply or use `select_model` when role-based routing
+materially helps. Never broaden the child's task or external authority beyond
+the user's request.
+
+For Antigravity (`provider:"antigravity"`, backed by the `agy` CLI over stream
+ACP): omit `transport` and `contextWindow` (Antigravity always uses stream
+transport and rejects `contextWindow`). Omit `model` for the CLI default, or
+pass an explicit model ID (either a base model ID with optional `effort` in
+`low` | `medium` | `high` | `xhigh` | `max`, or a compound `<model>-<effort>`
+ID) together with `exactModel:true`. Workspacer attaches its MCP tools and role
+skills automatically, and `skipPermissions` maps to Antigravity's auto-approve
+mode.
 
 After spawning, end your turn. Do not poll. Workspacer sends you the child's
 progress, blocker/escalation, completion, and missed-wake catch-up events. Reply

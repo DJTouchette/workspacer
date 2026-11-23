@@ -126,6 +126,43 @@ mod tests {
             );
             assert!(!description.contains("headless brain declines"));
         }
+        assert!(spawn["description"].as_str().unwrap().contains("Antigravity"));
+        for field in ["provider", "effort", "contextWindow"] {
+            let description = spawn["inputSchema"]["properties"][field]["description"]
+                .as_str()
+                .unwrap();
+            assert!(
+                description.to_ascii_lowercase().contains("antigravity"),
+                "{field}: {description}"
+            );
+        }
+        let providers = effective["operator"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "list_providers")
+            .unwrap();
+        assert!(
+            providers["description"]
+                .as_str()
+                .unwrap()
+                .contains("antigravity")
+        );
+        for name in ["select_model", "select_dispatch_model", "routing_preview"] {
+            let tool = effective["operator"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["name"] == name)
+                .unwrap();
+            assert!(
+                tool["inputSchema"]["properties"]["provider"]["description"]
+                    .as_str()
+                    .unwrap()
+                    .contains("antigravity"),
+                "{name}"
+            );
+        }
         let raw: Value = serde_json::from_str(include_str!("../../assets/mcp-help.json")).unwrap();
         let mut texts: BTreeMap<String, String> =
             serde_json::from_value(raw["guidance"].clone()).unwrap();
@@ -135,6 +172,8 @@ mod tests {
         assert_eq!(serde_json::to_value(&texts).unwrap(), generated["guidance"]);
         assert!(texts["workflows"].contains("owning Rust host"));
         assert!(!texts["spawn"].contains("headless declines arbitrary"));
+        assert!(texts["spawn"].contains("antigravity"));
+        assert!(texts["jobs"].contains("antigravity"));
         assert!(
             texts["observe"].contains("headless/old peers"),
             "on-demand status summaries still require their desktop provider"

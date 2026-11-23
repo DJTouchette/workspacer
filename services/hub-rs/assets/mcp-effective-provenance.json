@@ -3,7 +3,7 @@
   "inputs": {
     "mcp-tools.json": "b66755e62a97884d52181db0ed971d54b75a44851c738bfb5c495dc2c8741402",
     "mcp-help.json": "25a2c1895a0c18c42a778a668efbb433ce1419df554518d7326771e7270bd456",
-    "mcp-rust-presentation.json": "76bde4e8bbd383f0f398f0d59b97814a765818abad1516b7f64f2af436cc73c8",
+    "mcp-rust-presentation.json": "a1e41b7afaafb0a0cba053b0dd200528567e113088db514f4caa11a4560ac7a2",
     "mcp-wire-contract.json": "4a40a413e050e674e704fd3570b5d6a1569cfdf38a62ae7306c0b7880f97170b",
     "mcp-wire-overrides.json": "e82a1a69381b40ed1c27f188aa513a7bd367c0b022f3884cf5ec9b088cd20413"
   }

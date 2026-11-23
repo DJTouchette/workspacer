@@ -228,12 +228,19 @@ mod tests {
             params["contextWindow"],
             crate::model_selection::DEFAULT_CODEX_CONTEXT_WINDOW
         );
-        for provider in ["opencode", "pi", "copilot"] {
+        for provider in ["antigravity", "opencode", "pi", "copilot"] {
             let mut params = json!({"provider":provider});
             resolve_defaults(&mut params, &config).unwrap();
             assert!(params["model"].is_null());
             assert!(params["contextWindow"].is_null());
         }
+        assert!(
+            resolve_defaults(
+                &mut json!({"provider":"antigravity","model":"gemini-4-neon","contextWindow":1_000_000}),
+                &config,
+            )
+            .is_err()
+        );
         let mut params = json!({"provider":"claude","model":"sonnet","skipPermissions":false});
         resolve_defaults(&mut params, &config).unwrap();
         assert_eq!(params["model"], "sonnet");

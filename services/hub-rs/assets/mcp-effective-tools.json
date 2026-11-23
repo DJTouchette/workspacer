@@ -1064,7 +1064,7 @@
       "name": "list_profiles"
     },
     {
-      "description": "List the coding-agent HARNESSES spawn_agent can use (claude, codex, copilot, opencode, pi) and whether each is installed/available on this host — call before dispatching a worker on a non-default provider.",
+      "description": "List the coding-agent HARNESSES spawn_agent can use (claude, codex, antigravity, copilot, opencode, pi) and whether each is installed/available on this host — call before dispatching a worker on a non-default provider.",
       "inputSchema": {
         "additionalProperties": false,
         "type": "object"
@@ -2446,7 +2446,7 @@
             "type": "string"
           },
           "provider": {
-            "description": "ask about ONE provider (claude | codex | copilot | opencode | pi): the answer then reports that provider's capacity and refuses rather than silently substituting another one",
+            "description": "ask about ONE provider (claude | codex | antigravity | copilot | opencode | pi): the answer then reports that provider's capacity and refuses rather than silently substituting another one",
             "type": "string"
           },
           "requireIndependentFamily": {
@@ -2703,7 +2703,7 @@
             "type": "string"
           },
           "provider": {
-            "description": "ask about ONE provider (claude | codex | copilot | opencode | pi): the answer then reports that provider's capacity and refuses rather than silently substituting another one",
+            "description": "ask about ONE provider (claude | codex | antigravity | copilot | opencode | pi): the answer then reports that provider's capacity and refuses rather than silently substituting another one",
             "type": "string"
           },
           "requireIndependentFamily": {
@@ -2796,7 +2796,7 @@
             "type": "string"
           },
           "provider": {
-            "description": "ask about ONE provider (claude | codex | copilot | opencode | pi): the answer then reports that provider's capacity and refuses rather than silently substituting another one",
+            "description": "ask about ONE provider (claude | codex | antigravity | copilot | opencode | pi): the answer then reports that provider's capacity and refuses rather than silently substituting another one",
             "type": "string"
           },
           "requireIndependentFamily": {
@@ -2979,7 +2979,7 @@
       "name": "signal"
     },
     {
-      "description": "Start a supported coding-agent session (Claude, Codex, Copilot, or OpenCode) with full Workspacer tools and all enabled plugin tools automatically. Pi is unavailable because it has no MCP bridge. Returns sessionId and any rendered dispatch message; see help topic spawn.",
+      "description": "Start a supported coding-agent session (Claude, Codex, Antigravity, Copilot, or OpenCode) with full Workspacer tools and all enabled plugin tools automatically. Pi is unavailable because it has no MCP bridge. Returns sessionId and any rendered dispatch message; see help topic spawn.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2992,7 +2992,7 @@
             "type": "string"
           },
           "contextWindow": {
-            "description": "spawn-time context request in tokens (Claude: validated model variant; Codex: model_context_window, omission uses the shared fresh-Codex request, while explicit null uses the provider default). Copilot, OpenCode and Pi reject this field because their installed harnesses expose no validated request mechanism",
+            "description": "spawn-time context request in tokens (Claude: validated model variant; Codex: model_context_window, omission uses the shared fresh-Codex request, while explicit null uses the provider default). Antigravity, Copilot, OpenCode and Pi reject this field because their installed harnesses expose no validated request mechanism",
             "minimum": 0,
             "type": [
               "null",
@@ -3008,7 +3008,7 @@
             "type": "string"
           },
           "effort": {
-            "description": "reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)",
+            "description": "reasoning-effort level: low, medium, high, xhigh, or max (claude/codex/antigravity)",
             "type": "string"
           },
           "exactModel": {
@@ -3069,7 +3069,7 @@
             "type": "string"
           },
           "provider": {
-            "description": "supported coding-agent backend: claude (default), codex, copilot, or opencode. Pi is rejected because its CLI has no MCP bridge for the required Workspacer tools",
+            "description": "supported coding-agent backend: claude (default), codex, antigravity, copilot, or opencode. Pi is rejected because its CLI has no MCP bridge for the required Workspacer tools",
             "type": "string"
           },
           "remoteCwd": {

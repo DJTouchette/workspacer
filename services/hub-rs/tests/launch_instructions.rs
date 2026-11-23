@@ -82,6 +82,19 @@ fn claude_takes_the_role_plugin_by_plugin_dir_and_codex_by_skill_roots() {
             .text
             .contains("standup (for an on-demand fleet status digest)")
     );
+
+    let antigravity = launch("three", "antigravity", cwd.path(), home.path(), false);
+    assert!(antigravity.skills.args.is_empty());
+    assert_eq!(
+        antigravity.skills.skill_roots,
+        vec![plugin.join("skills").to_string_lossy().into_owned()]
+    );
+    assert!(
+        antigravity
+            .text
+            .contains("spawn-agent (before spawning child agents)")
+    );
+    assert!(!antigravity.text.contains("standup"));
     // A manager never sees the ordinary plugin, nor the reverse.
     assert!(!codex.text.contains("spawn-agent"));
     assert!(!claude.text.contains("standup"));

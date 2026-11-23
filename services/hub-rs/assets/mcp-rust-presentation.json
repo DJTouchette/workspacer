@@ -19,6 +19,48 @@
       "after": "Available on the owning Rust host in standalone and embedded deployments; peer-qualified inbox access is unavailable."
     },
     {
+      "tool": "list_providers",
+      "pointer": "/description",
+      "before": "(claude, codex, copilot, opencode, pi)",
+      "after": "(claude, codex, antigravity, copilot, opencode, pi)"
+    },
+    {
+      "tool": "routing_preview",
+      "pointer": "/inputSchema/properties/provider/description",
+      "before": "(claude | codex | copilot | opencode | pi)",
+      "after": "(claude | codex | antigravity | copilot | opencode | pi)"
+    },
+    {
+      "tool": "select_dispatch_model",
+      "pointer": "/inputSchema/properties/provider/description",
+      "before": "(claude | codex | copilot | opencode | pi)",
+      "after": "(claude | codex | antigravity | copilot | opencode | pi)"
+    },
+    {
+      "tool": "select_model",
+      "pointer": "/inputSchema/properties/provider/description",
+      "before": "(claude | codex | copilot | opencode | pi)",
+      "after": "(claude | codex | antigravity | copilot | opencode | pi)"
+    },
+    {
+      "tool": "spawn_agent",
+      "pointer": "/description",
+      "before": "(Claude, Codex, Copilot, or OpenCode)",
+      "after": "(Claude, Codex, Antigravity, Copilot, or OpenCode)"
+    },
+    {
+      "tool": "spawn_agent",
+      "pointer": "/inputSchema/properties/provider/description",
+      "before": "claude (default), codex, copilot, or opencode.",
+      "after": "claude (default), codex, antigravity, copilot, or opencode."
+    },
+    {
+      "tool": "spawn_agent",
+      "pointer": "/inputSchema/properties/effort/description",
+      "before": "(claude/codex)",
+      "after": "(claude/codex/antigravity)"
+    },
+    {
       "tool": "spawn_agent",
       "pointer": "/inputSchema/properties/resultSchema/description",
       "before": "Desktop-only (the headless brain declines arbitrary resultSchema, while still providing its fixed escalation contract)",
@@ -43,6 +85,12 @@
       "after": "omission uses the shared fresh-Codex request, while explicit null uses the provider default"
     },
     {
+      "tool": "spawn_agent",
+      "pointer": "/inputSchema/properties/contextWindow/description",
+      "before": "Copilot, OpenCode and Pi reject this field",
+      "after": "Antigravity, Copilot, OpenCode and Pi reject this field"
+    },
+    {
       "tool": "respawn_with",
       "pointer": "/inputSchema/properties/contextWindow/description",
       "before": "canonical context-window override in tokens; pair with modelIdentity",
@@ -50,6 +98,16 @@
     }
   ],
   "guidance": [
+    {
+      "topic": "jobs",
+      "before": "provider is claude | codex | copilot | opencode | pi; blank",
+      "after": "provider is claude | codex | antigravity | copilot | opencode | pi; blank"
+    },
+    {
+      "topic": "spawn",
+      "before": "Every supported spawned agent receives the full Workspacer operator surface\n  and every enabled plugin tool automatically, including recursively spawned\n  children. Pi is refused because it has no MCP bridge.",
+      "after": "Every supported spawned agent (claude, codex, antigravity, copilot, opencode)\n  receives the full Workspacer operator surface and every enabled plugin tool\n  automatically, including recursively spawned children. Antigravity runs via\n  the agy CLI over stream ACP (supports model, effort, and skipPermissions;\n  omit transport and contextWindow). Pi is refused because it has no MCP bridge."
+    },
     {
       "topic": "spawn",
       "before": "Task loops (local desktop):",

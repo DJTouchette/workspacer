@@ -62,6 +62,9 @@ altered files) and hands its role's plugin to THAT session only:
   `skill_roots` → `skills/extraRoots/set` sent right after `initialize`
   (string RPC id `workspacer-skill-roots`). The setting is server-wide, so the
   hybrid TUI attaching over `--remote` sees it too.
+- Antigravity (`agy acp`): claudemon `skill_roots` → app-owned wrapper dir
+  passed via `--add-dir` with `.agents/skills.json`, surfacing role skills
+  natively alongside `_meta.antigravity.systemPrompt.append` and HTTP MCP.
 - Copilot, OpenCode and Codex's PTY-only rollout path: an instruction line
   naming each SKILL.md. Copilot managers additionally keep the personal
   `~/.copilot/skills` install (`managerSkills.ts`) for slash commands.
